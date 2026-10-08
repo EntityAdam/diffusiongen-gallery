@@ -1,0 +1,287 @@
+@inject GalleryService Gallery
+@inject LibraryService Library
+@inject VisionService Vision
+@inject ILogger<LibraryWorkbench> Logger
+@implements IDisposable
+
+<section class="panel workbench" hidden="@(!Visible)">
+    <div class="panel-header"><h3>Workflow tools</h3>@if (Workflow is "organize" or "ai") { <span class="pill">@SelectedIds.Count selected</span> }</div>
+    @if (Workflow == "organize")
+    {
+        <p class="muted">Select images using their checkboxes. Collections are virtual: organizing never moves or deletes image files.</p>
+        <div class="import-columns">
+            <div>
+                <label for="bulk-collection">Add to collection</label><input id="bulk-collection" @bind="collection" disabled="@working" list="collections" maxlength="80" placeholder="Worlds, portraits, final picks..." />
+                <datalist id="collections">@foreach (var name in Collections) { <option value="@name"></option> }</datalist>
+                <label for="bulk-tags">Add tags (existing tags are preserved)</label><input id="bulk-tags" @bind="tags" disabled="@working" placeholder="cinematic, warm light" />
+                <div class="actions"><button disabled="@(working || SelectedIds.Count == 0)" @onclick="OrganizeAsync">Apply collection &amp; tags</button><button disabled="@(working || SelectedIds.Count == 0 || collection.Trim().Length == 0)" @onclick="RemoveCollectionAsync">Remove from collection</button></div>
+            </div>
+            <div>
+                <label for="bulk-rating">Rating</label><select id="bulk-rating" @bind="rating" disabled="@working"><option value="-1">Leave unchanged</option><option value="0">Unrated</option>@for (var value = 1; value <= 5; value++) { <option value="@value">@value / 5</option> }</select>
+                <label for="bulk-review">Review status</label><select id="bulk-review" @bind="reviewStatus" disabled="@working"><option value="unchanged">Leave unchanged</option><option value="reviewed">Reviewed</option><option value="pending">Pending</option></select>
+                <div class="actions"><button disabled="@(working || SelectedIds.Count == 0 || rating == -1 && reviewStatus == "unchanged")" @onclick="RateAsync">Apply rating &amp; review status</button><button disabled="@(working || SelectedIds.Count != 2)" @onclick="CompareAsync">Compare two selected</button></div>
+                <small class="muted">Ratings are your judgement. AI never rates or deletes your images.</small>
+            </div>
+        </div>
+    }
+    @if (Workflow == "explore")
+    {
+        <div class="import-columns">
+            <div>
+                <label for="saved-name">Save the current sidebar filters</label><input id="saved-name" @bind="viewName" maxlength="80" placeholder="My cinematic favorites" />
+                <button disabled="@working" @onclick="SaveViewAsync">Save view</button>
+                @foreach (var view in views)
+                {
+                    <div class="saved-view"><button disabled="@working" @onclick="() => FilterChanged.InvokeAsync(LibraryService.Clone(view.Filter))">@view.Name</button><button disabled="@working" aria-label="@($"Delete saved view {view.Name}")" @onclick="() => DeleteViewAsync(view.Name)">&times;</button></div>
+                }
+            </div>
+            <div>
+                <label for="smart-query">Describe what you want to find</label><input id="smart-query" @bind="query" maxlength="2000" placeholder="Highly rated landscape favorites" />
+                <button disabled="@working" @onclick="InterpretAsync">Suggest filters with local LLM</button>
+                <p class="muted">Converts language to explicit filters, not embedding search. Review the interpretation before applying it.</p>
+                @if (suggestedFilter is not null)
+                {
+                    <div class="suggestion">Search: @suggestedFilter.Search / Tag: @suggestedFilter.Tag / Collection: @suggestedFilter.Collection / Minimum rating: @suggestedFilter.MinRating / Favorites: @suggestedFilter.FavoritesOnly / Orientation: @suggestedFilter.Orientation / Review: @suggestedFilter.Review</div>
+                    <button disabled="@working" @onclick="ApplySearchAsync">Apply suggested filters</button>
+                }
+            </div>
+        </div>
+    }
+    @if (Workflow == "ai")
+    {
+        <p class="muted">Generate descriptions, tags and collection suggestions for up to 24 selected images using your configured local vision model. Nothing is saved until you approve each suggestion. Existing tags and collections are preserved.</p>
+        <button class="primary" disabled="@(working || SelectedIds.Count is 0 or > 24)" @onclick="SuggestAsync">Analyze selected locally (@SelectedIds.Count)</button>
+        <button disabled="@(!analyzing || cancelRequested)" @onclick="StopAnalysisAsync">Stop after current image</button>
+        @foreach (var suggestion in suggestions.ToArray())
+        {
+            <div class="suggestion">
+                <strong>@suggestion.Name</strong><p>@suggestion.Description</p><p class="muted">Tags: @suggestion.Tags</p>
+                <p>Suggested collection: @suggestion.Collection</p>
+                @if (suggestion.Warning.Length > 0) { <p class="notice error" role="alert">@suggestion.Warning</p> }
+                <div class="actions"><button disabled="@working" @onclick="() => ApproveAsync(suggestion)">Approve &amp; save</button><button disabled="@working" @onclick="() => DismissAsync(suggestion)">Dismiss</button></div>
+            </div>
+        }
+    }
+    @if (working) { <p class="notice" role="status">@status</p> }
+    @if (notice.Length > 0) { <p class="notice" role="status">@notice</p> }
+    @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
+    @if (compareImages.Count == 2)
+    {
+        <div class="modal-backdrop compare-overlay">
+            <section class="panel" role="dialog" aria-modal="true" aria-label="Compare images">
+                <div class="panel-header"><h2>Choose what deserves to stay.</h2><button disabled="@working" @onclick="CloseComparison">Close comparison</button></div>
+                <div class="import-columns">
+                    @foreach (var image in compareImages)
+                    {
+                        <article class="compare-image"><h3>@image.Name</h3><img src="@comparison[image.Id]" alt="@image.Name" />
+                            <p>@image.Width &times; @image.Height / Rating: @image.Rating / @(image.Reviewed ? "Reviewed" : "Pending review")</p>
+                            <div class="actions">
+                                @for (var score = 1; score <= 5; score++)
+                                {
+                                    var value = score;
+                                    <button disabled="@working" @onclick="() => RateOneAsync(image, value)">@value / 5</button>
+                                }
+                            </div>
+                        </article>
+                    }
+                </div>
+                @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
+            </section>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public string Workflow { get; set; } = "organize";
+    [Parameter] public bool Visible { get; set; } = true;
+    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public IReadOnlyCollection<string> SelectedIds { get; set; } = [];
+    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
+    [Parameter] public EventCallback<GalleryFilter> FilterChanged { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback<LibraryJobStatus> JobChanged { get; set; }
+    private string collection = "", tags = "", viewName = "", query = "", error = "", notice = "", status = "";
+    private int rating = -1;
+    private string reviewStatus = "unchanged", jobWorkflow = "", jobMessage = "";
+    private bool working, analyzing, reportingJob, cancelRequested, disposed;
+    private List<SavedView> views = [];
+    private List<OrganizationSuggestion> suggestions = [];
+    private GalleryFilter? suggestedFilter;
+    private List<ImageRecord> compareImages = [];
+    private readonly Dictionary<string, string> comparison = [];
+    private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
+    protected override void OnParametersSet() => suggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
+
+    protected override Task OnInitializedAsync() => RunAsync("Loading saved views...", async () => views = await Library.LoadViewsAsync());
+
+    private async Task RunAsync(string message, Func<Task> action, bool reportJob = false)
+    {
+        if (working) return;
+        working = true; status = message; error = notice = "";
+        reportingJob = reportJob;
+        if (reportJob) jobWorkflow = Workflow;
+        try { await PublishJobAsync(); await action(); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Library workbench operation failed");
+            error = exception is InvalidOperationException or IOException or System.Text.Json.JsonException
+                ? exception.Message : "The operation failed. Check the application console.";
+        }
+        finally
+        {
+            if (reportJob) jobMessage = error.Length > 0 ? "Operation reported errors. Open workflow for details." : notice;
+            working = analyzing = reportingJob = false;
+            await PublishJobAsync();
+        }
+    }
+
+    private Task PublishJobAsync() => disposed ? Task.CompletedTask : JobChanged.InvokeAsync(
+        new LibraryJobStatus(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
+            suggestions.Count, analyzing && !cancelRequested));
+
+    public async Task StopAnalysisAsync()
+    {
+        if (!analyzing) return;
+        cancelRequested = true;
+        status = "Stopping after the current image...";
+        await PublishJobAsync();
+    }
+
+    private async Task DismissAsync(OrganizationSuggestion suggestion)
+    {
+        suggestions.Remove(suggestion);
+        jobMessage = $"{suggestions.Count} suggestions await approval.";
+        await PublishJobAsync();
+    }
+
+    private async Task ApplyBulkAsync(Action<ImageRecord> change)
+    {
+        var failures = new List<string>();
+        var ids = SelectedIds.ToArray();
+        foreach (var id in ids)
+        {
+            try { await Gallery.UpdateAsync(id, change); }
+            catch (Exception exception)
+            {
+                Logger.LogError(exception, "Bulk organization failed for {ImageId}", id);
+                failures.Add($"{id}: {exception.Message}");
+            }
+        }
+        await Changed.InvokeAsync();
+        notice = $"Updated {ids.Length - failures.Count} image(s).";
+        error = string.Join(" / ", failures);
+    }
+
+    private Task OrganizeAsync() => RunAsync("Organizing selection...", async () =>
+    {
+        if (collection.Trim().Length > 80 || tags.Length > 4000)
+            throw new InvalidOperationException("Collection or tags are too long.");
+        if (collection.Trim().Length == 0 && tags.Trim().Length == 0)
+            throw new InvalidOperationException("Enter a collection or tags.");
+        await ApplyBulkAsync(image =>
+        {
+            image.Tags = LibraryService.MergeTags(image.Tags, tags);
+            if (collection.Trim().Length > 0) LibraryService.SetOrganization(image, image.Rating, image.Reviewed, collection);
+        });
+    });
+
+    private Task RemoveCollectionAsync() => RunAsync("Updating collections...", () => ApplyBulkAsync(image =>
+        image.Collections.RemoveAll(name => name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase))));
+
+    private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
+        LibraryService.SetCuration(image, rating == -1 ? null : rating,
+            reviewStatus == "unchanged" ? null : reviewStatus == "reviewed")));
+
+    private Task SaveViewAsync() => RunAsync("Saving view...", async () =>
+    {
+        await Library.SaveViewAsync(viewName, Filter);
+        views = await Library.LoadViewsAsync();
+        notice = "Saved view stored encrypted.";
+    });
+
+    private Task DeleteViewAsync(string name) => RunAsync("Deleting view...", async () =>
+    {
+        await Library.DeleteViewAsync(name);
+        views = await Library.LoadViewsAsync();
+    });
+
+    private Task InterpretAsync() => RunAsync("Interpreting search locally...", async () =>
+    {
+        suggestedFilter = await Vision.InterpretSearchAsync(await Gallery.SettingsAsync(), query, Collections.ToArray());
+        notice = "Search interpretation ready to inspect.";
+    }, reportJob: true);
+
+    private async Task ApplySearchAsync()
+    {
+        if (suggestedFilter is not null) await FilterChanged.InvokeAsync(LibraryService.Clone(suggestedFilter));
+        suggestedFilter = null;
+    }
+
+    private Task SuggestAsync() => RunAsync("Analyzing selection...", async () =>
+    {
+        if (SelectedIds.Count is 0 or > 24) throw new InvalidOperationException("Select between 1 and 24 images.");
+        cancelRequested = false;
+        analyzing = true;
+        var settings = await Gallery.SettingsAsync();
+        var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToArray();
+        var failures = new List<string>();
+        var completed = 0;
+        foreach (var image in selected)
+        {
+            if (disposed || cancelRequested) break;
+            status = $"Analyzing {completed + 1} / {selected.Length}: {image.Name}";
+            await PublishJobAsync();
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                var result = await Vision.AnalyzeImageWithCollectionAsync(settings, await Gallery.PreviewAsync(image.Id), Collections.ToArray());
+                if (disposed) break;
+                suggestions.RemoveAll(suggestion => suggestion.Id == image.Id);
+                suggestions.Add(new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model, result.Warning));
+                if (result.Warning.Length > 0) Logger.LogWarning("Analysis collection warning for {ImageId}: {Warning}", image.Id, result.Warning);
+            }
+            catch (Exception exception)
+            {
+                Logger.LogError(exception, "Local analysis failed for {ImageId}", image.Id);
+                failures.Add($"{image.Name}: {exception.Message}");
+            }
+            completed++;
+        }
+        notice = $"{(cancelRequested ? "Stopped" : "Analysis finished")}: {completed} / {selected.Length} processed; {failures.Count} failed. {suggestions.Count} suggestions await approval.";
+        error = string.Join(" / ", failures);
+    }, reportJob: true);
+
+    private Task ApproveAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved suggestion...", async () =>
+    {
+        await Gallery.UpdateAsync(suggestion.Id, image =>
+        {
+            image.Description = suggestion.Description;
+            image.Tags = LibraryService.MergeTags(image.Tags, suggestion.Tags);
+            image.AnalysisModel = suggestion.Model;
+            if (suggestion.Collection.Length > 0)
+                LibraryService.SetOrganization(image, image.Rating, image.Reviewed, suggestion.Collection);
+        });
+        suggestions.Remove(suggestion);
+        jobMessage = $"{suggestions.Count} suggestions await approval.";
+        await Changed.InvokeAsync();
+    });
+
+    private Task CompareAsync() => RunAsync("Preparing comparison...", async () =>
+    {
+        comparison.Clear();
+        var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
+        if (selected.Count != 2) throw new InvalidOperationException("Select exactly two images.");
+        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, false);
+        compareImages = selected;
+    });
+
+    private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
+    {
+        await Gallery.UpdateAsync(image.Id, current => LibraryService.SetOrganization(current, value, true, null));
+        image.Rating = value; image.Reviewed = true;
+        await Changed.InvokeAsync();
+    });
+
+    private void CloseComparison() { compareImages.Clear(); comparison.Clear(); }
+    public void Dispose() { disposed = true; cancelRequested = true; suggestions.Clear(); CloseComparison(); }
+}

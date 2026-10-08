@@ -1,0 +1,48 @@
+<div class="active-filters" aria-label="Active filters">
+    @foreach (var chip in Chips)
+    {
+        <button disabled="@Disabled" @onclick="() => RemoveAsync(chip.Clear)" aria-label="@($"Remove filter: {chip.Label}")">@chip.Label &times;</button>
+    }
+    @if (Chips.Count > 0)
+    {
+        <button class="text-button" disabled="@Disabled" @onclick="Reset">Clear all filters</button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback Reset { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private List<(string Label, Action Clear)> Chips
+    {
+        get
+        {
+            var chips = new List<(string, Action)>();
+            if (Filter.Search.Length > 0) chips.Add(($"Search: {Filter.Search}", () => Filter.Search = ""));
+            if (Filter.Collection.Length > 0) chips.Add(($"Collection: {Filter.Collection}", () => Filter.Collection = ""));
+            if (Filter.Tag.Length > 0) chips.Add(($"Tag: {Filter.Tag}", () => Filter.Tag = ""));
+            if (Filter.Folder.Length > 0) chips.Add(($"Folder: {Filter.Folder}", () => Filter.Folder = ""));
+            if (Filter.Model.Length > 0) chips.Add(($"Model: {Filter.Model}", () => Filter.Model = ""));
+            if (Filter.MinRating > 0) chips.Add(($"Rating: {Filter.MinRating}+", () => Filter.MinRating = 0));
+            if (Filter.Review != "all") chips.Add(($"Review: {Filter.Review}", () => Filter.Review = "all"));
+            if (Filter.UnorganizedOnly) chips.Add(("Without a collection", () => Filter.UnorganizedOnly = false));
+            if (Filter.FavoritesOnly) chips.Add(("Favorites only", () => Filter.FavoritesOnly = false));
+            if (Filter.Deletion != "all") chips.Add(($"Deletion: {Filter.Deletion}", () => Filter.Deletion = "all"));
+            if (Filter.Analysis != "all") chips.Add(($"Analysis: {Filter.Analysis}", () => Filter.Analysis = "all"));
+            if (Filter.Orientation != "all") chips.Add(($"Orientation: {Filter.Orientation}", () => Filter.Orientation = "all"));
+            if (Filter.MinWidth > 0) chips.Add(($"Width: {Filter.MinWidth}+", () => Filter.MinWidth = 0));
+            if (Filter.MinHeight > 0) chips.Add(($"Height: {Filter.MinHeight}+", () => Filter.MinHeight = 0));
+            if (Filter.From is not null) chips.Add(($"From: {Filter.From:yyyy-MM-dd}", () => Filter.From = null));
+            if (Filter.To is not null) chips.Add(($"Through: {Filter.To:yyyy-MM-dd}", () => Filter.To = null));
+            return chips;
+        }
+    }
+
+    private async Task RemoveAsync(Action clear)
+    {
+        clear();
+        await Changed.InvokeAsync();
+    }
+}

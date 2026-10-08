@@ -1,0 +1,763 @@
+@page "/"
+@implements IDisposable
+@inject VaultStore Vault
+@inject VaultSession Session
+@inject GalleryService Gallery
+@inject VisionService Vision
+@inject ILogger<Home> Logger
+
+<PageTitle>Diffusion Gen Gallery 02</PageTitle>
+
+@if (!Session.IsUnlocked)
+{
+<section class="hero">
+    <div>
+        <div class="eyebrow"><span></span> YOUR IMAGINATION, KEPT SAFE</div>
+        <h1>A home for<br />every <span>what if.</span></h1>
+        <p>Your private creative library. Organize with intent. Discover with local intelligence.</p>
+    </div>
+    <div class="hero-art" aria-hidden="true"><div class="orbit"></div><div class="orbit second"></div><span>&#10035;</span><div class="art-caption">CREATE. COLLECT. KEEP.</div></div>
+</section>
+}
+
+@if (error.Length > 0)
+{
+    <div class="notice error" role="alert">@error <button class="icon-button" @onclick="() => error = string.Empty" aria-label="Dismiss error">&times;</button></div>
+}
+@if (message.Length > 0)
+{
+    <div class="notice" role="status">@message</div>
+}
+
+@if (!Session.IsUnlocked)
+{
+    <section class="panel unlock-panel">
+        <div class="panel-header"><span class="eyebrow">ENCRYPTED VAULT</span><span class="pill">AES-256-GCM</span></div>
+        <h2>@(Vault.Exists ? "Welcome back." : "Your gallery starts here.")</h2>
+        <p class="muted">@(Vault.Exists ? "Unlock your collection with your passphrase or recovery words." : "Choose a strong, unique passphrase. We will generate a separate recovery phrase for you to save offline.")</p>
+        <form @onsubmit="UnlockAsync" @onsubmit:preventDefault>
+            @if (Vault.Exists)
+            {
+                <div class="segmented">
+                    <button type="button" class="@(!useRecovery ? "active" : "")" @onclick="() => SwitchCredential(false)">Passphrase</button>
+                    <button type="button" class="@(useRecovery ? "active" : "")" @onclick="() => SwitchCredential(true)">Recovery words</button>
+                </div>
+            }
+            <label for="secret">@(useRecovery ? "32 recovery words" : "Passphrase")</label>
+            @if (useRecovery)
+            {
+                <textarea id="secret" @bind="secret" rows="4" autocomplete="off" spellcheck="false" required></textarea>
+            }
+            else
+            {
+                <input id="secret" type="password" @bind="secret" autocomplete="off" minlength="14" required />
+            }
+            @if (!Vault.Exists)
+            {
+                <label for="confirm">Confirm passphrase</label>
+                <input id="confirm" type="password" @bind="confirm" autocomplete="off" minlength="14" required />
+            }
+            <button class="primary full" disabled="@busy" type="submit">@(busy ? "Deriving encryption key..." : Vault.Exists ? "Unlock gallery" : "Create encrypted gallery") <span>&rarr;</span></button>
+        </form>
+        <div class="security-note"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted images cannot be recovered. Originals are retained unless you explicitly enable source deletion for a local folder import.</div>
+    </section>
+}
+else if (recoveryPhrase.Length > 0)
+{
+    <section class="panel recovery-panel">
+        <span class="eyebrow">SAVE THIS BEFORE CONTINUING</span>
+        <h2>Your recovery words.</h2>
+        <p>Write these 32 words down, in order, and keep them offline in a safe place. Anyone with these words can unlock your gallery. They are shown only now.</p>
+        <div class="word-grid">
+            @foreach (var (word, index) in recoveryPhrase.Split(' ').Select((word, index) => (word, index)))
+            {
+                <div><small>@(index + 1).</small> @word</div>
+            }
+        </div>
+        <label class="check"><input type="checkbox" @bind="recoverySaved" /> I saved all 32 words securely and understand there is no other recovery method.</label>
+        <button class="primary" disabled="@(!recoverySaved || busy)" @onclick="FinishSetupAsync">Open my gallery &rarr;</button>
+    </section>
+}
+else
+{
+    <div class="workflow-layout">
+    <nav class="workflow-nav panel" aria-label="Gallery workflows">
+        <span class="eyebrow">YOUR WORKSPACE</span>
+        @foreach (var item in Workflows)
+        {
+            <button disabled="@(busy || libraryJob.Running && item.Id is "remove" or "ingest" or "endpoints" or "settings")" class="@(workflow == item.Id ? "active" : "")" aria-current="@(workflow == item.Id ? "page" : null)" @onclick="() => SwitchWorkflowAsync(item.Id)">@item.Name</button>
+        }
+        <div class="security-note"><strong>@images.Count images</strong><span data-testid="pending-count">@PendingReviewCount awaiting review</span></div>
+        @if (libraryJob.Running || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
+        {
+            <div class="job-indicator" role="status">
+                <strong>@(libraryJob.Running ? "Library job running" : "Library job")</strong>
+                <p>@libraryJob.Message</p>
+                @if (libraryJob.Suggestions > 0) { <p>@libraryJob.Suggestions suggestions await approval</p> }
+                <button disabled="@busy" @onclick="OpenLibraryJobAsync">Open job</button>
+                @if (libraryJob.CanStop)
+                {
+                    <button @onclick="StopLibraryJobAsync">Stop after current image</button>
+                }
+                @if (!libraryJob.Running && libraryJob.Suggestions == 0)
+                {
+                    <button @onclick="DismissLibraryJob">Dismiss job status</button>
+                }
+            </div>
+        }
+        <button disabled="@(busy || libraryJob.Running)" @onclick="Lock">Lock vault</button>
+    </nav>
+    <div class="workflow-content">
+    <div class="collection-header">
+        <div><span class="eyebrow">THE COLLECTION</span><h2>@Workflows.Single(item => item.Id == workflow).Name <span class="count">@images.Count</span></h2></div>
+        <div class="actions">
+            @if (ShowsGallery)
+            {
+                <button disabled="@(busy || !PageImages.Any())" @onclick="() => OpenViewer()">Full screen view</button>
+            }
+        </div>
+    </div>
+
+    @if (workflow == "ingest")
+    {
+        <section class="panel">
+            <div class="panel-header"><h3>Bring your images home.</h3><span class="pill">PNG / JPEG / WEBP</span></div>
+            <p class="muted">Copies are converted to PNG and encrypted as .dpng. Sources are retained by default. Duplicate images are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image.</p>
+                <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
+                    <label for="source">Local folder path</label>
+                    <input id="source" @bind="importPath" placeholder="C:\Pictures\Diffusion" required disabled="@busy" />
+                    <label class="check"><input type="checkbox" @bind="recursive" disabled="@busy" /> Include subfolders</label>
+                    <label class="check"><input type="checkbox" @bind="deleteSources" disabled="@busy" /> Delete originals after verified import</label>
+                    @if (deleteSources)
+                    {
+                        <div class="notice error">Originals will be deleted without the Recycle Bin after the saved image, catalog and thumbnail are verified. This is not secure shredding: SSD/NVMe remnants, backups and snapshots may remain recoverable.</div>
+                        <label class="check"><input type="checkbox" @bind="confirmSourceDeletion" disabled="@busy" /> I understand this permanently removes successfully imported source files, not their forensic remnants.</label>
+                    }
+                    <button disabled="@busy" type="submit">Ingest this folder &rarr;</button>
+                </form>
+            @if (importFailures.Count > 0)
+            {
+                <details open class="import-errors"><summary>@importFailures.Count file(s) reported issues</summary>
+                    @foreach (var failure in importFailures) { <p>@failure</p> }
+                </details>
+            }
+        </section>
+    }
+    @if (workflow == "endpoints")
+    {
+        <LlmEndpointSettings SavedSettings="settings" Saved="value => settings = value" />
+    }
+    @if (workflow == "settings")
+    {
+        <section class="panel settings">
+            <h3>Vault security</h3>
+                <form @onsubmit="ChangePassphraseAsync" @onsubmit:preventDefault>
+                    <label for="new-passphrase">New passphrase</label>
+                    <input id="new-passphrase" type="password" @bind="newPassphrase" minlength="14" autocomplete="off" required />
+                    <label for="new-confirm">Confirm new passphrase</label>
+                    <input id="new-confirm" type="password" @bind="newConfirm" minlength="14" autocomplete="off" required />
+                    <p class="muted">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the vault header, database, and all .dpng files together.</p>
+                    <button disabled="@busy" type="submit">Change passphrase</button>
+                </form>
+            <p class="muted vault-location">Vault location: <code>@Vault.Root</code></p>
+        </section>
+    }
+
+    @if (workflow == "library")
+    {
+    <div class="library-overview">
+        <button disabled="@busy" @onclick='() => SetQueueAsync("all")'><strong>@images.Count</strong><span>In your library</span></button>
+        <button disabled="@busy" @onclick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.Reviewed && !image.MarkedForDeletion)</strong><span>Awaiting review</span></button>
+        <button disabled="@busy" @onclick='() => SetQueueAsync("favorites")'><strong>@images.Count(image => image.Favorite && !image.MarkedForDeletion)</strong><span>Favorites</span></button>
+        <button disabled="@busy" @onclick='() => SetQueueAsync("unorganized")'><strong>@images.Count(image => image.Collections.Count == 0 && !image.MarkedForDeletion)</strong><span>Without a collection</span></button>
+    </div>
+    }
+    @if (workflow == "review")
+    {
+        <section class="panel review-intro">
+            <h3>One image. One decision.</h3>
+            <p class="muted">Keep, favorite, rate or mark for deletion to finish reviewing an image. Skip leaves it pending. The session includes pending, unmarked images matching your filters across all pages.</p>
+            <button class="primary" disabled="@(busy || !Filtered.Any(image => !image.Reviewed && !image.MarkedForDeletion))" @onclick="StartReview">Start guided review (@Filtered.Count(image => !image.Reviewed && !image.MarkedForDeletion))</button>
+        </section>
+    }
+    <LibraryWorkbench @ref="workbench" Visible="@(workflow is "organize" or "explore" or "ai")" Workflow="@workflow" Images="images" SelectedIds="librarySelection" Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" JobChanged="LibraryJobChanged" />
+    @if (ShowsGallery)
+    {
+    <div class="gallery-layout">
+        <aside class="panel filters">
+            <details class="filter-disclosure">
+            <summary>Filter images</summary>
+            <div class="panel-header"><h3>Find your image</h3><button class="text-button" @onclick="ResetFilters" disabled="@busy">Reset</button></div>
+            <label for="collection-filter">Collection</label>
+            <select id="collection-filter" @bind="filter.Collection" @bind:after="FilterChangedAsync">
+                <option value="">All collections</option>
+                @foreach (var name in images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order())
+                { <option value="@name">@name</option> }
+            </select>
+            <label for="rating-filter">Minimum rating</label><select id="rating-filter" @bind="filter.MinRating" @bind:after="FilterChangedAsync">
+                <option value="0">Any rating</option>@for (var score = 1; score <= 5; score++) { <option value="@score">@score / 5</option> }
+            </select>
+            <label for="review-filter">Review queue</label><select id="review-filter" @bind="filter.Review" @bind:after="FilterChangedAsync">
+                <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
+            </select>
+            <label class="check"><input type="checkbox" @bind="filter.UnorganizedOnly" @bind:after="FilterChangedAsync" /> Without a collection only</label>
+            <label for="search">Search everything</label>
+            <input id="search" @bind="filter.Search" @bind:event="oninput" @bind:after="FilterChangedAsync" placeholder="Prompt, name, description..." />
+            <label for="tag">Tag</label>
+            <input id="tag" @bind="filter.Tag" @bind:after="FilterChangedAsync" placeholder="Exact tag" list="tags" />
+            <datalist id="tags">@foreach (var tag in AllTags) { <option value="@tag"></option> }</datalist>
+            <label for="folder">Folder</label>
+            <input id="folder" @bind="filter.Folder" @bind:after="FilterChangedAsync" placeholder="Source or current folder" />
+            <label for="analysis-model">Vision model</label>
+            <input id="analysis-model" @bind="filter.Model" @bind:after="FilterChangedAsync" placeholder="Model name" />
+            <label for="orientation">Orientation</label>
+            <select id="orientation" @bind="filter.Orientation" @bind:after="FilterChangedAsync">
+                <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
+            </select>
+            <div class="two-fields">
+                <div><label for="width">Min width</label><input id="width" type="number" min="0" @bind="filter.MinWidth" @bind:after="FilterChangedAsync" /></div>
+                <div><label for="height">Min height</label><input id="height" type="number" min="0" @bind="filter.MinHeight" @bind:after="FilterChangedAsync" /></div>
+            </div>
+            <label for="analysis">Vision analysis</label>
+            <select id="analysis" @bind="filter.Analysis" @bind:after="FilterChangedAsync">
+                <option value="all">All images</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
+            </select>
+            <label for="deletion">Deletion status</label>
+            <select id="deletion" @bind="filter.Deletion" @bind:after="FilterChangedAsync">
+                <option value="active">Active images</option><option value="marked">Marked for deletion</option><option value="all">All images</option>
+            </select>
+            <label for="from">Imported from</label><input id="from" type="date" @bind="filter.From" @bind:after="FilterChangedAsync" />
+            <label for="to">Imported through</label><input id="to" type="date" @bind="filter.To" @bind:after="FilterChangedAsync" />
+            <label class="check"><input type="checkbox" @bind="filter.FavoritesOnly" @bind:after="FilterChangedAsync" /> Favorites only</label>
+            <div class="security-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the vault is unlocked.</div>
+            </details>
+        </aside>
+        <section>
+            <ActiveFilters Filter="filter" Changed="FilterChangedAsync" Reset="ResetFilters" Disabled="busy" />
+            <div class="results-bar"><span><strong>@Filtered.Count</strong> images <span class="muted">/ @images.Count in vault</span></span>
+                <select aria-label="Sort images" @bind="filter.Sort" @bind:after="FilterChangedAsync">
+                    <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
+                </select>
+            </div>
+            <div class="actions">
+                @if (workflow is "organize" or "ai")
+                {
+                    <button disabled="@busy" @onclick="SelectLibraryPage">Select page for organization</button>
+                }
+                @if (workflow == "remove")
+                {
+                    <button disabled="@busy" @onclick="SelectFilteredMarked">Select filtered marked images</button>
+                    <button disabled="@(busy || removalSelection.Count == 0)" @onclick="PrepareBulkRemovalAsync">Remove selected (@removalSelection.Count)</button>
+                }
+                @if (librarySelection.Count > 0 || removalSelection.Count > 0)
+                {
+                    <button disabled="@busy" @onclick="ClearSelection">Clear selection (@(librarySelection.Count + removalSelection.Count))</button>
+                }
+            </div>
+            @if (removalResults.Count > 0)
+            {
+                <details open><summary>Removal results: @removalResults.Count(result => result.Removed) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
+                    @foreach (var result in removalResults)
+                    {
+                        <p class="path">@result.Id: @(result.Removed ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"PNG restored to {result.RestoredPath}")</p>
+                    }
+                </details>
+            }
+            @if (busy) { <div class="progress" role="status"><span class="status-dot"></span> @progress</div> }
+            @if (Filtered.Count == 0)
+            {
+                <div class="empty-state"><span class="brand-mark">&#10035;</span><h3>@(images.Count == 0 ? "A little space for possibility." : "Nothing matches just yet.")</h3><p>@(images.Count == 0 ? "Ingest a folder of images to start your private collection." : "Try another search or reset your filters.")</p></div>
+            }
+            else
+            {
+                <div class="image-grid">
+                    @foreach (var image in PageImages)
+                    {
+                        <article class="image-card @(image.MarkedForDeletion ? "marked" : "")" @key="image.Id">
+                            @if (workflow is "organize" or "ai")
+                            {
+                                <label class="check library-select"><input type="checkbox" checked="@librarySelection.Contains(image.Id)" disabled="@busy" @onchange="args => ToggleLibrarySelection(image.Id, args.Value is true)" /> Select image</label>
+                            }
+                            <button class="image-open" disabled="@busy" @onclick="() => OpenAsync(image)">
+                                @if (thumbnails.TryGetValue(image.Id, out var thumbnail))
+                                { <img src="@thumbnail" alt="@image.Name" loading="lazy" /> }
+                                else { <div class="thumbnail-placeholder">Loading preview...</div> }
+                            </button>
+                            <div class="card-info"><h3 title="@image.Name">@image.Name</h3><div class="card-meta"><span>@image.Width &times; @image.Height</span><span>@(image.Description.Length > 0 ? "Analyzed" : "Encrypted")</span></div>
+                                <div class="card-meta"><span>@(image.Rating == 0 ? "Unrated" : $"{image.Rating} / 5") / @(image.Reviewed ? "Reviewed" : "Pending")</span></div>
+                                @if (image.Collections.Count > 0) { <div class="collection-chips">@foreach (var name in image.Collections) { <span>@name</span> }</div> }
+                            </div>
+                            <div class="card-actions">
+                                <button disabled="@busy" class="@(image.Favorite ? "selected" : "")" @onclick="() => FavoriteAsync(image)" aria-label="Toggle favorite">@(image.Favorite ? "\u2605" : "\u2606") Favorite</button>
+                                <button disabled="@busy" class="@(image.MarkedForDeletion ? "danger selected" : "")" @onclick="() => MarkAsync(image)">@(image.MarkedForDeletion ? "Unmark" : "Mark deletion")</button>
+                            </div>
+                            @if (workflow == "remove" && image.MarkedForDeletion)
+                            {
+                                <label class="check"><input type="checkbox" checked="@removalSelection.Contains(image.Id)" disabled="@busy" @onchange="args => ToggleRemovalSelection(image.Id, args.Value is true)" /> Select for removal</label>
+                            }
+                        </article>
+                    }
+                </div>
+                <div class="pagination">
+                    <button disabled="@(page == 0 || busy)" @onclick="PreviousAsync">&larr; Previous</button>
+                    <span>Page @(page + 1) of @PageCount</span>
+                    <button disabled="@(page + 1 >= PageCount || busy)" @onclick="NextAsync">Next &rarr;</button>
+                </div>
+            }
+        </section>
+    </div>
+    }
+    </div>
+    </div>
+
+    @if (selected is not null)
+    {
+        <div class="modal-backdrop">
+            <section class="detail-modal panel" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+                <div class="panel-header"><h2 id="detail-title">@selected.Name</h2><button class="icon-button" disabled="@busy" @onclick="CloseDetail" aria-label="Close image details">&times;</button></div>
+                <div class="detail-columns">
+                    <div class="preview"><img src="@preview" alt="@selected.Name" /></div>
+                    <div class="detail-content">
+                        <div class="eyebrow">ENCRYPTED ORIGINAL</div>
+                        <p>@selected.Width &times; @selected.Height &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
+                        <p class="muted">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
+                        <div class="actions">
+                            <button disabled="@busy" @onclick="() => OpenViewer(selected.Id)">Full screen view</button>
+                            <button disabled="@busy" @onclick="() => FavoriteAsync(selected)">@(selected.Favorite ? "Remove favorite" : "Favorite")</button>
+                            <button disabled="@busy" @onclick="() => MarkAsync(selected)">@(selected.MarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</button>
+                            @if (selected.MarkedForDeletion)
+                            {
+                                <button disabled="@busy" @onclick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</button>
+                            }
+                        </div>
+                        <h3>Vision notes</h3>
+                        <label for="description">Description</label><textarea id="description" rows="4" @bind="editDescription"></textarea>
+                        <label for="edit-tags">Tags, comma-separated</label><input id="edit-tags" @bind="editTags" placeholder="landscape, sunset, cinematic" />
+                        <div class="actions"><button disabled="@busy" @onclick="SaveNotesAsync">Save notes</button><button class="primary" disabled="@busy" @onclick="AnalyzeAsync">Analyze locally</button></div>
+                        @if (selected.AnalysisModel.Length > 0) { <small class="muted">Analyzed by @selected.AnalysisModel</small> }
+                        <h3>Move &amp; rename</h3>
+                        <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
+                            <label for="destination">Existing destination folder</label><input id="destination" @bind="destination" required />
+                            <label for="rename">Filename</label><div class="filename-input"><input id="rename" @bind="rename" required /><span>.dpng</span></div>
+                            <button type="submit" disabled="@busy">Move encrypted image &rarr;</button>
+                        </form>
+                        <small class="muted">No overwrite. The file remains encrypted. Deletion marks are reversible; permanent removal requires a separate confirmation.</small>
+                        <details><summary>Embedded generation metadata</summary><pre>@selected.Metadata</pre></details>
+                        <details><summary>File locations</summary><p class="path">@selected.StoredPath</p><p class="path">Source: @selected.SourceFolder</p></details>
+                        @if (busy) { <p class="notice" role="status">@progress</p> }
+                        @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
+                    </div>
+                </div>
+            </section>
+        </div>
+    }
+    @if (removalPlan.Count > 0)
+    {
+        <div class="modal-backdrop">
+            <section class="panel unlock-panel" role="dialog" aria-modal="true" aria-labelledby="removal-title">
+                <div class="panel-header"><h2 id="removal-title">Remove @removalPlan.Count marked image(s)</h2><button class="icon-button" disabled="@busy" @onclick="CancelRemoval" aria-label="Cancel removal">&times;</button></div>
+                <p>This removes gallery records, thumbnails and encrypted files. Each image is checked again before removal. Unmarked images cannot be removed.</p>
+                <details><summary>Review affected images</summary>
+                    @foreach (var item in removalPlan)
+                    {
+                        <p class="path">@item.Name: @(item.OriginalExists ? $"Original exists: {item.OriginalPath}" : "No accessible original (missing or browser upload)")</p>
+                    }
+                </details>
+                @if (removalPlan.Any(item => item.OriginalExists))
+                {
+                    <label for="existing-action">Original exists (@removalPlan.Count(item => item.OriginalExists))</label>
+                    <select id="existing-action" @bind="existingOriginalAction" disabled="@busy">
+                        <option value="@ExistingOriginalAction.Retain">Remove from gallery, retain original</option>
+                        <option value="@ExistingOriginalAction.Delete">Remove from gallery AND delete original</option>
+                    </select>
+                }
+                @if (removalPlan.Any(item => !item.OriginalExists))
+                {
+                    <label for="missing-action">No accessible original (@removalPlan.Count(item => !item.OriginalExists))</label>
+                    <select id="missing-action" @bind="missingOriginalAction" disabled="@busy">
+                        <option value="@MissingOriginalAction.RestorePng">Restore a PNG copy, then remove from gallery</option>
+                        <option value="@MissingOriginalAction.Discard">Remove from gallery without restoration (lost forever)</option>
+                    </select>
+                    @if (missingOriginalAction == MissingOriginalAction.RestorePng)
+                    {
+                        <label for="restore-folder">Existing folder for restored PNG files</label>
+                        <input id="restore-folder" @bind="restoreFolder" disabled="@busy" />
+                        <p class="muted">Restores full-resolution PNGs named by image ID; never overwrites. Exact JPEG/WebP source bytes are not retained. Browser uploads may still have originals the app cannot access.</p>
+                    }
+                }
+                <div class="notice error">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this vault. Backups may still contain them. This is not secure SSD/NVMe erasure.</div>
+                <label class="check"><input type="checkbox" @bind="confirmRemoval" disabled="@busy" /> I reviewed these images and actions and confirm permanent removal.</label>
+                <button class="primary full" disabled="@(busy || !confirmRemoval)" @onclick="ExecuteRemovalAsync">Confirm removal of @removalPlan.Count image(s)</button>
+                @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
+                @if (busy) { <p role="status">@progress</p> }
+            </section>
+        </div>
+    }
+}
+
+@if (Session.IsUnlocked && viewerImages.Count > 0)
+{
+    <FullscreenViewer Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged" />
+}
+
+@code {
+    private string secret = "", confirm = "", recoveryPhrase = "", error = "", message = "", progress = "";
+    private string importPath = "", newPassphrase = "", newConfirm = "";
+    private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
+    private bool useRecovery, recoverySaved, busy, recursive;
+    private string workflow = "library";
+    private LibraryWorkbench? workbench;
+    private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
+    private GalleryFilter? browsingFilter;
+    private static readonly (string Id, string Name)[] Workflows =
+    [
+        ("library", "Library"), ("review", "Guided review"), ("organize", "Organize"),
+        ("explore", "Explore & saved views"), ("ai", "Local intelligence"),
+        ("remove", "Remove marked images"), ("ingest", "Ingest images"),
+        ("endpoints", "LLM endpoints"), ("settings", "Vault security")
+    ];
+    private bool ShowsGallery => workflow is not ("ingest" or "settings" or "endpoints");
+    private int PendingReviewCount => images.Count(image => !image.Reviewed && !image.MarkedForDeletion);
+    private bool deleteSources, confirmSourceDeletion;
+    private readonly HashSet<string> removalSelection = [];
+    private List<RemovalItem> removalPlan = [];
+    private List<RemovalResult> removalResults = [];
+    private ExistingOriginalAction existingOriginalAction = ExistingOriginalAction.Retain;
+    private MissingOriginalAction missingOriginalAction = MissingOriginalAction.RestorePng;
+    private string restoreFolder = "";
+    private bool confirmRemoval;
+    private readonly HashSet<string> librarySelection = [];
+    private List<ImageRecord> viewerImages = [];
+    private string viewerInitialId = "";
+    private bool reviewMode;
+    private int page;
+    private const int PageSize = 24;
+    private GalleryFilter filter = new();
+    private VisionSettings settings = new();
+    private List<ImageRecord> images = [];
+    private List<string> importFailures = [];
+    private readonly Dictionary<string, string> thumbnails = [];
+    private ImageRecord? selected;
+    private bool disposed;
+    private List<ImageRecord> Filtered => filter.Apply(images).ToList();
+    private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
+    private IEnumerable<ImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
+    private IEnumerable<string> AllTags => images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Distinct().Order();
+
+    private async Task RunAsync(string status, Func<Task> action)
+    {
+        if (busy) return;
+        busy = true;
+        progress = status;
+        error = message = "";
+        try { await action(); }
+        catch (System.Security.Cryptography.CryptographicException exception)
+        {
+            Logger.LogWarning(exception, "Vault authentication or integrity check failed");
+            error = "Incorrect credentials, or encrypted data failed its integrity check. The operation was stopped.";
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Gallery operation failed");
+            error = exception is IOException or InvalidOperationException or System.Text.Json.JsonException
+                or HttpRequestException or SixLabors.ImageSharp.UnknownImageFormatException
+                or SixLabors.ImageSharp.InvalidImageContentException ? exception.Message
+                : "The operation failed. Check the application console for details.";
+        }
+        finally
+        {
+            busy = false;
+            progress = "";
+            if (disposed) Session.Lock();
+        }
+    }
+
+    private void SwitchCredential(bool recovery) { useRecovery = recovery; secret = ""; }
+
+    private Task UnlockAsync() => RunAsync("Unlocking vault...", async () =>
+    {
+        try
+        {
+            if (Vault.Exists)
+            {
+                Session.Unlock(await Vault.UnlockAsync(secret, useRecovery));
+                workflow = useRecovery ? "settings" : "library";
+                await ReloadAsync();
+            }
+            else
+            {
+                if (secret != confirm) throw new InvalidOperationException("Passphrases do not match.");
+                var created = await Vault.CreateAsync(secret);
+                Session.Unlock(created.Key);
+                recoveryPhrase = created.Recovery;
+            }
+        }
+        catch
+        {
+            Lock();
+            throw;
+        }
+        finally { secret = confirm = ""; }
+    });
+
+    private Task FinishSetupAsync() => RunAsync("Opening gallery...", async () =>
+    {
+        if (!recoverySaved) throw new InvalidOperationException("Save your recovery words first.");
+        await ReloadAsync();
+        recoveryPhrase = "";
+    });
+
+    private async Task ReloadAsync()
+    {
+        images = await Gallery.ListAsync();
+        settings = await Gallery.SettingsAsync();
+        selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
+        if (selected is null) preview = "";
+        removalSelection.IntersectWith(images.Where(image => image.MarkedForDeletion).Select(image => image.Id));
+        librarySelection.IntersectWith(images.Select(image => image.Id));
+        page = Math.Min(page, PageCount - 1);
+        await LoadThumbnailsAsync();
+    }
+
+    private async Task LoadThumbnailsAsync()
+    {
+        thumbnails.Clear();
+        foreach (var image in PageImages) thumbnails[image.Id] = await Gallery.ThumbnailAsync(image.Id);
+    }
+
+    private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
+    private Task ResetFilters() { filter = new() { Deletion = workflow == "remove" ? "marked" : "all" }; return FilterChangedAsync(); }
+    private Task ApplyLibraryFilterAsync(GalleryFilter value) { filter = value; return FilterChangedAsync(); }
+    private Task SetQueueAsync(string queue)
+    {
+        browsingFilter = null;
+        workflow = queue == "pending" ? "review" : "library";
+        filter = new();
+        if (queue == "all") filter.Deletion = "all";
+        if (queue == "pending") filter.Review = "pending";
+        if (queue == "favorites") filter.FavoritesOnly = true;
+        if (queue == "unorganized") filter.UnorganizedOnly = true;
+        return FilterChangedAsync();
+    }
+    private Task SwitchWorkflowAsync(string value)
+    {
+        if (value == "remove" && workflow != "remove")
+        {
+            browsingFilter = LibraryService.Clone(filter);
+            filter = new() { Deletion = "marked" };
+        }
+        else if (workflow == "remove" && value != "remove" && browsingFilter is not null)
+        {
+            filter = browsingFilter;
+            browsingFilter = null;
+        }
+        workflow = value;
+        ClearSelection();
+        return FilterChangedAsync();
+    }
+    private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
+    private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.Running ? "ai" : libraryJob.Workflow);
+    private void DismissLibraryJob() => libraryJob = new(false, "", "", 0, false);
+    private Task StopLibraryJobAsync() => workbench?.StopAnalysisAsync() ?? Task.CompletedTask;
+    private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); }
+    private void ViewerImageChanged(ImageRecord updated)
+    {
+        var image = images.Single(item => item.Id == updated.Id);
+        image.Reviewed = updated.Reviewed;
+        image.Rating = updated.Rating;
+        image.Favorite = updated.Favorite;
+        image.MarkedForDeletion = updated.MarkedForDeletion;
+    }
+    private void SelectLibraryPage() { librarySelection.UnionWith(PageImages.Select(image => image.Id)); }
+    private void ToggleLibrarySelection(string id, bool value)
+    {
+        if (value) librarySelection.Add(id); else librarySelection.Remove(id);
+    }
+    private Task PreviousAsync() => RunAsync("Loading previews...", async () => { page--; await LoadThumbnailsAsync(); });
+    private Task NextAsync() => RunAsync("Loading previews...", async () => { page++; await LoadThumbnailsAsync(); });
+
+    private Task ImportFolderAsync() => RunAsync("Scanning selected folder...", async () =>
+    {
+        EnsureNoLibraryJob();
+        if (deleteSources && !confirmSourceDeletion)
+            throw new InvalidOperationException("Confirm source deletion before importing, or disable it to keep originals.");
+        var countBefore = images.Count;
+        importFailures = await Gallery.ImportFolderAsync(importPath, recursive, name =>
+        {
+            progress = $"Encrypting {name}...";
+            _ = InvokeAsync(StateHasChanged);
+        }, deleteSources);
+        await ReloadAsync();
+        message = $"Imported {images.Count - countBefore} images. {importFailures.Count} file(s) reported errors."
+            + (deleteSources ? " Sources of verified imports were deleted unless an error was reported; duplicates were retained." : " Sources were retained.");
+        deleteSources = confirmSourceDeletion = false;
+    });
+
+    private Task FavoriteAsync(ImageRecord image) => RunAsync("Saving favorite...", async () =>
+    {
+        await Gallery.UpdateAsync(image.Id, current => current.Favorite = !current.Favorite);
+        await ReloadAsync();
+    });
+
+    private Task MarkAsync(ImageRecord image) => RunAsync("Saving deletion mark...", async () =>
+    {
+        await Gallery.UpdateAsync(image.Id, current => current.MarkedForDeletion = !current.MarkedForDeletion);
+        await ReloadAsync();
+    });
+
+    private void ToggleRemovalSelection(string id, bool value)
+    {
+        if (value) removalSelection.Add(id);
+        else removalSelection.Remove(id);
+    }
+
+    private void SelectFilteredMarked()
+    {
+        removalSelection.Clear();
+        removalSelection.UnionWith(Filtered.Where(image => image.MarkedForDeletion).Select(image => image.Id));
+    }
+
+    private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(removalSelection.ToArray());
+    private Task PrepareRemovalAsync(IEnumerable<string> ids) => RunAsync("Checking originals...", async () =>
+    {
+        EnsureNoLibraryJob();
+        removalPlan = await Gallery.PrepareRemovalAsync(ids);
+        confirmRemoval = false;
+        existingOriginalAction = ExistingOriginalAction.Retain;
+        missingOriginalAction = MissingOriginalAction.RestorePng;
+        removalResults.Clear();
+    });
+
+    private void CancelRemoval() { removalPlan.Clear(); confirmRemoval = false; }
+
+    private Task ExecuteRemovalAsync() => RunAsync("Removing marked images...", async () =>
+    {
+        EnsureNoLibraryJob();
+        if (!confirmRemoval) throw new InvalidOperationException("Confirm removal first.");
+        removalResults = await Gallery.RemoveAsync(removalPlan, existingOriginalAction, missingOriginalAction, restoreFolder);
+        foreach (var result in removalResults.Where(result => result.Error is not null))
+            Logger.LogWarning("Image removal issue for {ImageId}: {Error}", result.Id, result.Error);
+        CancelRemoval();
+        CloseDetail();
+        await ReloadAsync();
+        message = $"Removed {removalResults.Count(result => result.Removed)} images. {removalResults.Count(result => result.Error is not null)} issue(s); review the removal results.";
+    });
+
+    private Task OpenAsync(ImageRecord image) => RunAsync("Decrypting preview...", async () =>
+    {
+        var data = await Gallery.PreviewAsync(image.Id);
+        selected = image;
+        preview = data;
+        editDescription = image.Description;
+        editTags = image.Tags;
+        destination = Path.GetDirectoryName(image.StoredPath)!;
+        rename = image.Name;
+    });
+
+    private void CloseDetail() { selected = null; preview = editDescription = editTags = destination = rename = ""; }
+
+    private void OpenViewer(string? initialId = null)
+    {
+        reviewMode = false;
+        viewerImages = PageImages.Select(image => image with { }).ToList();
+        if (initialId is not null && !viewerImages.Any(image => image.Id == initialId) && selected is not null)
+            viewerImages.Add(selected with { });
+        viewerInitialId = initialId ?? viewerImages.FirstOrDefault()?.Id ?? "";
+        CloseDetail();
+    }
+
+    private void StartReview()
+    {
+        viewerImages = Filtered.Where(image => !image.Reviewed && !image.MarkedForDeletion)
+            .Select(image => image with { }).ToList();
+        viewerInitialId = viewerImages.FirstOrDefault()?.Id ?? "";
+        reviewMode = true;
+        CloseDetail();
+    }
+
+    private Task CloseViewerAsync()
+    {
+        viewerImages.Clear();
+        viewerInitialId = "";
+        return RunAsync("Refreshing gallery...", ReloadAsync);
+    }
+
+    private Task SaveNotesAsync() => RunAsync("Saving notes...", async () =>
+    {
+        if (selected is null) return;
+        await Gallery.UpdateAsync(selected.Id, image => { image.Description = editDescription.Trim(); image.Tags = editTags.Trim(); });
+        await ReloadAsync();
+        message = "Notes saved.";
+    });
+
+    private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>
+    {
+        if (selected is null) return;
+        var result = await Vision.AnalyzeAsync(settings, preview);
+        await Gallery.UpdateAsync(selected.Id, image =>
+        {
+            image.Description = result.Description;
+            image.Tags = result.Tags;
+            image.AnalysisModel = settings.Model;
+        });
+        await ReloadAsync();
+        editDescription = selected!.Description;
+        editTags = selected.Tags;
+        message = "Vision analysis saved.";
+    });
+
+    private Task MoveAsync() => RunAsync("Moving encrypted image...", async () =>
+    {
+        EnsureNoLibraryJob();
+        if (selected is null) return;
+        try { await Gallery.MoveAsync(selected.Id, destination, rename); }
+        finally { await ReloadAsync(); }
+        message = "Encrypted image moved and renamed.";
+    });
+
+    private Task ChangePassphraseAsync() => RunAsync("Updating passphrase...", async () =>
+    {
+        EnsureNoLibraryJob();
+        try
+        {
+            if (newPassphrase != newConfirm) throw new InvalidOperationException("New passphrases do not match.");
+            using var key = Session.Borrow();
+            await Vault.ChangePassphraseAsync(key.Bytes, newPassphrase);
+            message = "Passphrase updated. Your recovery words are unchanged.";
+        }
+        finally { newPassphrase = newConfirm = ""; }
+    });
+
+    private void EnsureNoLibraryJob()
+    {
+        if (libraryJob.Running) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or vault settings.");
+    }
+
+    private void Lock()
+    {
+        Session.Lock();
+        images.Clear();
+        thumbnails.Clear();
+        CloseDetail();
+        secret = confirm = recoveryPhrase = newPassphrase = newConfirm = error = message = importPath = "";
+        importFailures.Clear();
+        settings = new();
+        filter = new();
+        page = 0;
+        useRecovery = recoverySaved = false;
+        workflow = "library";
+        browsingFilter = null;
+        libraryJob = new(false, "", "", 0, false);
+        deleteSources = confirmSourceDeletion = false;
+        removalSelection.Clear();
+        removalPlan.Clear();
+        removalResults.Clear();
+        confirmRemoval = false;
+        restoreFolder = "";
+        librarySelection.Clear();
+        viewerImages.Clear();
+        viewerInitialId = "";
+    }
+
+    public void Dispose() { disposed = true; Lock(); }
+}

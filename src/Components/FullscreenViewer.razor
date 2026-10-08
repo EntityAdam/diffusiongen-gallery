@@ -1,0 +1,305 @@
+@implements IAsyncDisposable
+@inject GalleryService Gallery
+@inject IJSRuntime JS
+@inject ILogger<FullscreenViewer> Logger
+
+<section class="fullscreen-viewer" role="dialog" aria-modal="true" aria-label="@(ReviewMode ? "Guided review session" : "Full screen image viewer")" tabindex="-1" @ref="element" data-review="@ReviewMode.ToString().ToLowerInvariant()">
+    <header class="viewer-toolbar">
+        <div><strong>@Current.Name</strong><span class="muted"> @(index + 1) / @Images.Count &middot; @Current.Width &times; @Current.Height</span></div>
+        <div class="actions">
+            <button disabled="@(busy || index == 0)" @onclick="() => NavigateAsync(-1)" title="Left arrow: previous image">Previous &larr;</button>
+            <button disabled="@(busy || index + 1 >= Images.Count)" @onclick="() => NavigateAsync(1)" title="Right arrow: next image">Next &rarr;</button>
+            @if (!ReviewMode)
+            {
+                <button disabled="@busy" @onclick="MarkAsync" aria-pressed="@Current.MarkedForDeletion">@(Current.MarkedForDeletion ? "Unmark deletion" : "Mark deletion") (D)</button>
+                <button disabled="@busy" @onclick="FavoriteAsync" aria-pressed="@Current.Favorite">@(Current.Favorite ? "Unfavorite" : "Favorite") (F)</button>
+            }
+            <button disabled="@busy" @onclick="() => SetSizeAsync(true)" aria-pressed="@originalSize">Original size (O)</button>
+            <button disabled="@busy" @onclick="() => SetSizeAsync(false)" aria-pressed="@(!originalSize)">Fit window (P)</button>
+            <button disabled="@busy" @onclick="CloseAsync" aria-label="Close full screen viewer">Close (Esc)</button>
+        </div>
+    </header>
+    @if (ReviewMode)
+    {
+        <div class="review-controls">
+            <div><strong>@(reviewComplete ? UntouchedCount > 0 ? "End reached. Images still need a decision." : "Session complete." : "Make a decision, then move on.")</strong>
+                <p class="muted">@decisions.Count reviewed / @skipped.Count skipped / @UntouchedCount untouched / @Images.Count in session. Decisions save immediately. Skip leaves an image pending; marking never deletes files.</p>
+            </div>
+            @if (!reviewComplete)
+            {
+                <div class="actions">
+                    <button class="primary" disabled="@busy" @onclick="() => DecideAsync(ReviewAction.Keep)">Keep (K)</button>
+                    <button disabled="@busy" @onclick="() => DecideAsync(ReviewAction.Favorite)">Favorite (F)</button>
+                    <button disabled="@busy" @onclick="() => DecideAsync(ReviewAction.MarkDeletion)">Mark deletion (D)</button>
+                    <button disabled="@busy" @onclick="SkipAsync">Skip (S)</button>
+                    @for (var score = 1; score <= 5; score++)
+                    {
+                        var value = score;
+                        <button disabled="@busy" @onclick="() => DecideAsync(ReviewAction.Rate, value)" title="Rate, mark reviewed and advance">@value / 5</button>
+                    }
+                </div>
+            }
+            else
+            {
+                <p role="status">Your decisions are saved. Skipped images remain in the pending queue. Close to refresh the library, or go back to revise a decision.</p>
+                <button disabled="@busy" @onclick="() => NavigateAsync(0)">Revisit last image</button>
+                @if (UntouchedCount > 0)
+                {
+                    <button class="primary" disabled="@busy" @onclick="ContinueRemainingAsync">Continue remaining (@UntouchedCount)</button>
+                }
+            }
+            <button disabled="@(busy || undo.Count == 0)" @onclick="UndoAsync">Undo last decision</button>
+        </div>
+    }
+    <div class="viewer-image-area @(originalSize ? "original-size" : "fit-window")">
+        @if (busy) { <p role="status">Loading...</p> }
+        @if (imageData.Length > 0 && !reviewComplete) { <img @key="Current.Id" src="@imageData" alt="@Current.Name" /> }
+    </div>
+    <footer class="viewer-status">
+        <span>@(Current.Favorite ? "Favorite" : "Not favorite") &middot; @(Current.MarkedForDeletion ? "Marked for deletion" : "Not marked") &middot; @(Current.Reviewed ? "Reviewed" : "Pending review") / @Current.Rating out of 5 &middot; @(originalSize ? "100% size (scroll to explore)" : "Fit to window")</span>
+        <span>@(ReviewMode ? "K: keep / F: favorite / D: mark deletion / S: skip / 1-5: rate / Arrows: browse / O: 100% / P: fit / Esc: close" : "Left: previous / Right: next / D: deletion mark / F: favorite / O: 100% / P: fit / Esc: close")</span>
+    </footer>
+    @if (error.Length > 0) { <div class="notice error viewer-error" role="alert">@error</div> }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public string InitialId { get; set; } = "";
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<ImageRecord> OnImageChanged { get; set; }
+    [Parameter] public bool ReviewMode { get; set; }
+    private ElementReference element;
+    private DotNetObjectReference<FullscreenViewer>? reference;
+    private int index;
+    private bool busy, originalSize;
+    private string imageData = "", error = "";
+    private readonly Dictionary<string, (string Url, long Bytes)> fitCache = [];
+    private readonly Dictionary<string, (string Url, long Bytes)> fullCache = [];
+    private readonly SemaphoreSlim cacheGate = new(1);
+    private const long CacheBudget = 64 * 1024 * 1024;
+    private bool disposed;
+    private Task? preload;
+    private ImageRecord Current => Images[index];
+    private bool reviewComplete;
+    private readonly HashSet<string> decisions = [];
+    private readonly HashSet<string> skipped = [];
+    private int UntouchedCount => Images.Count - decisions.Count - skipped.Count;
+    private readonly Stack<(int Index, ReviewState State, bool Decided, bool Skipped)> undo = [];
+
+    protected override void OnInitialized()
+    {
+        index = Math.Max(0, Images.ToList().FindIndex(image => image.Id == InitialId));
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        reference = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("galleryViewer.attach", element, reference);
+        await RunAsync(async () => imageData = await LoadImageAsync(Current.Id, false));
+        StateHasChanged();
+        preload = PreloadPageAsync();
+    }
+
+    private async Task<string> LoadImageAsync(string id, bool full, bool prefetch = false)
+    {
+        await cacheGate.WaitAsync();
+        try
+        {
+            if (disposed) return "";
+            var cache = full ? fullCache : fitCache;
+            if (cache.TryGetValue(id, out var cached)) return cached.Url;
+            var data = await Gallery.ViewerImageAsync(id, full);
+            if (disposed) return "";
+            var bytes = data.Length * 3L / 4;
+            if (prefetch && fitCache.Values.Sum(entry => entry.Bytes) + bytes > CacheBudget) return "";
+            while (cache.Count > 0 && (cache.Values.Sum(entry => entry.Bytes) + bytes > CacheBudget
+                || full && cache.Count >= 2))
+            {
+                var victim = cache.First();
+                await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)new[] { victim.Value.Url });
+                cache.Remove(victim.Key);
+            }
+            var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
+            cache[id] = (url, bytes);
+            return url;
+        }
+        finally { cacheGate.Release(); }
+    }
+
+    private async Task PreloadPageAsync()
+    {
+        // Start with neighboring images; sequential prefetch limits transient decode memory.
+        foreach (var image in Images.Skip(index).Take(24))
+        {
+            if (disposed) return;
+            if (fitCache.Values.Sum(entry => entry.Bytes) >= CacheBudget) return;
+            try { await LoadImageAsync(image.Id, false, prefetch: true); }
+            catch (Exception exception)
+            {
+                if (disposed) return;
+                Logger.LogError(exception, "Viewer preloading failed for {ImageId}", image.Id);
+                await InvokeAsync(() =>
+                {
+                    error = $"Could not preload '{image.Name}'. Navigation will retry; check the application console.";
+                    StateHasChanged();
+                });
+            }
+        }
+    }
+
+    private Task SetSizeAsync(bool original) => RunAsync(async () =>
+    {
+        var data = await LoadImageAsync(Current.Id, original);
+        originalSize = original;
+        imageData = data;
+    });
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (busy) return;
+        busy = true;
+        error = "";
+        try { await action(); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Full screen viewer operation failed");
+            error = exception is System.Security.Cryptography.CryptographicException
+                ? "Image failed its encryption integrity check."
+                : exception is IOException or InvalidOperationException ? exception.Message
+                : "Viewer operation failed. Check the application console for details.";
+        }
+        finally { busy = false; }
+    }
+
+    private Task NavigateAsync(int direction) => RunAsync(async () =>
+    {
+        var next = index + direction;
+        if (next < 0 || next >= Images.Count) return;
+        var data = await LoadImageAsync(Images[next].Id, originalSize);
+        index = next;
+        imageData = data;
+        reviewComplete = false;
+    });
+
+    private Task DecideAsync(ReviewAction action, int rating = 0) => RunAsync(async () =>
+    {
+        if (reviewComplete) return;
+        var id = Current.Id;
+        var previous = (index, ReviewState.Capture(Current), decisions.Contains(id), skipped.Contains(id));
+        await Gallery.UpdateAsync(id, image => ReviewDecision.Apply(image, action, rating));
+        undo.Push(previous);
+        ReviewDecision.Apply(Current, action, rating);
+        decisions.Add(id);
+        skipped.Remove(id);
+        await OnImageChanged.InvokeAsync(Current);
+        await AdvanceReviewAsync();
+    });
+
+    private Task ContinueRemainingAsync() => NavigateAsync(
+        Images.ToList().FindIndex(image => !decisions.Contains(image.Id) && !skipped.Contains(image.Id)) - index);
+
+    private Task UndoAsync() => RunAsync(async () =>
+    {
+        if (!undo.TryPeek(out var previous)) return;
+        var image = Images[previous.Index];
+        var data = await LoadImageAsync(image.Id, originalSize);
+        await Gallery.UpdateAsync(image.Id, previous.State.Restore);
+        previous.State.Restore(image);
+        undo.Pop();
+        if (previous.Decided) decisions.Add(image.Id); else decisions.Remove(image.Id);
+        if (previous.Skipped) skipped.Add(image.Id); else skipped.Remove(image.Id);
+        index = previous.Index;
+        imageData = data;
+        reviewComplete = false;
+        await OnImageChanged.InvokeAsync(image);
+    });
+
+    private Task SkipAsync() => RunAsync(async () =>
+    {
+        if (reviewComplete) return;
+        if (!decisions.Contains(Current.Id)) skipped.Add(Current.Id);
+        await AdvanceReviewAsync();
+    });
+
+    private async Task AdvanceReviewAsync()
+    {
+        if (index + 1 >= Images.Count)
+        {
+            reviewComplete = true;
+            return;
+        }
+        var next = index + 1;
+        var data = await LoadImageAsync(Images[next].Id, originalSize);
+        index = next;
+        imageData = data;
+        // Warm only a small forward window for long review queues.
+        if (preload is null || preload.IsCompleted) preload = PreloadPageAsync();
+    }
+
+    private Task MarkAsync() => RunAsync(async () =>
+    {
+        await Gallery.UpdateAsync(Current.Id, image => image.MarkedForDeletion = !image.MarkedForDeletion);
+        Current.MarkedForDeletion = !Current.MarkedForDeletion;
+        await OnImageChanged.InvokeAsync(Current);
+    });
+
+    private Task FavoriteAsync() => RunAsync(async () =>
+    {
+        await Gallery.UpdateAsync(Current.Id, image => image.Favorite = !image.Favorite);
+        Current.Favorite = !Current.Favorite;
+        await OnImageChanged.InvokeAsync(Current);
+    });
+
+    private async Task CloseAsync()
+    {
+        disposed = true;
+        await JS.InvokeVoidAsync("galleryViewer.detach", element);
+        await cacheGate.WaitAsync();
+        try
+        {
+            await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls",
+                (object)fitCache.Values.Concat(fullCache.Values).Select(entry => entry.Url).ToArray());
+            fitCache.Clear();
+            fullCache.Clear();
+        }
+        finally { cacheGate.Release(); }
+        await OnClose.InvokeAsync();
+    }
+
+    [JSInvokable]
+    public async Task HandleKey(string key)
+    {
+        if (busy) return;
+        switch (key)
+        {
+            case "arrowleft": await NavigateAsync(-1); break;
+            case "arrowright": await NavigateAsync(1); break;
+            case "d": if (ReviewMode) await DecideAsync(ReviewAction.MarkDeletion); else await MarkAsync(); break;
+            case "f": if (ReviewMode) await DecideAsync(ReviewAction.Favorite); else await FavoriteAsync(); break;
+            case "k" when ReviewMode: await DecideAsync(ReviewAction.Keep); break;
+            case "s" when ReviewMode: await SkipAsync(); break;
+            case "1" or "2" or "3" or "4" or "5" when ReviewMode:
+                await DecideAsync(ReviewAction.Rate, int.Parse(key)); break;
+            case "o": await SetSizeAsync(true); break;
+            case "p": await SetSizeAsync(false); break;
+            case "escape": await CloseAsync(); return;
+        }
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        if (preload is not null) await preload;
+        imageData = "";
+        try
+        {
+            await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls",
+                (object)fitCache.Values.Concat(fullCache.Values).Select(entry => entry.Url).ToArray());
+            await JS.InvokeVoidAsync("galleryViewer.detach", element);
+        }
+        catch (JSDisconnectedException) { }
+        finally { fitCache.Clear(); fullCache.Clear(); reference?.Dispose(); }
+    }
+}

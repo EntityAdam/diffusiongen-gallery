@@ -1,0 +1,81 @@
+@inject VisionService Vision
+@inject GalleryService Gallery
+@inject ILogger<LlmEndpointSettings> Logger
+
+<section class="panel settings">
+    <div class="panel-header"><h3>Connect your local LLM</h3><span class="pill">OPENAI-COMPATIBLE</span></div>
+    <p class="muted">Configure LM Studio, Ollama or another local server. Include /v1 when required. Use a literal loopback or private LAN IP: 10.x.x.x, 172.16.x.x through 172.31.x.x, or 192.168.x.x. Public addresses and hostnames are blocked.</p>
+    <p class="muted">LAN analysis sends decrypted previews and metadata to that server. Only connect to servers you trust; HTTP is not encrypted in transit. Use HTTPS when supported.</p>
+    <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
+        <label for="endpoint-url">Endpoint URL</label>
+        <input id="endpoint-url" type="url" @bind="Settings.Endpoint" @bind:after="EndpointChanged" placeholder="http://127.0.0.1:1234/v1/" disabled="@working" required />
+        <label for="api-key">API key (optional)</label>
+        <input id="api-key" type="password" autocomplete="new-password" @bind="Settings.ApiKey" disabled="@working" placeholder="Leave blank for unauthenticated local endpoints" />
+        <label for="request-timeout">Request timeout (seconds)</label>
+        <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds" @bind="Settings.RequestTimeoutSeconds" disabled="@working" required />
+        <label for="model-select">Model</label>
+        @if (models.Count > 0)
+        {
+            <select id="model-select" @bind="Settings.Model" disabled="@working" required>
+                <option value="">Choose a model</option>
+                @foreach (var model in models) { <option value="@model">@model</option> }
+            </select>
+        }
+        else
+        {
+            <input id="model-select" @bind="Settings.Model" disabled="@working" placeholder="Fetch models or enter a model ID" required />
+        }
+        <p class="muted">Choose a vision-capable model for image analysis. Model discovery does not verify vision support. Text search interpretation uses this model too.</p>
+        <div class="actions">
+            <button type="button" disabled="@working" @onclick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</button>
+            <button class="primary" type="submit" disabled="@working">Save LLM settings</button>
+        </div>
+    </form>
+    @if (message.Length > 0) { <p class="notice" role="status">@message</p> }
+    @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
+    <div class="security-note">Settings, including the optional API key, are encrypted in your vault. Fetch models tests the entered endpoint without saving it. Save to apply changes to subsequent requests.</div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public VisionSettings SavedSettings { get; set; } = new();
+    [Parameter] public EventCallback<VisionSettings> Saved { get; set; }
+    private VisionSettings Settings = new();
+    protected override void OnInitialized() => Settings = SavedSettings with { };
+    private IReadOnlyList<string> models = [];
+    private string message = "", error = "";
+    private bool working;
+
+    private void EndpointChanged() { models = []; message = error = ""; }
+    private Task FetchModelsAsync() => RunAsync(async () =>
+    {
+        models = [];
+        models = await Vision.GetModelsAsync(Settings);
+        if (models.Count == 0) message = "The endpoint is reachable, but it returned no models. Load a model or enter its ID manually.";
+        else
+        {
+            if (!models.Contains(Settings.Model, StringComparer.Ordinal)) Settings.Model = models[0];
+            message = $"Connected: {models.Count} model(s) found. Choose a model and save settings.";
+        }
+    });
+
+    private Task SaveAsync() => RunAsync(async () =>
+    {
+        await Gallery.SaveSettingsAsync(Settings);
+        await Saved.InvokeAsync(Settings with { });
+        message = "LLM settings saved encrypted in this vault.";
+    });
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (working) return;
+        working = true; message = error = "";
+        try { await action(); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "LLM endpoint settings operation failed");
+            error = exception is InvalidOperationException or HttpRequestException or System.Text.Json.JsonException
+                ? exception.Message : "Could not update LLM settings. Check the application console.";
+        }
+        finally { working = false; }
+    }
+}

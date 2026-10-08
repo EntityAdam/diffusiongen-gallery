@@ -1,0 +1,6 @@
+data/
+*.dpng
+*.db
+*.db-shm
+*.db-wal
+vault.json
