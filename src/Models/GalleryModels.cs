@@ -30,6 +30,8 @@ public enum MissingOriginalAction { RestorePng, Discard }
 public sealed record RemovalItem(string Id, string Name, string OriginalPath, bool OriginalExists);
 public sealed record RemovalResult(string Id, bool Removed, string? RestoredPath, string? Error);
 
+public sealed record ImportProgress(int? Total, int Completed, int Imported, int Failed, string Status);
+
 public sealed class GalleryFilter
 {
     public string Search { get; set; } = "";

@@ -104,6 +104,12 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
     public async Task<ImageRecord> ImportAsync(Stream input, string name, string sourceFolder, string sourcePath = "")
     {
         using var key = session.Borrow();
+        return await ImportWithKeyAsync(input, name, sourceFolder, sourcePath, key.Bytes, ensureFingerprints: true);
+    }
+
+    private async Task<ImageRecord> ImportWithKeyAsync(Stream input, string name, string sourceFolder,
+        string sourcePath, byte[] key, bool ensureFingerprints)
+    {
         if (!Extensions.Contains(Path.GetExtension(name), StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Supported images: PNG, JPEG and WebP.");
         using var original = new MemoryStream();
@@ -119,11 +125,11 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         try
         {
             var sourceHash = Convert.ToHexString(SHA256.HashData(bytes.Span));
-            var fingerprint = VaultCrypto.ContentFingerprint(key.Bytes, sourceHash);
+            var fingerprint = VaultCrypto.ContentFingerprint(key, sourceHash);
             await store.Gate.WaitAsync();
             try
             {
-                await BackfillFingerprintsAsync(key.Bytes);
+                if (ensureFingerprints) await BackfillFingerprintsAsync(key);
                 if (await store.ContainsFingerprintAsync(fingerprint))
                     throw new InvalidOperationException($"'{name}' is already in the gallery.");
             }
@@ -141,7 +147,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
                 exif = image.Metadata.ExifProfile?.Values.Select(value => $"{value.Tag}: {value.GetValue()}")
             });
             using var png = new MemoryStream();
-            await image.SaveAsPngAsync(png);
+            await image.SaveAsPngAsync(png, new PngEncoder { CompressionLevel = PngCompressionLevel.Level1 });
             using var thumbnail = image.Clone(context => context.Resize(new ResizeOptions
             {
                 Size = new Size(384, 384), Mode = ResizeMode.Max
@@ -151,7 +157,10 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             thumbnail.Metadata.XmpProfile = null;
             thumbnail.Metadata.GetPngMetadata().TextData.Clear();
             using var thumb = new MemoryStream();
-            await thumbnail.SaveAsPngAsync(thumb, new PngEncoder { SkipMetadata = true });
+            await thumbnail.SaveAsPngAsync(thumb, new PngEncoder
+            {
+                SkipMetadata = true, CompressionLevel = PngCompressionLevel.Level1
+            });
             var record = new ImageRecord
             {
                 Name = Path.GetFileNameWithoutExtension(name),
@@ -165,8 +174,8 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
                 Metadata = metadata
             };
             record.StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dpng");
-            var encrypted = VaultCrypto.Encrypt(png.GetBuffer().AsSpan(0, (int)png.Length), key.Bytes, $"image:{record.Id}");
-            var encryptedThumb = VaultCrypto.Encrypt(thumb.GetBuffer().AsSpan(0, (int)thumb.Length), key.Bytes, $"thumbnail:{record.Id}");
+            var encrypted = VaultCrypto.Encrypt(png.GetBuffer().AsSpan(0, (int)png.Length), key, $"image:{record.Id}");
+            var encryptedThumb = VaultCrypto.Encrypt(thumb.GetBuffer().AsSpan(0, (int)thumb.Length), key, $"thumbnail:{record.Id}");
             CryptographicOperations.ZeroMemory(png.GetBuffer());
             CryptographicOperations.ZeroMemory(thumb.GetBuffer());
             await store.Gate.WaitAsync();
@@ -180,7 +189,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
                     await output.WriteAsync(encrypted);
                     output.Flush(flushToDisk: true);
                 }
-                try { await store.InsertAsync(record.Id, EncryptRecord(record, key.Bytes), encryptedThumb, fingerprint); }
+                try { await store.InsertAsync(record.Id, EncryptRecord(record, key), encryptedThumb, fingerprint); }
                 catch
                 {
                     File.Delete(record.StoredPath);
@@ -194,9 +203,9 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
     }
 
     public async Task<List<string>> ImportFolderAsync(string folder, bool recursive, Action<string>? progress = null,
-        bool deleteSources = false)
+        bool deleteSources = false, Func<ImportProgress, Task>? reportProgress = null)
     {
-        if (!session.IsUnlocked) throw new InvalidOperationException("Unlock the vault first.");
+        using var key = session.Borrow();
         folder = Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing local folder.");
         var options = new EnumerationOptions
@@ -205,20 +214,57 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             IgnoreInaccessible = false,
             AttributesToSkip = FileAttributes.ReparsePoint
         };
-        var failures = new List<string>();
-        foreach (var path in Directory.EnumerateFiles(folder, "*", options).Where(path =>
-            Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)))
+        if (reportProgress is not null)
+            await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder..."));
+        var paths = await Task.Run(() => Directory.EnumerateFiles(folder, "*", options).Where(path =>
+            Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)).ToArray());
+        await store.Gate.WaitAsync();
+        try { await BackfillFingerprintsAsync(key.Bytes); }
+        finally { store.Gate.Release(); }
+        var failures = new string?[paths.Length];
+        var completed = 0;
+        var importedCount = 0;
+        var failedCount = 0;
+        using var progressGate = new SemaphoreSlim(1);
+
+        async Task ReportAsync(string status, bool finished = false, bool imported = false, bool failed = false)
         {
-            progress?.Invoke(Path.GetFileName(path));
+            await progressGate.WaitAsync();
+            try
+            {
+                if (finished) completed++;
+                if (imported) importedCount++;
+                if (failed) failedCount++;
+                if (reportProgress is not null)
+                    await reportProgress(new ImportProgress(paths.Length, completed, importedCount, failedCount, status));
+            }
+            finally { progressGate.Release(); }
+        }
+
+        await ReportAsync("Importing images...");
+        // Two workers overlap decode/encode and I/O without multiplying full-size image memory by every CPU.
+        await Parallel.ForEachAsync(Enumerable.Range(0, paths.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Min(2, Environment.ProcessorCount) }, async (index, _) =>
+        {
+            var path = paths[index];
+            var name = Path.GetFileName(path);
+            await progressGate.WaitAsync();
+            try { progress?.Invoke(name); }
+            finally { progressGate.Release(); }
+            await ReportAsync($"Importing {name}...");
+            var importedSuccessfully = false;
             try
             {
                 ImageRecord imported;
                 await using (var input = File.OpenRead(path))
                 {
-                    imported = await ImportAsync(input, Path.GetFileName(path), Path.GetDirectoryName(path)!, path);
+                    imported = await ImportWithKeyAsync(input, name, Path.GetDirectoryName(path)!, path,
+                        key.Bytes, ensureFingerprints: false);
+                    importedSuccessfully = true;
                     if (deleteSources)
                     {
-                        await VerifyImportedAsync(imported.Id);
+                        await ReportAsync($"Verifying {name} before source deletion...");
+                        await VerifyImportedWithKeyAsync(imported.Id, key.Bytes);
                         input.Position = 0;
                         var currentHash = Convert.ToHexString(await SHA256.HashDataAsync(input));
                         if (currentHash != imported.Sha256)
@@ -237,17 +283,25 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             catch (Exception exception) when (exception is IOException or InvalidOperationException
                 or UnauthorizedAccessException or CryptographicException or UnknownImageFormatException or InvalidImageContentException)
             {
-                failures.Add($"{Path.GetFileName(path)}: {exception.Message}");
+                failures[index] = $"{name}: {exception.Message}";
             }
-        }
-        return failures;
+            await ReportAsync($"Processed {name}", finished: true, imported: importedSuccessfully,
+                failed: failures[index] is not null);
+        });
+        await ReportAsync(paths.Length == 0 ? "No supported images found." : "Ingestion complete.");
+        return failures.OfType<string>().ToList();
     }
 
     public async Task VerifyImportedAsync(string id)
     {
         using var key = session.Borrow();
-        var record = await FindAsync(id, key.Bytes);
-        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key.Bytes, $"image:{id}");
+        await VerifyImportedWithKeyAsync(id, key.Bytes);
+    }
+
+    private async Task VerifyImportedWithKeyAsync(string id, byte[] key)
+    {
+        var record = await FindAsync(id, key);
+        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{id}");
         try
         {
             if (record.PngSha256.Length == 0 || Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
@@ -257,7 +311,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
                 throw new CryptographicException("Saved image dimensions did not match the catalog.");
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
-        var thumbnail = VaultCrypto.Decrypt(await store.ReadThumbnailAsync(id), key.Bytes, $"thumbnail:{id}");
+        var thumbnail = VaultCrypto.Decrypt(await store.ReadThumbnailAsync(id), key, $"thumbnail:{id}");
         try { using var image = Image.Load(thumbnail); }
         finally { CryptographicOperations.ZeroMemory(thumbnail); }
     }

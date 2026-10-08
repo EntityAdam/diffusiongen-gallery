@@ -126,6 +126,106 @@ public sealed class GalleryTests
     }
 
     [Fact]
+    public async Task FolderProgressIsAwaitedMonotonicAndCountsDuplicatesAndFailures()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        var duplicate = MakePng();
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), duplicate);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "duplicate.png"), duplicate);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "two.png"), MakePng(20, 10));
+        await File.WriteAllTextAsync(Path.Combine(folder, "invalid.png"), "not an image");
+        await File.WriteAllTextAsync(Path.Combine(folder, "ignored.txt"), "ignored");
+        var updates = new List<ImportProgress>();
+        var activeCallbacks = 0;
+        var errors = await fixture.Service.ImportFolderAsync(folder, false, reportProgress: async update =>
+        {
+            Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
+            try
+            {
+                await Task.Delay(1);
+                updates.Add(update);
+            }
+            finally { Interlocked.Decrement(ref activeCallbacks); }
+        });
+
+        Assert.Null(updates[0].Total);
+        Assert.Equal(0, updates[0].Completed);
+        Assert.All(updates.Skip(1), update => Assert.Equal(4, update.Total));
+        Assert.Equal(Enumerable.Range(0, 5), updates.Select(update => update.Completed).Distinct());
+        Assert.All(updates.Zip(updates.Skip(1)), pair =>
+        {
+            Assert.True(pair.First.Completed <= pair.Second.Completed);
+            Assert.True(pair.First.Imported <= pair.Second.Imported);
+            Assert.True(pair.First.Failed <= pair.Second.Failed);
+        });
+        var final = updates[^1];
+        Assert.Equal(4, final.Completed);
+        Assert.Equal(2, final.Imported);
+        Assert.Equal(2, final.Failed);
+        Assert.Equal("Ingestion complete.", final.Status);
+        Assert.Equal(final.Failed, errors.Count);
+        var records = await fixture.Service.ListAsync();
+        Assert.Equal(final.Imported, records.Count);
+        Assert.Equal(records.Count, Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng",
+            SearchOption.AllDirectories).Length);
+        foreach (var record in records) await fixture.Service.VerifyImportedAsync(record.Id);
+        Assert.Equal(5, Directory.GetFiles(folder).Length);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EmptyFolderProgressFinishesWithoutImportingUnsupportedFiles(bool recursive)
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "ignored.txt"), "ignored");
+        var updates = new List<ImportProgress>();
+        var errors = await fixture.Service.ImportFolderAsync(folder, recursive, reportProgress: update =>
+        {
+            updates.Add(update);
+            return Task.CompletedTask;
+        });
+        Assert.Empty(errors);
+        Assert.Equal(new ImportProgress(0, 0, 0, 0, "No supported images found."), updates[^1]);
+        Assert.Empty(await fixture.Service.ListAsync());
+    }
+
+    [Fact]
+    public async Task FastIngestionPreservesPixelsTransparencyAndPngMetadata()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        using var original = new Image<Rgba64>(48, 32);
+        for (var y = 0; y < original.Height; y++)
+        for (var x = 0; x < original.Width; x++)
+            original[x, y] = new Rgba64((ushort)(x * 1234), (ushort)(y * 2345),
+                (ushort)(x * y * 345), (ushort)(x * 1357));
+        original.Metadata.GetPngMetadata().TextData.Add(new PngTextData("parameters", "retained prompt", "", ""));
+        using var input = new MemoryStream();
+        await original.SaveAsPngAsync(input);
+        input.Position = 0;
+        var record = await fixture.Service.ImportAsync(input, "rgba.png", "folder");
+        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), fixture.Session.Key, $"image:{record.Id}");
+        try
+        {
+            using var saved = Image.Load<Rgba64>(plain);
+            Assert.Equal(original.Width, saved.Width);
+            Assert.Equal(original.Height, saved.Height);
+            for (var y = 0; y < original.Height; y++)
+            for (var x = 0; x < original.Width; x++)
+                Assert.Equal(original[x, y], saved[x, y]);
+            Assert.Contains(saved.Metadata.GetPngMetadata().TextData, chunk => chunk.Value == "retained prompt");
+        }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+
+    [Fact]
     public async Task VisionSettingsPersistEncrypted()
     {
         using var fixture = new TestVault();
@@ -153,8 +253,14 @@ public sealed class GalleryTests
         var duplicateBytes = MakePng(20, 10);
         await fixture.Service.ImportAsync(new MemoryStream(duplicateBytes), "existing.png", "other");
         await File.WriteAllBytesAsync(duplicate, duplicateBytes);
-        var errors = await fixture.Service.ImportFolderAsync(folder, false, deleteSources: true);
+        ImportProgress? final = null;
+        var errors = await fixture.Service.ImportFolderAsync(folder, false, deleteSources: true, reportProgress: update =>
+        {
+            final = update;
+            return Task.CompletedTask;
+        });
         Assert.Equal(2, errors.Count);
+        Assert.Equal(new ImportProgress(3, 3, 1, 2, "Ingestion complete."), final);
         Assert.False(File.Exists(valid));
         Assert.True(File.Exists(invalid));
         Assert.Equal(duplicateBytes, await File.ReadAllBytesAsync(duplicate));

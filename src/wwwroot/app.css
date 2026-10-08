@@ -79,6 +79,9 @@ form > button { margin-top: 18px; }
 .import-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 35px; }
 .import-errors { color: #f2b0ae; margin-top: 20px; }
 .import-errors p { margin: 7px 0; font-size: 12px; }
+.ingestion-progress { margin-top: 20px; }
+.ingestion-progress progress { width: 100%; height: 14px; accent-color: var(--mint); }
+.ingestion-progress p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .settings p { font-size: 12px; margin-top: 14px; }
 .vault-location code { overflow-wrap: anywhere; }
 .gallery-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 28px; align-items: start; }

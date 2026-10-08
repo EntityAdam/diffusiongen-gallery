@@ -139,6 +139,13 @@ references original image files. Keep gallery01 on its own original vault.
   and WebP are supported, up to 50 MiB, 40 megapixels, and 16384 pixels per
   dimension. Animated images are rejected. Imports are copies; originals
   remain plaintext and untouched by default. Exact source-byte duplicates are reported.
+- Ingestion shows a scanning indicator, then a progress bar with processed/total
+  files, imported images and per-file issues (including duplicates). The final
+  counts remain visible after completion. At most two images are processed in
+  parallel; catalog insertion and duplicate checks remain serialized. Fingerprint
+  migration runs once per folder job. Fast lossless PNG compression reduces
+  encoding time without changing decoded pixels or retained metadata, at the cost
+  of potentially larger encrypted files. Existing encrypted images are unchanged.
 - Local folder-path ingestion supports **Delete originals after verified import**,
   off by default, with an explicit acknowledgement. The saved encrypted image,
   catalog and thumbnail are reread and authenticated; the saved PNG hash and

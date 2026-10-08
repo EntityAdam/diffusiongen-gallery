@@ -135,6 +135,22 @@ else
                     }
                     <button disabled="@busy" type="submit">Ingest this folder &rarr;</button>
                 </form>
+            @if (importProgress is not null)
+            {
+                <div class="ingestion-progress" aria-busy="@(busy ? "true" : "false")">
+                    <label for="ingestion-progress">Image ingestion</label>
+                    <progress id="ingestion-progress" max="@Math.Max(1, importProgress.Total ?? 1)"
+                              value="@(importProgress.Total is null ? null : (double?)importProgress.Completed)"
+                              aria-label="Image ingestion progress"></progress>
+                    <p class="muted">
+                        @if (importProgress.Total is int total)
+                        {
+                            <span>@importProgress.Completed / @total files processed &middot; @importProgress.Imported imported &middot; @importProgress.Failed reported issues</span>
+                        }
+                    </p>
+                    <p role="status">@importProgress.Status</p>
+                </div>
+            }
             @if (importFailures.Count > 0)
             {
                 <details open class="import-errors"><summary>@importFailures.Count file(s) reported issues</summary>
@@ -436,6 +452,7 @@ else
     private VisionSettings settings = new();
     private List<ImageRecord> images = [];
     private List<string> importFailures = [];
+    private ImportProgress? importProgress;
     private readonly Dictionary<string, string> thumbnails = [];
     private ImageRecord? selected;
     private bool disposed;
@@ -581,15 +598,40 @@ else
         EnsureNoLibraryJob();
         if (deleteSources && !confirmSourceDeletion)
             throw new InvalidOperationException("Confirm source deletion before importing, or disable it to keep originals.");
-        var countBefore = images.Count;
-        importFailures = await Gallery.ImportFolderAsync(importPath, recursive, name =>
+        importFailures = [];
+        importProgress = new ImportProgress(null, 0, 0, 0, "Scanning selected folder...");
+        await InvokeAsync(StateHasChanged);
+        var lastProgressRender = System.Diagnostics.Stopwatch.StartNew();
+        try
         {
-            progress = $"Encrypting {name}...";
-            _ = InvokeAsync(StateHasChanged);
-        }, deleteSources);
-        await ReloadAsync();
-        message = $"Imported {images.Count - countBefore} images. {importFailures.Count} file(s) reported errors."
-            + (deleteSources ? " Sources of verified imports were deleted unless an error was reported; duplicates were retained." : " Sources were retained.");
+            importFailures = await Gallery.ImportFolderAsync(importPath, recursive, deleteSources: deleteSources,
+                reportProgress: update => InvokeAsync(() =>
+                {
+                    if (disposed) return;
+                    var render = update.Total != importProgress?.Total || update.Completed == update.Total
+                        || update.Failed != importProgress?.Failed || lastProgressRender.ElapsedMilliseconds >= 100;
+                    importProgress = update;
+                    if (render)
+                    {
+                        StateHasChanged();
+                        lastProgressRender.Restart();
+                    }
+                }));
+            if (disposed) return;
+            importProgress = importProgress with { Status = "Refreshing library..." };
+            await InvokeAsync(StateHasChanged);
+            await ReloadAsync();
+            if (disposed) return;
+            importProgress = importProgress with { Status = importProgress.Total == 0 ? "No supported images found." : "Ingestion complete." };
+            message = $"Imported {importProgress.Imported} images. {importFailures.Count} file(s) reported errors."
+                + (deleteSources ? " Sources of verified imports were deleted unless an error was reported; duplicates were retained." : " Sources were retained.");
+        }
+        catch
+        {
+            if (importProgress is not null)
+                importProgress = importProgress with { Status = "Ingestion stopped. See the error above; completed imports were retained." };
+            throw;
+        }
         deleteSources = confirmSourceDeletion = false;
     });
 
@@ -741,6 +783,7 @@ else
         CloseDetail();
         secret = confirm = recoveryPhrase = newPassphrase = newConfirm = error = message = importPath = "";
         importFailures.Clear();
+        importProgress = null;
         settings = new();
         filter = new();
         page = 0;
