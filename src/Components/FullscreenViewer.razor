@@ -53,7 +53,7 @@
     }
     <div class="viewer-image-area @(originalSize ? "original-size" : "fit-window")">
         @if (busy) { <p role="status">Loading...</p> }
-        @if (imageData.Length > 0 && !reviewComplete) { <img @key="Current.Id" src="@imageData" alt="@Current.Name" /> }
+        @if (imageData.Length > 0 && !reviewComplete) { <img @key="Current.Id" src="@imageData" alt="@Current.Name" draggable="false" /> }
     </div>
     <footer class="viewer-status">
         <span>@(Current.Favorite ? "Favorite" : "Not favorite") &middot; @(Current.MarkedForDeletion ? "Marked for deletion" : "Not marked") &middot; @(Current.Reviewed ? "Reviewed" : "Pending review") / @Current.Rating out of 5 &middot; @(originalSize ? "100% size (scroll to explore)" : "Fit to window")</span>

@@ -32,6 +32,34 @@ public sealed record RemovalResult(string Id, bool Removed, string? RestoredPath
 
 public sealed record ImportProgress(int? Total, int Completed, int Imported, int Failed, string Status);
 
+public sealed record StorageOverview(
+    long DatabaseBytes,
+    int ImageFileCount,
+    long ImageBytes,
+    int VaultFileCount,
+    long VaultFileBytes,
+    int MissingImageFiles,
+    DateTimeOffset UpdatedAt)
+{
+    public int TotalFileCount => ImageFileCount + VaultFileCount;
+    public long TotalBytes => ImageBytes + VaultFileBytes;
+
+    public static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
+        double value = Math.Max(0, bytes);
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return unit == 0
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes:N0} B")
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{value:0.##} {units[unit]}");
+    }
+}
+
 public sealed class GalleryFilter
 {
     public string Search { get; set; } = "";

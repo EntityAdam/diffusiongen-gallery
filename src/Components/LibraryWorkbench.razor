@@ -73,7 +73,7 @@
                 <div class="import-columns">
                     @foreach (var image in compareImages)
                     {
-                        <article class="compare-image"><h3>@image.Name</h3><img src="@comparison[image.Id]" alt="@image.Name" />
+                        <article class="compare-image"><h3>@image.Name</h3><img src="@comparison[image.Id]" alt="@image.Name" draggable="false" />
                             <p>@image.Width &times; @image.Height / Rating: @image.Rating / @(image.Reviewed ? "Reviewed" : "Pending review")</p>
                             <div class="actions">
                                 @for (var score = 1; score <= 5; score++)

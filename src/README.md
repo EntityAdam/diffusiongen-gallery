@@ -32,7 +32,7 @@ Only one process should operate on a vault at a time.
 
 ### Smart library, curation and discovery
 
-**LLM endpoints** borrows src03's connection workflow: enter the API base URL,
+**Settings > LLM endpoints** borrows src03's connection workflow: enter the API base URL,
 an optional bearer API key and a request timeout (10-3600 seconds, default 180).
 **Fetch models** tests the entered connection and populates the model selector
 without saving settings. You can also enter a model ID manually. Discovery does
@@ -50,7 +50,15 @@ does not encrypt traffic in transit. The gallery web application itself still bi
 only to loopback. Gallery02 does not import or share src03's configuration.
 
 The left navigation separates Library, Guided review, Organize, Explore & saved
-views, Local intelligence, Remove marked images, Ingest images, LLM endpoints and Vault security.
+views, Local intelligence, Remove marked images, Ingest images and Settings.
+**Settings** opens on a **Gallery overview** with tabs for **LLM endpoints** and
+**Vault security**. The overview shows database size (`gallery.db` plus its WAL/SHM
+files, which include encrypted thumbnails), total file count (catalogued encrypted
+image files plus vault header/database files) and total size on disk, auto-scaled
+from B through PB. Measurements are cached encrypted in the vault with a "Last
+updated" time and are only recalculated when you select **Refresh** (or the first
+time no cached overview exists). Catalogued images missing from disk are reported
+and excluded from the totals.
 Only tools for the current workflow are shown. Image workflows reuse the same
 grid, sort and collapsible **Filter images** controls. Filters carry across
 workflows; removal temporarily resets filters to show all marked images, and leaving
@@ -64,6 +72,11 @@ only in the corresponding workflows. Select a page or individual cards; selectio
 remain across pages until cleared. **Clear selection** clears both sets and unchecks
 their cards. Switching workflows also clears selections to avoid accidental reuse.
 Virtual collections do not change file locations.
+
+Gallery cards retain filenames and pixel dimensions. A shield icon indicates
+encrypted storage. Five interactive stars show each rating: click a star to save
+that rating, or click the current rating again to clear it. Card ratings do not
+change review status, favorites or deletion marks.
 
 **Organize** adds/removes collection membership, merges tags without
 discarding existing tags, and applies 0-5 ratings and reviewed/pending status.
@@ -139,6 +152,9 @@ references original image files. Keep gallery01 on its own original vault.
   and WebP are supported, up to 50 MiB, 40 megapixels, and 16384 pixels per
   dimension. Animated images are rejected. Imports are copies; originals
   remain plaintext and untouched by default. Exact source-byte duplicates are reported.
+- Gallery images are not draggable. Dropping files or browser images into the app
+  is blocked so native browser navigation cannot interrupt the unlocked gallery.
+  Use **Ingest images** with a local folder path instead.
 - Ingestion shows a scanning indicator, then a progress bar with processed/total
   files, imported images and per-file issues (including duplicates). The final
   counts remain visible after completion. At most two images are processed in
@@ -229,7 +245,7 @@ references original image files. Keep gallery01 on its own original vault.
   Cleanup failures report the residue path. Retained backups/copies are not removed.
   Permanent removal bypasses the Recycle Bin and is not secure SSD/NVMe erasure.
 - Configure a loaded vision-capable model and a literal loopback or private LAN,
-  OpenAI-compatible endpoint under **LLM endpoints**. Examples:
+  OpenAI-compatible endpoint under **Settings > LLM endpoints**. Examples:
   LM Studio `http://127.0.0.1:1234/v1/`, Ollama
   `http://127.0.0.1:11434/v1/`. Requests are user-triggered, use a metadata-free
   preview of at most 1600 pixels per dimension, and store structured descriptions
@@ -254,7 +270,7 @@ Only salts and authenticated wrapped keys are saved in `vault.json`; neither
 credential nor an unwrapped master key is saved to disk.
 
 Use the recovery-words tab to unlock after forgetting a passphrase, then change
-the passphrase in **Vault security**. Recovery words remain valid. They are
+the passphrase in **Settings > Vault security** (recovery unlock opens it directly). Recovery words remain valid. They are
 shown only during creation and cannot be displayed again. There is **no
 backdoor, email reset, escrow, or machine-bound bypass**. Losing both credentials
 makes the vault's encrypted content unrecoverable, assuming strong credentials
@@ -282,6 +298,7 @@ Use neutral names if those are sensitive.
 
 ```powershell
 dotnet test .\src\gallery02\tests\Gallery.Tests\Gallery.Tests.csproj
+node --test .\src\tests\viewer-drag.test.cjs
 ```
 
 Tests cover credential/recovery rotation, authentication/tampering, encrypted

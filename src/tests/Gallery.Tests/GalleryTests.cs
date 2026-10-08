@@ -239,6 +239,57 @@ public sealed class GalleryTests
     }
 
     [Fact]
+    public async Task StorageOverviewMeasuresVaultAndMovedImagesAndCachesEncrypted()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        Assert.Null(await fixture.Service.CachedStorageOverviewAsync());
+        var first = await fixture.Service.ImportAsync(new MemoryStream(MakePng(30, 10)), "first.png", "folder");
+        var second = await fixture.Service.ImportAsync(new MemoryStream(MakePng(20, 10)), "second.png", "folder");
+        var outside = Path.Combine(Path.GetTempPath(), "gallery-outside-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        try
+        {
+            await fixture.Service.MoveAsync(second.Id, outside, "moved");
+            var moved = (await fixture.Service.ListAsync()).Single(image => image.Id == second.Id);
+            Assert.StartsWith(outside, moved.StoredPath);
+
+            var overview = await fixture.Service.RefreshStorageOverviewAsync();
+            Assert.Equal(2, overview.ImageFileCount);
+            Assert.Equal(new FileInfo(first.StoredPath).Length + new FileInfo(moved.StoredPath).Length, overview.ImageBytes);
+            Assert.True(overview.DatabaseBytes > 0);
+            Assert.Equal(0, overview.MissingImageFiles);
+            Assert.Equal(overview.ImageBytes + overview.VaultFileBytes, overview.TotalBytes);
+            Assert.Equal(overview.ImageFileCount + overview.VaultFileCount, overview.TotalFileCount);
+            Assert.True(overview.VaultFileBytes >= overview.DatabaseBytes + new FileInfo(Path.Combine(fixture.Vault.Root, "vault.json")).Length);
+
+            // The cache is not recomputed until refresh, even after the disk changes.
+            File.Delete(first.StoredPath);
+            Assert.Equal(overview, await fixture.Service.CachedStorageOverviewAsync());
+            var blob = await fixture.Store.ReadSettingsAsync("storage-overview");
+            Assert.DoesNotContain("ImageBytes", Encoding.UTF8.GetString(blob!));
+
+            var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
+            Assert.Equal(1, refreshed.ImageFileCount);
+            Assert.Equal(1, refreshed.MissingImageFiles);
+            Assert.True(refreshed.UpdatedAt >= overview.UpdatedAt);
+        }
+        finally { Directory.Delete(outside, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(0L, "0 B")]
+    [InlineData(1023L, "1,023 B")]
+    [InlineData(1536L, "1.5 KB")]
+    [InlineData(5L * 1024 * 1024, "5 MB")]
+    [InlineData(3L * 1024 * 1024 * 1024 + 512L * 1024 * 1024, "3.5 GB")]
+    [InlineData(2L * 1024 * 1024 * 1024 * 1024, "2 TB")]
+    [InlineData(7L * 1024 * 1024 * 1024 * 1024 * 1024, "7 PB")]
+    [InlineData(4096L * 1024 * 1024 * 1024 * 1024 * 1024, "4096 PB")]
+    public void StorageSizesAutoScale(long bytes, string expected) =>
+        Assert.Equal(expected, StorageOverview.FormatBytes(bytes));
+
+    [Fact]
     public async Task OptInSourceDeletionRemovesOnlyVerifiedNewImports()
     {
         using var fixture = new TestVault();

@@ -1,3 +1,17 @@
+// Native image/file drops can navigate away from the live vault circuit.
+document.addEventListener("dragstart", event => {
+    if (event.target instanceof Element && event.target.closest("img")) event.preventDefault();
+}, true);
+const preventImageDrop = event => {
+    const types = Array.from(event.dataTransfer?.types ?? []);
+    if (types.some(type => ["Files", "text/uri-list", "text/html"].includes(type))) {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+    }
+};
+document.addEventListener("dragover", preventImageDrop, true);
+document.addEventListener("drop", preventImageDrop, true);
+
 window.galleryViewer = {
     createImageUrl: function (data) {
         const comma = data.indexOf(",");

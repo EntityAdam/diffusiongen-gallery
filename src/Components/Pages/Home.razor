@@ -85,7 +85,7 @@ else
         <span class="eyebrow">YOUR WORKSPACE</span>
         @foreach (var item in Workflows)
         {
-            <button disabled="@(busy || libraryJob.Running && item.Id is "remove" or "ingest" or "endpoints" or "settings")" class="@(workflow == item.Id ? "active" : "")" aria-current="@(workflow == item.Id ? "page" : null)" @onclick="() => SwitchWorkflowAsync(item.Id)">@item.Name</button>
+            <button disabled="@(busy || libraryJob.Running && item.Id is "remove" or "ingest" or "settings")" class="@(workflow == item.Id ? "active" : "")" aria-current="@(workflow == item.Id ? "page" : null)" @onclick="() => SwitchWorkflowAsync(item.Id)">@item.Name</button>
         }
         <div class="security-note"><strong>@images.Count images</strong><span data-testid="pending-count">@PendingReviewCount awaiting review</span></div>
         @if (libraryJob.Running || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
@@ -159,11 +159,46 @@ else
             }
         </section>
     }
-    @if (workflow == "endpoints")
+    @if (workflow == "settings")
+    {
+        <nav class="settings-tabs" aria-label="Settings sections">
+            @foreach (var tab in SettingsTabs)
+            {
+                <button type="button" class="@(settingsTab == tab.Id ? "active" : "")" aria-current="@(settingsTab == tab.Id ? "page" : null)" disabled="@busy" @onclick="() => SwitchSettingsTabAsync(tab.Id)">@tab.Name</button>
+            }
+        </nav>
+    }
+    @if (workflow == "settings" && settingsTab == "overview")
+    {
+        <section class="panel storage-overview" aria-labelledby="storage-overview-title">
+            <div class="panel-header">
+                <h3 id="storage-overview-title">Gallery overview</h3>
+                <button type="button" disabled="@busy" @onclick="RefreshStorageOverviewAsync">@(busy && progress.StartsWith("Measuring") ? "Refreshing..." : "Refresh")</button>
+            </div>
+            @if (storageOverview is null)
+            {
+                <p class="muted">Storage has not been measured yet. Select Refresh to calculate it.</p>
+            }
+            else
+            {
+                <dl class="overview-stats">
+                    <div><dt>Database size</dt><dd data-testid="database-size">@StorageOverview.FormatBytes(storageOverview.DatabaseBytes)</dd><span class="muted">gallery.db with WAL files, including thumbnails</span></div>
+                    <div><dt>Total file count</dt><dd data-testid="file-count">@storageOverview.TotalFileCount.ToString("N0")</dd><span class="muted">@storageOverview.ImageFileCount.ToString("N0") encrypted images + @storageOverview.VaultFileCount vault files</span></div>
+                    <div><dt>Total size on disk</dt><dd data-testid="total-size">@StorageOverview.FormatBytes(storageOverview.TotalBytes)</dd><span class="muted">@StorageOverview.FormatBytes(storageOverview.ImageBytes) of encrypted images</span></div>
+                </dl>
+                @if (storageOverview.MissingImageFiles > 0)
+                {
+                    <div class="notice error">@storageOverview.MissingImageFiles catalogued image file(s) were not found on disk and are not counted.</div>
+                }
+                <p class="muted" data-testid="overview-updated">Last updated <time datetime="@storageOverview.UpdatedAt.ToString("O")">@storageOverview.UpdatedAt.ToLocalTime().ToString("g")</time>. Cached values are shown until you refresh.</p>
+            }
+        </section>
+    }
+    @if (workflow == "settings" && settingsTab == "endpoints")
     {
         <LlmEndpointSettings SavedSettings="settings" Saved="value => settings = value" />
     }
-    @if (workflow == "settings")
+    @if (workflow == "settings" && settingsTab == "security")
     {
         <section class="panel settings">
             <h3>Vault security</h3>
@@ -296,11 +331,36 @@ else
                             }
                             <button class="image-open" disabled="@busy" @onclick="() => OpenAsync(image)">
                                 @if (thumbnails.TryGetValue(image.Id, out var thumbnail))
-                                { <img src="@thumbnail" alt="@image.Name" loading="lazy" /> }
+                                { <img src="@thumbnail" alt="@image.Name" loading="lazy" draggable="false" /> }
                                 else { <div class="thumbnail-placeholder">Loading preview...</div> }
                             </button>
-                            <div class="card-info"><h3 title="@image.Name">@image.Name</h3><div class="card-meta"><span>@image.Width &times; @image.Height</span><span>@(image.Description.Length > 0 ? "Analyzed" : "Encrypted")</span></div>
-                                <div class="card-meta"><span>@(image.Rating == 0 ? "Unrated" : $"{image.Rating} / 5") / @(image.Reviewed ? "Reviewed" : "Pending")</span></div>
+                            <div class="card-info"><h3 title="@image.Name">@image.Name</h3>
+                                <div class="card-meta">
+                                    <span>@image.Width &times; @image.Height</span>
+                                    <span class="card-security">
+                                        @if (image.Description.Length > 0) { <span>Analyzed</span> }
+                                        <svg class="shield-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" role="img" aria-label="Encrypted" focusable="false">
+                                            <title>Encrypted</title>
+                                            <path d="M12 3 4 6v6c0 4 4 7 8 9 4-2 8-5 8-9V6l-8-3Z" />
+                                            <path d="m8 12 3 3 5-6" />
+                                        </svg>
+                                    </span>
+                                </div>
+                                <div class="card-rating-row">
+                                    <div class="star-rating" role="group" aria-label="@($"Rating for {image.Name}: {image.Rating} out of 5 stars")">
+                                        @for (var score = 1; score <= 5; score++)
+                                        {
+                                            var value = score;
+                                            var label = image.Rating == value ? "Clear rating" : $"Rate {value} out of 5 stars";
+                                            <button type="button" disabled="@busy" class="rating-star @(value <= image.Rating ? "filled" : "")"
+                                                    aria-label="@label" title="@label" aria-pressed="@(image.Rating == value ? "true" : "false")"
+                                                    @onclick="() => RateImageAsync(image, value)">
+                                                <span aria-hidden="true">@(value <= image.Rating ? "\u2605" : "\u2606")</span>
+                                            </button>
+                                        }
+                                    </div>
+                                    <span class="muted">@(image.Reviewed ? "Reviewed" : "Pending")</span>
+                                </div>
                                 @if (image.Collections.Count > 0) { <div class="collection-chips">@foreach (var name in image.Collections) { <span>@name</span> }</div> }
                             </div>
                             <div class="card-actions">
@@ -332,7 +392,7 @@ else
             <section class="detail-modal panel" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
                 <div class="panel-header"><h2 id="detail-title">@selected.Name</h2><button class="icon-button" disabled="@busy" @onclick="CloseDetail" aria-label="Close image details">&times;</button></div>
                 <div class="detail-columns">
-                    <div class="preview"><img src="@preview" alt="@selected.Name" /></div>
+                    <div class="preview"><img src="@preview" alt="@selected.Name" draggable="false" /></div>
                     <div class="detail-content">
                         <div class="eyebrow">ENCRYPTED ORIGINAL</div>
                         <p>@selected.Width &times; @selected.Height &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
@@ -430,9 +490,15 @@ else
         ("library", "Library"), ("review", "Guided review"), ("organize", "Organize"),
         ("explore", "Explore & saved views"), ("ai", "Local intelligence"),
         ("remove", "Remove marked images"), ("ingest", "Ingest images"),
-        ("endpoints", "LLM endpoints"), ("settings", "Vault security")
+        ("settings", "Settings")
     ];
-    private bool ShowsGallery => workflow is not ("ingest" or "settings" or "endpoints");
+    private static readonly (string Id, string Name)[] SettingsTabs =
+    [
+        ("overview", "Overview"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
+    ];
+    private string settingsTab = "overview";
+    private StorageOverview? storageOverview;
+    private bool ShowsGallery => workflow is not ("ingest" or "settings");
     private int PendingReviewCount => images.Count(image => !image.Reviewed && !image.MarkedForDeletion);
     private bool deleteSources, confirmSourceDeletion;
     private readonly HashSet<string> removalSelection = [];
@@ -499,6 +565,7 @@ else
             {
                 Session.Unlock(await Vault.UnlockAsync(secret, useRecovery));
                 workflow = useRecovery ? "settings" : "library";
+                settingsTab = useRecovery ? "security" : "overview";
                 await ReloadAsync();
             }
             else
@@ -570,8 +637,30 @@ else
         }
         workflow = value;
         ClearSelection();
+        if (value == "settings")
+        {
+            settingsTab = "overview";
+            return RunAsync("Loading gallery overview...", async () =>
+            {
+                page = 0;
+                await LoadThumbnailsAsync();
+                storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync();
+            });
+        }
         return FilterChangedAsync();
     }
+    private Task SwitchSettingsTabAsync(string value)
+    {
+        settingsTab = value;
+        return value == "overview" && storageOverview is null
+            ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync())
+            : Task.CompletedTask;
+    }
+    private Task RefreshStorageOverviewAsync() => RunAsync("Measuring gallery storage...", async () =>
+    {
+        storageOverview = await Gallery.RefreshStorageOverviewAsync();
+        message = "Gallery overview refreshed.";
+    });
     private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
     private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.Running ? "ai" : libraryJob.Workflow);
     private void DismissLibraryJob() => libraryJob = new(false, "", "", 0, false);
@@ -633,6 +722,13 @@ else
             throw;
         }
         deleteSources = confirmSourceDeletion = false;
+    });
+
+    private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
+    {
+        await Gallery.UpdateAsync(image.Id, current =>
+            LibraryService.SetCuration(current, current.Rating == value ? 0 : value, null));
+        await ReloadAsync();
     });
 
     private Task FavoriteAsync(ImageRecord image) => RunAsync("Saving favorite...", async () =>
@@ -789,6 +885,8 @@ else
         page = 0;
         useRecovery = recoverySaved = false;
         workflow = "library";
+        settingsTab = "overview";
+        storageOverview = null;
         browsingFilter = null;
         libraryJob = new(false, "", "", 0, false);
         deleteSources = confirmSourceDeletion = false;
