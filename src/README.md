@@ -195,7 +195,7 @@ references original image files. Keep gallery01 on its own original vault.
 
 - **Ingest images** accepts a local folder path with optional recursive ingestion.
   Browser folder/file uploads are not supported. PNG, JPEG,
-  and WebP are supported, up to 50 MiB, 40 megapixels, and 16384 pixels per
+  and WebP images (and MP4 videos, below) are supported; images up to 50 MiB, 40 megapixels, and 16384 pixels per
   dimension. Animated images are rejected. Imports are copies; originals
   remain plaintext and untouched by default. Exact source-byte duplicates are reported.
 - Gallery images are not draggable. Dropping files or browser images into the app
@@ -225,6 +225,30 @@ references original image files. Keep gallery01 on its own original vault.
   as authenticated encrypted `.dpng` files. PNG text and EXIF metadata are
   extracted into the encrypted catalog; original JPEG/WebP byte streams are
   not preserved. Thumbnails omit embedded metadata.
+- **MP4 videos** (MP4/MOV containers up to 256 MiB; browser playback needs a codec such as H.264) are imported
+  when ffmpeg is installed. The gallery finds `ffmpeg`/`ffprobe` via the
+  `Gallery:FFmpegPath` setting (folder or executable), then PATH, then WinGet links.
+  The original bytes are encrypted unchanged as `.dmp4`; the first frame becomes the
+  thumbnail and container metadata (including ComfyUI `prompt`/`workflow` and Video
+  Helper Suite `comment` tags) is extracted into the encrypted catalog. ffprobe and
+  ffmpeg need a file path, so each video is briefly copied as plaintext to
+  `%TEMP%\gallery-<guid>.mp4` and deleted when import finishes (not securely
+  shredded). Playback decrypts into an in-memory browser Blob URL; there is no
+  plaintext server URL. Exact-duplicate grouping never mixes images and videos.
+- **ComfyUI metadata** (PNG `prompt`/`workflow` text chunks, EXIF, and video tags)
+  is parsed into prompt, negative prompt, CFG, steps and the checkpoint, UNet or
+  diffusion model, by following the API prompt graph from the sampler. Results are
+  shown in the image details and are searchable; existing records are backfilled
+  automatically. UI-only workflows are detected but not parsed into fields.
+- **Group by same prompt** (grid controls) groups exact positive-prompt
+  matches, largest groups first, followed by unique and no-prompt images.
+  **Show only these** or **Show all N with this exact prompt** filters to one prompt.
+  The **Media type** filter and **Videos** quick filter limit the grid to videos.
+- **Save a copy** downloads a decrypted copy: videos as the original MP4, images
+  as PNG with prompt/workflow kept in uncompressed `tEXt` chunks. **Export
+  workflow** downloads the embedded ComfyUI workflow (or API prompt) as JSON.
+  **Save copies (zip)** exports a selection (up to 1 GiB). Exports are plaintext
+  once saved; protect them accordingly.
 - New imports use `images\<first two ID characters>\<next two ID characters>\<id>.dpng`
   beneath the vault directory. Random IDs avoid filename collisions, and two-level
   sharding spreads files across directories. Original/display names need not be

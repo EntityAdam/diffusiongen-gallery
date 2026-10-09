@@ -11,6 +11,7 @@ builder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
 });
 builder.Services.AddSingleton<VaultStore>();
 builder.Services.AddSingleton<GalleryStore>();
+builder.Services.AddSingleton(services => new VideoTools(services.GetRequiredService<IConfiguration>()));
 builder.Services.AddScoped<VaultSession>();
 builder.Services.AddScoped<GalleryService>();
 builder.Services.AddScoped<LibraryService>();

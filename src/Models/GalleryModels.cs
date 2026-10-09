@@ -23,6 +23,43 @@ public sealed record ImageRecord
     public List<string> Collections { get; set; } = [];
     public int Rating { get; set; }
     public bool Reviewed { get; set; }
+    /// <summary>"image" (stored as encrypted PNG) or "video" (original MP4 stored encrypted).</summary>
+    public string MediaType { get; init; } = "image";
+    public string ContentType { get; init; } = "image/png";
+    public double DurationSeconds { get; init; }
+    public GenerationInfo? Generation { get; set; }
+    /// <summary>Version of the generation-metadata parser applied to this record; older records are re-parsed once.</summary>
+    public int MetadataVersion { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore] public bool IsVideo => MediaType == "video";
+    [System.Text.Json.Serialization.JsonIgnore] public string Prompt => Generation?.Prompt ?? "";
+
+    public string FormatDuration()
+    {
+        var time = TimeSpan.FromSeconds(Math.Max(0, Math.Round(DurationSeconds)));
+        return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
+    }
+}
+
+/// <summary>Generation parameters recovered from an embedded ComfyUI API prompt.</summary>
+public sealed record GenerationInfo
+{
+    public string Prompt { get; init; } = "";
+    public string NegativePrompt { get; init; } = "";
+    public double? Cfg { get; init; }
+    public int? Steps { get; init; }
+    public string Model { get; init; } = "";
+    /// <summary>Checkpoint, Diffusion model or Model, describing which loader supplied <see cref="Model"/>.</summary>
+    public string ModelKind { get; init; } = "";
+    public bool HasWorkflow { get; init; }
+    public bool HasApiPrompt { get; init; }
+}
+
+public sealed record ExportFile(string FileName, string ContentType, byte[] Content);
+
+public sealed record PromptGroup(string Kind, string Prompt, List<ImageRecord> Images)
+{
+    public const string Shared = "shared", Unique = "unique", None = "none";
 }
 
 public enum ExistingOriginalAction { Retain, Delete }
@@ -96,10 +133,15 @@ public sealed class GalleryFilter
     public int MinRating { get; set; }
     public string Review { get; set; } = "all";
     public bool UnorganizedOnly { get; set; }
+    public string Media { get; set; } = "all";
+    /// <summary>Exact positive prompt match; empty means any prompt.</summary>
+    public string Prompt { get; set; } = "";
 
     public IEnumerable<ImageRecord> Apply(IEnumerable<ImageRecord> images)
     {
         var result = images.Where(image =>
+            (Media == "all" || image.MediaType == Media)
+            && (Prompt.Length == 0 || image.Prompt == Prompt) &&
             (Search.Length == 0 || $"{image.Name} {image.OriginalName} {image.Metadata} {image.Description} {image.Tags}"
                 .Contains(Search, StringComparison.OrdinalIgnoreCase))
             && (Folder.Length == 0 || image.SourceFolder.Contains(Folder, StringComparison.OrdinalIgnoreCase)

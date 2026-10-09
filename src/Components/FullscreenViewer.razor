@@ -53,7 +53,13 @@
     }
     <div class="viewer-image-area @(originalSize ? "original-size" : "fit-window")">
         @if (busy) { <p role="status">Loading...</p> }
-        @if (imageData.Length > 0 && !reviewComplete) { <img @key="Current.Id" src="@imageData" alt="@Current.Name" draggable="false" /> }
+        @if (imageData.Length > 0 && !reviewComplete)
+        {
+            if (Current.IsVideo)
+            { <video @key="Current.Id" src="@imageData" controls autoplay loop muted playsinline aria-label="@Current.Name"></video> }
+            else
+            { <img @key="Current.Id" src="@imageData" alt="@Current.Name" draggable="false" /> }
+        }
     </div>
     <footer class="viewer-status">
         <span>@(Current.Favorite ? "Favorite" : "Not favorite") &middot; @(Current.MarkedForDeletion ? "Marked for deletion" : "Not marked") &middot; @(Current.Reviewed ? "Reviewed" : "Pending review") / @Current.Rating out of 5 &middot; @(originalSize ? "100% size (scroll to explore)" : "Fit to window")</span>
@@ -107,11 +113,27 @@
         try
         {
             if (disposed) return "";
+            var isVideo = Images.FirstOrDefault(image => image.Id == id)?.IsVideo == true;
+            // Videos are large: never prefetch them, and keep one decrypted copy regardless of the size mode.
+            if (isVideo && prefetch) return "";
+            full = full && !isVideo;
             var cache = full ? fullCache : fitCache;
             if (cache.TryGetValue(id, out var cached)) return cached.Url;
-            var data = await Gallery.ViewerImageAsync(id, full);
-            if (disposed) return "";
-            var bytes = data.Length * 3L / 4;
+            string data = "";
+            Stream? media = null;
+            string mediaType = "";
+            long bytes;
+            if (isVideo)
+            {
+                (media, mediaType) = await Gallery.OpenMediaAsync(id);
+                bytes = media.Length;
+            }
+            else
+            {
+                data = await Gallery.ViewerImageAsync(id, full);
+                bytes = data.Length * 3L / 4;
+            }
+            if (disposed) { media?.Dispose(); return ""; }
             if (prefetch && fitCache.Values.Sum(entry => entry.Bytes) + bytes > CacheBudget) return "";
             while (cache.Count > 0 && (cache.Values.Sum(entry => entry.Bytes) + bytes > CacheBudget
                 || full && cache.Count >= 2))
@@ -120,7 +142,13 @@
                 await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)new[] { victim.Value.Url });
                 cache.Remove(victim.Key);
             }
-            var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
+            string url;
+            if (media is not null)
+            {
+                using var reference = new DotNetStreamReference(media);
+                url = await JS.InvokeAsync<string>("galleryMedia.createStreamUrl", reference, mediaType);
+            }
+            else url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
             cache[id] = (url, bytes);
             return url;
         }

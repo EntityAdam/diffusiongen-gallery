@@ -102,7 +102,7 @@ internal sealed class TestVault : IDisposable
     public VaultSession Session { get; } = new();
     public GalleryService Service { get; }
 
-    public TestVault()
+    public TestVault(VideoTools? video = null)
     {
         Configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -110,7 +110,7 @@ internal sealed class TestVault : IDisposable
         }).Build();
         Vault = new(Configuration);
         Store = new(Vault);
-        Service = new(Store, Vault, Session);
+        Service = new(Store, Vault, Session, video);
     }
 
     public async Task InitializeAsync()

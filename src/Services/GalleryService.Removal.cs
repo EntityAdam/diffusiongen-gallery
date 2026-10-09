@@ -69,14 +69,17 @@ public sealed partial class GalleryService
                         try
                         {
                             if (record.PngSha256.Length > 0 && Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
-                                throw new CryptographicException("Saved PNG failed verification.");
-                            using var image = Image.Load(plain);
-                            if (image.Width != record.Width || image.Height != record.Height)
-                                throw new CryptographicException("Saved PNG dimensions do not match.");
+                                throw new CryptographicException("Saved file failed verification.");
+                            if (!record.IsVideo)
+                            {
+                                using var image = Image.Load(plain);
+                                if (image.Width != record.Width || image.Height != record.Height)
+                                    throw new CryptographicException("Saved PNG dimensions do not match.");
+                            }
                             // Use the opaque ID for a safe, collision-free name; never trust imported names as paths.
                             if (!Guid.TryParseExact(record.Id, "N", out _))
                                 throw new InvalidOperationException("Invalid image identity for restoration.");
-                            var target = Path.Combine(restoreFolder, record.Id + ".png");
+                            var target = Path.Combine(restoreFolder, record.Id + (record.IsVideo ? ".mp4" : ".png"));
                             await using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                             {
                                 try

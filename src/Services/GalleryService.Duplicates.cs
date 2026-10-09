@@ -111,8 +111,9 @@ public sealed partial class GalleryService
         for (var left = 0; left < records.Count; left++)
             for (var right = left + 1; right < records.Count; right++)
             {
+                if (records[left].MediaType != records[right].MediaType) continue;
                 var exact = records[left].PngSha256.Length > 0 && records[left].PngSha256 == records[right].PngSha256;
-                if (exact || (HammingDistance(hashes[left], hashes[right]) <= threshold && SimilarShape(records[left], records[right])))
+                if (exact ||  (HammingDistance(hashes[left], hashes[right]) <= threshold && SimilarShape(records[left], records[right])))
                     parent[Root(right)] = Root(left);
             }
 

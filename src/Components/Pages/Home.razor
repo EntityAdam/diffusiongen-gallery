@@ -122,8 +122,8 @@ else
     @if (workflow == "ingest")
     {
         <section class="panel">
-            <div class="panel-header"><h3>Bring your images home.</h3><span class="pill">PNG / JPEG / WEBP</span></div>
-            <p class="muted">Copies are converted to PNG and encrypted as .dpng. Sources are retained by default. Duplicate images are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image.</p>
+            <div class="panel-header"><h3>Bring your images home.</h3><span class="pill">PNG / JPEG / WEBP / MP4</span></div>
+            <p class="muted">Images are converted to PNG and encrypted as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
                 <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
                     <label for="source">Local folder path</label>
                     <input id="source" @bind="importPath" placeholder="C:\Pictures\Diffusion" required disabled="@busy" />
@@ -318,6 +318,10 @@ else
                 <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
             </select>
             <label class="check"><input type="checkbox" @bind="filter.UnorganizedOnly" @bind:after="FilterChangedAsync" /> Without a collection only</label>
+            <label for="media-filter">Media type</label>
+            <select id="media-filter" @bind="filter.Media" @bind:after="FilterChangedAsync">
+                <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
+            </select>
             <label for="search">Search everything</label>
             <input id="search" @bind="filter.Search" @bind:event="oninput" @bind:after="FilterChangedAsync" placeholder="Prompt, name, description..." />
             <label for="tag">Tag</label>
@@ -368,6 +372,9 @@ else
                             <button type="button" class="@(density == option ? "active" : "")" aria-pressed="@(density == option ? "true" : "false")" disabled="@busy" @onclick="() => SetDensityAsync(option)">@(char.ToUpperInvariant(option[0]) + option[1..])</button>
                         }
                     </div>
+                    <select aria-label="Group images" @bind="grouping" @bind:after="FilterChangedAsync">
+                        <option value="none">No grouping</option><option value="prompt">Group by same prompt</option>
+                    </select>
                     <select aria-label="Sort images" @bind="filter.Sort" @bind:after="FilterChangedAsync">
                         <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
                     </select>
@@ -407,6 +414,7 @@ else
                         <button type="button" class="danger" disabled="@busy" @onclick="() => BulkMarkAsync(true)">Mark for deletion</button>
                         <button type="button" disabled="@busy" @onclick="() => BulkMarkAsync(false)">Unmark</button>
                         <button type="button" disabled="@busy" title="Compare the selected images against the whole library and review matches in full screen" @onclick="FindSelectedDuplicatesAsync">Find duplicates</button>
+                        <button type="button" disabled="@busy" title="Download decrypted copies of the selected images and videos as a zip file" @onclick="ExportSelectedAsync">Save copies (zip)</button>
                     </div>
                     <form class="bulk-group" @onsubmit="BulkTagAsync" @onsubmit:preventDefault>
                         <input aria-label="Tags to add to selected images" placeholder="Add tags, comma-separated" @bind="bulkTags" @bind:event="oninput" list="tags" disabled="@busy" />
@@ -437,9 +445,32 @@ else
             {
                 <p class="shortcut-hint muted">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>Del</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
                 <div class="image-grid density-@density">
+                    @{ PromptGroup? previousGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
                     {
                         var isSelected = workflow != "remove" && librarySelection.Contains(image.Id);
+                        if (grouping == "prompt" && promptGroupOf.TryGetValue(image.Id, out var group) && !ReferenceEquals(group, previousGroup))
+                        {
+                            var continued = firstOnPage && group.Images[0].Id != image.Id;
+                            previousGroup = group;
+                            <div class="prompt-group-header" @key="@("group-" + image.Id)">
+                                @if (group.Kind == PromptGroup.Shared)
+                                {
+                                    var sample = group.Images[0].Generation;
+                                    <div class="prompt-group-title">
+                                        <strong>@group.Images.Count share this prompt@(continued ? " (continued)" : "")</strong>
+                                        @if (sample is not null) { <span class="muted">@GenerationSummary(sample)</span> }
+                                        <button type="button" class="text-button" disabled="@busy" @onclick="() => ShowPromptAsync(group.Prompt)">Show only these</button>
+                                    </div>
+                                    <p class="prompt-text" title="@group.Prompt">@group.Prompt</p>
+                                }
+                                else
+                                {
+                                    <div class="prompt-group-title"><strong>@(group.Kind == PromptGroup.Unique ? "Unique prompts" : "No ComfyUI prompt found") (@group.Images.Count)@(continued ? " (continued)" : "")</strong></div>
+                                }
+                            </div>
+                        }
+                        firstOnPage = false;
                         <article class="image-card @(image.MarkedForDeletion ? "marked" : "") @(isSelected ? "selected" : "")" data-image-id="@image.Id" @key="image.Id">
                             @if (workflow != "remove")
                             {
@@ -451,6 +482,7 @@ else
                                 @if (thumbnails.TryGetValue(image.Id, out var thumbnail))
                                 { <img src="@thumbnail" alt="@image.Name" loading="lazy" draggable="false" /> }
                                 else { <div class="thumbnail-placeholder">Loading preview...</div> }
+                                @if (image.IsVideo) { <span class="video-badge" aria-label="@($"Video, {image.FormatDuration()}")">&#9654; @image.FormatDuration()</span> }
                             </button>
                             <div class="card-info"><h3 title="@image.Name">@image.Name</h3>
                                 <div class="card-meta">
@@ -510,20 +542,46 @@ else
             <section class="detail-modal panel" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
                 <div class="panel-header"><h2 id="detail-title">@selected.Name</h2><button class="icon-button" disabled="@busy" @onclick="CloseDetail" aria-label="Close image details">&times;</button></div>
                 <div class="detail-columns">
-                    <div class="preview"><img src="@preview" alt="@selected.Name" draggable="false" /></div>
+                    <div class="preview">
+                        @if (selected.IsVideo && videoUrl.Length > 0)
+                        { <video src="@videoUrl" poster="@preview" controls loop playsinline aria-label="@selected.Name"></video> }
+                        else { <img src="@preview" alt="@selected.Name" draggable="false" /> }
+                    </div>
                     <div class="detail-content">
-                        <div class="eyebrow">ENCRYPTED ORIGINAL</div>
-                        <p>@selected.Width &times; @selected.Height &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
+                        <div class="eyebrow">ENCRYPTED ORIGINAL@(selected.IsVideo ? " · MP4 VIDEO" : "")</div>
+                        <p>@selected.Width &times; @selected.Height@(selected.IsVideo ? $" · {selected.FormatDuration()}" : "") &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
                         <p class="muted">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
                         <div class="actions">
                             <button disabled="@busy" @onclick="() => OpenViewer(selected.Id)">Full screen view</button>
                             <button disabled="@busy" @onclick="() => FavoriteAsync(selected)">@(selected.Favorite ? "Remove favorite" : "Favorite")</button>
                             <button disabled="@busy" @onclick="() => MarkAsync(selected)">@(selected.MarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</button>
+                            <button disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted PNG copy, including embedded metadata")" @onclick="() => ExportAsync(selected)">Save a copy</button>
+                            @if (selected.Generation?.HasWorkflow == true || selected.Generation?.HasApiPrompt == true)
+                            {
+                                <button disabled="@busy" title="Download the embedded ComfyUI workflow as JSON" @onclick="() => ExportWorkflowAsync(selected)">Export workflow</button>
+                            }
                             @if (selected.MarkedForDeletion)
                             {
                                 <button disabled="@busy" @onclick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</button>
                             }
                         </div>
+                        @if (selected.Generation is { } generation)
+                        {
+                            <h3>ComfyUI generation</h3>
+                            <dl class="generation-info">
+                                @if (generation.Prompt.Length > 0) { <dt>Prompt</dt><dd class="prompt-text">@generation.Prompt</dd> }
+                                @if (generation.NegativePrompt.Length > 0) { <dt>Negative prompt</dt><dd class="prompt-text">@generation.NegativePrompt</dd> }
+                                @if (generation.Model.Length > 0) { <dt>@(generation.ModelKind.Length > 0 ? generation.ModelKind : "Model")</dt><dd>@generation.Model</dd> }
+                                @if (generation.Steps is int steps) { <dt>Steps</dt><dd>@steps</dd> }
+                                @if (generation.Cfg is double cfg) { <dt>CFG</dt><dd>@cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)</dd> }
+                            </dl>
+                            @if (!generation.HasApiPrompt) { <p class="muted">Only a UI workflow was embedded; export it to inspect the graph in ComfyUI.</p> }
+                            @if (generation.Prompt.Length > 0)
+                            {
+                                var count = images.Count(image => image.Prompt == generation.Prompt);
+                                <button class="text-button" disabled="@busy" @onclick="() => ShowPromptAsync(generation.Prompt)">Show all @count with this exact prompt</button>
+                            }
+                        }
                         <h3>Vision notes</h3>
                         <label for="description">Description</label><textarea id="description" rows="4" @bind="editDescription"></textarea>
                         <label for="edit-tags">Tags, comma-separated</label><input id="edit-tags" @bind="editTags" placeholder="landscape, sunset, cinematic" />
@@ -532,7 +590,7 @@ else
                         <h3>Move &amp; rename</h3>
                         <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
                             <label for="destination">Existing destination folder</label><input id="destination" @bind="destination" required />
-                            <label for="rename">Filename</label><div class="filename-input"><input id="rename" @bind="rename" required /><span>.dpng</span></div>
+                            <label for="rename">Filename</label><div class="filename-input"><input id="rename" @bind="rename" required /><span>@(selected.IsVideo ? ".dmp4" : ".dpng")</span></div>
                             <button type="submit" disabled="@busy">Move encrypted image &rarr;</button>
                         </form>
                         <small class="muted">No overwrite. The file remains encrypted. Deletion marks are reversible; permanent removal requires a separate confirmation.</small>
@@ -602,6 +660,9 @@ else
     private string secret = "", confirm = "", recoveryPhrase = "", error = "", message = "", progress = "";
     private string importPath = "", newPassphrase = "", newConfirm = "";
     private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
+    private string videoUrl = "";
+    private string grouping = "none";
+    private Dictionary<string, PromptGroup> promptGroupOf = [];
     private bool useRecovery, recoverySaved, busy, recursive;
     private string workflow = "library";
     private LibraryWorkbench? workbench;
@@ -652,6 +713,7 @@ else
         new("5\u2605", f => f.MinRating == 5, (f, on) => f.MinRating = on ? 5 : 0, all => all.Count(i => i.Rating == 5 && !i.MarkedForDeletion)),
         new("Favorites", f => f.FavoritesOnly, (f, on) => f.FavoritesOnly = on, all => all.Count(i => i.Favorite && !i.MarkedForDeletion)),
         new("Not analyzed", f => f.Analysis == "pending", (f, on) => f.Analysis = on ? "pending" : "all", all => all.Count(i => i.Description.Length == 0 && !i.MarkedForDeletion)),
+        new("Videos", f => f.Media == "video", (f, on) => f.Media = on ? "video" : "all", all => all.Count(i => i.IsVideo && !i.MarkedForDeletion)),
     ];
     private IEnumerable<string> AllCollections => images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
     private ImageRecord? ImageById(string id) => imagesById.GetValueOrDefault(id);
@@ -669,7 +731,17 @@ else
     private readonly Dictionary<string, string> thumbnails = [];
     private ImageRecord? selected;
     private bool disposed;
-    private List<ImageRecord> Filtered => filter.Apply(images).ToList();
+    private List<ImageRecord> Filtered
+    {
+        get
+        {
+            var filtered = filter.Apply(images);
+            if (grouping != "prompt") { promptGroupOf = []; return filtered.ToList(); }
+            var groups = ComfyMetadata.GroupByPrompt(filtered);
+            promptGroupOf = groups.SelectMany(group => group.Images.Select(image => (image.Id, group))).ToDictionary(item => item.Id, item => item.group);
+            return groups.SelectMany(group => group.Images).ToList();
+        }
+    }
     private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
     private IEnumerable<ImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
     private IEnumerable<string> AllTags => images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Distinct().Order();
@@ -747,7 +819,7 @@ else
         UpdateDuplicateGroups();
         settings = await Gallery.SettingsAsync();
         selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
-        if (selected is null) preview = "";
+        if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }
         removalSelection.IntersectWith(images.Where(image => image.MarkedForDeletion).Select(image => image.Id));
         librarySelection.IntersectWith(images.Select(image => image.Id));
         page = Math.Min(page, PageCount - 1);
@@ -1139,7 +1211,15 @@ else
 
     private Task OpenAsync(ImageRecord image) => RunAsync("Decrypting preview...", async () =>
     {
+        await ReleaseVideoAsync();
         var data = await Gallery.PreviewAsync(image.Id);
+        if (image.IsVideo)
+        {
+            progress = "Decrypting video...";
+            var (content, type) = await Gallery.OpenMediaAsync(image.Id);
+            using var reference = new DotNetStreamReference(content);
+            videoUrl = await JS.InvokeAsync<string>("galleryMedia.createStreamUrl", reference, type);
+        }
         selected = image;
         preview = data;
         editDescription = image.Description;
@@ -1148,7 +1228,66 @@ else
         rename = image.Name;
     });
 
-    private void CloseDetail() { selected = null; preview = editDescription = editTags = destination = rename = ""; }
+    private void CloseDetail()
+    {
+        selected = null;
+        preview = editDescription = editTags = destination = rename = "";
+        _ = ReleaseVideoAsync();
+    }
+
+    private async Task ReleaseVideoAsync()
+    {
+        if (videoUrl.Length == 0) return;
+        var url = videoUrl;
+        videoUrl = "";
+        try { await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)new[] { url }); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+    }
+
+    private static string GenerationSummary(GenerationInfo info) => string.Join(" · ", new[]
+    {
+        info.Model,
+        info.Steps is int steps ? $"{steps} steps" : "",
+        info.Cfg is double cfg ? $"CFG {cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}" : ""
+    }.Where(part => part.Length > 0));
+
+    private Task ShowPromptAsync(string prompt)
+    {
+        CloseDetail();
+        filter.Prompt = prompt;
+        return FilterChangedAsync();
+    }
+
+    private Task DownloadAsync(ExportFile file) => DownloadAsync(new MemoryStream(file.Content, writable: false), file.FileName, file.ContentType);
+
+    private async Task DownloadAsync(Stream content, string fileName, string contentType)
+    {
+        using var reference = new DotNetStreamReference(content);
+        await JS.InvokeVoidAsync("galleryMedia.download", reference, fileName, contentType);
+    }
+
+    private Task ExportAsync(ImageRecord image) => RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing PNG copy...", async () =>
+    {
+        var file = await Gallery.ExportAsync(image.Id);
+        try { await DownloadAsync(file); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(file.Content); }
+        message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the vault.";
+    });
+
+    private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
+    {
+        var file = await Gallery.WorkflowAsync(image.Id) ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
+        await DownloadAsync(file);
+        message = $"Saved the ComfyUI workflow as {file.FileName}.";
+    });
+
+    private Task ExportSelectedAsync() => RunAsync($"Packing {librarySelection.Count} decrypted copies...", async () =>
+    {
+        var file = await Gallery.ExportZipAsync(librarySelection.ToList());
+        try { await DownloadAsync(file); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(file.Content); }
+        message = $"Saved {librarySelection.Count} decrypted copies as {file.FileName}. They are no longer protected by the vault.";
+    });
 
     private void OpenViewer(string? initialId = null)
     {

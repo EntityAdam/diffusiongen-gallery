@@ -320,3 +320,17 @@ footer .brand-mark { margin-left: 7px; font-size: 16px; }
     .strip-view img, .strip-view .thumbnail-placeholder { height: 64px; }
     .duplicate-controls p { display: none; }
 }
+
+/* Video, export and ComfyUI generation metadata */
+.image-open { position: relative; }
+.video-badge { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(8, 12, 18, .78); color: #fff; font-size: .78rem; font-variant-numeric: tabular-nums; pointer-events: none; }
+.preview video { width: 100%; max-height: 78vh; background: #000; }
+.fit-window video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.original-size video { display: block; max-width: none; margin: auto; }
+.generation-info { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0 0 10px; }
+.generation-info dt { color: var(--muted, #8a94a3); font-size: .85rem; }
+.generation-info dd { margin: 0; overflow-wrap: anywhere; }
+.prompt-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9.5em; overflow: auto; }
+.prompt-group-header { grid-column: 1 / -1; padding: 10px 14px; border-left: 3px solid var(--mint, #7fe0c0); background: rgba(127, 224, 192, .06); border-radius: 6px; }
+.prompt-group-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.prompt-group-header .prompt-text { margin: 6px 0 0; max-height: 4.8em; font-size: .9rem; }

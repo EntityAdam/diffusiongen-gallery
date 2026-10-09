@@ -111,3 +111,25 @@ window.galleryViewer = {
     },
     detach: function (element) { element?.viewerCleanup?.(); }
 };
+
+// Decrypted media arrives as a .NET stream and becomes a revocable Blob URL (no plaintext server URL exists).
+window.galleryMedia = {
+    createStreamUrl: async function (streamRef, type) {
+        const buffer = await streamRef.arrayBuffer();
+        return URL.createObjectURL(new Blob([buffer], { type: type }));
+    },
+    download: async function (streamRef, fileName, type) {
+        const url = await window.galleryMedia.createStreamUrl(streamRef, type);
+        try {
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = fileName;
+            link.rel = "noopener";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } finally {
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+        }
+    }
+};

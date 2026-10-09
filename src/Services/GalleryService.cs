@@ -8,10 +8,13 @@ using SixLabors.ImageSharp.Processing;
 
 namespace Gallery.Services;
 
-public sealed partial class GalleryService(GalleryStore store, VaultStore vault, VaultSession session)
+public sealed partial class GalleryService(GalleryStore store, VaultStore vault, VaultSession session, VideoTools? video = null)
 {
     public const long MaxFileBytes = 50 * 1024 * 1024;
-    public static readonly string[] Extensions = [".png", ".jpg", ".jpeg", ".webp"];
+    public const long MaxVideoBytes = 256 * 1024 * 1024;
+    public static readonly string[] Extensions = [".png", ".jpg", ".jpeg", ".webp", ".mp4"];
+
+    public static bool IsVideoName(string name) => string.Equals(Path.GetExtension(name), ".mp4", StringComparison.OrdinalIgnoreCase);
 
     public async Task<List<ImageRecord>> ListAsync()
     {
@@ -19,7 +22,37 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         await store.Gate.WaitAsync();
         try { await BackfillFingerprintsAsync(key.Bytes); }
         finally { store.Gate.Release(); }
-        return await ListWithKeyAsync(key.Bytes);
+        var records = await ListWithKeyAsync(key.Bytes);
+        await BackfillGenerationAsync(records, key.Bytes);
+        return records;
+    }
+
+    /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
+    private async Task BackfillGenerationAsync(List<ImageRecord> records, byte[] key)
+    {
+        var stale = records.Select((record, index) => (record, index))
+            .Where(item => item.record.MetadataVersion < ComfyMetadata.Version).ToList();
+        if (stale.Count == 0) return;
+        await store.Gate.WaitAsync();
+        try
+        {
+            foreach (var (record, index) in stale)
+            {
+                try
+                {
+                    var fresh = await FindAsync(record.Id, key);
+                    fresh.Generation = ComfyMetadata.Extract(fresh.Metadata);
+                    fresh.MetadataVersion = ComfyMetadata.Version;
+                    await store.UpdateAsync(fresh.Id, EncryptRecord(fresh, key));
+                    records[index] = fresh;
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or CryptographicException)
+                {
+                    // A record removed concurrently or unreadable stays as listed; it is retried next time.
+                }
+            }
+        }
+        finally { store.Gate.Release(); }
     }
 
     private async Task<List<ImageRecord>> ListWithKeyAsync(byte[] key)
@@ -51,7 +84,12 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
     public async Task<string> ThumbnailAsync(string id)
     {
         using var key = session.Borrow();
-        var plain = VaultCrypto.Decrypt(await store.ReadThumbnailAsync(id), key.Bytes, $"thumbnail:{id}");
+        return await ThumbnailWithKeyAsync(id, key.Bytes);
+    }
+
+    private async Task<string> ThumbnailWithKeyAsync(string id, byte[] key)
+    {
+        var plain = VaultCrypto.Decrypt(await store.ReadThumbnailAsync(id), key, $"thumbnail:{id}");
         try { return "data:image/png;base64," + Convert.ToBase64String(plain); }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
@@ -60,6 +98,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
     {
         using var key = session.Borrow();
         var record = await FindAsync(id, key.Bytes);
+        if (record.IsVideo) return await ThumbnailWithKeyAsync(id, key.Bytes);
         var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key.Bytes, $"image:{id}");
         try
         {
@@ -80,6 +119,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
     {
         using var key = session.Borrow();
         var record = await FindAsync(id, key.Bytes);
+        if (record.IsVideo) return await ThumbnailWithKeyAsync(id, key.Bytes);
         var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key.Bytes, $"image:{id}");
         try
         {
@@ -111,13 +151,16 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         string sourcePath, byte[] key, bool ensureFingerprints)
     {
         if (!Extensions.Contains(Path.GetExtension(name), StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Supported images: PNG, JPEG and WebP.");
+            throw new InvalidOperationException("Supported files: PNG, JPEG, WebP and MP4.");
+        var isVideo = IsVideoName(name);
+        var limit = isVideo ? MaxVideoBytes : MaxFileBytes;
         using var original = new MemoryStream();
         var buffer = new byte[81920];
         int read;
         while ((read = await input.ReadAsync(buffer)) > 0)
         {
-            if (original.Length + read > MaxFileBytes) throw new InvalidOperationException("Image exceeds the 50 MiB limit.");
+            if (original.Length + read > limit)
+                throw new InvalidOperationException(isVideo ? "Video exceeds the 256 MiB limit." : "Image exceeds the 50 MiB limit.");
             await original.WriteAsync(buffer.AsMemory(0, read));
         }
         CryptographicOperations.ZeroMemory(buffer);
@@ -134,50 +177,9 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
                     throw new InvalidOperationException($"'{name}' is already in the gallery.");
             }
             finally { store.Gate.Release(); }
-            original.Position = 0;
-            var info = await Image.IdentifyAsync(original);
-            if ((long)info.Width * info.Height > 40_000_000 || info.Width > 16_384 || info.Height > 16_384)
-                throw new InvalidOperationException("Image exceeds the 40 megapixel / 16384 pixel dimension limit.");
-            original.Position = 0;
-            using var image = await Image.LoadAsync(original);
-            if (image.Frames.Count != 1) throw new InvalidOperationException("Animated images are not supported.");
-            var metadata = JsonSerializer.Serialize(new
-            {
-                png = image.Metadata.GetPngMetadata().TextData.Select(chunk => new { chunk.Keyword, chunk.Value }),
-                exif = image.Metadata.ExifProfile?.Values.Select(value => $"{value.Tag}: {value.GetValue()}")
-            });
-            using var png = new MemoryStream();
-            await image.SaveAsPngAsync(png, new PngEncoder { CompressionLevel = PngCompressionLevel.Level1 });
-            using var thumbnail = image.Clone(context => context.Resize(new ResizeOptions
-            {
-                Size = new Size(384, 384), Mode = ResizeMode.Max
-            }));
-            thumbnail.Metadata.ExifProfile = null;
-            thumbnail.Metadata.IccProfile = null;
-            thumbnail.Metadata.XmpProfile = null;
-            thumbnail.Metadata.GetPngMetadata().TextData.Clear();
-            using var thumb = new MemoryStream();
-            await thumbnail.SaveAsPngAsync(thumb, new PngEncoder
-            {
-                SkipMetadata = true, CompressionLevel = PngCompressionLevel.Level1
-            });
-            var record = new ImageRecord
-            {
-                Name = Path.GetFileNameWithoutExtension(name),
-                OriginalName = Path.GetFileName(name),
-                SourceFolder = sourceFolder,
-                SourcePath = sourcePath,
-                Width = image.Width, Height = image.Height,
-                OriginalBytes = original.Length,
-                Sha256 = sourceHash,
-                PngSha256 = Convert.ToHexString(SHA256.HashData(png.GetBuffer().AsSpan(0, (int)png.Length))),
-                Metadata = metadata
-            };
-            record.StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dpng");
-            var encrypted = VaultCrypto.Encrypt(png.GetBuffer().AsSpan(0, (int)png.Length), key, $"image:{record.Id}");
-            var encryptedThumb = VaultCrypto.Encrypt(thumb.GetBuffer().AsSpan(0, (int)thumb.Length), key, $"thumbnail:{record.Id}");
-            CryptographicOperations.ZeroMemory(png.GetBuffer());
-            CryptographicOperations.ZeroMemory(thumb.GetBuffer());
+            var (record, encrypted, encryptedThumb) = isVideo
+                ? await PrepareVideoAsync(bytes, name, sourceFolder, sourcePath, sourceHash, key)
+                : await PrepareImageAsync(original, name, sourceFolder, sourcePath, sourceHash, key);
             await store.Gate.WaitAsync();
             try
             {
@@ -200,6 +202,137 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             finally { store.Gate.Release(); }
         }
         finally { CryptographicOperations.ZeroMemory(bytes.Span); }
+    }
+
+    private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImageAsync(
+        MemoryStream original, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key)
+    {
+        original.Position = 0;
+        var info = await Image.IdentifyAsync(original);
+        if ((long)info.Width * info.Height > 40_000_000 || info.Width > 16_384 || info.Height > 16_384)
+            throw new InvalidOperationException("Image exceeds the 40 megapixel / 16384 pixel dimension limit.");
+        original.Position = 0;
+        using var image = await Image.LoadAsync(original);
+        if (image.Frames.Count != 1) throw new InvalidOperationException("Animated images are not supported.");
+        var metadata = JsonSerializer.Serialize(new
+        {
+            png = image.Metadata.GetPngMetadata().TextData.Select(chunk => new { chunk.Keyword, chunk.Value }),
+            exif = image.Metadata.ExifProfile?.Values.Select(value => $"{value.Tag}: {value.GetValue()}")
+        });
+        using var png = new MemoryStream();
+        await image.SaveAsPngAsync(png, new PngEncoder { CompressionLevel = PngCompressionLevel.Level1 });
+        var thumb = await CreateThumbnailAsync(image);
+        var record = new ImageRecord
+        {
+            Name = Path.GetFileNameWithoutExtension(name),
+            OriginalName = Path.GetFileName(name),
+            SourceFolder = sourceFolder,
+            SourcePath = sourcePath,
+            Width = image.Width, Height = image.Height,
+            OriginalBytes = original.Length,
+            Sha256 = sourceHash,
+            PngSha256 = Convert.ToHexString(SHA256.HashData(png.GetBuffer().AsSpan(0, (int)png.Length))),
+            Metadata = metadata,
+            Generation = ComfyMetadata.Extract(metadata),
+            MetadataVersion = ComfyMetadata.Version
+        };
+        record.StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dpng");
+        try
+        {
+            return (record,
+                VaultCrypto.Encrypt(png.GetBuffer().AsSpan(0, (int)png.Length), key, $"image:{record.Id}"),
+                VaultCrypto.Encrypt(thumb, key, $"thumbnail:{record.Id}"));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(png.GetBuffer());
+            CryptographicOperations.ZeroMemory(thumb);
+        }
+    }
+
+    /// <summary>
+    /// ffprobe/ffmpeg need a file, so the plaintext MP4 is written briefly to a randomly named temp file
+    /// that is deleted as soon as the metadata and first frame are read.
+    /// </summary>
+    private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareVideoAsync(
+        ReadOnlyMemory<byte> bytes, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key)
+    {
+        if (video is null || !video.IsAvailable) throw new InvalidOperationException(VideoTools.MissingMessage);
+        var temp = Path.Combine(Path.GetTempPath(), "gallery-" + Guid.NewGuid().ToString("N") + ".mp4");
+        VideoTools.ProbeResult probe;
+        byte[] frame;
+        try
+        {
+            await using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                await output.WriteAsync(bytes);
+            probe = await video.ProbeAsync(temp);
+            if (!probe.FormatName.Split(',').Any(format => format is "mp4" or "mov"))
+                throw new InvalidOperationException("File is not a valid MP4 video.");
+            if (probe.Width <= 0 || probe.Height <= 0) throw new InvalidOperationException("No video stream was found.");
+            if (probe.Width > 16_384 || probe.Height > 16_384)
+                throw new InvalidOperationException("Video exceeds the 16384 pixel dimension limit.");
+            frame = await video.FirstFrameAsync(temp);
+        }
+        finally
+        {
+            try { File.Delete(temp); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+        byte[] thumb;
+        try
+        {
+            using var image = Image.Load(frame);
+            thumb = await CreateThumbnailAsync(image);
+        }
+        finally { CryptographicOperations.ZeroMemory(frame); }
+        var metadata = JsonSerializer.Serialize(new
+        {
+            video = probe.Tags.Select(tag => new { Keyword = tag.Key, Value = tag.Value })
+        });
+        var record = new ImageRecord
+        {
+            Name = Path.GetFileNameWithoutExtension(name),
+            OriginalName = Path.GetFileName(name),
+            SourceFolder = sourceFolder,
+            SourcePath = sourcePath,
+            Width = probe.Width, Height = probe.Height,
+            OriginalBytes = bytes.Length,
+            Sha256 = sourceHash,
+            PngSha256 = sourceHash,
+            Metadata = metadata,
+            MediaType = "video",
+            ContentType = "video/mp4",
+            DurationSeconds = probe.DurationSeconds,
+            Generation = ComfyMetadata.Extract(metadata),
+            MetadataVersion = ComfyMetadata.Version
+        };
+        record.StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dmp4");
+        try
+        {
+            return (record, VaultCrypto.Encrypt(bytes.Span, key, $"image:{record.Id}"),
+                VaultCrypto.Encrypt(thumb, key, $"thumbnail:{record.Id}"));
+        }
+        finally { CryptographicOperations.ZeroMemory(thumb); }
+    }
+
+    private static async Task<byte[]> CreateThumbnailAsync(Image image)
+    {
+        using var thumbnail = image.Clone(context => context.Resize(new ResizeOptions
+        {
+            Size = new Size(384, 384), Mode = ResizeMode.Max
+        }));
+        thumbnail.Metadata.ExifProfile = null;
+        thumbnail.Metadata.IccProfile = null;
+        thumbnail.Metadata.XmpProfile = null;
+        thumbnail.Metadata.GetPngMetadata().TextData.Clear();
+        using var thumb = new MemoryStream();
+        await thumbnail.SaveAsPngAsync(thumb, new PngEncoder
+        {
+            SkipMetadata = true, CompressionLevel = PngCompressionLevel.Level1
+        });
+        var result = thumb.ToArray();
+        CryptographicOperations.ZeroMemory(thumb.GetBuffer());
+        return result;
     }
 
     public async Task<List<string>> ImportFolderAsync(string folder, bool recursive, Action<string>? progress = null,
@@ -305,10 +438,13 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         try
         {
             if (record.PngSha256.Length == 0 || Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
-                throw new CryptographicException("Saved image did not match the imported PNG.");
-            using var image = Image.Load(plain);
-            if (image.Width != record.Width || image.Height != record.Height)
-                throw new CryptographicException("Saved image dimensions did not match the catalog.");
+                throw new CryptographicException("Saved file did not match the imported content.");
+            if (!record.IsVideo)
+            {
+                using var image = Image.Load(plain);
+                if (image.Width != record.Width || image.Height != record.Height)
+                    throw new CryptographicException("Saved image dimensions did not match the catalog.");
+            }
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
         var thumbnail = VaultCrypto.Decrypt(await store.ReadThumbnailAsync(id), key, $"thumbnail:{id}");
@@ -361,7 +497,8 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         if (name.Length == 0 || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
             || name.EndsWith('.') || name.EndsWith(' ') || name.Contains('/') || name.Contains('\\'))
             throw new InvalidOperationException("Enter a valid filename without a path or extension.");
-        if (name.EndsWith(".dpng", StringComparison.OrdinalIgnoreCase)) name = name[..^5];
+        if (name.EndsWith(".dpng", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".dmp4", StringComparison.OrdinalIgnoreCase))
+            name = name[..^5];
         if (name.Length == 0) throw new InvalidOperationException("A filename is required.");
         folder = Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing destination folder.");
@@ -369,7 +506,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         try
         {
             var record = await FindAsync(id, key.Bytes);
-            var target = Path.Combine(folder, name + ".dpng");
+            var target = Path.Combine(folder, name + (record.IsVideo ? ".dmp4" : ".dpng"));
             if (string.Equals(record.StoredPath, target, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Choose a different name or destination.");
             var source = record.StoredPath;

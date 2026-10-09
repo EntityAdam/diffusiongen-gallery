@@ -21,6 +21,9 @@
         {
             var chips = new List<(string, Action)>();
             if (Filter.Search.Length > 0) chips.Add(($"Search: {Filter.Search}", () => Filter.Search = ""));
+            if (Filter.Prompt.Length > 0)
+                chips.Add(($"Prompt: {(Filter.Prompt.Length > 48 ? Filter.Prompt[..48] + "…" : Filter.Prompt)}", () => Filter.Prompt = ""));
+            if (Filter.Media != "all") chips.Add((Filter.Media == "video" ? "Videos only" : "Images only", () => Filter.Media = "all"));
             if (Filter.Collection.Length > 0) chips.Add(($"Collection: {Filter.Collection}", () => Filter.Collection = ""));
             if (Filter.Tag.Length > 0) chips.Add(($"Tag: {Filter.Tag}", () => Filter.Tag = ""));
             if (Filter.Folder.Length > 0) chips.Add(($"Folder: {Filter.Folder}", () => Filter.Folder = ""));
