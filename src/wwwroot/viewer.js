@@ -12,6 +12,57 @@ const preventImageDrop = event => {
 document.addEventListener("dragover", preventImageDrop, true);
 document.addEventListener("drop", preventImageDrop, true);
 
+// Keyboard curation for the focused or hovered gallery card.
+window.galleryGrid = {
+    keys: ["0", "1", "2", "3", "4", "5", "f", "delete", "x", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
+    attach: function (reference, doc) {
+        const grid = window.galleryGrid;
+        grid.detach();
+        doc = doc ?? document;
+        let hoveredId = null;
+        let queue = Promise.resolve();
+        const cardOf = target => typeof target?.closest === "function" ? target.closest(".image-card[data-image-id]") : null;
+        const columnsOf = element => {
+            const style = element && typeof window.getComputedStyle === "function" ? window.getComputedStyle(element) : null;
+            return Math.max(1, (style?.gridTemplateColumns ?? "").split(" ").filter(Boolean).length);
+        };
+        const onHover = event => { hoveredId = cardOf(event.target)?.dataset.imageId ?? null; };
+        const onKey = event => {
+            if (event.ctrlKey || event.altKey || event.metaKey || event.defaultPrevented) return;
+            const key = (event.key ?? "").toLowerCase();
+            if (!grid.keys.includes(key)) return;
+            const editing = event.target?.closest?.("input,textarea,select,[contenteditable=true]");
+            if (editing && !(editing.type === "checkbox" && cardOf(editing))) return;
+            if (doc.querySelector("[role=dialog][aria-modal=true]")) return;
+            const id = cardOf(doc.activeElement)?.dataset.imageId ?? hoveredId;
+            if (key.startsWith("arrow")) {
+                const cards = Array.from(doc.querySelectorAll(".image-card[data-image-id]"));
+                if (cards.length === 0) return;
+                const current = cards.findIndex(card => card.dataset.imageId === id);
+                const columns = columnsOf(cards[0].parentElement);
+                const step = { arrowleft: -1, arrowright: 1, arrowup: -columns, arrowdown: columns }[key];
+                const next = cards[current < 0 ? 0 : Math.min(cards.length - 1, Math.max(0, current + step))];
+                event.preventDefault();
+                next.querySelector(".image-open")?.focus();
+                next.scrollIntoView?.({ block: "nearest" });
+                return;
+            }
+            if (key === "escape" ? doc.querySelector(".bulk-bar") === null : !id) return;
+            event.preventDefault();
+            const invocation = queue.then(() => reference.invokeMethodAsync("HandleGridKey", key, id ?? "", event.shiftKey === true));
+            queue = invocation.catch(error => console.error("Gallery shortcut failed", error));
+        };
+        doc.addEventListener("mouseover", onHover, true);
+        doc.addEventListener("keydown", onKey, true);
+        grid.detach = () => {
+            doc.removeEventListener("mouseover", onHover, true);
+            doc.removeEventListener("keydown", onKey, true);
+            grid.detach = () => { };
+        };
+    },
+    detach: function () { }
+};
+
 window.galleryViewer = {
     createImageUrl: function (data) {
         const comma = data.indexOf(",");

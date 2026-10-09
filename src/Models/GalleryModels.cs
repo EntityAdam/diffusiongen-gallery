@@ -32,6 +32,23 @@ public sealed record RemovalResult(string Id, bool Removed, string? RestoredPath
 
 public sealed record ImportProgress(int? Total, int Completed, int Imported, int Failed, string Status);
 
+public sealed record UiPreferences
+{
+    public static readonly string[] Densities = ["compact", "comfortable", "large"];
+    public string GridDensity { get; init; } = "comfortable";
+
+    public UiPreferences Normalize() =>
+        Densities.Contains(GridDensity) ? this : this with { GridDensity = "comfortable" };
+}
+
+public sealed record DuplicateGroup(string KeepId, List<string> Ids, int MaxDistance, bool Exact, long ReclaimableBytes);
+
+public sealed record DuplicateScan(List<DuplicateGroup> Groups, int ScannedCount, DateTimeOffset ScannedAt)
+{
+    public int DuplicateCount => Groups.Sum(group => group.Ids.Count - 1);
+    public long ReclaimableBytes => Groups.Sum(group => group.ReclaimableBytes);
+}
+
 public sealed record StorageOverview(
     long DatabaseBytes,
     int ImageFileCount,

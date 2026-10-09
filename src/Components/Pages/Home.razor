@@ -5,6 +5,7 @@
 @inject GalleryService Gallery
 @inject VisionService Vision
 @inject ILogger<Home> Logger
+@inject IJSRuntime JS
 
 <PageTitle>Diffusion Gen Gallery 02</PageTitle>
 
@@ -192,6 +193,67 @@ else
                 }
                 <p class="muted" data-testid="overview-updated">Last updated <time datetime="@storageOverview.UpdatedAt.ToString("O")">@storageOverview.UpdatedAt.ToLocalTime().ToString("g")</time>. Cached values are shown until you refresh.</p>
             }
+            <p class="muted duplicate-hint">
+                @if (duplicateScan is null) { <span>Duplicates have not been scanned yet.</span> }
+                else { <span>Last duplicate scan found @VisibleDuplicateGroups.Sum(group => group.Ids.Count - 1).ToString("N0") likely duplicate(s), about @StorageOverview.FormatBytes(VisibleDuplicateGroups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
+                <button type="button" class="text-button" disabled="@busy" @onclick='() => SwitchSettingsTabAsync("duplicates")'>Find duplicates &rarr;</button>
+            </p>
+        </section>
+    }
+    @if (workflow == "settings" && settingsTab == "duplicates")
+    {
+        <section class="panel duplicates" aria-labelledby="duplicates-title">
+            <div class="panel-header">
+                <h3 id="duplicates-title">Duplicate finder</h3>
+                <button type="button" class="primary" disabled="@busy" @onclick="ScanDuplicatesAsync">@(duplicateScan is null ? "Scan for duplicates" : "Scan again")</button>
+            </div>
+            <p class="muted">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the vault and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Remove marked images</em>.</p>
+            @if (busy && progress.StartsWith("Scanning")) { <p class="progress" role="status"><span class="status-dot"></span> @progress</p> }
+            @if (duplicateScan is not null)
+            {
+                var groups = VisibleDuplicateGroups;
+                var pendingMarks = groups.Sum(group => group.Ids.Count(id => id != KeeperOf(group).Id && !ImageById(id)!.MarkedForDeletion));
+                <div class="duplicate-summary">
+                    <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.Ids.Count - 1)</strong> extra copies &middot; <strong>@StorageOverview.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
+                    <span class="muted">Scanned @duplicateScan.ScannedCount.ToString("N0") images <time datetime="@duplicateScan.ScannedAt.ToString("O")">@duplicateScan.ScannedAt.ToLocalTime().ToString("g")</time></span>
+                    <div class="actions">
+                        <button type="button" disabled="@(busy || pendingMarks == 0)" @onclick="() => MarkDuplicatesAsync(groups)">Mark all extra copies (@pendingMarks)</button>
+                        <button type="button" disabled="@busy" @onclick='() => SwitchWorkflowAsync("remove")'>Go to Remove marked images</button>
+                    </div>
+                </div>
+                @if (groups.Count == 0) { <p class="muted">No likely duplicates found.</p> }
+                @foreach (var group in groups.Take(DuplicateGroupsShown))
+                {
+                    var keeper = KeeperOf(group);
+                    var groupMarks = group.Ids.Count(id => id != keeper.Id && !ImageById(id)!.MarkedForDeletion);
+                    <article class="duplicate-group" @key="group.Ids[0]">
+                        <header>
+                            <span>@(group.Exact ? "Exact copies" : $"Similar images (difference {group.MaxDistance}/64)") &middot; @StorageOverview.FormatBytes(group.ReclaimableBytes) reclaimable</span>
+                            <button type="button" disabled="@(busy || groupMarks == 0)" @onclick="() => MarkDuplicatesAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</button>
+                        </header>
+                        <div class="duplicate-items">
+                            @foreach (var id in group.Ids.OrderByDescending(id => id == keeper.Id))
+                            {
+                                var image = ImageById(id)!;
+                                <figure class="@(id == keeper.Id ? "keep" : "") @(image.MarkedForDeletion ? "marked" : "")">
+                                    @if (duplicateThumbnails.TryGetValue(id, out var thumbnail)) { <img src="@thumbnail" alt="@image.Name" draggable="false" /> }
+                                    else { <div class="thumbnail-placeholder">Preview</div> }
+                                    <figcaption>
+                                        <strong title="@image.Name">@image.Name</strong>
+                                        <span>@image.Width &times; @image.Height &middot; @StorageOverview.FormatBytes(image.OriginalBytes)@(image.Rating > 0 ? $" · {image.Rating}★" : "")@(image.Favorite ? " · Favorite" : "")</span>
+                                        @if (id == keeper.Id) { <span class="badge keep-badge">Keep</span> }
+                                        else if (image.MarkedForDeletion) { <span class="badge marked-badge">Marked</span> }
+                                    </figcaption>
+                                </figure>
+                            }
+                        </div>
+                    </article>
+                }
+                @if (groups.Count > DuplicateGroupsShown)
+                {
+                    <button type="button" disabled="@busy" @onclick="ShowMoreDuplicatesAsync">Show more groups (@(groups.Count - DuplicateGroupsShown) remaining)</button>
+                }
+            }
         </section>
     }
     @if (workflow == "settings" && settingsTab == "endpoints")
@@ -284,16 +346,33 @@ else
             </details>
         </aside>
         <section>
+            <div class="quick-filters" role="group" aria-label="Quick filters">
+                @foreach (var chip in QuickFilters)
+                {
+                    var active = chip.IsActive(filter);
+                    <button type="button" class="quick-chip @(active ? "active" : "")" aria-pressed="@(active ? "true" : "false")" disabled="@busy" @onclick="() => ToggleQuickFilterAsync(chip)">
+                        @chip.Label <span class="chip-count">@chip.Count(images)</span>
+                    </button>
+                }
+            </div>
             <ActiveFilters Filter="filter" Changed="FilterChangedAsync" Reset="ResetFilters" Disabled="busy" />
             <div class="results-bar"><span><strong>@Filtered.Count</strong> images <span class="muted">/ @images.Count in vault</span></span>
-                <select aria-label="Sort images" @bind="filter.Sort" @bind:after="FilterChangedAsync">
-                    <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
-                </select>
+                <div class="results-controls">
+                    <div class="density-control" role="group" aria-label="Thumbnail size">
+                        @foreach (var option in UiPreferences.Densities)
+                        {
+                            <button type="button" class="@(density == option ? "active" : "")" aria-pressed="@(density == option ? "true" : "false")" disabled="@busy" @onclick="() => SetDensityAsync(option)">@(char.ToUpperInvariant(option[0]) + option[1..])</button>
+                        }
+                    </div>
+                    <select aria-label="Sort images" @bind="filter.Sort" @bind:after="FilterChangedAsync">
+                        <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
+                    </select>
+                </div>
             </div>
             <div class="actions">
-                @if (workflow is "organize" or "ai")
+                @if (workflow != "remove")
                 {
-                    <button disabled="@busy" @onclick="SelectLibraryPage">Select page for organization</button>
+                    <button disabled="@busy" @onclick="SelectLibraryPage">Select page</button>
                 }
                 @if (workflow == "remove")
                 {
@@ -305,6 +384,36 @@ else
                     <button disabled="@busy" @onclick="ClearSelection">Clear selection (@(librarySelection.Count + removalSelection.Count))</button>
                 }
             </div>
+            @if (workflow != "remove" && librarySelection.Count > 0)
+            {
+                <div class="bulk-bar" role="region" aria-label="Bulk actions for selected images">
+                    <strong>@librarySelection.Count selected</strong>
+                    <div class="bulk-group" role="group" aria-label="Rate selected images">
+                        @for (var score = 1; score <= 5; score++)
+                        {
+                            var value = score;
+                            <button type="button" class="bulk-star" disabled="@busy" title="@($"Rate selected {value} stars")" aria-label="@($"Rate selected {value} out of 5 stars")" @onclick="() => BulkRateAsync(value)">@value&#9733;</button>
+                        }
+                        <button type="button" disabled="@busy" @onclick="() => BulkRateAsync(0)">Clear rating</button>
+                    </div>
+                    <div class="bulk-group">
+                        <button type="button" disabled="@busy" @onclick="() => BulkFavoriteAsync(true)">&#9733; Favorite</button>
+                        <button type="button" disabled="@busy" @onclick="() => BulkFavoriteAsync(false)">Unfavorite</button>
+                        <button type="button" disabled="@busy" @onclick="() => BulkReviewedAsync(true)">Mark reviewed</button>
+                        <button type="button" class="danger" disabled="@busy" @onclick="() => BulkMarkAsync(true)">Mark for deletion</button>
+                        <button type="button" disabled="@busy" @onclick="() => BulkMarkAsync(false)">Unmark</button>
+                    </div>
+                    <form class="bulk-group" @onsubmit="BulkTagAsync" @onsubmit:preventDefault>
+                        <input aria-label="Tags to add to selected images" placeholder="Add tags, comma-separated" @bind="bulkTags" @bind:event="oninput" list="tags" disabled="@busy" />
+                        <button type="submit" disabled="@(busy || string.IsNullOrWhiteSpace(bulkTags))">Add tags</button>
+                    </form>
+                    <form class="bulk-group" @onsubmit="BulkCollectAsync" @onsubmit:preventDefault>
+                        <input aria-label="Collection for selected images" placeholder="Collection name" @bind="bulkCollection" @bind:event="oninput" list="collections" maxlength="80" disabled="@busy" />
+                        <datalist id="collections">@foreach (var name in AllCollections) { <option value="@name"></option> }</datalist>
+                        <button type="submit" disabled="@(busy || string.IsNullOrWhiteSpace(bulkCollection))">Add to collection</button>
+                    </form>
+                </div>
+            }
             @if (removalResults.Count > 0)
             {
                 <details open><summary>Removal results: @removalResults.Count(result => result.Removed) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
@@ -321,13 +430,17 @@ else
             }
             else
             {
-                <div class="image-grid">
+                <p class="shortcut-hint muted">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>Del</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
+                <div class="image-grid density-@density">
                     @foreach (var image in PageImages)
                     {
-                        <article class="image-card @(image.MarkedForDeletion ? "marked" : "")" @key="image.Id">
-                            @if (workflow is "organize" or "ai")
+                        var isSelected = workflow != "remove" && librarySelection.Contains(image.Id);
+                        <article class="image-card @(image.MarkedForDeletion ? "marked" : "") @(isSelected ? "selected" : "")" data-image-id="@image.Id" @key="image.Id">
+                            @if (workflow != "remove")
                             {
-                                <label class="check library-select"><input type="checkbox" checked="@librarySelection.Contains(image.Id)" disabled="@busy" @onchange="args => ToggleLibrarySelection(image.Id, args.Value is true)" /> Select image</label>
+                                <button type="button" class="card-select" disabled="@busy" aria-pressed="@(isSelected ? "true" : "false")"
+                                        aria-label="@($"Select {image.Name}")" title="Select (Shift+click selects a range)"
+                                        @onclick="args => SelectCard(image.Id, args.ShiftKey)"><span aria-hidden="true">&#10003;</span></button>
                             }
                             <button class="image-open" disabled="@busy" @onclick="() => OpenAsync(image)">
                                 @if (thumbnails.TryGetValue(image.Id, out var thumbnail))
@@ -494,7 +607,7 @@ else
     ];
     private static readonly (string Id, string Name)[] SettingsTabs =
     [
-        ("overview", "Overview"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
+        ("overview", "Overview"), ("duplicates", "Duplicates"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
@@ -513,7 +626,30 @@ else
     private string viewerInitialId = "";
     private bool reviewMode;
     private int page;
-    private const int PageSize = 24;
+    private int PageSize => density switch { "compact" => 48, "large" => 12, _ => 24 };
+    private string density = "comfortable";
+    private string bulkTags = "", bulkCollection = "";
+    private string? selectionAnchor;
+    private DuplicateScan? duplicateScan;
+    private readonly Dictionary<string, string> duplicateThumbnails = [];
+    private int DuplicateGroupsShown = 20;
+    private DotNetObjectReference<Home>? gridReference;
+    private sealed record QuickFilter(string Label, Func<GalleryFilter, bool> IsActive, Action<GalleryFilter, bool> Toggle, Func<IEnumerable<ImageRecord>, int> Count);
+    private static readonly QuickFilter[] QuickFilters =
+    [
+        new("Unreviewed", f => f.Review == "pending", (f, on) => f.Review = on ? "pending" : "all", all => all.Count(i => !i.Reviewed && !i.MarkedForDeletion)),
+        new("5\u2605", f => f.MinRating == 5, (f, on) => f.MinRating = on ? 5 : 0, all => all.Count(i => i.Rating == 5 && !i.MarkedForDeletion)),
+        new("Favorites", f => f.FavoritesOnly, (f, on) => f.FavoritesOnly = on, all => all.Count(i => i.Favorite && !i.MarkedForDeletion)),
+        new("Not analyzed", f => f.Analysis == "pending", (f, on) => f.Analysis = on ? "pending" : "all", all => all.Count(i => i.Description.Length == 0 && !i.MarkedForDeletion)),
+    ];
+    private IEnumerable<string> AllCollections => images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
+    private ImageRecord? ImageById(string id) => imagesById.GetValueOrDefault(id);
+    private Dictionary<string, ImageRecord> imagesById = [];
+    private List<DuplicateGroup> VisibleDuplicateGroups = [];
+    private void UpdateDuplicateGroups() => VisibleDuplicateGroups = duplicateScan is null ? [] : duplicateScan.Groups
+        .Select(group => group with { Ids = group.Ids.Where(imagesById.ContainsKey).ToList() })
+        .Where(group => group.Ids.Count > 1).ToList();
+    private ImageRecord KeeperOf(DuplicateGroup group) => GalleryService.PickKeeper(group.Ids.Select(id => ImageById(id)!));
     private GalleryFilter filter = new();
     private VisionSettings settings = new();
     private List<ImageRecord> images = [];
@@ -566,6 +702,7 @@ else
                 Session.Unlock(await Vault.UnlockAsync(secret, useRecovery));
                 workflow = useRecovery ? "settings" : "library";
                 settingsTab = useRecovery ? "security" : "overview";
+                density = (await Gallery.LoadPreferencesAsync()).GridDensity;
                 await ReloadAsync();
             }
             else
@@ -587,6 +724,7 @@ else
     private Task FinishSetupAsync() => RunAsync("Opening gallery...", async () =>
     {
         if (!recoverySaved) throw new InvalidOperationException("Save your recovery words first.");
+        density = (await Gallery.LoadPreferencesAsync()).GridDensity;
         await ReloadAsync();
         recoveryPhrase = "";
     });
@@ -594,6 +732,8 @@ else
     private async Task ReloadAsync()
     {
         images = await Gallery.ListAsync();
+        imagesById = images.ToDictionary(image => image.Id);
+        UpdateDuplicateGroups();
         settings = await Gallery.SettingsAsync();
         selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
         if (selected is null) preview = "";
@@ -607,6 +747,12 @@ else
     {
         thumbnails.Clear();
         foreach (var image in PageImages) thumbnails[image.Id] = await Gallery.ThumbnailAsync(image.Id);
+    }
+
+    private async Task LoadMissingThumbnailsAsync()
+    {
+        foreach (var image in PageImages)
+            if (!thumbnails.ContainsKey(image.Id)) thumbnails[image.Id] = await Gallery.ThumbnailAsync(image.Id);
     }
 
     private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
@@ -645,6 +791,7 @@ else
                 page = 0;
                 await LoadThumbnailsAsync();
                 storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync();
+                await LoadCachedDuplicatesAsync();
             });
         }
         return FilterChangedAsync();
@@ -652,9 +799,61 @@ else
     private Task SwitchSettingsTabAsync(string value)
     {
         settingsTab = value;
+        if (value == "duplicates") return RunAsync("Loading duplicates...", async () =>
+        {
+            await LoadCachedDuplicatesAsync();
+            await LoadDuplicateThumbnailsAsync();
+        });
         return value == "overview" && storageOverview is null
             ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync())
             : Task.CompletedTask;
+    }
+    private async Task LoadCachedDuplicatesAsync()
+    {
+        duplicateScan ??= await Gallery.CachedDuplicateScanAsync();
+        UpdateDuplicateGroups();
+    }
+    private async Task LoadDuplicateThumbnailsAsync()
+    {
+        foreach (var id in VisibleDuplicateGroups.Take(DuplicateGroupsShown).SelectMany(group => group.Ids))
+            if (!duplicateThumbnails.ContainsKey(id)) duplicateThumbnails[id] = await Gallery.ThumbnailAsync(id);
+    }
+    private Task ShowMoreDuplicatesAsync() => RunAsync("Loading previews...", async () =>
+    {
+        DuplicateGroupsShown += 20;
+        await LoadDuplicateThumbnailsAsync();
+    });
+    private Task ScanDuplicatesAsync() => RunAsync("Scanning for duplicates...", async () =>
+    {
+        var reporter = new InlineProgress<(int Completed, int Total)>(update => InvokeAsync(() =>
+        {
+            if (disposed || !busy) return;
+            progress = $"Scanning for duplicates... {update.Completed:N0} / {update.Total:N0} images fingerprinted";
+            StateHasChanged();
+        }));
+        duplicateScan = await Gallery.ScanDuplicatesAsync(reporter);
+        if (disposed) return;
+        duplicateThumbnails.Clear();
+        DuplicateGroupsShown = 20;
+        await ReloadAsync();
+        await LoadDuplicateThumbnailsAsync();
+        message = $"Duplicate scan complete: {VisibleDuplicateGroups.Count} group(s) found.";
+    });
+    private Task MarkDuplicatesAsync(IReadOnlyCollection<DuplicateGroup> groups) => RunAsync("Marking extra copies...", async () =>
+    {
+        var ids = groups.SelectMany(group =>
+        {
+            var keeper = KeeperOf(group);
+            return group.Ids.Where(id => id != keeper.Id);
+        }).ToList();
+        var failed = await Gallery.UpdateManyAsync(ids, image => image.MarkedForDeletion = true);
+        await ReloadAsync();
+        message = $"Marked {ids.Count - failed} extra cop{(ids.Count - failed == 1 ? "y" : "ies")} for deletion. Review and remove them from Remove marked images."
+            + (failed > 0 ? $" {failed} could not be updated." : "");
+    });
+    private sealed class InlineProgress<T>(Func<T, Task> report) : IProgress<T>
+    {
+        public void Report(T value) => _ = report(value);
     }
     private Task RefreshStorageOverviewAsync() => RunAsync("Measuring gallery storage...", async () =>
     {
@@ -665,7 +864,7 @@ else
     private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.Running ? "ai" : libraryJob.Workflow);
     private void DismissLibraryJob() => libraryJob = new(false, "", "", 0, false);
     private Task StopLibraryJobAsync() => workbench?.StopAnalysisAsync() ?? Task.CompletedTask;
-    private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); }
+    private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); selectionAnchor = null; }
     private void ViewerImageChanged(ImageRecord updated)
     {
         var image = images.Single(item => item.Id == updated.Id);
@@ -678,6 +877,114 @@ else
     private void ToggleLibrarySelection(string id, bool value)
     {
         if (value) librarySelection.Add(id); else librarySelection.Remove(id);
+    }
+    private void SelectCard(string id, bool range)
+    {
+        var ordered = Filtered.Select(image => image.Id).ToList();
+        var anchor = selectionAnchor is null ? -1 : ordered.IndexOf(selectionAnchor);
+        var target = ordered.IndexOf(id);
+        if (range && anchor >= 0 && target >= 0)
+        {
+            var (from, to) = anchor <= target ? (anchor, target) : (target, anchor);
+            librarySelection.UnionWith(ordered.Skip(from).Take(to - from + 1));
+        }
+        else ToggleLibrarySelection(id, !librarySelection.Contains(id));
+        selectionAnchor = id;
+    }
+
+    private Task ToggleQuickFilterAsync(QuickFilter chip)
+    {
+        chip.Toggle(filter, !chip.IsActive(filter));
+        return FilterChangedAsync();
+    }
+
+    private Task SetDensityAsync(string value) => RunAsync("Saving thumbnail size...", async () =>
+    {
+        if (density == value) return;
+        var first = page * PageSize;
+        density = value;
+        page = Math.Min(first / PageSize, PageCount - 1);
+        await LoadThumbnailsAsync();
+        await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = value });
+    });
+
+    private async Task CurateAsync(IReadOnlyCollection<string> ids, Action<ImageRecord> update, string done)
+    {
+        if (ids.Count == 0) return;
+        var failed = await Gallery.UpdateManyAsync(ids, update);
+        if (failed > 0) await ReloadAsync();
+        else
+        {
+            foreach (var id in ids) if (imagesById.TryGetValue(id, out var image)) update(image);
+            page = Math.Min(page, PageCount - 1);
+            await LoadMissingThumbnailsAsync();
+        }
+        message = failed > 0 ? $"{done} {failed} image(s) could not be updated." : done;
+    }
+
+    private Task BulkAsync(string status, Action<ImageRecord> update, string done) =>
+        RunAsync(status, () => CurateAsync(librarySelection.ToList(), update, $"{done} ({librarySelection.Count} images)."));
+    private Task BulkRateAsync(int value) => BulkAsync("Rating selected images...", image => LibraryService.SetCuration(image, value, null), value == 0 ? "Ratings cleared" : $"Rated {value} stars");
+    private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image.Favorite = value, value ? "Added to favorites" : "Removed from favorites");
+    private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image.Reviewed = value, "Marked reviewed");
+    private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => image.MarkedForDeletion = value, value ? "Marked for deletion" : "Deletion marks cleared");
+    private Task BulkTagAsync()
+    {
+        var tags = bulkTags.Trim();
+        if (tags.Length == 0) return Task.CompletedTask;
+        bulkTags = "";
+        return BulkAsync("Adding tags...", image => image.Tags = LibraryService.MergeTags(image.Tags, tags), "Tags added");
+    }
+    private Task BulkCollectAsync()
+    {
+        var name = bulkCollection.Trim();
+        if (name.Length is 0 or > 80) return Task.CompletedTask;
+        bulkCollection = "";
+        return BulkAsync("Adding to collection...", image =>
+        {
+            if (!image.Collections.Contains(name, StringComparer.OrdinalIgnoreCase)) image.Collections.Add(name);
+        }, $"Added to {name}");
+    }
+
+    [JSInvokable]
+    public async Task HandleGridKey(string key, string id, bool shift)
+    {
+        if (!Session.IsUnlocked || busy || !ShowsGallery || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0) return;
+        if (key == "escape") { ClearSelection(); selectionAnchor = null; StateHasChanged(); return; }
+        if (!imagesById.TryGetValue(id, out var image)) return;
+        if (key == "x")
+        {
+            if (workflow == "remove") return;
+            SelectCard(id, shift);
+            StateHasChanged();
+            return;
+        }
+        Action<ImageRecord>? update = key switch
+        {
+            "0" or "1" or "2" or "3" or "4" or "5" => current => LibraryService.SetCuration(current, key[0] - '0', null),
+            "f" when !image.Favorite => current => current.Favorite = true,
+            "f" => current => current.Favorite = false,
+            "delete" when !image.MarkedForDeletion => current => current.MarkedForDeletion = true,
+            "delete" => current => current.MarkedForDeletion = false,
+            _ => null
+        };
+        if (update is null) return;
+        var done = key switch
+        {
+            "f" => image.Favorite ? "Removed from favorites." : "Added to favorites.",
+            "delete" => image.MarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.",
+            "0" => "Rating cleared.",
+            _ => $"Rated {key} stars."
+        };
+        await RunAsync("Saving...", () => CurateAsync([id], update, $"{image.Name}: {done}"));
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        gridReference = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("galleryGrid.attach", gridReference);
     }
     private Task PreviousAsync() => RunAsync("Loading previews...", async () => { page--; await LoadThumbnailsAsync(); });
     private Task NextAsync() => RunAsync("Loading previews...", async () => { page++; await LoadThumbnailsAsync(); });
@@ -898,7 +1205,20 @@ else
         librarySelection.Clear();
         viewerImages.Clear();
         viewerInitialId = "";
+        imagesById = [];
+        density = "comfortable";
+        bulkTags = bulkCollection = "";
+        selectionAnchor = null;
+        duplicateScan = null;
+        duplicateThumbnails.Clear();
+        VisibleDuplicateGroups = [];
+        DuplicateGroupsShown = 20;
     }
 
-    public void Dispose() { disposed = true; Lock(); }
+    public void Dispose()
+    {
+        disposed = true;
+        Lock();
+        gridReference?.Dispose();
+    }
 }

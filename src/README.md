@@ -51,14 +51,26 @@ only to loopback. Gallery02 does not import or share src03's configuration.
 
 The left navigation separates Library, Guided review, Organize, Explore & saved
 views, Local intelligence, Remove marked images, Ingest images and Settings.
-**Settings** opens on a **Gallery overview** with tabs for **LLM endpoints** and
+**Settings** opens on a **Gallery overview** with tabs for **Duplicates**, **LLM endpoints** and
 **Vault security**. The overview shows database size (`gallery.db` plus its WAL/SHM
 files, which include encrypted thumbnails), total file count (catalogued encrypted
 image files plus vault header/database files) and total size on disk, auto-scaled
 from B through PB. Measurements are cached encrypted in the vault with a "Last
 updated" time and are only recalculated when you select **Refresh** (or the first
 time no cached overview exists). Catalogued images missing from disk are reported
-and excluded from the totals.
+and excluded from the totals. The overview also summarizes the last duplicate scan.
+
+**Settings > Duplicates** finds likely duplicates, including resized or
+re-encoded copies that import's exact-byte check cannot catch. Each image gets a
+64-bit perceptual difference hash computed from its decrypted thumbnail;
+images within 6 of 64 bits and with a similar aspect ratio (or identical PNG
+pixels) are grouped. Fingerprints and the last scan result are cached encrypted
+in the vault, and rescans only fingerprint new or changed images. Each group shows
+thumbnails, sizes and approximate reclaimable space, and recommends a keeper:
+unmarked first, then highest rating, favorite, most pixels, largest original and
+oldest import. **Mark other(s) for deletion** (per group) or **Mark all extra
+copies** only sets reversible deletion marks; permanently remove them from
+**Remove marked images**.
 Only tools for the current workflow are shown. Image workflows reuse the same
 grid, sort and collapsible **Filter images** controls. Filters carry across
 workflows; removal temporarily resets filters to show all marked images, and leaving
@@ -67,11 +79,32 @@ above results even when filters are collapsed. Remove individual chips or clear 
 filters (the removal workflow keeps its marked-image default). The Library dashboard opens queues for all images, pending review,
 favorites and images without a collection.
 
-Organization selection is separate from deletion selection, and checkboxes appear
-only in the corresponding workflows. Select a page or individual cards; selections
-remain across pages until cleared. **Clear selection** clears both sets and unchecks
-their cards. Switching workflows also clears selections to avoid accidental reuse.
-Virtual collections do not change file locations.
+**Quick filters** above the grid toggle the most common views with one click:
+**Unreviewed**, **5★**, **Favorites** and **Not analyzed**, each with a live count.
+They combine with each other and with the full filter panel, and appear in the
+active-filter chips like any other filter.
+
+**Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
+Compact shows 48 smaller cards per page with condensed details, Comfortable shows
+24 and Large shows 12. The choice is saved encrypted per vault and restored on
+unlock.
+
+Every gallery workflow except removal has a select button on each card. Click it to
+toggle an image, or Shift+click to select the range from the last selected image
+(across pages, in the current sort order). **Select page** adds the current page.
+Selections remain across pages until cleared, and switching workflows clears them.
+While images are selected, a floating **bulk action bar** rates (1-5★ or clear),
+favorites/unfavorites, marks reviewed, marks/unmarks deletion, merges tags, and
+adds the selection to a collection. Removal keeps its own separate deletion
+selection. Virtual collections do not change file locations.
+
+**Keyboard curation** works on the focused card, or the card under the pointer:
+`1`-`5` rate, `0` clears the rating, `F` toggles favorite, `Delete` toggles the
+deletion mark, `X` toggles selection (`Shift+X` selects a range), `Esc` clears the
+selection and the arrow keys move focus between cards. Shortcuts are ignored while
+typing in a field or while a dialog or the full screen viewer is open. When a marked
+image is hidden by the active filter, the next image moves under the pointer, so
+repeated `Delete` presses cull images in sequence.
 
 Gallery cards retain filenames and pixel dimensions. A shield icon indicates
 encrypted storage. Five interactive stars show each rating: click a star to save
@@ -298,12 +331,14 @@ Use neutral names if those are sensitive.
 
 ```powershell
 dotnet test .\src\gallery02\tests\Gallery.Tests\Gallery.Tests.csproj
-node --test .\src\tests\viewer-drag.test.cjs
+node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
 
 Tests cover credential/recovery rotation, authentication/tampering, encrypted
 image/catalog/thumbnail storage, duplicates, folder ingestion, move/rename
 safety, filtering, local endpoint restrictions, and vision request handling.
+Curation tests cover perceptual near-duplicate grouping, keeper choice, encrypted
+fingerprint/scan/preference caches, bulk updates and grid keyboard shortcuts.
 Storage tests also cover sharded paths, same-name imports, vault-specific
 fingerprints, legacy-schema backfill and rollback, indexed query plans,
 concurrent duplicate imports, and SQLite uniqueness enforcement.

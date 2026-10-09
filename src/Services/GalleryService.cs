@@ -329,6 +329,31 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         finally { store.Gate.Release(); }
     }
 
+    public async Task<int> UpdateManyAsync(IEnumerable<string> ids, Action<ImageRecord> update)
+    {
+        using var key = session.Borrow();
+        var failed = 0;
+        await store.Gate.WaitAsync();
+        try
+        {
+            foreach (var id in ids.Distinct())
+            {
+                try
+                {
+                    var record = await FindAsync(id, key.Bytes);
+                    update(record);
+                    await store.UpdateAsync(id, EncryptRecord(record, key.Bytes));
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or IOException)
+                {
+                    failed++;
+                }
+            }
+        }
+        finally { store.Gate.Release(); }
+        return failed;
+    }
+
     public async Task MoveAsync(string id, string folder, string name)
     {
         using var key = session.Borrow();
