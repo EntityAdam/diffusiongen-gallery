@@ -420,7 +420,7 @@ else
                             </div>
                         }
                         firstOnPage = false;
-                        <GalleryImageCard @key="image.Id" Image="image" Thumbnail="thumbnails.GetValueOrDefault(image.Id)"
+                        <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)"
                                           Busy="busy" Selected="isSelected" ShowSelection="@(workflow != "remove")"
                                           RemovalMode="@(workflow == "remove")" RemovalSelected="@removalSelection.Contains(image.Id)"
                                           Select="args => SelectCard(image.Id, args.ShiftKey)" Open="() => OpenAsync(image)"
