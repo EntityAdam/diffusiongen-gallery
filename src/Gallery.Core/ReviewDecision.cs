@@ -1,6 +1,6 @@
 using Gallery.Models;
 
-namespace Gallery.Services;
+namespace Gallery.Core;
 
 public enum ReviewAction { Keep, Favorite, MarkDeletion, Rate }
 

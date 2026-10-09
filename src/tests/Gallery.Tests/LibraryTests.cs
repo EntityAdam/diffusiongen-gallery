@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Gallery.Core;
 using Gallery.Models;
 using Gallery.Services;
 
@@ -15,7 +16,7 @@ public sealed class LibraryTests
     public void BulkCurationOnlyChangesExplicitFields(int? rating, bool? reviewed, int expectedRating, bool expectedReviewed)
     {
         var image = new ImageRecord { Rating = 4, Reviewed = true, Favorite = true, MarkedForDeletion = true };
-        LibraryService.SetCuration(image, rating, reviewed);
+        LibraryRules.SetCuration(image, rating, reviewed);
         Assert.Equal(expectedRating, image.Rating);
         Assert.Equal(expectedReviewed, image.Reviewed);
         Assert.True(image.Favorite);
@@ -26,7 +27,7 @@ public sealed class LibraryTests
     public void InvalidBulkRatingDoesNotChangeReviewStatus()
     {
         var image = new ImageRecord { Rating = 4, Reviewed = true };
-        Assert.Throws<InvalidOperationException>(() => LibraryService.SetCuration(image, 6, false));
+        Assert.Throws<InvalidOperationException>(() => LibraryRules.SetCuration(image, 6, false));
         Assert.Equal(4, image.Rating);
         Assert.True(image.Reviewed);
     }
@@ -39,9 +40,9 @@ public sealed class LibraryTests
         var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
         await fixture.Service.UpdateAsync(image.Id, current =>
         {
-            LibraryService.SetOrganization(current, 4, true, "Private collection");
-            LibraryService.SetOrganization(current, 4, true, "private collection");
-            current.Tags = LibraryService.MergeTags("green, landscape", "GREEN, cinema");
+            LibraryRules.SetOrganization(current, 4, true, "Private collection");
+            LibraryRules.SetOrganization(current, 4, true, "private collection");
+            current.Tags = LibraryRules.MergeTags("green, landscape", "GREEN, cinema");
         });
         var stored = Assert.Single(await fixture.Service.ListAsync());
         Assert.Equal(4, stored.Rating);
@@ -50,7 +51,7 @@ public sealed class LibraryTests
         Assert.Equal("green, landscape, cinema", stored.Tags);
         Assert.Equal(image.StoredPath, stored.StoredPath);
         Assert.DoesNotContain("Private collection", Encoding.UTF8.GetString(await fixture.Store.ReadRecordAsync(image.Id)));
-        Assert.Throws<InvalidOperationException>(() => LibraryService.SetOrganization(stored, 6, true, null));
+        Assert.Throws<InvalidOperationException>(() => LibraryRules.SetOrganization(stored, 6, true, null));
     }
 
     [Fact]
@@ -106,6 +107,13 @@ public sealed class LibraryTests
         Assert.Equal(third, Assert.Single(filter.Apply([first, second, third])));
         filter = new() { Sort = "rating" };
         Assert.Equal(second, filter.Apply([first, second, third]).First());
+    }
+
+    [Fact]
+    public void FolderFilterHandlesStoredPathsWithoutAParentDirectory()
+    {
+        var image = new ImageRecord { StoredPath = "image.dpng" };
+        Assert.Empty(new GalleryFilter { Folder = "source" }.Apply([image]));
     }
 
     [Fact]

@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Gallery.Models;
 
-namespace Gallery.Services;
+namespace Gallery.Core;
 
 /// <summary>
 /// Finds ComfyUI documents embedded in imported files and extracts generation parameters.

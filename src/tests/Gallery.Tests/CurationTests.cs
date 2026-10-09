@@ -1,4 +1,5 @@
 using System.Text;
+using Gallery.Core;
 using Gallery.Models;
 using Gallery.Services;
 using SixLabors.ImageSharp;
@@ -27,11 +28,11 @@ public sealed class CurationTests
     [Fact]
     public void DifferenceHashMatchesResizedCopiesAndSeparatesDifferentImages()
     {
-        var original = GalleryService.DifferenceHash(MakePattern(320, 240, 0));
-        var resized = GalleryService.DifferenceHash(MakePattern(160, 120, 0));
-        var different = GalleryService.DifferenceHash(MakePattern(320, 240, 1));
-        Assert.True(GalleryService.HammingDistance(original, resized) <= GalleryService.DuplicateThreshold);
-        Assert.True(GalleryService.HammingDistance(original, different) > GalleryService.DuplicateThreshold);
+        var original = DuplicateRules.DifferenceHash(MakePattern(320, 240, 0));
+        var resized = DuplicateRules.DifferenceHash(MakePattern(160, 120, 0));
+        var different = DuplicateRules.DifferenceHash(MakePattern(320, 240, 1));
+        Assert.True(DuplicateRules.HammingDistance(original, resized) <= DuplicateRules.Threshold);
+        Assert.True(DuplicateRules.HammingDistance(original, different) > DuplicateRules.Threshold);
     }
 
     [Fact]
@@ -77,15 +78,15 @@ public sealed class CurationTests
         var now = DateTimeOffset.UtcNow;
         var bigger = new ImageRecord { Id = "big", Width = 400, Height = 300, ImportedAt = now };
         var smaller = new ImageRecord { Id = "small", Width = 200, Height = 150, ImportedAt = now.AddDays(-1) };
-        Assert.Equal("big", GalleryService.PickKeeper([smaller, bigger]).Id);
+        Assert.Equal("big", DuplicateRules.PickKeeper([smaller, bigger]).Id);
         smaller.Favorite = true;
-        Assert.Equal("small", GalleryService.PickKeeper([smaller, bigger]).Id);
+        Assert.Equal("small", DuplicateRules.PickKeeper([smaller, bigger]).Id);
         bigger.Rating = 3;
-        Assert.Equal("big", GalleryService.PickKeeper([smaller, bigger]).Id);
+        Assert.Equal("big", DuplicateRules.PickKeeper([smaller, bigger]).Id);
         bigger.MarkedForDeletion = true;
-        Assert.Equal("small", GalleryService.PickKeeper([smaller, bigger]).Id);
+        Assert.Equal("small", DuplicateRules.PickKeeper([smaller, bigger]).Id);
         var twin = new ImageRecord { Id = "twin", Width = 200, Height = 150, Favorite = true, ImportedAt = now.AddDays(-2) };
-        Assert.Equal("twin", GalleryService.PickKeeper([smaller, twin]).Id);
+        Assert.Equal("twin", DuplicateRules.PickKeeper([smaller, twin]).Id);
     }
 
     [Fact]
@@ -93,9 +94,10 @@ public sealed class CurationTests
     {
         var wide = new ImageRecord { Id = "wide", Width = 400, Height = 100, PngSha256 = "A" };
         var square = new ImageRecord { Id = "square", Width = 100, Height = 100, PngSha256 = "B" };
-        Assert.Empty(GalleryService.GroupDuplicates([wide, square], _ => 42UL, GalleryService.DuplicateThreshold));
+        Assert.Empty(DuplicateRules.GroupDuplicates([wide, square], _ => 42UL, _ => null));
         var copy = new ImageRecord { Id = "copy", Width = 100, Height = 100, PngSha256 = "A" };
-        var exact = Assert.Single(GalleryService.GroupDuplicates([wide, copy], image => image.Id == "wide" ? 0UL : ulong.MaxValue, 0));
+        var exact = Assert.Single(DuplicateRules.GroupDuplicates([wide, copy],
+            image => image.Id == "wide" ? 0UL : ulong.MaxValue, _ => null, threshold: 0));
         Assert.True(exact.Exact);
     }
 
@@ -123,7 +125,7 @@ public sealed class CurationTests
         var failed = await fixture.Service.UpdateManyAsync([first.Id, second.Id, "missing", first.Id], image =>
         {
             image.Favorite = true;
-            image.Tags = LibraryService.MergeTags(image.Tags, "batch");
+            image.Tags = LibraryRules.MergeTags(image.Tags, "batch");
         });
 
         Assert.Equal(1, failed);
@@ -137,11 +139,11 @@ public sealed class CurationTests
         var big = new ImageRecord { Id = "big", Width = 400, Height = 300 };
         var small = new ImageRecord { Id = "small", Width = 200, Height = 150 };
         var tiny = new ImageRecord { Id = "tiny", Width = 100, Height = 75 };
-        Assert.Equal(["big"], GalleryService.InitialKeepers([small, big, tiny]));
+        Assert.Equal(["big"], DuplicateRules.InitialKeepers([small, big, tiny]));
         tiny.MarkedForDeletion = true;
-        Assert.Equal(["big", "small"], GalleryService.InitialKeepers([big, small, tiny]).Order());
+        Assert.Equal(["big", "small"], DuplicateRules.InitialKeepers([big, small, tiny]).Order());
         big.MarkedForDeletion = small.MarkedForDeletion = true;
-        Assert.Equal(["big"], GalleryService.InitialKeepers([big, small, tiny]));
+        Assert.Equal(["big"], DuplicateRules.InitialKeepers([big, small, tiny]));
     }
 
     [Fact]

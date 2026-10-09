@@ -41,7 +41,7 @@ public sealed record ImageRecord
     }
 }
 
-/// <summary>Generation parameters recovered from an embedded ComfyUI API prompt.</summary>
+/// <summary>Generation parameters extracted from an embedded ComfyUI API prompt.</summary>
 public sealed record GenerationInfo
 {
     public string Prompt { get; init; } = "";
@@ -137,6 +137,8 @@ public sealed class GalleryFilter
     /// <summary>Exact positive prompt match; empty means any prompt.</summary>
     public string Prompt { get; set; } = "";
 
+    public GalleryFilter Clone() => (GalleryFilter)MemberwiseClone();
+
     public IEnumerable<ImageRecord> Apply(IEnumerable<ImageRecord> images)
     {
         var result = images.Where(image =>
@@ -145,7 +147,7 @@ public sealed class GalleryFilter
             (Search.Length == 0 || $"{image.Name} {image.OriginalName} {image.Metadata} {image.Description} {image.Tags}"
                 .Contains(Search, StringComparison.OrdinalIgnoreCase))
             && (Folder.Length == 0 || image.SourceFolder.Contains(Folder, StringComparison.OrdinalIgnoreCase)
-                || Path.GetDirectoryName(image.StoredPath)!.Contains(Folder, StringComparison.OrdinalIgnoreCase))
+                || Path.GetDirectoryName(image.StoredPath)?.Contains(Folder, StringComparison.OrdinalIgnoreCase) == true)
             && (Tag.Length == 0 || image.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Contains(Tag, StringComparer.OrdinalIgnoreCase))
             && (Model.Length == 0 || image.AnalysisModel.Contains(Model, StringComparison.OrdinalIgnoreCase))

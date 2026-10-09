@@ -32,7 +32,7 @@
                 <button disabled="@working" @onclick="SaveViewAsync">Save view</button>
                 @foreach (var view in views)
                 {
-                    <div class="saved-view"><button disabled="@working" @onclick="() => FilterChanged.InvokeAsync(LibraryService.Clone(view.Filter))">@view.Name</button><button disabled="@working" aria-label="@($"Delete saved view {view.Name}")" @onclick="() => DeleteViewAsync(view.Name)">&times;</button></div>
+                    <div class="saved-view"><button disabled="@working" @onclick="() => FilterChanged.InvokeAsync(view.Filter.Clone())">@view.Name</button><button disabled="@working" aria-label="@($"Delete saved view {view.Name}")" @onclick="() => DeleteViewAsync(view.Name)">&times;</button></div>
                 }
             </div>
             <div>
@@ -180,8 +180,8 @@
             throw new InvalidOperationException("Enter a collection or tags.");
         await ApplyBulkAsync(image =>
         {
-            image.Tags = LibraryService.MergeTags(image.Tags, tags);
-            if (collection.Trim().Length > 0) LibraryService.SetOrganization(image, image.Rating, image.Reviewed, collection);
+            image.Tags = LibraryRules.MergeTags(image.Tags, tags);
+            if (collection.Trim().Length > 0) LibraryRules.SetOrganization(image, image.Rating, image.Reviewed, collection);
         });
     });
 
@@ -189,7 +189,7 @@
         image.Collections.RemoveAll(name => name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase))));
 
     private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
-        LibraryService.SetCuration(image, rating == -1 ? null : rating,
+        LibraryRules.SetCuration(image, rating == -1 ? null : rating,
             reviewStatus == "unchanged" ? null : reviewStatus == "reviewed")));
 
     private Task SaveViewAsync() => RunAsync("Saving view...", async () =>
@@ -213,7 +213,7 @@
 
     private async Task ApplySearchAsync()
     {
-        if (suggestedFilter is not null) await FilterChanged.InvokeAsync(LibraryService.Clone(suggestedFilter));
+        if (suggestedFilter is not null) await FilterChanged.InvokeAsync(suggestedFilter.Clone());
         suggestedFilter = null;
     }
 
@@ -256,10 +256,10 @@
         await Gallery.UpdateAsync(suggestion.Id, image =>
         {
             image.Description = suggestion.Description;
-            image.Tags = LibraryService.MergeTags(image.Tags, suggestion.Tags);
+            image.Tags = LibraryRules.MergeTags(image.Tags, suggestion.Tags);
             image.AnalysisModel = suggestion.Model;
             if (suggestion.Collection.Length > 0)
-                LibraryService.SetOrganization(image, image.Rating, image.Reviewed, suggestion.Collection);
+                LibraryRules.SetOrganization(image, image.Rating, image.Reviewed, suggestion.Collection);
         });
         suggestions.Remove(suggestion);
         jobMessage = $"{suggestions.Count} suggestions await approval.";
@@ -277,7 +277,7 @@
 
     private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => LibraryService.SetOrganization(current, value, true, null));
+        await Gallery.UpdateAsync(image.Id, current => LibraryRules.SetOrganization(current, value, true, null));
         image.Rating = value; image.Reviewed = true;
         await Changed.InvokeAsync();
     });

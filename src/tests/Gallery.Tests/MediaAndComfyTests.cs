@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
+using Gallery.Core;
 using Gallery.Models;
 using Gallery.Services;
 using Microsoft.Extensions.Configuration;
@@ -269,12 +270,12 @@ public sealed class MediaAndComfyTests
     {
         var image = new ImageRecord { Name = "image", PngSha256 = "same" };
         var video = new ImageRecord { Name = "video", PngSha256 = "same", MediaType = "video" };
-        Assert.Empty(GalleryService.GroupDuplicates([image, video], _ => 0, 4));
+        Assert.Empty(DuplicateRules.GroupDuplicates([image, video], _ => 0, _ => null, threshold: 4));
     }
 
     private static byte[] MakeComfyPng()
     {
-        using var image = new Image<Rgba32>(48, 32, Color.CornflowerBlue);
+        using var image = new Image<Rgba32>(Configuration.Default, 48, 32, new Rgba32(100, 149, 237));
         var text = image.Metadata.GetPngMetadata().TextData;
         // Long values are what ComfyUI produces; they exceed ImageSharp's default compression threshold.
         text.Add(new PngTextData("prompt", KSamplerPrompt, "", ""));

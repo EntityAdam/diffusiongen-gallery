@@ -1,3 +1,4 @@
+using Gallery.Core;
 using Gallery.Models;
 using Gallery.Services;
 

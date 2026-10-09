@@ -1,0 +1,69 @@
+<aside class="panel filters">
+    <details class="filter-disclosure">
+        <summary>Filter images</summary>
+        <div class="panel-header"><h3>Find your image</h3><button class="text-button" @onclick="Reset" disabled="@Disabled">Reset</button></div>
+        <label for="collection-filter">Collection</label>
+        <select id="collection-filter" @bind="Filter.Collection" @bind:after="NotifyChangedAsync">
+            <option value="">All collections</option>
+            @foreach (var name in Collections)
+            { <option value="@name">@name</option> }
+        </select>
+        <label for="rating-filter">Minimum rating</label><select id="rating-filter" @bind="Filter.MinRating" @bind:after="NotifyChangedAsync">
+            <option value="0">Any rating</option>@for (var score = 1; score <= 5; score++) { <option value="@score">@score / 5</option> }
+        </select>
+        <label for="review-filter">Review queue</label><select id="review-filter" @bind="Filter.Review" @bind:after="NotifyChangedAsync">
+            <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
+        </select>
+        <label class="check"><input type="checkbox" @bind="Filter.UnorganizedOnly" @bind:after="NotifyChangedAsync" /> Without a collection only</label>
+        <label for="media-filter">Media type</label>
+        <select id="media-filter" @bind="Filter.Media" @bind:after="NotifyChangedAsync">
+            <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
+        </select>
+        <label for="search">Search everything</label>
+        <input id="search" @bind="Filter.Search" @bind:event="oninput" @bind:after="NotifyChangedAsync" placeholder="Prompt, name, description..." />
+        <label for="tag">Tag</label>
+        <input id="tag" @bind="Filter.Tag" @bind:after="NotifyChangedAsync" placeholder="Exact tag" list="tags" />
+        <datalist id="tags">@foreach (var tag in Tags) { <option value="@tag"></option> }</datalist>
+        <label for="folder">Folder</label>
+        <input id="folder" @bind="Filter.Folder" @bind:after="NotifyChangedAsync" placeholder="Source or current folder" />
+        <label for="analysis-model">Vision model</label>
+        <input id="analysis-model" @bind="Filter.Model" @bind:after="NotifyChangedAsync" placeholder="Model name" />
+        <label for="orientation">Orientation</label>
+        <select id="orientation" @bind="Filter.Orientation" @bind:after="NotifyChangedAsync">
+            <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
+        </select>
+        <div class="two-fields">
+            <div><label for="width">Min width</label><input id="width" type="number" min="0" @bind="Filter.MinWidth" @bind:after="NotifyChangedAsync" /></div>
+            <div><label for="height">Min height</label><input id="height" type="number" min="0" @bind="Filter.MinHeight" @bind:after="NotifyChangedAsync" /></div>
+        </div>
+        <label for="analysis">Vision analysis</label>
+        <select id="analysis" @bind="Filter.Analysis" @bind:after="NotifyChangedAsync">
+            <option value="all">All images</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
+        </select>
+        <label for="deletion">Deletion status</label>
+        <select id="deletion" @bind="Filter.Deletion" @bind:after="NotifyChangedAsync">
+            <option value="active">Active images</option><option value="marked">Marked for deletion</option><option value="all">All images</option>
+        </select>
+        <label for="from">Imported from</label><input id="from" type="date" @bind="Filter.From" @bind:after="NotifyChangedAsync" />
+        <label for="to">Imported through</label><input id="to" type="date" @bind="Filter.To" @bind:after="NotifyChangedAsync" />
+        <label class="check"><input type="checkbox" @bind="Filter.FavoritesOnly" @bind:after="NotifyChangedAsync" /> Favorites only</label>
+        <div class="security-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the vault is unlocked.</div>
+    </details>
+</aside>
+
+@code {
+    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
+    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback Reset { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections)
+        .Distinct(StringComparer.OrdinalIgnoreCase).Order();
+
+    private IEnumerable<string> Tags => Images.SelectMany(image =>
+            image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        .Distinct().Order();
+
+    private Task NotifyChangedAsync() => Changed.InvokeAsync();
+}

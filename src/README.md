@@ -4,14 +4,28 @@ A standalone local-only .NET 10 / Blazor Server gallery. It shares `src03`'s
 charcoal, mint, typography, and Diffusion Gen branding, but has no project or
 runtime dependency on it. `gallery01` is frozen; all new development lives here.
 This is an independent source copy, not a shared project.
+Reusable gallery models and domain rules live in `src/Gallery.Core`; the web
+project owns persistence, encryption, external integrations and presentation.
 
 ## Run
 
 Install the .NET 10 SDK, then from the repository root:
 
 ```powershell
-dotnet run --project .\src\gallery02\Gallery.csproj
+dotnet run --project .\src\Gallery.csproj
 ```
+
+ImageSharp 4 requires a valid Six Labors license for Release builds. Apply for
+the free Community license at [Six Labors pricing](https://sixlabors.com/pricing/)
+if eligible, save the issued license as `sixlabors.lic` in the repository root,
+and pass its absolute path to Release builds. In PowerShell, run:
+
+```powershell
+$license = (Resolve-Path .\sixlabors.lic).Path
+dotnet run --project .\src\Gallery.csproj --configuration Release "-p:SixLaborsLicenseFile=$license"
+```
+
+The license file is gitignored and must not be committed.
 
 Open **http://127.0.0.1:5189**. Create a vault with a unique passphrase of at least
 14 characters and **save the 32 recovery words offline before continuing**.
@@ -20,7 +34,7 @@ location, set `Gallery__DataDirectory` before launching:
 
 ```powershell
 $env:Gallery__DataDirectory = 'D:\PrivateGallery'
-dotnet run --project .\src\gallery02\Gallery.csproj
+dotnet run --project .\src\Gallery.csproj
 ```
 
 The process binds to loopback and rejects non-loopback clients, untrusted Host
