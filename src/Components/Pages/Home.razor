@@ -217,19 +217,23 @@ else
                     <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.Ids.Count - 1)</strong> extra copies &middot; <strong>@StorageOverview.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
                     <span class="muted">Scanned @duplicateScan.ScannedCount.ToString("N0") images <time datetime="@duplicateScan.ScannedAt.ToString("O")">@duplicateScan.ScannedAt.ToLocalTime().ToString("g")</time></span>
                     <div class="actions">
+                        <button type="button" class="primary" disabled="@(busy || groups.Count == 0)" @onclick="() => OpenDuplicateReview(groups, 0)">Review in full screen</button>
                         <button type="button" disabled="@(busy || pendingMarks == 0)" @onclick="() => MarkDuplicatesAsync(groups)">Mark all extra copies (@pendingMarks)</button>
                         <button type="button" disabled="@busy" @onclick='() => SwitchWorkflowAsync("remove")'>Go to Remove marked images</button>
                     </div>
                 </div>
                 @if (groups.Count == 0) { <p class="muted">No likely duplicates found.</p> }
-                @foreach (var group in groups.Take(DuplicateGroupsShown))
+                @foreach (var (group, groupNumber) in groups.Take(DuplicateGroupsShown).Select((group, index) => (group, index)))
                 {
                     var keeper = KeeperOf(group);
                     var groupMarks = group.Ids.Count(id => id != keeper.Id && !ImageById(id)!.MarkedForDeletion);
                     <article class="duplicate-group" @key="group.Ids[0]">
                         <header>
                             <span>@(group.Exact ? "Exact copies" : $"Similar images (difference {group.MaxDistance}/64)") &middot; @StorageOverview.FormatBytes(group.ReclaimableBytes) reclaimable</span>
-                            <button type="button" disabled="@(busy || groupMarks == 0)" @onclick="() => MarkDuplicatesAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</button>
+                            <div class="actions">
+                                <button type="button" disabled="@busy" @onclick="() => OpenDuplicateReview(groups, groupNumber)">Review &amp; choose keepers</button>
+                                <button type="button" disabled="@(busy || groupMarks == 0)" @onclick="() => MarkDuplicatesAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</button>
+                            </div>
                         </header>
                         <div class="duplicate-items">
                             @foreach (var id in group.Ids.OrderByDescending(id => id == keeper.Id))
@@ -402,6 +406,7 @@ else
                         <button type="button" disabled="@busy" @onclick="() => BulkReviewedAsync(true)">Mark reviewed</button>
                         <button type="button" class="danger" disabled="@busy" @onclick="() => BulkMarkAsync(true)">Mark for deletion</button>
                         <button type="button" disabled="@busy" @onclick="() => BulkMarkAsync(false)">Unmark</button>
+                        <button type="button" disabled="@busy" title="Compare the selected images against the whole library and review matches in full screen" @onclick="FindSelectedDuplicatesAsync">Find duplicates</button>
                     </div>
                     <form class="bulk-group" @onsubmit="BulkTagAsync" @onsubmit:preventDefault>
                         <input aria-label="Tags to add to selected images" placeholder="Add tags, comma-separated" @bind="bulkTags" @bind:event="oninput" list="tags" disabled="@busy" />
@@ -588,6 +593,10 @@ else
 {
     <FullscreenViewer Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged" />
 }
+@if (Session.IsUnlocked && reviewGroups.Count > 0)
+{
+    <DuplicateReviewer Groups="reviewGroups" Lookup="@(id => ImageById(id))" InitialGroup="reviewStartGroup" OnClose="CloseDuplicateReviewAsync" />
+}
 
 @code {
     private string secret = "", confirm = "", recoveryPhrase = "", error = "", message = "", progress = "";
@@ -633,6 +642,8 @@ else
     private DuplicateScan? duplicateScan;
     private readonly Dictionary<string, string> duplicateThumbnails = [];
     private int DuplicateGroupsShown = 20;
+    private List<DuplicateGroup> reviewGroups = [];
+    private int reviewStartGroup;
     private DotNetObjectReference<Home>? gridReference;
     private sealed record QuickFilter(string Label, Func<GalleryFilter, bool> IsActive, Action<GalleryFilter, bool> Toggle, Func<IEnumerable<ImageRecord>, int> Count);
     private static readonly QuickFilter[] QuickFilters =
@@ -855,6 +866,44 @@ else
     {
         public void Report(T value) => _ = report(value);
     }
+    private void OpenDuplicateReview(IReadOnlyList<DuplicateGroup> groups, int start)
+    {
+        if (busy || groups.Count == 0) return;
+        reviewGroups = groups.ToList();
+        reviewStartGroup = Math.Clamp(start, 0, groups.Count - 1);
+    }
+    private Task CloseDuplicateReviewAsync(string summary)
+    {
+        reviewGroups = [];
+        return RunAsync("Refreshing library...", async () =>
+        {
+            await ReloadAsync();
+            if (workflow == "settings" && settingsTab == "duplicates") await LoadDuplicateThumbnailsAsync();
+            message = summary;
+        });
+    }
+    private Task FindSelectedDuplicatesAsync() => RunAsync("Finding duplicates of selected images...", async () =>
+    {
+        var reporter = new InlineProgress<(int Completed, int Total)>(update => InvokeAsync(() =>
+        {
+            if (disposed || !busy) return;
+            progress = $"Finding duplicates... {update.Completed:N0} / {update.Total:N0} images fingerprinted";
+            StateHasChanged();
+        }));
+        duplicateScan = await Gallery.ScanDuplicatesAsync(reporter);
+        if (disposed) return;
+        duplicateThumbnails.Clear();
+        DuplicateGroupsShown = 20;
+        UpdateDuplicateGroups();
+        var matches = VisibleDuplicateGroups.Where(group => group.Ids.Any(librarySelection.Contains)).ToList();
+        if (matches.Count == 0)
+        {
+            message = $"No likely duplicates found for the {librarySelection.Count} selected image(s).";
+            return;
+        }
+        reviewGroups = matches;
+        reviewStartGroup = 0;
+    });
     private Task RefreshStorageOverviewAsync() => RunAsync("Measuring gallery storage...", async () =>
     {
         storageOverview = await Gallery.RefreshStorageOverviewAsync();
@@ -949,7 +998,7 @@ else
     [JSInvokable]
     public async Task HandleGridKey(string key, string id, bool shift)
     {
-        if (!Session.IsUnlocked || busy || !ShowsGallery || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0) return;
+        if (!Session.IsUnlocked || busy || !ShowsGallery || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
         if (key == "escape") { ClearSelection(); selectionAnchor = null; StateHasChanged(); return; }
         if (!imagesById.TryGetValue(id, out var image)) return;
         if (key == "x")
@@ -1212,6 +1261,7 @@ else
         duplicateScan = null;
         duplicateThumbnails.Clear();
         VisibleDuplicateGroups = [];
+        reviewGroups = [];
         DuplicateGroupsShown = 20;
     }
 

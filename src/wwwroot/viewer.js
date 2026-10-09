@@ -82,7 +82,8 @@ window.galleryViewer = {
             if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
             const key = event.key.toLowerCase();
             const reviewKeys = element.dataset.review === "true" ? ["k", "s", "1", "2", "3", "4", "5"] : [];
-            if (!["arrowleft", "arrowright", "d", "f", "o", "p", "escape", "tab", ...reviewKeys].includes(key)) return;
+            const extraKeys = (element.dataset.keys || "").split(" ").filter(Boolean);
+            if (!["arrowleft", "arrowright", "d", "f", "o", "p", "escape", "tab", ...reviewKeys, ...extraKeys].includes(key)) return;
             if (key === "tab") {
                 const buttons = Array.from(element.querySelectorAll("button:not(:disabled)"));
                 const first = buttons[0], last = buttons[buttons.length - 1];

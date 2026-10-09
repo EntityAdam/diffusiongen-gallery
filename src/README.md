@@ -71,6 +71,16 @@ unmarked first, then highest rating, favorite, most pixels, largest original and
 oldest import. **Mark other(s) for deletion** (per group) or **Mark all extra
 copies** only sets reversible deletion marks; permanently remove them from
 **Remove marked images**.
+
+**Review in full screen** (or **Review & choose keepers** on a group) opens a
+full screen duplicate review. Step through each copy at full size, see its
+dimensions, file size, rating and favorite status, and choose **one or more**
+copies to keep from the filmstrip or with `K`. **Keep only this** and **Keep all**
+are quick picks. **Apply** unmarks the kept copies, marks the rest for deletion
+and moves to the next group; **Skip group** leaves a group unchanged. Reopening a
+group you partly marked earlier restores those choices. Shortcuts: Left/Right
+copies, Up/Down groups, `K` toggle keep, `A` apply, `S` skip, `O` 100%, `P` fit,
+`Esc` close.
 Only tools for the current workflow are shown. Image workflows reuse the same
 grid, sort and collapsible **Filter images** controls. Filters carry across
 workflows; removal temporarily resets filters to show all marked images, and leaving
@@ -94,8 +104,11 @@ toggle an image, or Shift+click to select the range from the last selected image
 (across pages, in the current sort order). **Select page** adds the current page.
 Selections remain across pages until cleared, and switching workflows clears them.
 While images are selected, a floating **bulk action bar** rates (1-5★ or clear),
-favorites/unfavorites, marks reviewed, marks/unmarks deletion, merges tags, and
-adds the selection to a collection. Removal keeps its own separate deletion
+favorites/unfavorites, marks reviewed, marks/unmarks deletion, merges tags,
+adds the selection to a collection, or runs **Find duplicates**. Find duplicates
+compares the selected images against the whole library, reusing cached
+fingerprints, and opens every matching group in the full screen duplicate review.
+Removal keeps its own separate deletion
 selection. Virtual collections do not change file locations.
 
 **Keyboard curation** works on the focused card, or the card under the pointer:

@@ -131,6 +131,41 @@ public sealed class CurationTests
         Assert.All(images, image => { Assert.True(image.Favorite); Assert.Equal("batch", image.Tags); });
     }
 
+    [Fact]
+    public void InitialKeepersDefaultToRecommendationOrReflectEarlierPartialDecision()
+    {
+        var big = new ImageRecord { Id = "big", Width = 400, Height = 300 };
+        var small = new ImageRecord { Id = "small", Width = 200, Height = 150 };
+        var tiny = new ImageRecord { Id = "tiny", Width = 100, Height = 75 };
+        Assert.Equal(["big"], GalleryService.InitialKeepers([small, big, tiny]));
+        tiny.MarkedForDeletion = true;
+        Assert.Equal(["big", "small"], GalleryService.InitialKeepers([big, small, tiny]).Order());
+        big.MarkedForDeletion = small.MarkedForDeletion = true;
+        Assert.Equal(["big"], GalleryService.InitialKeepers([big, small, tiny]));
+    }
+
+    [Fact]
+    public async Task ApplyingDuplicateDecisionKeepsChosenCopiesAndMarksTheRest()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var a = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "a.png", "folder");
+        var b = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "b.png", "folder");
+        var c = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(80, 60, 0)), "c.png", "folder");
+        await fixture.Service.UpdateAsync(a.Id, image => image.MarkedForDeletion = true);
+        string[] group = [a.Id, b.Id, c.Id];
+
+        Assert.Equal(0, await fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string> { a.Id, c.Id }));
+        var marks = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id, image => image.MarkedForDeletion);
+        Assert.False(marks[a.Id]);
+        Assert.True(marks[b.Id]);
+        Assert.False(marks[c.Id]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string>()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string> { "elsewhere" }));
+        Assert.True((await fixture.Service.ListAsync()).Single(image => image.Id == b.Id).MarkedForDeletion);
+    }
+
     private sealed class SyncProgress(Action<(int, int)> report) : IProgress<(int Completed, int Total)>
     {
         public void Report((int Completed, int Total) value) => report(value);

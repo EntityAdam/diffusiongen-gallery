@@ -144,6 +144,25 @@ public sealed partial class GalleryService
         .ThenBy(record => record.ImportedAt)
         .First();
 
+    /// <summary>
+    /// Default keep set for reviewing a group: reflect an earlier partial decision
+    /// (some copies marked, some not), otherwise only the recommended keeper.
+    /// </summary>
+    public static HashSet<string> InitialKeepers(IReadOnlyCollection<ImageRecord> group)
+    {
+        var unmarked = group.Where(record => !record.MarkedForDeletion).Select(record => record.Id).ToHashSet();
+        return unmarked.Count > 0 && unmarked.Count < group.Count ? unmarked : [PickKeeper(group).Id];
+    }
+
+    /// <summary>Unmarks the kept copies and marks every other copy in the group for deletion. Returns the failure count.</summary>
+    public async Task<int> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupIds, IReadOnlySet<string> keep)
+    {
+        if (keep.Count == 0) throw new InvalidOperationException("Keep at least one image in the group.");
+        if (!keep.All(groupIds.Contains)) throw new InvalidOperationException("Kept images must belong to the group.");
+        var failed = await UpdateManyAsync(keep, record => record.MarkedForDeletion = false);
+        return failed + await UpdateManyAsync(groupIds.Where(id => !keep.Contains(id)).ToList(), record => record.MarkedForDeletion = true);
+    }
+
     private static bool SimilarShape(ImageRecord left, ImageRecord right)
     {
         if (left.Width <= 0 || left.Height <= 0 || right.Width <= 0 || right.Height <= 0) return true;

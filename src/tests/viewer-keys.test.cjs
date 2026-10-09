@@ -74,3 +74,27 @@ test("detach removes the document listeners", () => {
     window.galleryGrid.detach();
     assert.equal(listeners.size, 0);
 });
+
+test("full screen viewer forwards declared extra keys only", async () => {
+    let keydown = null;
+    const document = {
+        activeElement: null,
+        body: { style: { overflow: "" } },
+        addEventListener(name, handler) { if (name === "keydown") keydown = handler; },
+        removeEventListener() { keydown = null; }
+    };
+    const window = {};
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), { window, Element: class { }, document });
+    const calls = [];
+    const element = { dataset: { review: "false", keys: "arrowup k a" }, focus() { }, querySelectorAll() { return []; } };
+    window.galleryViewer.attach(element, { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } });
+    const target = { closest() { return null; } };
+    const press = key => { const event = { key, target, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; keydown(event); return event; };
+    assert.equal(press("K").defaultPrevented, true);
+    press("ArrowUp");
+    assert.equal(press("s").defaultPrevented, false);
+    await flush();
+    assert.deepEqual(calls, [["HandleKey", "k"], ["HandleKey", "arrowup"]]);
+    window.galleryViewer.detach(element);
+    assert.equal(keydown, null);
+});

@@ -1,0 +1,301 @@
+@implements IAsyncDisposable
+@inject GalleryService Gallery
+@inject IJSRuntime JS
+@inject ILogger<DuplicateReviewer> Logger
+
+<section class="fullscreen-viewer duplicate-reviewer" role="dialog" aria-modal="true" aria-label="Duplicate review" tabindex="-1" @ref="element" data-review="false" data-keys="arrowup arrowdown k a s">
+    <header class="viewer-toolbar">
+        <div>
+            <strong>Duplicate group @(groupIndex + 1) / @Groups.Count</strong>
+            <span class="muted"> &middot; copy @(imageIndex + 1) / @members.Count &middot; @Current.Name &middot; @Current.Width &times; @Current.Height &middot; @StorageOverview.FormatBytes(Current.OriginalBytes)</span>
+        </div>
+        <div class="actions">
+            <button disabled="@(busy || imageIndex == 0)" @onclick="() => ShowImageAsync(imageIndex - 1)" title="Left arrow: previous copy">Previous copy &larr;</button>
+            <button disabled="@(busy || imageIndex + 1 >= members.Count)" @onclick="() => ShowImageAsync(imageIndex + 1)" title="Right arrow: next copy">Next copy &rarr;</button>
+            <button disabled="@(busy || groupIndex == 0)" @onclick="() => OpenGroupAsync(groupIndex - 1)" title="Up arrow: previous group">Previous group &uarr;</button>
+            <button disabled="@(busy || groupIndex + 1 >= Groups.Count)" @onclick="() => OpenGroupAsync(groupIndex + 1)" title="Down arrow: next group">Next group &darr;</button>
+            <button disabled="@busy" @onclick="() => SetSizeAsync(true)" aria-pressed="@(originalSize ? "true" : "false")">Original size (O)</button>
+            <button disabled="@busy" @onclick="() => SetSizeAsync(false)" aria-pressed="@(originalSize ? "false" : "true")">Fit window (P)</button>
+            <button disabled="@busy" @onclick="CloseAsync" aria-label="Close duplicate review">Close (Esc)</button>
+        </div>
+    </header>
+    <div class="review-controls duplicate-controls">
+        <div>
+            <strong>@(applied.Contains(groupIndex) ? "Saved. Change your picks and apply again, or move on." : Keep.Count == 0 ? "Keep at least one copy." : "Choose one or more copies to keep.")</strong>
+            <p class="muted">Keeping @Keep.Count of @members.Count. Applying marks the other @(members.Count - Keep.Count) for deletion and clears marks on kept copies. @(Group.Exact ? "Exact copies." : $"Similar images (difference {Group.MaxDistance}/64).") Nothing is deleted until you use Remove marked images.</p>
+        </div>
+        <div class="actions">
+            <button disabled="@busy" aria-pressed="@(Keep.Contains(Current.Id) ? "true" : "false")" @onclick="() => ToggleKeep(Current.Id)">@(Keep.Contains(Current.Id) ? "\u2713 Keeping this copy" : "Keep this copy") (K)</button>
+            <button disabled="@busy" @onclick="KeepOnlyCurrent">Keep only this</button>
+            <button disabled="@busy" @onclick="KeepAll">Keep all</button>
+            <button class="primary" disabled="@(busy || Keep.Count == 0)" @onclick="ApplyAsync">@(groupIndex + 1 < Groups.Count ? "Apply & next group" : "Apply") (A)</button>
+            <button disabled="@(busy || groupIndex + 1 >= Groups.Count)" @onclick="() => OpenGroupAsync(groupIndex + 1)">Skip group (S)</button>
+        </div>
+    </div>
+    <div class="viewer-image-area @(originalSize ? "original-size" : "fit-window")">
+        @if (busy) { <p role="status">Loading...</p> }
+        @if (imageData.Length > 0) { <img @key="Current.Id" src="@imageData" alt="@Current.Name" draggable="false" /> }
+        <span class="duplicate-verdict @(Keep.Contains(Current.Id) ? "keep" : "drop")">@(Keep.Contains(Current.Id) ? "Keep" : "Will be marked for deletion")</span>
+    </div>
+    <div class="duplicate-strip" role="group" aria-label="Copies in this group">
+        @for (var position = 0; position < members.Count; position++)
+        {
+            var index = position;
+            var member = members[index];
+            var kept = Keep.Contains(member.Id);
+            <div class="strip-item @(index == imageIndex ? "current" : "") @(kept ? "kept" : "dropped")" @key="member.Id">
+                <button type="button" class="strip-view" disabled="@busy" aria-current="@(index == imageIndex ? "true" : null)" title="@($"View {member.Name}")" @onclick="() => ShowImageAsync(index)">
+                    @if (thumbs.TryGetValue(member.Id, out var thumbnail)) { <img src="@thumbnail" alt="" draggable="false" /> }
+                    else { <span class="thumbnail-placeholder">Preview</span> }
+                    <span class="strip-name">@member.Name</span>
+                    <span class="strip-meta">@member.Width &times; @member.Height &middot; @StorageOverview.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.Favorite ? " · Favorite" : "")</span>
+                    @if (member.Id == recommendedId) { <span class="strip-meta recommended">Recommended</span> }
+                </button>
+                <button type="button" class="strip-keep" disabled="@busy" aria-pressed="@(kept ? "true" : "false")" aria-label="@($"Keep {member.Name}")" @onclick="() => ToggleKeep(member.Id)">@(kept ? "\u2713 Keep" : "Keep")</button>
+            </div>
+        }
+    </div>
+    <footer class="viewer-status">
+        <span>@status</span>
+        <span>Left/Right: copies / Up/Down: groups / K: toggle keep / A: apply / S: skip / O: 100% / P: fit / Esc: close</span>
+    </footer>
+    @if (error.Length > 0) { <div class="notice error viewer-error" role="alert">@error</div> }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = [];
+    [Parameter, EditorRequired] public Func<string, ImageRecord?> Lookup { get; set; } = _ => null;
+    [Parameter] public int InitialGroup { get; set; }
+    [Parameter] public EventCallback<string> OnClose { get; set; }
+    private ElementReference element;
+    private DotNetObjectReference<DuplicateReviewer>? reference;
+    private int groupIndex, imageIndex, appliedMarks, generation;
+    private List<ImageRecord> members = [];
+    private string recommendedId = "";
+    private readonly Dictionary<int, HashSet<string>> keepByGroup = [];
+    private readonly HashSet<int> applied = [];
+    private readonly Dictionary<string, string> thumbs = [];
+    private readonly Dictionary<(string Id, bool Full), string> urls = [];
+    private readonly SemaphoreSlim gate = new(1);
+    private bool busy, originalSize, disposed, closed;
+    private string imageData = "", error = "", status = "";
+    private Task? preload;
+    private DuplicateGroup Group => Groups[groupIndex];
+    private ImageRecord Current => members[imageIndex];
+    private HashSet<string> Keep => keepByGroup[groupIndex];
+
+    protected override void OnInitialized()
+    {
+        groupIndex = Math.Clamp(InitialGroup, 0, Groups.Count - 1);
+        PrepareGroup();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        reference = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("galleryViewer.attach", element, reference);
+        await RunAsync(LoadGroupAsync);
+        StateHasChanged();
+    }
+
+    private void PrepareGroup()
+    {
+        var records = Group.Ids.Select(Lookup).OfType<ImageRecord>().ToList();
+        recommendedId = GalleryService.PickKeeper(records).Id;
+        members = records.OrderByDescending(record => record.Id == recommendedId).ToList();
+        imageIndex = 0;
+        imageData = "";
+        if (!keepByGroup.ContainsKey(groupIndex)) keepByGroup[groupIndex] = GalleryService.InitialKeepers(records);
+    }
+
+    private async Task LoadGroupAsync()
+    {
+        foreach (var member in members)
+            if (!thumbs.ContainsKey(member.Id)) thumbs[member.Id] = await Gallery.ThumbnailAsync(member.Id);
+        imageData = await LoadImageAsync(Current.Id, originalSize, generation);
+        preload = PreloadAsync(generation);
+    }
+
+    private async Task<string> LoadImageAsync(string id, bool full, int forGeneration)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            if (disposed || forGeneration != generation) return "";
+            if (urls.TryGetValue((id, full), out var cached)) return cached;
+            if (full)
+            {
+                // Full-resolution copies can be large; keep only the one being inspected.
+                var stale = urls.Where(entry => entry.Key.Full).ToList();
+                if (stale.Count > 0) await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)stale.Select(entry => entry.Value).ToArray());
+                foreach (var entry in stale) urls.Remove(entry.Key);
+            }
+            var data = await Gallery.ViewerImageAsync(id, full);
+            if (disposed || forGeneration != generation) return "";
+            var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
+            urls[(id, full)] = url;
+            return url;
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task ReleaseUrlsAsync()
+    {
+        await gate.WaitAsync();
+        try
+        {
+            if (urls.Count > 0) await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)urls.Values.ToArray());
+            urls.Clear();
+        }
+        finally { gate.Release(); }
+    }
+
+    private async Task PreloadAsync(int forGeneration)
+    {
+        // Sequential warm-up of this group's copies so flipping between them is instant.
+        foreach (var member in members.ToList())
+        {
+            if (disposed || forGeneration != generation) return;
+            try { await LoadImageAsync(member.Id, false, forGeneration); }
+            catch (Exception exception) when (exception is not JSDisconnectedException)
+            {
+                if (disposed) return;
+                Logger.LogError(exception, "Duplicate review preloading failed for {ImageId}", member.Id);
+            }
+            catch (JSDisconnectedException) { return; }
+        }
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (busy) return;
+        busy = true;
+        error = "";
+        try { await action(); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Duplicate review operation failed");
+            error = exception is System.Security.Cryptography.CryptographicException
+                ? "Image failed its encryption integrity check."
+                : exception is IOException or InvalidOperationException ? exception.Message
+                : "Duplicate review operation failed. Check the application console for details.";
+        }
+        finally { busy = false; }
+    }
+
+    private Task ShowImageAsync(int next) => RunAsync(async () =>
+    {
+        if (next < 0 || next >= members.Count) return;
+        var data = await LoadImageAsync(members[next].Id, originalSize, generation);
+        imageIndex = next;
+        imageData = data;
+    });
+
+    private Task SetSizeAsync(bool original) => RunAsync(async () =>
+    {
+        var data = await LoadImageAsync(Current.Id, original, generation);
+        originalSize = original;
+        imageData = data;
+    });
+
+    private Task OpenGroupAsync(int next) => RunAsync(() => MoveToGroupAsync(next));
+
+    private async Task MoveToGroupAsync(int next)
+    {
+        if (next < 0 || next >= Groups.Count || next == groupIndex) return;
+        generation++;
+        imageData = "";
+        if (preload is not null) await preload;
+        await ReleaseUrlsAsync();
+        groupIndex = next;
+        PrepareGroup();
+        await LoadGroupAsync();
+    }
+
+    private void ToggleKeep(string id)
+    {
+        if (busy) return;
+        if (!Keep.Remove(id)) Keep.Add(id);
+        applied.Remove(groupIndex);
+    }
+
+    private void KeepOnlyCurrent()
+    {
+        if (busy) return;
+        Keep.Clear();
+        Keep.Add(Current.Id);
+        applied.Remove(groupIndex);
+    }
+
+    private void KeepAll()
+    {
+        if (busy) return;
+        Keep.UnionWith(members.Select(member => member.Id));
+        applied.Remove(groupIndex);
+    }
+
+    private Task ApplyAsync() => RunAsync(async () =>
+    {
+        if (Keep.Count == 0) throw new InvalidOperationException("Keep at least one copy in the group.");
+        var ids = members.Select(member => member.Id).ToList();
+        var failed = await Gallery.ApplyDuplicateDecisionAsync(ids, Keep);
+        if (failed > 0)
+        {
+            error = $"{failed} image(s) could not be updated. The library will refresh when you close.";
+            return;
+        }
+        foreach (var member in members) member.MarkedForDeletion = !Keep.Contains(member.Id);
+        var marked = ids.Count - Keep.Count;
+        appliedMarks += marked;
+        applied.Add(groupIndex);
+        var last = groupIndex + 1 >= Groups.Count;
+        status = $"Group {groupIndex + 1}: kept {Keep.Count}, marked {marked} for deletion." + (last ? " That was the last group; press Esc to close." : "");
+        if (!last) await MoveToGroupAsync(groupIndex + 1);
+    });
+
+    private async Task CloseAsync()
+    {
+        if (closed) return;
+        closed = disposed = true;
+        await JS.InvokeVoidAsync("galleryViewer.detach", element);
+        if (preload is not null) await preload;
+        await ReleaseUrlsAsync();
+        await OnClose.InvokeAsync(applied.Count == 0 ? "" :
+            $"Duplicate review: {applied.Count} group(s) applied, {appliedMarks} cop{(appliedMarks == 1 ? "y" : "ies")} marked for deletion. Remove them from Remove marked images.");
+    }
+
+    [JSInvokable]
+    public async Task HandleKey(string key)
+    {
+        if (busy) return;
+        switch (key)
+        {
+            case "arrowleft": await ShowImageAsync(imageIndex - 1); break;
+            case "arrowright": await ShowImageAsync(imageIndex + 1); break;
+            case "arrowup": await OpenGroupAsync(groupIndex - 1); break;
+            case "arrowdown": await OpenGroupAsync(groupIndex + 1); break;
+            case "k": ToggleKeep(Current.Id); break;
+            case "a": if (Keep.Count > 0) await ApplyAsync(); break;
+            case "s": await OpenGroupAsync(groupIndex + 1); break;
+            case "o": await SetSizeAsync(true); break;
+            case "p": await SetSizeAsync(false); break;
+            case "escape": await CloseAsync(); return;
+        }
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        if (preload is not null) await preload;
+        imageData = "";
+        try
+        {
+            if (urls.Count > 0) await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)urls.Values.ToArray());
+            await JS.InvokeVoidAsync("galleryViewer.detach", element);
+        }
+        catch (JSDisconnectedException) { }
+        finally { urls.Clear(); reference?.Dispose(); gate.Dispose(); }
+    }
+}
