@@ -1,16 +1,13 @@
-using System.Numerics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Gallery.Core;
 using Gallery.Models;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
 
 namespace Gallery.Services;
 
 public sealed partial class GalleryService
 {
-    public const int DuplicateThreshold = 6;
     private const string PerceptualHashesId = "perceptual-hashes";
     private const string PerceptualHashesPurpose = "perceptual-hashes:v1";
     private const string DuplicateScanId = "duplicate-scan";
@@ -62,7 +59,7 @@ public sealed partial class GalleryService
                     try
                     {
                         var plain = VaultCrypto.Decrypt(encrypted, key.Bytes, $"thumbnail:{record.Id}");
-                        try { results[index] = new(record.PngSha256, DifferenceHash(plain)); }
+                        try { results[index] = new(record.PngSha256, DuplicateRules.DifferenceHash(plain)); }
                         finally { CryptographicOperations.ZeroMemory(plain); }
                     }
                     catch (Exception exception) when (exception is CryptographicException or ImageFormatException or UnknownImageFormatException) { }
@@ -77,82 +74,11 @@ public sealed partial class GalleryService
 
         await WriteEncryptedSettingAsync(hashes, PerceptualHashesId, PerceptualHashesPurpose);
         var hashed = records.Where(record => hashes.ContainsKey(record.Id)).ToList();
-        var groups = await Task.Run(() => GroupDuplicates(hashed, record => hashes[record.Id].Hash, DuplicateThreshold));
+        var groups = await Task.Run(() => DuplicateRules.GroupDuplicates(hashed,
+            record => hashes[record.Id].Hash, FileLength));
         var scan = new DuplicateScan(groups, hashed.Count, DateTimeOffset.UtcNow);
         await WriteEncryptedSettingAsync(scan, DuplicateScanId, DuplicateScanPurpose);
         return scan;
-    }
-
-    /// <summary>64-bit difference hash: grayscale 9x8, one bit per horizontal gradient.</summary>
-    public static ulong DifferenceHash(byte[] image)
-    {
-        using var pixels = Image.Load<L8>(image);
-        pixels.Mutate(context => context.Resize(new ResizeOptions { Size = new Size(9, 8), Mode = ResizeMode.Stretch }));
-        ulong hash = 0;
-        var bit = 0;
-        for (var y = 0; y < 8; y++)
-            for (var x = 0; x < 8; x++, bit++)
-                if (pixels[x, y].PackedValue > pixels[x + 1, y].PackedValue) hash |= 1UL << bit;
-        return hash;
-    }
-
-    public static int HammingDistance(ulong left, ulong right) => BitOperations.PopCount(left ^ right);
-
-    public static List<DuplicateGroup> GroupDuplicates(IReadOnlyList<ImageRecord> records, Func<ImageRecord, ulong> hashOf, int threshold)
-    {
-        var hashes = records.Select(hashOf).ToArray();
-        var parent = Enumerable.Range(0, records.Count).ToArray();
-        int Root(int index)
-        {
-            while (parent[index] != index) index = parent[index] = parent[parent[index]];
-            return index;
-        }
-
-        for (var left = 0; left < records.Count; left++)
-            for (var right = left + 1; right < records.Count; right++)
-            {
-                if (records[left].MediaType != records[right].MediaType) continue;
-                var exact = records[left].PngSha256.Length > 0 && records[left].PngSha256 == records[right].PngSha256;
-                if (exact ||  (HammingDistance(hashes[left], hashes[right]) <= threshold && SimilarShape(records[left], records[right])))
-                    parent[Root(right)] = Root(left);
-            }
-
-        var groups = new List<DuplicateGroup>();
-        foreach (var members in Enumerable.Range(0, records.Count).GroupBy(Root).Where(group => group.Count() > 1))
-        {
-            var indexes = members.ToList();
-            var maxDistance = 0;
-            foreach (var left in indexes)
-                foreach (var right in indexes)
-                    maxDistance = Math.Max(maxDistance, HammingDistance(hashes[left], hashes[right]));
-            var items = indexes.Select(index => records[index]).ToList();
-            var keeper = PickKeeper(items);
-            var ordered = items.OrderByDescending(item => item.Id == keeper.Id).ThenBy(item => item.ImportedAt).ToList();
-            var exact = items.All(item => item.PngSha256.Length > 0 && item.PngSha256 == keeper.PngSha256);
-            var reclaimable = ordered.Skip(1).Sum(item => FileLength(item.StoredPath) ?? 0);
-            groups.Add(new(keeper.Id, ordered.Select(item => item.Id).ToList(), maxDistance, exact, reclaimable));
-        }
-        return groups.OrderByDescending(group => group.ReclaimableBytes).ThenByDescending(group => group.Ids.Count).ToList();
-    }
-
-    /// <summary>Keep the most curated, highest-resolution copy; ties go to the oldest import.</summary>
-    public static ImageRecord PickKeeper(IEnumerable<ImageRecord> records) => records
-        .OrderBy(record => record.MarkedForDeletion)
-        .ThenByDescending(record => record.Rating)
-        .ThenByDescending(record => record.Favorite)
-        .ThenByDescending(record => (long)record.Width * record.Height)
-        .ThenByDescending(record => record.OriginalBytes)
-        .ThenBy(record => record.ImportedAt)
-        .First();
-
-    /// <summary>
-    /// Default keep set for reviewing a group: reflect an earlier partial decision
-    /// (some copies marked, some not), otherwise only the recommended keeper.
-    /// </summary>
-    public static HashSet<string> InitialKeepers(IReadOnlyCollection<ImageRecord> group)
-    {
-        var unmarked = group.Where(record => !record.MarkedForDeletion).Select(record => record.Id).ToHashSet();
-        return unmarked.Count > 0 && unmarked.Count < group.Count ? unmarked : [PickKeeper(group).Id];
     }
 
     /// <summary>Unmarks the kept copies and marks every other copy in the group for deletion. Returns the failure count.</summary>
@@ -162,14 +88,6 @@ public sealed partial class GalleryService
         if (!keep.All(groupIds.Contains)) throw new InvalidOperationException("Kept images must belong to the group.");
         var failed = await UpdateManyAsync(keep, record => record.MarkedForDeletion = false);
         return failed + await UpdateManyAsync(groupIds.Where(id => !keep.Contains(id)).ToList(), record => record.MarkedForDeletion = true);
-    }
-
-    private static bool SimilarShape(ImageRecord left, ImageRecord right)
-    {
-        if (left.Width <= 0 || left.Height <= 0 || right.Width <= 0 || right.Height <= 0) return true;
-        var a = (double)left.Width / left.Height;
-        var b = (double)right.Width / right.Height;
-        return Math.Abs(a - b) / Math.Max(a, b) <= 0.05;
     }
 
     private async Task<T?> ReadEncryptedSettingAsync<T>(string id, string purpose) where T : class

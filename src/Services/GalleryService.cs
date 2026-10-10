@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Gallery.Core;
 using Gallery.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -276,7 +277,10 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         finally
         {
             try { File.Delete(temp); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException($"The temporary decrypted video could not be deleted from '{temp}'. Remove it manually.", exception);
+            }
         }
         byte[] thumb;
         try

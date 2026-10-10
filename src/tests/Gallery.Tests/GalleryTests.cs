@@ -14,7 +14,7 @@ public sealed class GalleryTests
 {
     internal static byte[] MakePng(int width = 32, int height = 24)
     {
-        using var image = new Image<Rgba32>(width, height, Color.SeaGreen);
+        using var image = new Image<Rgba32>(Configuration.Default, width, height, new Rgba32(46, 139, 87));
         image.Metadata.GetPngMetadata().TextData.Add(new PngTextData("parameters", "secret diffusion prompt, seed: 12345", "", ""));
         using var output = new MemoryStream();
         image.SaveAsPng(output);
@@ -208,7 +208,7 @@ public sealed class GalleryTests
                 (ushort)(x * y * 345), (ushort)(x * 1357));
         original.Metadata.GetPngMetadata().TextData.Add(new PngTextData("parameters", "retained prompt", "", ""));
         using var input = new MemoryStream();
-        await original.SaveAsPngAsync(input);
+        await original.SaveAsPngAsync(input, new PngEncoder { BitDepth = PngBitDepth.Bit16 });
         input.Position = 0;
         var record = await fixture.Service.ImportAsync(input, "rgba.png", "folder");
         var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), fixture.Session.Key, $"image:{record.Id}");

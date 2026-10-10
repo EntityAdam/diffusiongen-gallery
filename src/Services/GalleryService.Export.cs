@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using Gallery.Core;
 using Gallery.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -31,6 +32,7 @@ public sealed partial class GalleryService
         using var key = session.Borrow();
         using var zip = new MemoryStream();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long centralDirectoryBytes = 0;
         using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
         {
             foreach (var id in ids.Distinct(StringComparer.Ordinal))
@@ -38,13 +40,18 @@ public sealed partial class GalleryService
                 var file = await ExportWithKeyAsync(await FindAsync(id, key.Bytes), key.Bytes);
                 try
                 {
-                    if (zip.Length + file.Content.Length > MaxExportZipBytes)
-                        throw new InvalidOperationException("The selection is larger than the 1 GiB export limit. Export fewer items.");
                     var entryName = UniqueName(file.FileName, names);
+                    var nameBytes = System.Text.Encoding.UTF8.GetByteCount(entryName);
+                    var localHeaderBytes = 30L + nameBytes;
+                    var centralEntryBytes = 46L + nameBytes;
+                    if (zip.Length + file.Content.Length + localHeaderBytes + centralDirectoryBytes
+                        + centralEntryBytes + 22 > MaxExportZipBytes)
+                        throw new InvalidOperationException("The selection is larger than the 1 GiB export limit. Export fewer items.");
                     // Media is already compressed; storing avoids a slow, pointless deflate pass.
                     var entry = archive.CreateEntry(entryName, CompressionLevel.NoCompression);
                     await using var output = entry.Open();
                     await output.WriteAsync(file.Content);
+                    centralDirectoryBytes += centralEntryBytes;
                 }
                 finally { CryptographicOperations.ZeroMemory(file.Content); }
             }

@@ -1,0 +1,67 @@
+<article class="image-card @(Image.MarkedForDeletion ? "marked" : "") @(Selected ? "selected" : "")" data-image-id="@Image.Id">
+    @if (ShowSelection)
+    {
+        <button type="button" class="card-select" disabled="@Busy" aria-pressed="@(Selected ? "true" : "false")"
+                aria-label="@($"Select {Image.Name}")" title="Select (Shift+click selects a range)"
+                @onclick="Select"><span aria-hidden="true">&#10003;</span></button>
+    }
+    <button class="image-open" disabled="@Busy" @onclick="Open">
+        @if (Thumbnail is not null)
+        { <img src="@Thumbnail" alt="@Image.Name" loading="lazy" draggable="false" /> }
+        else { <div class="thumbnail-placeholder">Loading preview...</div> }
+        @if (Image.IsVideo) { <span class="video-badge" aria-label="@($"Video, {Image.FormatDuration()}")">&#9654; @Image.FormatDuration()</span> }
+    </button>
+    <div class="card-info"><h3 title="@Image.Name">@Image.Name</h3>
+        <div class="card-meta">
+            <span>@Image.Width &times; @Image.Height</span>
+            <span class="card-security">
+                @if (Image.Description.Length > 0) { <span>Analyzed</span> }
+                <svg class="shield-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" role="img" aria-label="Encrypted" focusable="false">
+                    <title>Encrypted</title>
+                    <path d="M12 3 4 6v6c0 4 4 7 8 9 4-2 8-5 8-9V6l-8-3Z" />
+                    <path d="m8 12 3 3 5-6" />
+                </svg>
+            </span>
+        </div>
+        <div class="card-rating-row">
+            <div class="star-rating" role="group" aria-label="@($"Rating for {Image.Name}: {Image.Rating} out of 5 stars")">
+                @for (var score = 1; score <= 5; score++)
+                {
+                    var value = score;
+                    var label = Image.Rating == value ? "Clear rating" : $"Rate {value} out of 5 stars";
+                    <button type="button" disabled="@Busy" class="rating-star @(value <= Image.Rating ? "filled" : "")"
+                            aria-label="@label" title="@label" aria-pressed="@(Image.Rating == value ? "true" : "false")"
+                            @onclick="() => Rate.InvokeAsync(value)">
+                        <span aria-hidden="true">@(value <= Image.Rating ? "\u2605" : "\u2606")</span>
+                    </button>
+                }
+            </div>
+            <span class="muted">@(Image.Reviewed ? "Reviewed" : "Pending")</span>
+        </div>
+        @if (Image.Collections.Count > 0) { <div class="collection-chips">@foreach (var name in Image.Collections) { <span>@name</span> }</div> }
+    </div>
+    <div class="card-actions">
+        <button disabled="@Busy" class="@(Image.Favorite ? "selected" : "")" @onclick="Favorite" aria-label="Toggle favorite">@(Image.Favorite ? "\u2605" : "\u2606") Favorite</button>
+        <button disabled="@Busy" class="@(Image.MarkedForDeletion ? "danger selected" : "")" @onclick="Mark">@(Image.MarkedForDeletion ? "Unmark" : "Mark deletion")</button>
+    </div>
+    @if (RemovalMode && Image.MarkedForDeletion)
+    {
+        <label class="check"><input type="checkbox" checked="@RemovalSelected" disabled="@Busy" @onchange="args => RemovalSelectionChanged.InvokeAsync(args.Value is true)" /> Select for removal</label>
+    }
+</article>
+
+@code {
+    [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
+    [Parameter] public string? Thumbnail { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool Selected { get; set; }
+    [Parameter] public bool ShowSelection { get; set; }
+    [Parameter] public bool RemovalMode { get; set; }
+    [Parameter] public bool RemovalSelected { get; set; }
+    [Parameter] public EventCallback<MouseEventArgs> Select { get; set; }
+    [Parameter] public EventCallback Open { get; set; }
+    [Parameter] public EventCallback<int> Rate { get; set; }
+    [Parameter] public EventCallback Favorite { get; set; }
+    [Parameter] public EventCallback Mark { get; set; }
+    [Parameter] public EventCallback<bool> RemovalSelectionChanged { get; set; }
+}

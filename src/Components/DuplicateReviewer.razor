@@ -102,11 +102,11 @@
     private void PrepareGroup()
     {
         var records = Group.Ids.Select(Lookup).OfType<ImageRecord>().ToList();
-        recommendedId = GalleryService.PickKeeper(records).Id;
+        recommendedId = DuplicateRules.PickKeeper(records).Id;
         members = records.OrderByDescending(record => record.Id == recommendedId).ToList();
         imageIndex = 0;
         imageData = "";
-        if (!keepByGroup.ContainsKey(groupIndex)) keepByGroup[groupIndex] = GalleryService.InitialKeepers(records);
+        if (!keepByGroup.ContainsKey(groupIndex)) keepByGroup[groupIndex] = DuplicateRules.InitialKeepers(records);
     }
 
     private async Task LoadGroupAsync()

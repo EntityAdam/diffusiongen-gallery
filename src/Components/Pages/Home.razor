@@ -301,58 +301,7 @@ else
     @if (ShowsGallery)
     {
     <div class="gallery-layout">
-        <aside class="panel filters">
-            <details class="filter-disclosure">
-            <summary>Filter images</summary>
-            <div class="panel-header"><h3>Find your image</h3><button class="text-button" @onclick="ResetFilters" disabled="@busy">Reset</button></div>
-            <label for="collection-filter">Collection</label>
-            <select id="collection-filter" @bind="filter.Collection" @bind:after="FilterChangedAsync">
-                <option value="">All collections</option>
-                @foreach (var name in images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order())
-                { <option value="@name">@name</option> }
-            </select>
-            <label for="rating-filter">Minimum rating</label><select id="rating-filter" @bind="filter.MinRating" @bind:after="FilterChangedAsync">
-                <option value="0">Any rating</option>@for (var score = 1; score <= 5; score++) { <option value="@score">@score / 5</option> }
-            </select>
-            <label for="review-filter">Review queue</label><select id="review-filter" @bind="filter.Review" @bind:after="FilterChangedAsync">
-                <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
-            </select>
-            <label class="check"><input type="checkbox" @bind="filter.UnorganizedOnly" @bind:after="FilterChangedAsync" /> Without a collection only</label>
-            <label for="media-filter">Media type</label>
-            <select id="media-filter" @bind="filter.Media" @bind:after="FilterChangedAsync">
-                <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
-            </select>
-            <label for="search">Search everything</label>
-            <input id="search" @bind="filter.Search" @bind:event="oninput" @bind:after="FilterChangedAsync" placeholder="Prompt, name, description..." />
-            <label for="tag">Tag</label>
-            <input id="tag" @bind="filter.Tag" @bind:after="FilterChangedAsync" placeholder="Exact tag" list="tags" />
-            <datalist id="tags">@foreach (var tag in AllTags) { <option value="@tag"></option> }</datalist>
-            <label for="folder">Folder</label>
-            <input id="folder" @bind="filter.Folder" @bind:after="FilterChangedAsync" placeholder="Source or current folder" />
-            <label for="analysis-model">Vision model</label>
-            <input id="analysis-model" @bind="filter.Model" @bind:after="FilterChangedAsync" placeholder="Model name" />
-            <label for="orientation">Orientation</label>
-            <select id="orientation" @bind="filter.Orientation" @bind:after="FilterChangedAsync">
-                <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
-            </select>
-            <div class="two-fields">
-                <div><label for="width">Min width</label><input id="width" type="number" min="0" @bind="filter.MinWidth" @bind:after="FilterChangedAsync" /></div>
-                <div><label for="height">Min height</label><input id="height" type="number" min="0" @bind="filter.MinHeight" @bind:after="FilterChangedAsync" /></div>
-            </div>
-            <label for="analysis">Vision analysis</label>
-            <select id="analysis" @bind="filter.Analysis" @bind:after="FilterChangedAsync">
-                <option value="all">All images</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
-            </select>
-            <label for="deletion">Deletion status</label>
-            <select id="deletion" @bind="filter.Deletion" @bind:after="FilterChangedAsync">
-                <option value="active">Active images</option><option value="marked">Marked for deletion</option><option value="all">All images</option>
-            </select>
-            <label for="from">Imported from</label><input id="from" type="date" @bind="filter.From" @bind:after="FilterChangedAsync" />
-            <label for="to">Imported through</label><input id="to" type="date" @bind="filter.To" @bind:after="FilterChangedAsync" />
-            <label class="check"><input type="checkbox" @bind="filter.FavoritesOnly" @bind:after="FilterChangedAsync" /> Favorites only</label>
-            <div class="security-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the vault is unlocked.</div>
-            </details>
-        </aside>
+        <GalleryFilterPanel Filter="filter" Images="images" Changed="FilterChangedAsync" Reset="ResetFilters" Disabled="busy" />
         <section>
             <div class="quick-filters" role="group" aria-label="Quick filters">
                 @foreach (var chip in QuickFilters)
@@ -432,7 +381,7 @@ else
                 <details open><summary>Removal results: @removalResults.Count(result => result.Removed) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
                     @foreach (var result in removalResults)
                     {
-                        <p class="path">@result.Id: @(result.Removed ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"PNG restored to {result.RestoredPath}")</p>
+                        <p class="path">@result.Id: @(result.Removed ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
                     }
                 </details>
             }
@@ -471,57 +420,13 @@ else
                             </div>
                         }
                         firstOnPage = false;
-                        <article class="image-card @(image.MarkedForDeletion ? "marked" : "") @(isSelected ? "selected" : "")" data-image-id="@image.Id" @key="image.Id">
-                            @if (workflow != "remove")
-                            {
-                                <button type="button" class="card-select" disabled="@busy" aria-pressed="@(isSelected ? "true" : "false")"
-                                        aria-label="@($"Select {image.Name}")" title="Select (Shift+click selects a range)"
-                                        @onclick="args => SelectCard(image.Id, args.ShiftKey)"><span aria-hidden="true">&#10003;</span></button>
-                            }
-                            <button class="image-open" disabled="@busy" @onclick="() => OpenAsync(image)">
-                                @if (thumbnails.TryGetValue(image.Id, out var thumbnail))
-                                { <img src="@thumbnail" alt="@image.Name" loading="lazy" draggable="false" /> }
-                                else { <div class="thumbnail-placeholder">Loading preview...</div> }
-                                @if (image.IsVideo) { <span class="video-badge" aria-label="@($"Video, {image.FormatDuration()}")">&#9654; @image.FormatDuration()</span> }
-                            </button>
-                            <div class="card-info"><h3 title="@image.Name">@image.Name</h3>
-                                <div class="card-meta">
-                                    <span>@image.Width &times; @image.Height</span>
-                                    <span class="card-security">
-                                        @if (image.Description.Length > 0) { <span>Analyzed</span> }
-                                        <svg class="shield-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" role="img" aria-label="Encrypted" focusable="false">
-                                            <title>Encrypted</title>
-                                            <path d="M12 3 4 6v6c0 4 4 7 8 9 4-2 8-5 8-9V6l-8-3Z" />
-                                            <path d="m8 12 3 3 5-6" />
-                                        </svg>
-                                    </span>
-                                </div>
-                                <div class="card-rating-row">
-                                    <div class="star-rating" role="group" aria-label="@($"Rating for {image.Name}: {image.Rating} out of 5 stars")">
-                                        @for (var score = 1; score <= 5; score++)
-                                        {
-                                            var value = score;
-                                            var label = image.Rating == value ? "Clear rating" : $"Rate {value} out of 5 stars";
-                                            <button type="button" disabled="@busy" class="rating-star @(value <= image.Rating ? "filled" : "")"
-                                                    aria-label="@label" title="@label" aria-pressed="@(image.Rating == value ? "true" : "false")"
-                                                    @onclick="() => RateImageAsync(image, value)">
-                                                <span aria-hidden="true">@(value <= image.Rating ? "\u2605" : "\u2606")</span>
-                                            </button>
-                                        }
-                                    </div>
-                                    <span class="muted">@(image.Reviewed ? "Reviewed" : "Pending")</span>
-                                </div>
-                                @if (image.Collections.Count > 0) { <div class="collection-chips">@foreach (var name in image.Collections) { <span>@name</span> }</div> }
-                            </div>
-                            <div class="card-actions">
-                                <button disabled="@busy" class="@(image.Favorite ? "selected" : "")" @onclick="() => FavoriteAsync(image)" aria-label="Toggle favorite">@(image.Favorite ? "\u2605" : "\u2606") Favorite</button>
-                                <button disabled="@busy" class="@(image.MarkedForDeletion ? "danger selected" : "")" @onclick="() => MarkAsync(image)">@(image.MarkedForDeletion ? "Unmark" : "Mark deletion")</button>
-                            </div>
-                            @if (workflow == "remove" && image.MarkedForDeletion)
-                            {
-                                <label class="check"><input type="checkbox" checked="@removalSelection.Contains(image.Id)" disabled="@busy" @onchange="args => ToggleRemovalSelection(image.Id, args.Value is true)" /> Select for removal</label>
-                            }
-                        </article>
+                        <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)"
+                                          Busy="busy" Selected="isSelected" ShowSelection="@(workflow != "remove")"
+                                          RemovalMode="@(workflow == "remove")" RemovalSelected="@removalSelection.Contains(image.Id)"
+                                          Select="args => SelectCard(image.Id, args.ShiftKey)" Open="() => OpenAsync(image)"
+                                          Rate="value => RateImageAsync(image, value)" Favorite="() => FavoriteAsync(image)"
+                                          Mark="() => MarkAsync(image)"
+                                          RemovalSelectionChanged="value => ToggleRemovalSelection(image.Id, value)" />
                     }
                 </div>
                 <div class="pagination">
@@ -634,7 +539,7 @@ else
                     {
                         <label for="restore-folder">Existing folder for restored PNG files</label>
                         <input id="restore-folder" @bind="restoreFolder" disabled="@busy" />
-                        <p class="muted">Restores full-resolution PNGs named by image ID; never overwrites. Exact JPEG/WebP source bytes are not retained. Browser uploads may still have originals the app cannot access.</p>
+                        <p class="muted">Restores full-resolution PNGs or original-format MP4s named by image ID; never overwrites. Exact JPEG/WebP source bytes are not retained. Browser uploads may still have originals the app cannot access.</p>
                     }
                 }
                 <div class="notice error">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this vault. Backups may still contain them. This is not secure SSD/NVMe erasure.</div>
@@ -722,7 +627,7 @@ else
     private void UpdateDuplicateGroups() => VisibleDuplicateGroups = duplicateScan is null ? [] : duplicateScan.Groups
         .Select(group => group with { Ids = group.Ids.Where(imagesById.ContainsKey).ToList() })
         .Where(group => group.Ids.Count > 1).ToList();
-    private ImageRecord KeeperOf(DuplicateGroup group) => GalleryService.PickKeeper(group.Ids.Select(id => ImageById(id)!));
+    private ImageRecord KeeperOf(DuplicateGroup group) => DuplicateRules.PickKeeper(group.Ids.Select(id => ImageById(id)!));
     private GalleryFilter filter = new();
     private VisionSettings settings = new();
     private List<ImageRecord> images = [];
@@ -744,8 +649,6 @@ else
     }
     private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
     private IEnumerable<ImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
-    private IEnumerable<string> AllTags => images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Distinct().Order();
-
     private async Task RunAsync(string status, Func<Task> action)
     {
         if (busy) return;
@@ -856,7 +759,7 @@ else
     {
         if (value == "remove" && workflow != "remove")
         {
-            browsingFilter = LibraryService.Clone(filter);
+            browsingFilter = filter.Clone();
             filter = new() { Deletion = "marked" };
         }
         else if (workflow == "remove" && value != "remove" && browsingFilter is not null)
@@ -1045,7 +948,7 @@ else
 
     private Task BulkAsync(string status, Action<ImageRecord> update, string done) =>
         RunAsync(status, () => CurateAsync(librarySelection.ToList(), update, $"{done} ({librarySelection.Count} images)."));
-    private Task BulkRateAsync(int value) => BulkAsync("Rating selected images...", image => LibraryService.SetCuration(image, value, null), value == 0 ? "Ratings cleared" : $"Rated {value} stars");
+    private Task BulkRateAsync(int value) => BulkAsync("Rating selected images...", image => LibraryRules.SetCuration(image, value, null), value == 0 ? "Ratings cleared" : $"Rated {value} stars");
     private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image.Favorite = value, value ? "Added to favorites" : "Removed from favorites");
     private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image.Reviewed = value, "Marked reviewed");
     private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => image.MarkedForDeletion = value, value ? "Marked for deletion" : "Deletion marks cleared");
@@ -1054,7 +957,7 @@ else
         var tags = bulkTags.Trim();
         if (tags.Length == 0) return Task.CompletedTask;
         bulkTags = "";
-        return BulkAsync("Adding tags...", image => image.Tags = LibraryService.MergeTags(image.Tags, tags), "Tags added");
+        return BulkAsync("Adding tags...", image => image.Tags = LibraryRules.MergeTags(image.Tags, tags), "Tags added");
     }
     private Task BulkCollectAsync()
     {
@@ -1082,7 +985,7 @@ else
         }
         Action<ImageRecord>? update = key switch
         {
-            "0" or "1" or "2" or "3" or "4" or "5" => current => LibraryService.SetCuration(current, key[0] - '0', null),
+            "0" or "1" or "2" or "3" or "4" or "5" => current => LibraryRules.SetCuration(current, key[0] - '0', null),
             "f" when !image.Favorite => current => current.Favorite = true,
             "f" => current => current.Favorite = false,
             "delete" when !image.MarkedForDeletion => current => current.MarkedForDeletion = true,
@@ -1155,7 +1058,7 @@ else
     private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
         await Gallery.UpdateAsync(image.Id, current =>
-            LibraryService.SetCuration(current, current.Rating == value ? 0 : value, null));
+            LibraryRules.SetCuration(current, current.Rating == value ? 0 : value, null));
         await ReloadAsync();
     });
 

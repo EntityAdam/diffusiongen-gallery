@@ -7,7 +7,10 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <ProjectReference Include="Gallery.Core\Gallery.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Gallery.Core\**\*.cs" />
   </ItemGroup>
 </Project>
