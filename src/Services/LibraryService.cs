@@ -5,54 +5,107 @@ using Gallery.Models;
 
 namespace Gallery.Services;
 
-public sealed record SavedView(string Name, GalleryFilter Filter);
-public sealed record OrganizationSuggestion(string Id, string Name, string Description, string Tags, string Collection, string Model, string Warning = "");
+internal sealed record SavedView(string Name, GalleryFilter Filter);
+internal sealed record OrganizationSuggestion(string Id, string Name, string Description, string Tags, string Collection, string Model, string Warning = "");
 
-public sealed class LibraryService(GalleryStore store, VaultSession session)
+internal sealed class LibraryService(GalleryStore galleryStore, VaultSession vaultSession)
 {
+    private const string SavedViewsId = "saved-views";
+
     public async Task<List<SavedView>> LoadViewsAsync()
     {
-        using var key = session.Borrow();
-        var payload = await store.ReadSettingsAsync("saved-views");
-        if (payload is null) return [];
-        var plain = VaultCrypto.Decrypt(payload, key.Bytes, "saved-views:v1");
-        try { return JsonSerializer.Deserialize<List<SavedView>>(plain) ?? throw new InvalidOperationException("Invalid saved views."); }
-        finally { CryptographicOperations.ZeroMemory(plain); }
+        using var keyLease = vaultSession.Borrow();
+        var payload = await galleryStore.ReadSettingsAsync(SavedViewsId);
+        return payload is null ? [] : SavedViewCodec.Deserialize(payload, keyLease.Bytes);
     }
 
-    public async Task SaveViewAsync(string name, GalleryFilter filter)
+    public async Task SaveViewAsync(string name, GalleryFilter galleryFilter)
     {
-        name = name.Trim();
-        if (name.Length is 0 or > 80) throw new InvalidOperationException("Saved view names must have 1 to 80 characters.");
-        await store.Gate.WaitAsync();
+        name = ValidateViewName(name);
+        await galleryStore.Gate.WaitAsync();
         try
         {
             var views = await LoadViewsAsync();
-            views.RemoveAll(view => view.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-            views.Add(new(name, filter.Clone()));
+            SavedViewProcessor.Replace(views, name, galleryFilter);
             await SaveViewsAsync(views);
         }
-        finally { store.Gate.Release(); }
+        finally
+        {
+            galleryStore.Gate.Release();
+        }
+    }
+
+    private static string ValidateViewName(string name)
+    {
+        var normalizedName = name.Trim();
+        if (normalizedName.Length is 0 or > 80)
+            throw new InvalidOperationException("Saved view names must have 1 to 80 characters.");
+        return normalizedName;
     }
 
     public async Task DeleteViewAsync(string name)
     {
-        await store.Gate.WaitAsync();
+        await galleryStore.Gate.WaitAsync();
         try
         {
             var views = await LoadViewsAsync();
-            views.RemoveAll(view => view.Name == name);
+            SavedViewProcessor.Remove(views, name);
             await SaveViewsAsync(views);
         }
-        finally { store.Gate.Release(); }
+        finally
+        {
+            galleryStore.Gate.Release();
+        }
     }
 
     private async Task SaveViewsAsync(List<SavedView> views)
     {
-        using var key = session.Borrow();
-        var plain = JsonSerializer.SerializeToUtf8Bytes(views);
-        try { await store.SaveSettingsAsync(VaultCrypto.Encrypt(plain, key.Bytes, "saved-views:v1"), "saved-views"); }
-        finally { CryptographicOperations.ZeroMemory(plain); }
+        using var keyLease = vaultSession.Borrow();
+        var payload = SavedViewCodec.Serialize(views, keyLease.Bytes);
+        await galleryStore.SaveSettingsAsync(payload, SavedViewsId);
+    }
+}
+
+internal static class SavedViewCodec
+{
+    internal const string SavedViewsPurpose = "saved-views:v1";
+
+    public static List<SavedView> Deserialize(byte[] payload, byte[] keyBytes)
+    {
+        var plain = VaultCrypto.Decrypt(payload, keyBytes, SavedViewsPurpose);
+        try
+        {
+            return JsonSerializer.Deserialize<List<SavedView>>(plain)
+                ?? throw new InvalidOperationException("Invalid saved views.");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plain);
+        }
     }
 
+    public static byte[] Serialize(List<SavedView> views, byte[] keyBytes)
+    {
+        var plain = JsonSerializer.SerializeToUtf8Bytes(views);
+        try
+        {
+            return VaultCrypto.Encrypt(plain, keyBytes, SavedViewsPurpose);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plain);
+        }
+    }
+}
+
+internal static class SavedViewProcessor
+{
+    public static void Replace(List<SavedView> views, string name, GalleryFilter galleryFilter)
+    {
+        views.RemoveAll(savedView => savedView.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        views.Add(new SavedView(name, galleryFilter with { }));
+    }
+
+    public static void Remove(List<SavedView> views, string name) =>
+        views.RemoveAll(savedView => savedView.Name == name);
 }

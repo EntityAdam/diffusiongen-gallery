@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Collections.Immutable;
 using Gallery.Core;
 using Gallery.Models;
 using SixLabors.ImageSharp;
@@ -8,6 +9,14 @@ namespace Gallery.Services;
 
 public sealed partial class GalleryService
 {
+    private static class PreferencesNormalizer
+    {
+        public static UiPreferences Normalize(UiPreferences preferences) =>
+            UiPreferences.Densities.Contains(preferences.GridDensity)
+                ? preferences
+                : preferences with { GridDensity = UiPreferences.ComfortableDensity };
+    }
+
     private const string PerceptualHashesId = "perceptual-hashes";
     private const string PerceptualHashesPurpose = "perceptual-hashes:v1";
     private const string DuplicateScanId = "duplicate-scan";
@@ -18,76 +27,139 @@ public sealed partial class GalleryService
 
     private sealed record PerceptualHash(string PngSha256, ulong Hash);
 
+    private sealed class PerceptualHashProcessor(GalleryStore store)
+    {
+        public async Task<Dictionary<string, PerceptualHash>> ComputeAsync(
+            IReadOnlyList<ImageRecord> imageRecords, byte[] key)
+        {
+            var encryptedThumbnails = new List<(ImageRecord Record, byte[] Bytes)>(imageRecords.Count);
+            foreach (var imageRecord in imageRecords)
+            {
+                try
+                {
+                    encryptedThumbnails.Add((imageRecord, await store.ReadThumbnailAsync(imageRecord.Id)));
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or IOException
+                    or UnauthorizedAccessException)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not read the thumbnail for image '{imageRecord.Id}' during duplicate scanning.", exception);
+                }
+            }
+
+            var perceptualHashes = await Task.Run(() =>
+            {
+                var computedHashes = new PerceptualHash?[encryptedThumbnails.Count];
+                Parallel.For(0, encryptedThumbnails.Count, index =>
+                {
+                    var (imageRecord, encryptedThumbnail) = encryptedThumbnails[index];
+                    try
+                    {
+                        var plainThumbnail = VaultCrypto.Decrypt(encryptedThumbnail, key, $"thumbnail:{imageRecord.Id}");
+                        try
+                        {
+                            computedHashes[index] = new(
+                                imageRecord.PngSha256, DuplicateRules.DifferenceHash(plainThumbnail));
+                        }
+                        finally { CryptographicOperations.ZeroMemory(plainThumbnail); }
+                    }
+                    catch (Exception exception) when (exception is CryptographicException
+                        or ImageFormatException or UnknownImageFormatException)
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not compute a perceptual hash for image '{imageRecord.Id}'.", exception);
+                    }
+                });
+                return computedHashes;
+            });
+
+            var hashesByImageId = new Dictionary<string, PerceptualHash>(encryptedThumbnails.Count);
+            for (var index = 0; index < encryptedThumbnails.Count; index++)
+            {
+                if (perceptualHashes[index] is { } perceptualHash)
+                    hashesByImageId.Add(encryptedThumbnails[index].Record.Id, perceptualHash);
+            }
+            return hashesByImageId;
+        }
+    }
+
     public async Task<UiPreferences> LoadPreferencesAsync() =>
-        (await ReadEncryptedSettingAsync<UiPreferences>(PreferencesId, PreferencesPurpose) ?? new()).Normalize();
+        PreferencesNormalizer.Normalize(
+            await ReadEncryptedSettingAsync<UiPreferences>(PreferencesId, PreferencesPurpose) ?? new());
 
     public Task SavePreferencesAsync(UiPreferences preferences) =>
-        WriteEncryptedSettingAsync(preferences.Normalize(), PreferencesId, PreferencesPurpose);
+        WriteEncryptedSettingAsync(PreferencesNormalizer.Normalize(preferences), PreferencesId, PreferencesPurpose);
 
     public Task<DuplicateScan?> CachedDuplicateScanAsync() =>
         ReadEncryptedSettingAsync<DuplicateScan>(DuplicateScanId, DuplicateScanPurpose);
 
     public async Task<DuplicateScan> ScanDuplicatesAsync(IProgress<(int Completed, int Total)>? progress = null)
     {
-        var records = await ListAsync();
-        var cached = await ReadEncryptedSettingAsync<Dictionary<string, PerceptualHash>>(PerceptualHashesId, PerceptualHashesPurpose) ?? [];
-        var hashes = new Dictionary<string, PerceptualHash>();
-        var pending = new List<ImageRecord>();
-        foreach (var record in records)
-        {
-            if (cached.TryGetValue(record.Id, out var hash) && hash.PngSha256 == record.PngSha256) hashes[record.Id] = hash;
-            else pending.Add(record);
-        }
-
-        var completed = records.Count - pending.Count;
-        progress?.Report((completed, records.Count));
-        foreach (var batch in pending.Chunk(HashBatchSize))
-        {
-            var thumbnails = new List<(ImageRecord Record, byte[] Encrypted)>(batch.Length);
-            foreach (var record in batch)
-            {
-                try { thumbnails.Add((record, await store.ReadThumbnailAsync(record.Id))); }
-                catch (InvalidOperationException) { }
-            }
-            var computed = await Task.Run(() =>
-            {
-                using var key = session.Borrow();
-                var results = new PerceptualHash?[thumbnails.Count];
-                Parallel.For(0, thumbnails.Count, index =>
-                {
-                    var (record, encrypted) = thumbnails[index];
-                    try
-                    {
-                        var plain = VaultCrypto.Decrypt(encrypted, key.Bytes, $"thumbnail:{record.Id}");
-                        try { results[index] = new(record.PngSha256, DuplicateRules.DifferenceHash(plain)); }
-                        finally { CryptographicOperations.ZeroMemory(plain); }
-                    }
-                    catch (Exception exception) when (exception is CryptographicException or ImageFormatException or UnknownImageFormatException) { }
-                });
-                return results;
-            });
-            for (var index = 0; index < thumbnails.Count; index++)
-                if (computed[index] is { } hash) hashes[thumbnails[index].Record.Id] = hash;
-            completed += batch.Length;
-            progress?.Report((completed, records.Count));
-        }
-
-        await WriteEncryptedSettingAsync(hashes, PerceptualHashesId, PerceptualHashesPurpose);
-        var hashed = records.Where(record => hashes.ContainsKey(record.Id)).ToList();
-        var groups = await Task.Run(() => DuplicateRules.GroupDuplicates(hashed,
-            record => hashes[record.Id].Hash, FileLength));
-        var scan = new DuplicateScan(groups, hashed.Count, DateTimeOffset.UtcNow);
+        var imageRecords = await ListAsync();
+        var cachedHashesByImageId =
+            await ReadEncryptedSettingAsync<Dictionary<string, PerceptualHash>>(PerceptualHashesId, PerceptualHashesPurpose) ?? [];
+        var (perceptualHashesByImageId, pendingImageRecords) = ReconcileCachedHashes(imageRecords, cachedHashesByImageId);
+        await ComputePendingHashesAsync(pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
+        await WriteEncryptedSettingAsync(perceptualHashesByImageId, PerceptualHashesId, PerceptualHashesPurpose);
+        var scan = await BuildDuplicateScanAsync(imageRecords, perceptualHashesByImageId);
         await WriteEncryptedSettingAsync(scan, DuplicateScanId, DuplicateScanPurpose);
         return scan;
     }
 
-    /// <summary>Unmarks the kept copies and marks every other copy in the group for deletion. Returns the failure count.</summary>
-    public async Task<int> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupIds, IReadOnlySet<string> keep)
+    private static (Dictionary<string, PerceptualHash> HashesByImageId, List<ImageRecord> PendingImageRecords)
+        ReconcileCachedHashes(IEnumerable<ImageRecord> imageRecords,
+            IReadOnlyDictionary<string, PerceptualHash> cachedHashesByImageId)
     {
+        var hashesByImageId = new Dictionary<string, PerceptualHash>();
+        var pendingImageRecords = new List<ImageRecord>();
+        foreach (var imageRecord in imageRecords)
+        {
+            if (cachedHashesByImageId.TryGetValue(imageRecord.Id, out var cachedPerceptualHash)
+                && cachedPerceptualHash.PngSha256 == imageRecord.PngSha256)
+                hashesByImageId[imageRecord.Id] = cachedPerceptualHash;
+            else
+                pendingImageRecords.Add(imageRecord);
+        }
+        return (hashesByImageId, pendingImageRecords);
+    }
+
+    private async Task ComputePendingHashesAsync(IReadOnlyList<ImageRecord> pendingImageRecords,
+        IDictionary<string, PerceptualHash> perceptualHashesByImageId, int totalImageCount,
+        IProgress<(int Completed, int Total)>? progress)
+    {
+        var completedCount = totalImageCount - pendingImageRecords.Count;
+        progress?.Report((completedCount, totalImageCount));
+        var hashProcessor = new PerceptualHashProcessor(store);
+        foreach (var imageRecordBatch in pendingImageRecords.Chunk(HashBatchSize))
+        {
+            using var key = session.Borrow();
+            var batchHashes = await hashProcessor.ComputeAsync(imageRecordBatch, key.Bytes);
+            foreach (var (imageId, perceptualHash) in batchHashes)
+                perceptualHashesByImageId.Add(imageId, perceptualHash);
+            completedCount += imageRecordBatch.Length;
+            progress?.Report((completedCount, totalImageCount));
+        }
+    }
+
+    private static async Task<DuplicateScan> BuildDuplicateScanAsync(IEnumerable<ImageRecord> imageRecords,
+        IReadOnlyDictionary<string, PerceptualHash> hashesByImageId)
+    {
+        var hashedImageRecords = imageRecords.Where(imageRecord => hashesByImageId.ContainsKey(imageRecord.Id)).ToList();
+        var groups = await Task.Run(() => DuplicateRules.GroupDuplicates(hashedImageRecords,
+            imageRecord => hashesByImageId[imageRecord.Id].Hash, FileLength));
+        return new DuplicateScan(groups.ToImmutableArray(), hashedImageRecords.Count, DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Unmarks the kept copies and marks every other copy in the group for deletion. Returns the failure count.</summary>
+    public async Task ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupIds, IReadOnlySet<string> keep)
+    {
+        ArgumentNullException.ThrowIfNull(groupIds);
+        ArgumentNullException.ThrowIfNull(keep);
         if (keep.Count == 0) throw new InvalidOperationException("Keep at least one image in the group.");
         if (!keep.All(groupIds.Contains)) throw new InvalidOperationException("Kept images must belong to the group.");
-        var failed = await UpdateManyAsync(keep, record => record.MarkedForDeletion = false);
-        return failed + await UpdateManyAsync(groupIds.Where(id => !keep.Contains(id)).ToList(), record => record.MarkedForDeletion = true);
+        var retainedIds = keep.ToHashSet(StringComparer.Ordinal);
+        await UpdateManyAsync(groupIds.Distinct(StringComparer.Ordinal).ToList(),
+            record => record.MarkedForDeletion = !retainedIds.Contains(record.Id));
     }
 
     private async Task<T?> ReadEncryptedSettingAsync<T>(string id, string purpose) where T : class

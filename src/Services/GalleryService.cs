@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core;
+using Gallery.Core.Queries;
 using Gallery.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -9,47 +10,300 @@ using SixLabors.ImageSharp.Processing;
 
 namespace Gallery.Services;
 
-public sealed partial class GalleryService(GalleryStore store, VaultStore vault, VaultSession session, VideoTools? video = null)
+public sealed partial class GalleryService
 {
+    private const string RatingRangeMessageFormat = "Rating {0} must be between 0 and 5.";
+    private const string EmptyDuplicateCandidatesMessage =
+        "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
+
+    private readonly GalleryStore store;
+    private readonly VaultStore vault;
+    private readonly VaultSession session;
+    private readonly VideoTools? video;
+    private readonly VisionService? vision;
+    private readonly LibraryService? library;
+
+    private static class GalleryImageRenderer
+    {
+        public static async Task<string> CreatePreviewAsync(
+            ImageRecord record, byte[] key, bool shouldUseFullResolution)
+        {
+            var plainImage = await DecryptStoredImageAsync(record, key);
+            try
+            {
+                using var image = Image.Load(plainImage);
+                if (!shouldUseFullResolution)
+                    image.Mutate(context => context.Resize(new ResizeOptions
+                    {
+                        Size = new Size(1600, 1600), Mode = ResizeMode.Max
+                    }));
+                using var preview = new MemoryStream();
+                await image.SaveAsPngAsync(preview, new PngEncoder { SkipMetadata = true });
+                var dataUrl = "data:image/png;base64," +
+                    Convert.ToBase64String(preview.GetBuffer(), 0, (int)preview.Length);
+                CryptographicOperations.ZeroMemory(preview.GetBuffer());
+                return dataUrl;
+            }
+            finally { CryptographicOperations.ZeroMemory(plainImage); }
+        }
+
+        public static async Task<string> CreateViewerImageAsync(
+            ImageRecord record, byte[] key, bool shouldUseFullResolution)
+        {
+            var plainImage = await DecryptStoredImageAsync(record, key);
+            try
+            {
+                if (shouldUseFullResolution)
+                    return "data:image/png;base64," + Convert.ToBase64String(plainImage);
+
+                using var image = Image.Load(plainImage);
+                image.Mutate(context => context.Resize(new ResizeOptions
+                {
+                    Size = new Size(1600, 1600), Mode = ResizeMode.Max
+                }).BackgroundColor(Color.Black));
+                using var preview = new MemoryStream();
+                try
+                {
+                    await image.SaveAsJpegAsync(preview, new JpegEncoder { Quality = 85, SkipMetadata = true });
+                    return "data:image/jpeg;base64," +
+                        Convert.ToBase64String(preview.GetBuffer(), 0, (int)preview.Length);
+                }
+                finally { CryptographicOperations.ZeroMemory(preview.GetBuffer()); }
+            }
+            finally { CryptographicOperations.ZeroMemory(plainImage); }
+        }
+
+        private static async Task<byte[]> DecryptStoredImageAsync(ImageRecord record, byte[] key) =>
+            VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{record.Id}");
+    }
+
+    internal GalleryService(GalleryStore store, VaultStore vault, VaultSession session, VideoTools? video = null,
+        VisionService? vision = null, LibraryService? library = null)
+    {
+        this.store = store;
+        this.vault = vault;
+        this.session = session;
+        this.video = video;
+        this.vision = vision;
+        this.library = library;
+    }
+
     public const long MaxFileBytes = 50 * 1024 * 1024;
     public const long MaxVideoBytes = 256 * 1024 * 1024;
     public static readonly string[] Extensions = [".png", ".jpg", ".jpeg", ".webp", ".mp4"];
 
     public static bool IsVideoName(string name) => string.Equals(Path.GetExtension(name), ".mp4", StringComparison.OrdinalIgnoreCase);
 
+    public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        ArgumentNullException.ThrowIfNull(filter);
+        return GalleryFilterProcessor.Apply(filter, records).ToList();
+    }
+
+    public List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> records)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        return ComfyMetadata.GroupByPrompt(records);
+    }
+
+    public ImageRecord PickDuplicateKeeper(IEnumerable<ImageRecord> records)
+    {
+        var candidates = RequireDuplicateCandidates(records);
+        return DuplicateRules.PickKeeper(candidates);
+    }
+
+    public HashSet<string> InitialDuplicateKeepers(IReadOnlyCollection<ImageRecord> group)
+    {
+        var candidates = RequireDuplicateCandidates(group);
+        return DuplicateRules.InitialKeepers(candidates);
+    }
+
+    private static List<ImageRecord> RequireDuplicateCandidates(IEnumerable<ImageRecord> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        var candidateRecords = candidates.ToList();
+        if (candidateRecords.Count == 0)
+            throw new InvalidOperationException(EmptyDuplicateCandidatesMessage);
+        return candidateRecords;
+    }
+
+    public void ApplyReviewDecision(ImageRecordEdit image, ReviewAction action, int rating = 0)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (!Enum.IsDefined(action))
+            throw new InvalidOperationException(
+                $"Review action value {(int)action} is invalid; choose Keep, Favorite, MarkDeletion, or Rate.");
+        if (action == ReviewAction.Rate && rating is < 1 or > 5)
+            throw new InvalidOperationException($"Rating {rating} must be between 1 and 5.");
+        ReviewDecision.Apply(image, action, rating);
+    }
+
+    public ReviewState CaptureReviewState(ImageRecord image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        return ReviewState.Capture(image);
+    }
+
+    public void RestoreReviewState(ImageRecordEdit image, ReviewState state)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        ArgumentNullException.ThrowIfNull(state);
+        image.Reviewed = state.Reviewed;
+        image.Favorite = state.Favorite;
+        image.MarkedForDeletion = state.MarkedForDeletion;
+        image.Rating = state.Rating;
+    }
+
+    public void SetCuration(ImageRecordEdit image, int? rating, bool? reviewed)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (rating is < 0 or > 5)
+            throw new InvalidOperationException(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture, RatingRangeMessageFormat, rating));
+        LibraryRules.SetCuration(image, rating, reviewed);
+    }
+
+    public void SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (rating is < 0 or > 5)
+            throw new InvalidOperationException(string.Format(
+                System.Globalization.CultureInfo.InvariantCulture, RatingRangeMessageFormat, rating));
+        if (IsInvalidCollectionName(collection))
+            throw new InvalidOperationException("Collection names must have 1 to 80 characters.");
+        LibraryRules.SetOrganization(image, rating, reviewed, collection);
+    }
+
+    private static bool IsInvalidCollectionName(string? collection) =>
+        collection is not null && (string.IsNullOrWhiteSpace(collection) || collection.Trim().Length > 80);
+
+    public string MergeTags(string existing, string additions) => LibraryRules.MergeTags(existing, additions);
+
+    internal Task<List<SavedView>> LoadViewsAsync() => RequiredLibrary().LoadViewsAsync();
+    internal Task SaveViewAsync(string name, GalleryFilter filter) => RequiredLibrary().SaveViewAsync(name, filter);
+    internal Task DeleteViewAsync(string name) => RequiredLibrary().DeleteViewAsync(name);
+    public Task<IReadOnlyList<string>> GetVisionModelsAsync(VisionSettings settings) =>
+        RequiredVision().GetModelsAsync(settings);
+    public Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData) =>
+        RequiredVision().AnalyzeAsync(settings, imageData);
+    public Task<GalleryFilter> InterpretSearchAsync(VisionSettings settings, string query, IEnumerable<string> collections) =>
+        RequiredVision().InterpretSearchAsync(settings, query, collections);
+    public Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
+        VisionSettings settings, string imageData, IEnumerable<string> collections) =>
+        RequiredVision().AnalyzeImageWithCollectionAsync(settings, imageData, collections);
+
+    private LibraryService RequiredLibrary() => library
+        ?? throw new InvalidOperationException("The library manager is not configured.");
+
+    private VisionService RequiredVision() => vision
+        ?? throw new InvalidOperationException("The vision manager is not configured.");
+
+    public static string FormatDuration(ImageRecord image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        var duration = TimeSpan.FromSeconds(Math.Max(0, Math.Round(image.DurationSeconds)));
+        return duration.TotalHours >= 1 ? duration.ToString(@"h\:mm\:ss") : duration.ToString(@"m\:ss");
+    }
+
+    public static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB", "PB"];
+        double value = Math.Max(0, bytes);
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return unit == 0
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes:N0} B")
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{value:0.##} {units[unit]}");
+    }
+
     public async Task<List<ImageRecord>> ListAsync()
     {
         using var key = session.Borrow();
         await store.Gate.WaitAsync();
-        try { await BackfillFingerprintsAsync(key.Bytes); }
+        try
+        {
+            await RecoverInterruptedRemovalsAsync(key.Bytes);
+            await BackfillFingerprintsAsync(key.Bytes);
+        }
         finally { store.Gate.Release(); }
         var records = await ListWithKeyAsync(key.Bytes);
         await BackfillGenerationAsync(records, key.Bytes);
         return records;
     }
 
+    private async Task RecoverInterruptedRemovalsAsync(byte[] key)
+    {
+        var records = await ListWithKeyAsync(key);
+        var imageRoot = Path.Combine(vault.Root, "images");
+        IEnumerable<string> stagedRemovals = Directory.Exists(imageRoot)
+            ? Directory.EnumerateFiles(imageRoot, "*.removing-*", SearchOption.AllDirectories)
+            : Array.Empty<string>();
+        foreach (var path in stagedRemovals)
+        {
+            var record = records.FirstOrDefault(item =>
+                string.Equals(path, RemovalStagingPath(item), StringComparison.OrdinalIgnoreCase));
+            if (record is null)
+            {
+                File.Delete(path);
+                continue;
+            }
+
+            if (!File.Exists(record.StoredPath))
+            {
+                File.Move(path, record.StoredPath);
+                continue;
+            }
+
+            if (!await FilesMatchAsync(path, record.StoredPath))
+                throw new IOException($"Interrupted removal left conflicting encrypted copies for image '{record.Id}'; both were preserved.");
+            File.Delete(path);
+        }
+    }
+
+    private static string RemovalStagingPath(ImageRecord record) =>
+        record.StoredPath + ".removing-" + record.Id;
+
+    private static async Task<bool> FilesMatchAsync(string leftPath, string rightPath)
+    {
+        await using var left = File.OpenRead(leftPath);
+        await using var right = File.OpenRead(rightPath);
+        if (left.Length != right.Length) return false;
+        var leftHash = await SHA256.HashDataAsync(left);
+        var rightHash = await SHA256.HashDataAsync(right);
+        return CryptographicOperations.FixedTimeEquals(leftHash, rightHash);
+    }
+
     /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
     private async Task BackfillGenerationAsync(List<ImageRecord> records, byte[] key)
     {
-        var stale = records.Select((record, index) => (record, index))
+        var staleRecordIndices = records.Select((record, index) => (record, index))
             .Where(item => item.record.MetadataVersion < ComfyMetadata.Version).ToList();
-        if (stale.Count == 0) return;
+        if (staleRecordIndices.Count == 0) return;
         await store.Gate.WaitAsync();
         try
         {
-            foreach (var (record, index) in stale)
+            foreach (var (record, index) in staleRecordIndices)
             {
                 try
                 {
-                    var fresh = await FindAsync(record.Id, key);
-                    fresh.Generation = ComfyMetadata.Extract(fresh.Metadata);
-                    fresh.MetadataVersion = ComfyMetadata.Version;
-                    await store.UpdateAsync(fresh.Id, EncryptRecord(fresh, key));
-                    records[index] = fresh;
+                    var original = await FindAsync(record.Id, key);
+                    var edit = new ImageRecordEdit(original)
+                    {
+                        Generation = ComfyMetadata.Extract(original.Metadata),
+                        MetadataVersion = ComfyMetadata.Version
+                    };
+                    var refreshedImageRecord = edit.ToRecord(original);
+                    await store.UpdateAsync(refreshedImageRecord.Id, EncryptRecord(refreshedImageRecord, key));
+                    records[index] = refreshedImageRecord;
                 }
                 catch (Exception exception) when (exception is InvalidOperationException or CryptographicException)
                 {
-                    // A record removed concurrently or unreadable stays as listed; it is retried next time.
+                    throw new InvalidOperationException($"Could not backfill generation metadata for image '{record.Id}'.", exception);
                 }
             }
         }
@@ -58,12 +312,12 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
 
     private async Task<List<ImageRecord>> ListWithKeyAsync(byte[] key)
     {
-        var result = new List<ImageRecord>();
+        var imageRecords = new List<ImageRecord>();
         foreach (var (id, payload) in await store.ReadRecordsAsync())
         {
-            result.Add(DecryptRecord(id, payload, key));
+            imageRecords.Add(DecryptRecord(id, payload, key));
         }
-        return result;
+        return imageRecords;
     }
 
     private static ImageRecord DecryptRecord(string id, byte[] payload, byte[] key)
@@ -100,20 +354,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         using var key = session.Borrow();
         var record = await FindAsync(id, key.Bytes);
         if (record.IsVideo) return await ThumbnailWithKeyAsync(id, key.Bytes);
-        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key.Bytes, $"image:{id}");
-        try
-        {
-            using var image = Image.Load(plain);
-            if (!fullResolution)
-                image.Mutate(context => context.Resize(new ResizeOptions { Size = new Size(1600, 1600), Mode = ResizeMode.Max }));
-            using var preview = new MemoryStream();
-            await image.SaveAsPngAsync(preview, new PngEncoder { SkipMetadata = true });
-            var result = "data:image/png;base64," + Convert.ToBase64String(preview.GetBuffer(), 0, (int)preview.Length);
-            CryptographicOperations.ZeroMemory(preview.GetBuffer());
-            return result;
-        }
-
-        finally { CryptographicOperations.ZeroMemory(plain); }
+        return await GalleryImageRenderer.CreatePreviewAsync(record, key.Bytes, fullResolution);
     }
 
     public async Task<string> ViewerImageAsync(string id, bool fullResolution)
@@ -121,25 +362,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         using var key = session.Borrow();
         var record = await FindAsync(id, key.Bytes);
         if (record.IsVideo) return await ThumbnailWithKeyAsync(id, key.Bytes);
-        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key.Bytes, $"image:{id}");
-        try
-        {
-            if (fullResolution)
-                return "data:image/png;base64," + Convert.ToBase64String(plain);
-            using var image = Image.Load(plain);
-            image.Mutate(context => context.Resize(new ResizeOptions
-            {
-                Size = new Size(1600, 1600), Mode = ResizeMode.Max
-            }).BackgroundColor(Color.Black));
-            using var preview = new MemoryStream();
-            try
-            {
-                await image.SaveAsJpegAsync(preview, new JpegEncoder { Quality = 85, SkipMetadata = true });
-                return "data:image/jpeg;base64," + Convert.ToBase64String(preview.GetBuffer(), 0, (int)preview.Length);
-            }
-            finally { CryptographicOperations.ZeroMemory(preview.GetBuffer()); }
-        }
-        finally { CryptographicOperations.ZeroMemory(plain); }
+        return await GalleryImageRenderer.CreateViewerImageAsync(record, key.Bytes, fullResolution);
     }
 
     public async Task<ImageRecord> ImportAsync(Stream input, string name, string sourceFolder, string sourcePath = "")
@@ -156,15 +379,15 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         var isVideo = IsVideoName(name);
         var limit = isVideo ? MaxVideoBytes : MaxFileBytes;
         using var original = new MemoryStream();
-        var buffer = new byte[81920];
+        var readBufferBytes = new byte[81920];
         int read;
-        while ((read = await input.ReadAsync(buffer)) > 0)
+        while ((read = await input.ReadAsync(readBufferBytes)) > 0)
         {
             if (original.Length + read > limit)
                 throw new InvalidOperationException(isVideo ? "Video exceeds the 256 MiB limit." : "Image exceeds the 50 MiB limit.");
-            await original.WriteAsync(buffer.AsMemory(0, read));
+            await original.WriteAsync(readBufferBytes.AsMemory(0, read));
         }
-        CryptographicOperations.ZeroMemory(buffer);
+        CryptographicOperations.ZeroMemory(readBufferBytes);
         var bytes = original.GetBuffer().AsMemory(0, (int)original.Length);
         try
         {
@@ -222,7 +445,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         });
         using var png = new MemoryStream();
         await image.SaveAsPngAsync(png, new PngEncoder { CompressionLevel = PngCompressionLevel.Level1 });
-        var thumb = await CreateThumbnailAsync(image);
+        var thumbnailBytes = await CreateThumbnailAsync(image);
         var record = new ImageRecord
         {
             Name = Path.GetFileNameWithoutExtension(name),
@@ -237,17 +460,20 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             Generation = ComfyMetadata.Extract(metadata),
             MetadataVersion = ComfyMetadata.Version
         };
-        record.StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dpng");
+        record = record with
+        {
+            StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dpng")
+        };
         try
         {
             return (record,
                 VaultCrypto.Encrypt(png.GetBuffer().AsSpan(0, (int)png.Length), key, $"image:{record.Id}"),
-                VaultCrypto.Encrypt(thumb, key, $"thumbnail:{record.Id}"));
+                VaultCrypto.Encrypt(thumbnailBytes, key, $"thumbnail:{record.Id}"));
         }
         finally
         {
             CryptographicOperations.ZeroMemory(png.GetBuffer());
-            CryptographicOperations.ZeroMemory(thumb);
+            CryptographicOperations.ZeroMemory(thumbnailBytes);
         }
     }
 
@@ -261,7 +487,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         if (video is null || !video.IsAvailable) throw new InvalidOperationException(VideoTools.MissingMessage);
         var temp = Path.Combine(Path.GetTempPath(), "gallery-" + Guid.NewGuid().ToString("N") + ".mp4");
         VideoTools.ProbeResult probe;
-        byte[] frame;
+        byte[] videoFrameBytes;
         try
         {
             await using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -272,7 +498,7 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             if (probe.Width <= 0 || probe.Height <= 0) throw new InvalidOperationException("No video stream was found.");
             if (probe.Width > 16_384 || probe.Height > 16_384)
                 throw new InvalidOperationException("Video exceeds the 16384 pixel dimension limit.");
-            frame = await video.FirstFrameAsync(temp);
+            videoFrameBytes = await video.FirstFrameAsync(temp);
         }
         finally
         {
@@ -282,13 +508,13 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
                 throw new IOException($"The temporary decrypted video could not be deleted from '{temp}'. Remove it manually.", exception);
             }
         }
-        byte[] thumb;
+        byte[] thumbnailBytes;
         try
         {
-            using var image = Image.Load(frame);
-            thumb = await CreateThumbnailAsync(image);
+            using var image = Image.Load(videoFrameBytes);
+            thumbnailBytes = await CreateThumbnailAsync(image);
         }
-        finally { CryptographicOperations.ZeroMemory(frame); }
+        finally { CryptographicOperations.ZeroMemory(videoFrameBytes); }
         var metadata = JsonSerializer.Serialize(new
         {
             video = probe.Tags.Select(tag => new { Keyword = tag.Key, Value = tag.Value })
@@ -310,13 +536,16 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             Generation = ComfyMetadata.Extract(metadata),
             MetadataVersion = ComfyMetadata.Version
         };
-        record.StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dmp4");
+        record = record with
+        {
+            StoredPath = Path.Combine(vault.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dmp4")
+        };
         try
         {
             return (record, VaultCrypto.Encrypt(bytes.Span, key, $"image:{record.Id}"),
-                VaultCrypto.Encrypt(thumb, key, $"thumbnail:{record.Id}"));
+                VaultCrypto.Encrypt(thumbnailBytes, key, $"thumbnail:{record.Id}"));
         }
-        finally { CryptographicOperations.ZeroMemory(thumb); }
+        finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
     }
 
     private static async Task<byte[]> CreateThumbnailAsync(Image image)
@@ -334,99 +563,179 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         {
             SkipMetadata = true, CompressionLevel = PngCompressionLevel.Level1
         });
-        var result = thumb.ToArray();
+        var thumbnailBytes = thumb.ToArray();
         CryptographicOperations.ZeroMemory(thumb.GetBuffer());
-        return result;
+        return thumbnailBytes;
     }
 
-    public async Task<List<string>> ImportFolderAsync(string folder, bool recursive, Action<string>? progress = null,
-        bool deleteSources = false, Func<ImportProgress, Task>? reportProgress = null)
+    private sealed class FolderImportProcessor(GalleryService gallery)
     {
-        using var key = session.Borrow();
-        folder = Path.GetFullPath(folder);
-        if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing local folder.");
-        var options = new EnumerationOptions
-        {
-            RecurseSubdirectories = recursive,
-            IgnoreInaccessible = false,
-            AttributesToSkip = FileAttributes.ReparsePoint
-        };
-        if (reportProgress is not null)
-            await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder..."));
-        var paths = await Task.Run(() => Directory.EnumerateFiles(folder, "*", options).Where(path =>
-            Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)).ToArray());
-        await store.Gate.WaitAsync();
-        try { await BackfillFingerprintsAsync(key.Bytes); }
-        finally { store.Gate.Release(); }
-        var failures = new string?[paths.Length];
-        var completed = 0;
-        var importedCount = 0;
-        var failedCount = 0;
-        using var progressGate = new SemaphoreSlim(1);
+        private readonly SemaphoreSlim progressGate = new(1);
+        private int completedCount;
+        private int importedCount;
+        private int failedCount;
 
-        async Task ReportAsync(string status, bool finished = false, bool imported = false, bool failed = false)
+        public static string[] DiscoverImagePaths(string folder, bool recursive)
         {
-            await progressGate.WaitAsync();
-            try
+            var options = new EnumerationOptions
             {
-                if (finished) completed++;
-                if (imported) importedCount++;
-                if (failed) failedCount++;
-                if (reportProgress is not null)
-                    await reportProgress(new ImportProgress(paths.Length, completed, importedCount, failedCount, status));
-            }
-            finally { progressGate.Release(); }
+                RecurseSubdirectories = recursive,
+                IgnoreInaccessible = false,
+                AttributesToSkip = FileAttributes.ReparsePoint
+            };
+            return Directory.EnumerateFiles(folder, "*", options)
+                .Where(path => Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+                .ToArray();
         }
 
-        await ReportAsync("Importing images...");
-        // Two workers overlap decode/encode and I/O without multiplying full-size image memory by every CPU.
-        await Parallel.ForEachAsync(Enumerable.Range(0, paths.Length),
-            new ParallelOptions { MaxDegreeOfParallelism = Math.Min(2, Environment.ProcessorCount) }, async (index, _) =>
+        public async Task ImportAsync(string folder, string[] imagePaths, byte[] key, bool deleteSources,
+            Action<string>? progress, Func<ImportProgress, Task>? reportProgress)
         {
-            var path = paths[index];
+            var failuresByPathIndex = new Exception?[imagePaths.Length];
+            try
+            {
+                await ReportAsync(new ImportProgress(imagePaths.Length, 0, 0, 0, "Importing images..."), reportProgress);
+                await Parallel.ForEachAsync(Enumerable.Range(0, imagePaths.Length),
+                    new ParallelOptions { MaxDegreeOfParallelism = Math.Min(2, Environment.ProcessorCount) },
+                    async (pathIndex, _) =>
+                        await ImportOneAsync(folder, imagePaths, pathIndex, key, deleteSources, progress,
+                            reportProgress, failuresByPathIndex));
+
+                var completionStatus = imagePaths.Length == 0 ? "No supported images found." : "Ingestion complete.";
+                await ReportAsync(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount, completionStatus),
+                    reportProgress);
+                var terminalFailures = failuresByPathIndex.OfType<Exception>().ToList();
+                if (terminalFailures.Count > 0)
+                    throw new ImportFolderException(folder, new AggregateException(terminalFailures));
+            }
+            finally { progressGate.Dispose(); }
+        }
+
+        private async Task ImportOneAsync(string folder, string[] imagePaths, int pathIndex, byte[] key, bool deleteSources,
+            Action<string>? progress, Func<ImportProgress, Task>? reportProgress, Exception?[] failuresByPathIndex)
+        {
+            var path = imagePaths[pathIndex];
             var name = Path.GetFileName(path);
             await progressGate.WaitAsync();
             try { progress?.Invoke(name); }
             finally { progressGate.Release(); }
-            await ReportAsync($"Importing {name}...");
+            await ReportAsync(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount,
+                $"Importing {name}..."), reportProgress);
+
             var importedSuccessfully = false;
             try
             {
                 ImageRecord imported;
                 await using (var input = File.OpenRead(path))
                 {
-                    imported = await ImportWithKeyAsync(input, name, Path.GetDirectoryName(path)!, path,
-                        key.Bytes, ensureFingerprints: false);
+                    imported = await gallery.ImportWithKeyAsync(input, name, Path.GetDirectoryName(path)!, path,
+                        key, ensureFingerprints: false);
                     importedSuccessfully = true;
                     if (deleteSources)
                     {
-                        await ReportAsync($"Verifying {name} before source deletion...");
-                        await VerifyImportedWithKeyAsync(imported.Id, key.Bytes);
-                        input.Position = 0;
-                        var currentHash = Convert.ToHexString(await SHA256.HashDataAsync(input));
-                        if (currentHash != imported.Sha256)
-                            throw new InvalidOperationException("Source changed during import; it was not deleted.");
+                        await ReportAsync(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount,
+                            $"Verifying {name} before source deletion..."), reportProgress);
+                        await gallery.VerifyImportedWithKeyAsync(imported.Id, key);
                     }
                 }
                 if (deleteSources)
-                {
-                    try { File.Delete(path); }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                    {
-                        throw new InvalidOperationException("Encrypted import succeeded, but source deletion failed. The source was retained.", exception);
-                    }
-                }
+                    await DeleteVerifiedSourceAsync(path, imported.Sha256);
             }
             catch (Exception exception) when (exception is IOException or InvalidOperationException
-                or UnauthorizedAccessException or CryptographicException or UnknownImageFormatException or InvalidImageContentException)
+                or UnauthorizedAccessException or CryptographicException or UnknownImageFormatException
+                or InvalidImageContentException)
             {
-                failures[index] = $"{name}: {exception.Message}";
+                failuresByPathIndex[pathIndex] = new IOException($"Failed to import '{path}'.", exception);
             }
-            await ReportAsync($"Processed {name}", finished: true, imported: importedSuccessfully,
-                failed: failures[index] is not null);
-        });
-        await ReportAsync(paths.Length == 0 ? "No supported images found." : "Ingestion complete.");
-        return failures.OfType<string>().ToList();
+
+            await progressGate.WaitAsync();
+            try
+            {
+                completedCount++;
+                if (importedSuccessfully) importedCount++;
+                if (failuresByPathIndex[pathIndex] is not null) failedCount++;
+                if (reportProgress is not null)
+                    await reportProgress(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount,
+                        $"Processed {name}"));
+            }
+            finally { progressGate.Release(); }
+        }
+
+        private async Task ReportAsync(ImportProgress update, Func<ImportProgress, Task>? reportProgress)
+        {
+            await progressGate.WaitAsync();
+            try
+            {
+                if (reportProgress is not null)
+                    await reportProgress(update with
+                    {
+                        Completed = completedCount,
+                        Imported = importedCount,
+                        Failed = failedCount
+                    });
+            }
+            finally { progressGate.Release(); }
+        }
+    }
+
+    public async Task ImportFolderAsync(string folder, bool recursive, Action<string>? progress = null,
+        bool deleteSources = false, Func<ImportProgress, Task>? reportProgress = null)
+    {
+        using var key = session.Borrow();
+        folder = Path.GetFullPath(folder);
+        if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing local folder.");
+        if (reportProgress is not null)
+            await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder..."));
+        var imagePaths = await Task.Run(() => FolderImportProcessor.DiscoverImagePaths(folder, recursive));
+        await store.Gate.WaitAsync();
+        try { await BackfillFingerprintsAsync(key.Bytes); }
+        finally { store.Gate.Release(); }
+        await new FolderImportProcessor(this).ImportAsync(
+            folder, imagePaths, key.Bytes, deleteSources, progress, reportProgress);
+    }
+
+    private static async Task DeleteVerifiedSourceAsync(string sourcePath, string expectedSha256)
+    {
+        var claimedPath = sourcePath + ".gallery-delete-" + Guid.NewGuid().ToString("N");
+        File.Move(sourcePath, claimedPath);
+        string actualSha256;
+        try
+        {
+            await using var claimed = new FileStream(claimedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+            actualSha256 = Convert.ToHexString(await SHA256.HashDataAsync(claimed));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            RestoreClaimedSource(claimedPath, sourcePath, exception);
+            throw;
+        }
+
+        if (!actualSha256.Equals(expectedSha256, StringComparison.Ordinal))
+        {
+            RestoreClaimedSource(claimedPath, sourcePath);
+            throw new InvalidOperationException("Source changed since import; it was not deleted.");
+        }
+
+        try { File.Delete(claimedPath); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            RestoreClaimedSource(claimedPath, sourcePath, exception);
+            throw new InvalidOperationException("Encrypted import succeeded, but source deletion failed.", exception);
+        }
+    }
+
+    private static void RestoreClaimedSource(string claimedPath, string sourcePath, Exception? cause = null)
+    {
+        try
+        {
+            File.Move(claimedPath, sourcePath);
+        }
+        catch (IOException exception)
+        {
+            throw new InvalidOperationException(
+                $"The source could not be restored to '{sourcePath}' and is preserved at '{claimedPath}'.",
+                cause is null ? exception : new AggregateException(cause, exception));
+        }
     }
 
     public async Task VerifyImportedAsync(string id)
@@ -456,54 +765,66 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
         finally { CryptographicOperations.ZeroMemory(thumbnail); }
     }
 
-    public async Task UpdateAsync(string id, Action<ImageRecord> update)
+    public async Task UpdateAsync(string id, Action<ImageRecordEdit> update)
     {
         using var key = session.Borrow();
         await store.Gate.WaitAsync();
         try
         {
             var record = await FindAsync(id, key.Bytes);
-            update(record);
-            await store.UpdateAsync(id, EncryptRecord(record, key.Bytes));
+            var edit = new ImageRecordEdit(record);
+            update(edit);
+            var updatedRecord = edit.ToRecord(record);
+            await store.UpdateAsync(id, EncryptRecord(updatedRecord, key.Bytes));
         }
         finally { store.Gate.Release(); }
     }
 
-    public async Task<int> UpdateManyAsync(IEnumerable<string> ids, Action<ImageRecord> update)
+    public async Task UpdateManyAsync(IEnumerable<string> ids, Action<ImageRecordEdit> update)
     {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentNullException.ThrowIfNull(update);
+        var uniqueImageIds = ids.Distinct(StringComparer.Ordinal).ToList();
         using var key = session.Borrow();
-        var failed = 0;
+        var updateFailures = new List<Exception>();
         await store.Gate.WaitAsync();
         try
         {
-            foreach (var id in ids.Distinct())
+            foreach (var imageId in uniqueImageIds)
             {
                 try
                 {
-                    var record = await FindAsync(id, key.Bytes);
-                    update(record);
-                    await store.UpdateAsync(id, EncryptRecord(record, key.Bytes));
+                    await UpdateRecordAsync(imageId, update, key.Bytes);
                 }
                 catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or IOException)
                 {
-                    failed++;
+                    updateFailures.Add(new InvalidOperationException(
+                        $"Could not update gallery record '{imageId}'.", exception));
                 }
             }
         }
         finally { store.Gate.Release(); }
-        return failed;
+        if (updateFailures.Count > 0)
+        {
+            var failureSummary = string.Join(", ", updateFailures.Select(exception => exception.Message));
+            throw new AggregateException(
+                $"Failed to update {updateFailures.Count} gallery record(s): {failureSummary}", updateFailures);
+        }
+    }
+
+    private async Task UpdateRecordAsync(string imageId, Action<ImageRecordEdit> update, byte[] key)
+    {
+        var record = await FindAsync(imageId, key);
+        var edit = new ImageRecordEdit(record);
+        update(edit);
+        var updatedImageRecord = edit.ToRecord(record);
+        await store.UpdateAsync(imageId, EncryptRecord(updatedImageRecord, key));
     }
 
     public async Task MoveAsync(string id, string folder, string name)
     {
         using var key = session.Borrow();
-        name = name.Trim();
-        if (name.Length == 0 || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-            || name.EndsWith('.') || name.EndsWith(' ') || name.Contains('/') || name.Contains('\\'))
-            throw new InvalidOperationException("Enter a valid filename without a path or extension.");
-        if (name.EndsWith(".dpng", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".dmp4", StringComparison.OrdinalIgnoreCase))
-            name = name[..^5];
-        if (name.Length == 0) throw new InvalidOperationException("A filename is required.");
+        name = NormalizeGalleryFileName(name);
         folder = Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing destination folder.");
         await store.Gate.WaitAsync();
@@ -513,47 +834,53 @@ public sealed partial class GalleryService(GalleryStore store, VaultStore vault,
             var target = Path.Combine(folder, name + (record.IsVideo ? ".dmp4" : ".dpng"));
             if (string.Equals(record.StoredPath, target, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Choose a different name or destination.");
-            var source = record.StoredPath;
-            // Copy first: a crash may leave a ciphertext duplicate, but cannot lose the sole image.
-            File.Copy(source, target, overwrite: false);
-            record.StoredPath = target;
-            record.Name = name;
-            try { await store.UpdateAsync(id, EncryptRecord(record, key.Bytes)); }
-            catch
-            {
-                File.Delete(target);
-                throw;
-            }
-            try { File.Delete(source); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                throw new InvalidOperationException($"The image was moved to '{target}', but the old encrypted copy at '{source}' could not be removed. Remove that extra copy after checking the destination.", exception);
-            }
+            await MoveStoredImageAsync(record, target, name, key.Bytes);
         }
         finally { store.Gate.Release(); }
     }
 
-    public async Task<VisionSettings> SettingsAsync()
+    private static string NormalizeGalleryFileName(string name)
     {
-        using var key = session.Borrow();
-        var encrypted = await store.ReadSettingsAsync();
-        if (encrypted is null) return new();
-        var plain = VaultCrypto.Decrypt(encrypted, key.Bytes, "vision-settings");
-        try
-        {
-            return JsonSerializer.Deserialize<VisionSettings>(plain)
-                ?? throw new InvalidOperationException("Invalid vision settings.");
-        }
-        finally { CryptographicOperations.ZeroMemory(plain); }
+        name = name.Trim();
+        if (name.Length == 0 || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || name.EndsWith('.') || name.EndsWith(' ') || name.Contains('/') || name.Contains('\\'))
+            throw new InvalidOperationException("Enter a valid filename without a path or extension.");
+        if (name.EndsWith(".dpng", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".dmp4", StringComparison.OrdinalIgnoreCase))
+            name = name[..^5];
+        if (name.Length == 0) throw new InvalidOperationException("A filename is required.");
+        return name;
     }
+
+    private async Task MoveStoredImageAsync(ImageRecord record, string target, string newName, byte[] key)
+    {
+        var source = record.StoredPath;
+        // Copy first: a crash may leave a ciphertext duplicate, but cannot lose the sole image.
+        File.Copy(source, target, overwrite: false);
+        var edit = new ImageRecordEdit(record) { StoredPath = target, Name = newName };
+        var movedImageRecord = edit.ToRecord(record);
+        try { await store.UpdateAsync(record.Id, EncryptRecord(movedImageRecord, key)); }
+        catch
+        {
+            File.Delete(target);
+            throw;
+        }
+        try { File.Delete(source); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(
+                $"The image was moved to '{target}', but the old encrypted copy at '{source}' could not be removed. Remove that extra copy after checking the destination.",
+                exception);
+        }
+    }
+
+    public async Task<VisionSettings> SettingsAsync() =>
+        await ReadEncryptedSettingAsync<VisionSettings>("vision-settings", "vision-settings") ?? new();
 
     public async Task SaveSettingsAsync(VisionSettings settings)
     {
         VisionService.Validate(settings);
-        using var key = session.Borrow();
-        var plain = JsonSerializer.SerializeToUtf8Bytes(settings);
-        try { await store.SaveSettingsAsync(VaultCrypto.Encrypt(plain, key.Bytes, "vision-settings")); }
-        finally { CryptographicOperations.ZeroMemory(plain); }
+        await WriteEncryptedSettingAsync(settings, "vision-settings", "vision-settings");
     }
 
     private async Task<ImageRecord> FindAsync(string id, byte[] key) =>

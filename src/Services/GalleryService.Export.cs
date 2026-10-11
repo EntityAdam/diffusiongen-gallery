@@ -38,22 +38,27 @@ public sealed partial class GalleryService
             foreach (var id in ids.Distinct(StringComparer.Ordinal))
             {
                 var file = await ExportWithKeyAsync(await FindAsync(id, key.Bytes), key.Bytes);
+                var contentBytes = file.CopyContentBytes();
                 try
                 {
                     var entryName = UniqueName(file.FileName, names);
                     var nameBytes = System.Text.Encoding.UTF8.GetByteCount(entryName);
                     var localHeaderBytes = 30L + nameBytes;
                     var centralEntryBytes = 46L + nameBytes;
-                    if (zip.Length + file.Content.Length + localHeaderBytes + centralDirectoryBytes
+                    if (zip.Length + contentBytes.Length + localHeaderBytes + centralDirectoryBytes
                         + centralEntryBytes + 22 > MaxExportZipBytes)
                         throw new InvalidOperationException("The selection is larger than the 1 GiB export limit. Export fewer items.");
                     // Media is already compressed; storing avoids a slow, pointless deflate pass.
                     var entry = archive.CreateEntry(entryName, CompressionLevel.NoCompression);
                     await using var output = entry.Open();
-                    await output.WriteAsync(file.Content);
+                    await output.WriteAsync(contentBytes);
                     centralDirectoryBytes += centralEntryBytes;
                 }
-                finally { CryptographicOperations.ZeroMemory(file.Content); }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(contentBytes);
+                    file.ClearContentBytes();
+                }
             }
         }
         return new($"gallery-export-{DateTime.Now:yyyyMMdd-HHmmss}.zip", "application/zip", zip.ToArray());

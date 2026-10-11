@@ -79,13 +79,14 @@
     private int index;
     private bool busy, originalSize;
     private string imageData = "", error = "";
+    private ImageRecord? updatedCurrent;
     private readonly Dictionary<string, (string Url, long Bytes)> fitCache = [];
     private readonly Dictionary<string, (string Url, long Bytes)> fullCache = [];
     private readonly SemaphoreSlim cacheGate = new(1);
     private const long CacheBudget = 64 * 1024 * 1024;
     private bool disposed;
     private Task? preload;
-    private ImageRecord Current => Images[index];
+    private ImageRecord Current => updatedCurrent?.Id == Images[index].Id ? updatedCurrent : Images[index];
     private bool reviewComplete;
     private readonly HashSet<string> decisions = [];
     private readonly HashSet<string> skipped = [];
@@ -95,6 +96,7 @@
     protected override void OnInitialized()
     {
         index = Math.Max(0, Images.ToList().FindIndex(image => image.Id == InitialId));
+        updatedCurrent = Images.Count == 0 ? null : Images[index];
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -206,6 +208,7 @@
         if (next < 0 || next >= Images.Count) return;
         var data = await LoadImageAsync(Images[next].Id, originalSize);
         index = next;
+        updatedCurrent = Images[index];
         imageData = data;
         reviewComplete = false;
     });
@@ -214,10 +217,10 @@
     {
         if (reviewComplete) return;
         var id = Current.Id;
-        var previous = (index, ReviewState.Capture(Current), decisions.Contains(id), skipped.Contains(id));
-        await Gallery.UpdateAsync(id, image => ReviewDecision.Apply(image, action, rating));
+        var previous = (index, Gallery.CaptureReviewState(Current), decisions.Contains(id), skipped.Contains(id));
+        await Gallery.UpdateAsync(id, image => Gallery.ApplyReviewDecision(image, action, rating));
         undo.Push(previous);
-        ReviewDecision.Apply(Current, action, rating);
+        updatedCurrent = ApplyEdit(Current, image => Gallery.ApplyReviewDecision(image, action, rating));
         decisions.Add(id);
         skipped.Remove(id);
         await OnImageChanged.InvokeAsync(Current);
@@ -232,12 +235,13 @@
         if (!undo.TryPeek(out var previous)) return;
         var image = Images[previous.Index];
         var data = await LoadImageAsync(image.Id, originalSize);
-        await Gallery.UpdateAsync(image.Id, previous.State.Restore);
-        previous.State.Restore(image);
+        await Gallery.UpdateAsync(image.Id, edit => Gallery.RestoreReviewState(edit, previous.State));
+        updatedCurrent = ApplyEdit(image, edit => Gallery.RestoreReviewState(edit, previous.State));
         undo.Pop();
         if (previous.Decided) decisions.Add(image.Id); else decisions.Remove(image.Id);
         if (previous.Skipped) skipped.Add(image.Id); else skipped.Remove(image.Id);
         index = previous.Index;
+        updatedCurrent = image;
         imageData = data;
         reviewComplete = false;
         await OnImageChanged.InvokeAsync(image);
@@ -260,6 +264,7 @@
         var next = index + 1;
         var data = await LoadImageAsync(Images[next].Id, originalSize);
         index = next;
+        updatedCurrent = Images[next];
         imageData = data;
         // Warm only a small forward window for long review queues.
         if (preload is null || preload.IsCompleted) preload = PreloadPageAsync();
@@ -268,16 +273,23 @@
     private Task MarkAsync() => RunAsync(async () =>
     {
         await Gallery.UpdateAsync(Current.Id, image => image.MarkedForDeletion = !image.MarkedForDeletion);
-        Current.MarkedForDeletion = !Current.MarkedForDeletion;
+        updatedCurrent = ApplyEdit(Current, image => image.MarkedForDeletion = !image.MarkedForDeletion);
         await OnImageChanged.InvokeAsync(Current);
     });
 
     private Task FavoriteAsync() => RunAsync(async () =>
     {
         await Gallery.UpdateAsync(Current.Id, image => image.Favorite = !image.Favorite);
-        Current.Favorite = !Current.Favorite;
+        updatedCurrent = ApplyEdit(Current, image => image.Favorite = !image.Favorite);
         await OnImageChanged.InvokeAsync(Current);
     });
+
+    private static ImageRecord ApplyEdit(ImageRecord record, Action<ImageRecordEdit> update)
+    {
+        var edit = new ImageRecordEdit(record);
+        update(edit);
+        return edit.ToRecord(record);
+    }
 
     private async Task CloseAsync()
     {

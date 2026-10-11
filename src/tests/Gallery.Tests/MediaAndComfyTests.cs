@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
 using Gallery.Core;
+using Gallery.Core.Queries;
 using Gallery.Models;
 using Gallery.Services;
 using Microsoft.Extensions.Configuration;
@@ -110,7 +111,8 @@ public sealed class MediaAndComfyTests
     {
         Assert.Null(ComfyMetadata.Extract(PngMetadata(("parameters", "a1111 prompt, Steps: 20"))));
         Assert.Null(ComfyMetadata.Extract(""));
-        Assert.Null(ComfyMetadata.Extract("not json"));
+        Assert.Throws<InvalidOperationException>(() => ComfyMetadata.Extract("not json"));
+        Assert.Null(ComfyMetadata.Extract(PngMetadata(("prompt", """{"1":{"class_type":123,"inputs":{}}}"""))));
         var workflowOnly = ComfyMetadata.Extract(PngMetadata(("workflow", UiWorkflow)))!;
         Assert.True(workflowOnly.HasWorkflow);
         Assert.False(workflowOnly.HasApiPrompt);
@@ -142,11 +144,11 @@ public sealed class MediaAndComfyTests
         var image = new ImageRecord { Name = "image", Generation = new GenerationInfo { Prompt = "cat" } };
         var video = new ImageRecord { Name = "video", MediaType = "video", Generation = new GenerationInfo { Prompt = "cat " } };
         var all = new[] { image, video };
-        Assert.Equal([video], new GalleryFilter { Media = "video" }.Apply(all));
-        Assert.Equal([image], new GalleryFilter { Media = "image" }.Apply(all));
-        Assert.Equal([image], new GalleryFilter { Prompt = "cat" }.Apply(all));
-        Assert.Equal("0:00", new ImageRecord().FormatDuration());
-        Assert.Equal("1:05", new ImageRecord { DurationSeconds = 65.4 }.FormatDuration());
+        Assert.Equal([video], GalleryFilterProcessor.Apply(new GalleryFilter { Media = "video" }, all));
+        Assert.Equal([image], GalleryFilterProcessor.Apply(new GalleryFilter { Media = "image" }, all));
+        Assert.Equal([image], GalleryFilterProcessor.Apply(new GalleryFilter { Prompt = "cat" }, all));
+        Assert.Equal("0:00", GalleryService.FormatDuration(new ImageRecord()));
+        Assert.Equal("1:05", GalleryService.FormatDuration(new ImageRecord { DurationSeconds = 65.4 }));
     }
 
     [Fact]
@@ -180,19 +182,20 @@ public sealed class MediaAndComfyTests
         Assert.Equal("comfy.png", export.FileName);
         Assert.Equal("image/png", export.ContentType);
         // ComfyUI reads workflows from tEXt chunks; ImageSharp would otherwise write long text as zTXt.
-        Assert.Equal(["prompt", "workflow"], TextChunkKeywords(export.Content, "tEXt").Where(k => k is "prompt" or "workflow").Order());
-        Assert.Empty(TextChunkKeywords(export.Content, "zTXt"));
+        var exportBytes = export.CopyContentBytes();
+        Assert.Equal(["prompt", "workflow"], TextChunkKeywords(exportBytes, "tEXt").Where(k => k is "prompt" or "workflow").Order());
+        Assert.Empty(TextChunkKeywords(exportBytes, "zTXt"));
 
         var workflow = await fixture.Service.WorkflowAsync(record.Id);
         Assert.Equal("comfy.workflow.json", workflow!.FileName);
-        Assert.Equal(UiWorkflow, System.Text.Encoding.UTF8.GetString(workflow.Content));
+        Assert.Equal(UiWorkflow, System.Text.Encoding.UTF8.GetString(workflow.CopyContentBytes()));
 
         var plain = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "plain.png", "folder");
         Assert.Null(plain.Generation);
         Assert.Null(await fixture.Service.WorkflowAsync(plain.Id));
 
         var zip = await fixture.Service.ExportZipAsync([record.Id, plain.Id]);
-        using var archive = new ZipArchive(new MemoryStream(zip.Content));
+        using var archive = new ZipArchive(new MemoryStream(zip.CopyContentBytes()));
         Assert.Equal(["comfy.png", "plain.png"], archive.Entries.Select(entry => entry.FullName).Order());
     }
 
@@ -211,10 +214,8 @@ public sealed class MediaAndComfyTests
     [Fact]
     public async Task VideoImportWithoutFfmpegFailsClearly()
     {
-        var missing = new VideoTools(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Gallery:FFmpegPath"] = Path.Combine(Path.GetTempPath(), "no-ffmpeg-here-" + Guid.NewGuid().ToString("N"))
-        }).Build());
+        var missingPath = Path.Combine(Path.GetTempPath(), "no-ffmpeg-here-" + Guid.NewGuid().ToString("N"));
+        var missing = new VideoTools(new VideoToolsOptions(missingPath));
         using var fixture = new TestVault(missing);
         await fixture.InitializeAsync();
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -257,7 +258,7 @@ public sealed class MediaAndComfyTests
             Assert.StartsWith("data:image/png;base64,", await fixture.Service.PreviewAsync(record.Id));
             var export = await fixture.Service.ExportAsync(record.Id);
             Assert.Equal(("clip.mp4", "video/mp4"), (export.FileName, export.ContentType));
-            Assert.Equal(bytes, export.Content);
+            Assert.Equal(bytes, export.CopyContentBytes());
             var (media, type) = await fixture.Service.OpenMediaAsync(record.Id);
             await using (media) Assert.Equal(bytes.Length, media.Length);
             Assert.Equal("video/mp4", type);
@@ -270,7 +271,7 @@ public sealed class MediaAndComfyTests
     {
         var image = new ImageRecord { Name = "image", PngSha256 = "same" };
         var video = new ImageRecord { Name = "video", PngSha256 = "same", MediaType = "video" };
-        Assert.Empty(DuplicateRules.GroupDuplicates([image, video], _ => 0, _ => null, threshold: 4));
+        Assert.Empty(DuplicateRules.GroupDuplicates([image, video], _ => 0, _ => null));
     }
 
     private static byte[] MakeComfyPng()

@@ -7,7 +7,7 @@
     <header class="viewer-toolbar">
         <div>
             <strong>Duplicate group @(groupIndex + 1) / @Groups.Count</strong>
-            <span class="muted"> &middot; copy @(imageIndex + 1) / @members.Count &middot; @Current.Name &middot; @Current.Width &times; @Current.Height &middot; @StorageOverview.FormatBytes(Current.OriginalBytes)</span>
+            <span class="muted"> &middot; copy @(imageIndex + 1) / @members.Count &middot; @Current.Name &middot; @Current.Width &times; @Current.Height &middot; @GalleryService.FormatBytes(Current.OriginalBytes)</span>
         </div>
         <div class="actions">
             <button disabled="@(busy || imageIndex == 0)" @onclick="() => ShowImageAsync(imageIndex - 1)" title="Left arrow: previous copy">Previous copy &larr;</button>
@@ -48,7 +48,7 @@
                     @if (thumbs.TryGetValue(member.Id, out var thumbnail)) { <img src="@thumbnail" alt="" draggable="false" /> }
                     else { <span class="thumbnail-placeholder">Preview</span> }
                     <span class="strip-name">@member.Name</span>
-                    <span class="strip-meta">@member.Width &times; @member.Height &middot; @StorageOverview.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.Favorite ? " · Favorite" : "")</span>
+                    <span class="strip-meta">@member.Width &times; @member.Height &middot; @GalleryService.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.Favorite ? " · Favorite" : "")</span>
                     @if (member.Id == recommendedId) { <span class="strip-meta recommended">Recommended</span> }
                 </button>
                 <button type="button" class="strip-keep" disabled="@busy" aria-pressed="@(kept ? "true" : "false")" aria-label="@($"Keep {member.Name}")" @onclick="() => ToggleKeep(member.Id)">@(kept ? "\u2713 Keep" : "Keep")</button>
@@ -101,12 +101,12 @@
 
     private void PrepareGroup()
     {
-        var records = Group.Ids.Select(Lookup).OfType<ImageRecord>().ToList();
-        recommendedId = DuplicateRules.PickKeeper(records).Id;
+        var records = Group.ImageIds.Select(Lookup).OfType<ImageRecord>().ToList();
+        recommendedId = Gallery.PickDuplicateKeeper(records).Id;
         members = records.OrderByDescending(record => record.Id == recommendedId).ToList();
         imageIndex = 0;
         imageData = "";
-        if (!keepByGroup.ContainsKey(groupIndex)) keepByGroup[groupIndex] = DuplicateRules.InitialKeepers(records);
+        if (!keepByGroup.ContainsKey(groupIndex)) keepByGroup[groupIndex] = Gallery.InitialDuplicateKeepers(records);
     }
 
     private async Task LoadGroupAsync()
@@ -239,13 +239,8 @@
     {
         if (Keep.Count == 0) throw new InvalidOperationException("Keep at least one copy in the group.");
         var ids = members.Select(member => member.Id).ToList();
-        var failed = await Gallery.ApplyDuplicateDecisionAsync(ids, Keep);
-        if (failed > 0)
-        {
-            error = $"{failed} image(s) could not be updated. The library will refresh when you close.";
-            return;
-        }
-        foreach (var member in members) member.MarkedForDeletion = !Keep.Contains(member.Id);
+        await Gallery.ApplyDuplicateDecisionAsync(ids, Keep);
+        members = members.Select(member => member with { MarkedForDeletion = !Keep.Contains(member.Id) }).ToList();
         var marked = ids.Count - Keep.Count;
         appliedMarks += marked;
         applied.Add(groupIndex);

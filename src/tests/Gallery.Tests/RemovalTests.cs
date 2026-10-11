@@ -143,7 +143,7 @@ public sealed class RemovalTests
     }
 
     [Fact]
-    public async Task DatabaseFailurePutsStagedCiphertextBack()
+    public async Task DatabaseFailureRetainsCataloguedCiphertext()
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
@@ -163,6 +163,35 @@ public sealed class RemovalTests
         Assert.True(File.Exists(record.StoredPath));
         Assert.Single(await fixture.Service.ListAsync());
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(record.StoredPath)!, "*.removing-*"));
+    }
+
+    [Fact]
+    public async Task ListingRecoversInterruptedRemovalBeforeCatalogDeletion()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var stagedPath = record.StoredPath + ".removing-" + record.Id;
+        File.Move(record.StoredPath, stagedPath);
+
+        Assert.Equal(record.Id, Assert.Single(await fixture.Service.ListAsync()).Id);
+        Assert.True(File.Exists(record.StoredPath));
+        Assert.False(File.Exists(stagedPath));
+        await fixture.Service.VerifyImportedAsync(record.Id);
+    }
+
+    [Fact]
+    public async Task ListingCleansStagedCiphertextAfterCatalogDeletion()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var stagedPath = record.StoredPath + ".removing-" + record.Id;
+        File.Move(record.StoredPath, stagedPath);
+        await fixture.Store.DeleteAsync(record.Id);
+
+        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.False(File.Exists(stagedPath));
     }
 
     [Fact]

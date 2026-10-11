@@ -6,133 +6,162 @@ namespace Gallery.Services;
 
 public sealed partial class GalleryService
 {
+    private sealed class GalleryRecordDeletedException(string message, Exception innerException)
+        : IOException(message, innerException);
+
     public async Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids)
     {
+        ArgumentNullException.ThrowIfNull(ids);
         using var key = session.Borrow();
-        var items = new List<RemovalItem>();
+        var removalItems = new List<RemovalItem>();
         foreach (var id in ids.Distinct(StringComparer.Ordinal))
-        {
-            var record = await FindAsync(id, key.Bytes);
-            if (!record.MarkedForDeletion)
-                throw new InvalidOperationException($"'{record.Name}' must be marked for deletion first.");
-            var original = OriginalPath(record);
-            items.Add(new(id, record.Name, original, SourceExists(original)));
-        }
-        return items;
+            removalItems.Add(await PrepareRemovalItemAsync(id, key.Bytes));
+        return removalItems;
     }
 
-    public async Task<List<RemovalResult>> RemoveAsync(IReadOnlyList<RemovalItem> items,
+    private async Task<RemovalItem> PrepareRemovalItemAsync(string id, byte[] key)
+    {
+        var record = await FindAsync(id, key);
+        if (!record.MarkedForDeletion)
+            throw new InvalidOperationException($"'{record.Name}' must be marked for deletion first.");
+        var original = OriginalPath(record);
+        return new(id, record.Name, original, SourceExists(original));
+    }
+
+    public async Task<List<RemovalResult>> RemoveAsync(IReadOnlyList<RemovalItem> removalItems,
         ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder)
     {
+        ArgumentNullException.ThrowIfNull(removalItems);
         using var key = session.Borrow();
         if (!Enum.IsDefined(existingAction) || !Enum.IsDefined(missingAction))
             throw new InvalidOperationException("Invalid removal action.");
-        if (items.Count == 0) throw new InvalidOperationException("Select marked images to remove.");
-        if (items.Any(item => !item.OriginalExists) && missingAction == MissingOriginalAction.RestorePng)
+        if (removalItems.Count == 0) throw new InvalidOperationException("Select marked images to remove.");
+        if (removalItems.Any(item => !item.OriginalExists) && missingAction == MissingOriginalAction.RestorePng)
         {
             restoreFolder = Path.GetFullPath(restoreFolder);
             if (!Directory.Exists(restoreFolder)) throw new DirectoryNotFoundException("Choose an existing restoration folder.");
         }
-        var results = new List<RemovalResult>();
+        var removalResults = new List<RemovalResult>(removalItems.Count);
         await store.Gate.WaitAsync();
         try
         {
-            foreach (var item in items.DistinctBy(item => item.Id))
-            {
-                string? restored = null;
-                var removed = false;
-                var originalDeleted = false;
-                try
-                {
-                    var record = await FindAsync(item.Id, key.Bytes);
-                    if (!record.MarkedForDeletion)
-                        throw new InvalidOperationException("Image is no longer marked for deletion.");
-                    var original = OriginalPath(record);
-                    if (original != item.OriginalPath || SourceExists(original) != item.OriginalExists)
-                        throw new InvalidOperationException("Original file status changed. Review a new removal preview.");
-                    if (item.OriginalExists && existingAction == ExistingOriginalAction.Delete)
-                    {
-                        if (string.Equals(original, record.StoredPath, StringComparison.OrdinalIgnoreCase))
-                            throw new InvalidOperationException("Original and gallery file paths must differ.");
-                        await using (var source = File.OpenRead(original))
-                        {
-                            if (Convert.ToHexString(await SHA256.HashDataAsync(source)) != record.Sha256)
-                                throw new InvalidOperationException("Original file changed since import; it will not be deleted.");
-                        }
-                        File.Delete(original);
-                        originalDeleted = true;
-                    }
-                    else if (!item.OriginalExists && missingAction == MissingOriginalAction.RestorePng)
-                    {
-                        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath),
-                            key.Bytes, $"image:{record.Id}");
-                        try
-                        {
-                            if (record.PngSha256.Length > 0 && Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
-                                throw new CryptographicException("Saved file failed verification.");
-                            if (!record.IsVideo)
-                            {
-                                using var image = Image.Load(plain);
-                                if (image.Width != record.Width || image.Height != record.Height)
-                                    throw new CryptographicException("Saved PNG dimensions do not match.");
-                            }
-                            // Use the opaque ID for a safe, collision-free name; never trust imported names as paths.
-                            if (!Guid.TryParseExact(record.Id, "N", out _))
-                                throw new InvalidOperationException("Invalid image identity for restoration.");
-                            var target = Path.Combine(restoreFolder, record.Id + (record.IsVideo ? ".mp4" : ".png"));
-                            await using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                            {
-                                try
-                                {
-                                    await output.WriteAsync(plain);
-                                    output.Flush(flushToDisk: true);
-                                }
-                                catch
-                                {
-                                    output.Close();
-                                    File.Delete(target);
-                                    throw;
-                                }
-                            }
-                            restored = target;
-                            await using var restoredInput = File.OpenRead(target);
-                            if (!CryptographicOperations.FixedTimeEquals(await SHA256.HashDataAsync(restoredInput), SHA256.HashData(plain)))
-                                throw new CryptographicException("Restored PNG failed read-back verification; gallery image retained.");
-                        }
-                        finally { CryptographicOperations.ZeroMemory(plain); }
-                    }
-
-                    var staged = record.StoredPath + ".removing-" + Guid.NewGuid().ToString("N");
-                    var hasCiphertext = SourceExists(record.StoredPath);
-                    if (hasCiphertext) File.Move(record.StoredPath, staged);
-                    try { await store.DeleteAsync(record.Id); }
-                    catch
-                    {
-                        if (hasCiphertext) File.Move(staged, record.StoredPath);
-                        throw;
-                    }
-                    removed = true;
-                    if (hasCiphertext)
-                    {
-                        try { File.Delete(staged); }
-                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                        {
-                            throw new IOException($"Gallery entry removed, but encrypted residue remains at '{staged}'. Delete this file manually.", exception);
-                        }
-                    }
-                    results.Add(new(item.Id, true, restored, null));
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-                    or InvalidOperationException or CryptographicException or UnknownImageFormatException
-                    or InvalidImageContentException or Microsoft.Data.Sqlite.SqliteException)
-                {
-                    results.Add(new(item.Id, removed, restored,
-                        (originalDeleted ? "Original was deleted. " : "") + exception.Message));
-                }
-            }
+            foreach (var removalItem in removalItems.DistinctBy(removalItem => removalItem.Id))
+                removalResults.Add(await RemoveOneAsync(removalItem, key.Bytes, existingAction, missingAction, restoreFolder));
         }
         finally { store.Gate.Release(); }
-        return results;
+        return removalResults;
+    }
+
+    private async Task<RemovalResult> RemoveOneAsync(RemovalItem removalItem, byte[] key,
+        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder)
+    {
+        string? restoredPath = null;
+        var originalDeleted = false;
+        try
+        {
+            var record = await FindAsync(removalItem.Id, key);
+            if (!record.MarkedForDeletion)
+                throw new InvalidOperationException("Image is no longer marked for deletion.");
+            var original = OriginalPath(record);
+            if (RemovalPreviewHasChanged(record, removalItem, original))
+                throw new InvalidOperationException("Original file status changed. Review a new removal preview.");
+
+            if (removalItem.OriginalExists && existingAction == ExistingOriginalAction.Delete)
+            {
+                if (string.Equals(original, record.StoredPath, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Original and gallery file paths must differ.");
+                await DeleteVerifiedSourceAsync(original, record.Sha256);
+                originalDeleted = true;
+            }
+            else if (!removalItem.OriginalExists && missingAction == MissingOriginalAction.RestorePng)
+            {
+                await RestoreOriginalAsync(record, key, restoreFolder, path => restoredPath = path);
+            }
+
+            await DeleteGalleryRecordAsync(record);
+            return new(removalItem.Id, true, restoredPath, null);
+        }
+        catch (GalleryRecordDeletedException exception)
+        {
+            var message = (originalDeleted ? "Original was deleted. " : "") + exception.Message;
+            var failure = new InvalidOperationException($"Image '{removalItem.Id}' was removed with an issue: {message}", exception);
+            return new(removalItem.Id, true, restoredPath,
+                new(removalItem.Id, failure.Message, failure));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or InvalidOperationException or CryptographicException or UnknownImageFormatException
+            or InvalidImageContentException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            var message = (originalDeleted ? "Original was deleted. " : "") + exception.Message;
+            var failure = new InvalidOperationException($"Could not remove image '{removalItem.Id}': {message}", exception);
+            return new(removalItem.Id, false, restoredPath,
+                new(removalItem.Id, failure.Message, failure));
+        }
+    }
+
+    private static bool RemovalPreviewHasChanged(ImageRecord record, RemovalItem removalItem, string currentOriginalPath) =>
+        !string.Equals(currentOriginalPath, removalItem.OriginalPath, StringComparison.Ordinal)
+        || SourceExists(currentOriginalPath) != removalItem.OriginalExists;
+
+    private static async Task RestoreOriginalAsync(
+        ImageRecord record, byte[] key, string restoreFolder, Action<string> reportCreatedPath)
+    {
+        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{record.Id}");
+        try
+        {
+            if (record.PngSha256.Length > 0 && Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
+                throw new CryptographicException("Saved file failed verification.");
+            if (!record.IsVideo)
+            {
+                using var image = Image.Load(plain);
+                if (image.Width != record.Width || image.Height != record.Height)
+                    throw new CryptographicException("Saved PNG dimensions do not match.");
+            }
+            if (!Guid.TryParseExact(record.Id, "N", out _))
+                throw new InvalidOperationException("Invalid image identity for restoration.");
+            var restoredPath = Path.Combine(restoreFolder, record.Id + (record.IsVideo ? ".mp4" : ".png"));
+            await using (var output = new FileStream(restoredPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                try
+                {
+                    await output.WriteAsync(plain);
+                    output.Flush(flushToDisk: true);
+                }
+                catch
+                {
+                    output.Close();
+                    File.Delete(restoredPath);
+                    throw;
+                }
+            }
+            reportCreatedPath(restoredPath);
+            await using var restoredFile = File.OpenRead(restoredPath);
+            if (!CryptographicOperations.FixedTimeEquals(await SHA256.HashDataAsync(restoredFile), SHA256.HashData(plain)))
+                throw new CryptographicException("Restored file failed read-back verification; gallery image retained.");
+        }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+
+    private async Task DeleteGalleryRecordAsync(ImageRecord record)
+    {
+        var hasEncryptedImage = SourceExists(record.StoredPath);
+        var stagedCiphertextPath = RemovalStagingPath(record);
+        if (hasEncryptedImage) File.Move(record.StoredPath, stagedCiphertextPath);
+        try { await store.DeleteAsync(record.Id); }
+        catch
+        {
+            if (hasEncryptedImage) File.Move(stagedCiphertextPath, record.StoredPath);
+            throw;
+        }
+        if (!hasEncryptedImage) return;
+
+        try { File.Delete(stagedCiphertextPath); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new GalleryRecordDeletedException(
+                $"Gallery entry removed, but encrypted residue remains at '{stagedCiphertextPath}'. Delete this file manually.",
+                exception);
+        }
     }
 
     private static string OriginalPath(ImageRecord record)

@@ -5,22 +5,18 @@ using Gallery.Services;
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:5189");
 builder.WebHost.UseStaticWebAssets();
+var configuredVaultRoot = builder.Configuration["Gallery:DataDirectory"];
+var vaultRoot = string.IsNullOrWhiteSpace(configuredVaultRoot)
+    ? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DiffusionGenGallery02")
+    : configuredVaultRoot;
+var normalizedVaultRoot = Path.GetFullPath(vaultRoot);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
 {
     options.DisconnectedCircuitRetentionPeriod = TimeSpan.Zero;
 });
-builder.Services.AddSingleton<VaultStore>();
-builder.Services.AddSingleton<GalleryStore>();
-builder.Services.AddSingleton(services => new VideoTools(services.GetRequiredService<IConfiguration>()));
-builder.Services.AddScoped<VaultSession>();
-builder.Services.AddScoped<GalleryService>();
-builder.Services.AddScoped<LibraryService>();
-builder.Services.AddHttpClient<VisionService>(client => client.Timeout = Timeout.InfiniteTimeSpan)
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-    {
-        AllowAutoRedirect = false,
-        UseProxy = false
-    });
+builder.Services.AddGalleryDomain(normalizedVaultRoot);
 
 var app = builder.Build();
 // Binding and Host validation both matter: reject DNS rebinding and accidental LAN exposure.

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using Gallery.Models;
 
@@ -10,7 +11,7 @@ namespace Gallery.Core;
 /// PNG text chunks ("prompt", "workflow"), EXIF strings ("Workflow: {...}") and MP4 tags
 /// (core "prompt"/"workflow" tags, or a Video Helper Suite JSON "comment") are supported.
 /// </summary>
-public static partial class ComfyMetadata
+internal static partial class ComfyMetadata
 {
     /// <summary>Bump when extraction improves so existing records are re-parsed once.</summary>
     public const int Version = 1;
@@ -21,29 +22,44 @@ public static partial class ComfyMetadata
     /// <summary>Keyword/value text entries from the metadata JSON stored on a record.</summary>
     public static IEnumerable<(string Keyword, string Value)> TextEntries(string metadataJson)
     {
-        if (string.IsNullOrWhiteSpace(metadataJson)) yield break;
-        JsonNode? root;
-        try { root = JsonNode.Parse(metadataJson); }
-        catch (JsonException) { yield break; }
-        if (root is not JsonObject document) yield break;
-        foreach (var section in new[] { "png", "video" })
+        var document = ParseMetadataDocument(metadataJson);
+        if (document is null) yield break;
+        foreach (var entry in ExtractPngAndVideoEntries(document)) yield return entry;
+        foreach (var entry in ExtractExifEntries(document)) yield return entry;
+    }
+
+    private static JsonObject? ParseMetadataDocument(string metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson)) return null;
+        try { return JsonNode.Parse(metadataJson) as JsonObject; }
+        catch (JsonException exception)
         {
-            if (document[section] is not JsonArray entries) continue;
+            throw new InvalidOperationException("Stored generation metadata is not valid JSON.", exception);
+        }
+    }
+
+    private static IEnumerable<(string Keyword, string Value)> ExtractPngAndVideoEntries(JsonObject document)
+    {
+        foreach (var sectionName in new[] { "png", "video" })
+        {
+            if (document[sectionName] is not JsonArray entries) continue;
             foreach (var entry in entries.OfType<JsonObject>())
             {
-                var keyword = entry["Keyword"]?.GetValue<string>() ?? "";
-                var value = entry["Value"]?.GetValue<string>() ?? "";
+                var keyword = ReadString(entry["Keyword"]);
+                var value = ReadString(entry["Value"]);
                 if (value.Length > 0) yield return (keyword, value);
             }
         }
-        if (document["exif"] is JsonArray exif)
+    }
+
+    private static IEnumerable<(string Keyword, string Value)> ExtractExifEntries(JsonObject document)
+    {
+        if (document["exif"] is not JsonArray exifEntries) yield break;
+        foreach (var line in exifEntries.Select(ReadString))
         {
-            foreach (var line in exif.Select(item => item?.GetValue<string>() ?? ""))
-            {
-                // Stored as "Tag: value"; ComfyUI writes values such as "Workflow: {...}" or "Prompt: {...}".
-                var separator = line.IndexOf(": ", StringComparison.Ordinal);
-                if (separator > 0) yield return (line[..separator], line[(separator + 2)..]);
-            }
+            // Stored as "Tag: value"; ComfyUI writes values such as "Workflow: {...}" or "Prompt: {...}".
+            var separator = line.IndexOf(": ", StringComparison.Ordinal);
+            if (separator > 0) yield return (line[..separator], line[(separator + 2)..]);
         }
     }
 
@@ -62,8 +78,8 @@ public static partial class ComfyMetadata
     {
         if (depth > 2) return;
         var text = value.Trim();
-        var prefixed = PrefixedJson().Match(text);
-        if (prefixed.Success) text = text[prefixed.Length..];
+        var match = PrefixedJson().Match(text);
+        if (match.Success) text = text[match.Length..];
         if (!text.StartsWith('{')) return;
         JsonObject? json;
         try { json = JsonNode.Parse(text) as JsonObject; }
@@ -85,7 +101,12 @@ public static partial class ComfyMetadata
     private static bool IsWorkflow(JsonObject json) => json["nodes"] is JsonArray && json.ContainsKey("links");
 
     private static bool IsApiPrompt(JsonObject json) =>
-        json.Count > 0 && json.All(pair => pair.Value is JsonObject node && node["class_type"] is JsonValue && node["inputs"] is JsonObject);
+        json.Count > 0 && json.All(pair => pair.Value is JsonObject node
+            && node["class_type"] is JsonValue classType && classType.TryGetValue<string>(out _)
+            && node["inputs"] is JsonObject);
+
+    private static string ReadString(JsonNode? value) =>
+        value is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text) ? text : "";
 
     [GeneratedRegex(@"^(?:workflow|prompt)\s*:\s*(?=\{)", RegexOptions.IgnoreCase)]
     private static partial Regex PrefixedJson();
@@ -94,8 +115,8 @@ public static partial class ComfyMetadata
     {
         var documents = Find(metadataJson);
         if (documents.ApiPrompt is null && documents.Workflow is null) return null;
-        var info = documents.ApiPrompt is null ? new GenerationInfo() : ParseApiPrompt(documents.ApiPrompt);
-        return info with { HasWorkflow = documents.Workflow is not null, HasApiPrompt = documents.ApiPrompt is not null };
+        var generationInfo = documents.ApiPrompt is null ? new GenerationInfo() : ParseApiPrompt(documents.ApiPrompt);
+        return generationInfo with { HasWorkflow = documents.Workflow is not null, HasApiPrompt = documents.ApiPrompt is not null };
     }
 
     /// <summary>The document to save as a ComfyUI workflow: the UI workflow when present, otherwise the API prompt.</summary>
@@ -107,61 +128,105 @@ public static partial class ComfyMetadata
 
     public static GenerationInfo ParseApiPrompt(string apiPrompt)
     {
-        JsonObject nodes;
-        try { nodes = JsonNode.Parse(apiPrompt) as JsonObject ?? []; }
-        catch (JsonException) { return new(); }
-        var graph = new Graph(nodes);
+        var graph = ParseApiPromptGraph(apiPrompt);
+        var details = ResolveGenerationDetails(graph);
+        return new GenerationInfo
+        {
+            Prompt = details.Prompt.Trim(),
+            NegativePrompt = details.NegativePrompt.Trim(),
+            Cfg = details.Cfg,
+            Steps = details.Steps,
+            Model = details.Model,
+            ModelKind = details.ModelKind
+        };
+    }
+
+    private static Graph ParseApiPromptGraph(string apiPrompt)
+    {
+        try { return new Graph(JsonNode.Parse(apiPrompt) as JsonObject ?? []); }
+        catch (JsonException) { return new Graph([]); }
+    }
+
+    private static GenerationDetails ResolveGenerationDetails(Graph graph)
+    {
         var sampler = graph.FindSampler();
-        string prompt = "", negative = "", model = "", kind = "";
+        string prompt = "", negativePrompt = "", model = "", modelKind = "";
         double? cfg = null;
         int? steps = null;
         if (sampler is not null)
         {
             var guider = graph.Linked(sampler.Inputs["guider"]);
             prompt = graph.ResolveText(sampler.Inputs["positive"] ?? guider?.Inputs["positive"] ?? guider?.Inputs["conditioning"], "positive") ?? "";
-            negative = graph.ResolveText(sampler.Inputs["negative"] ?? guider?.Inputs["negative"], "negative") ?? "";
+            negativePrompt = graph.ResolveText(sampler.Inputs["negative"] ?? guider?.Inputs["negative"], "negative") ?? "";
             cfg = graph.ResolveNumber(sampler.Inputs["cfg"] ?? guider?.Inputs["cfg"], "cfg");
             var stepValue = graph.ResolveNumber(sampler.Inputs["steps"], "steps")
                 ?? graph.ResolveNumber(graph.Linked(sampler.Inputs["sigmas"])?.Inputs["steps"], "steps");
             steps = stepValue is double s ? (int)Math.Round(s) : null;
-            (model, kind) = graph.ResolveModel(sampler.Inputs["model"] ?? guider?.Inputs["model"]);
+            (model, modelKind) = graph.ResolveModel(sampler.Inputs["model"] ?? guider?.Inputs["model"]);
         }
         if (prompt.Length == 0) prompt = graph.FirstText() ?? "";
-        if (model.Length == 0) (model, kind) = graph.AnyModel();
-        return new GenerationInfo
-        {
-            Prompt = prompt.Trim(), NegativePrompt = negative.Trim(), Cfg = cfg, Steps = steps,
-            Model = model, ModelKind = kind
-        };
+        if (model.Length == 0) (model, modelKind) = graph.AnyModel();
+        return new(prompt, negativePrompt, cfg, steps, model, modelKind);
     }
 
     /// <summary>Groups exactly matching prompts (shared groups first, largest first), then unique and missing prompts.</summary>
-    public static List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> ordered)
+    public static List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> orderedImages)
     {
-        var groups = new List<PromptGroup>();
-        var byPrompt = new Dictionary<string, PromptGroup>(StringComparer.Ordinal);
-        var none = new List<ImageRecord>();
-        foreach (var image in ordered)
-        {
-            var prompt = image.Prompt;
-            if (prompt.Length == 0) { none.Add(image); continue; }
-            if (!byPrompt.TryGetValue(prompt, out var group))
-            {
-                group = new(PromptGroup.Shared, prompt, []);
-                byPrompt[prompt] = group;
-                groups.Add(group);
-            }
-            group.Images.Add(image);
-        }
-        var shared = groups.Where(group => group.Images.Count > 1)
-            .Select((group, order) => (group, order))
-            .OrderByDescending(item => item.group.Images.Count).ThenBy(item => item.order)
-            .Select(item => item.group).ToList();
-        var unique = groups.Where(group => group.Images.Count == 1).SelectMany(group => group.Images).ToList();
-        if (unique.Count > 0) shared.Add(new(PromptGroup.Unique, "", unique));
-        if (none.Count > 0) shared.Add(new(PromptGroup.None, "", none));
-        return shared;
+        var (promptGroups, imagesWithoutPrompts) = CollectPromptGroups(orderedImages);
+        var sharedPromptGroups = OrderSharedPromptGroups(promptGroups);
+        var orderedPromptGroups = new List<PromptGroup>(sharedPromptGroups);
+        AppendUniquelyPromptedImages(orderedPromptGroups, promptGroups);
+        AppendImagesWithoutPrompts(orderedPromptGroups, imagesWithoutPrompts);
+        return orderedPromptGroups;
     }
+
+    private static (List<(string Prompt, List<ImageRecord> Images)> PromptGroups, List<ImageRecord> ImagesWithoutPrompts)
+        CollectPromptGroups(IEnumerable<ImageRecord> orderedImages)
+    {
+        var promptGroups = new List<(string Prompt, List<ImageRecord> Images)>();
+        var promptGroupsByPrompt = new Dictionary<string, List<ImageRecord>>(StringComparer.Ordinal);
+        var imagesWithoutPrompts = new List<ImageRecord>();
+        foreach (var imageRecord in orderedImages)
+        {
+            var prompt = imageRecord.Prompt;
+            if (prompt.Length == 0) { imagesWithoutPrompts.Add(imageRecord); continue; }
+            if (!promptGroupsByPrompt.TryGetValue(prompt, out var promptGroupImages))
+            {
+                promptGroupImages = [];
+                promptGroupsByPrompt[prompt] = promptGroupImages;
+                promptGroups.Add((prompt, promptGroupImages));
+            }
+            promptGroupImages.Add(imageRecord);
+        }
+        return (promptGroups, imagesWithoutPrompts);
+    }
+
+    private static List<PromptGroup> OrderSharedPromptGroups(
+        List<(string Prompt, List<ImageRecord> Images)> promptGroups) =>
+        promptGroups.Where(promptGroup => promptGroup.Images.Count > 1)
+            .Select((promptGroup, order) => (promptGroup, order))
+            .OrderByDescending(item => item.promptGroup.Images.Count).ThenBy(item => item.order)
+            .Select(item => new PromptGroup(PromptGroup.Shared, item.promptGroup.Prompt, item.promptGroup.Images.ToImmutableArray()))
+            .ToList();
+
+    private static void AppendUniquelyPromptedImages(List<PromptGroup> orderedPromptGroups,
+        List<(string Prompt, List<ImageRecord> Images)> promptGroups)
+    {
+        var uniquelyPromptedImages = promptGroups.Where(promptGroup => promptGroup.Images.Count == 1)
+            .SelectMany(promptGroup => promptGroup.Images).ToList();
+        if (uniquelyPromptedImages.Count > 0)
+            orderedPromptGroups.Add(new(PromptGroup.Unique, "", uniquelyPromptedImages.ToImmutableArray()));
+    }
+
+    private static void AppendImagesWithoutPrompts(List<PromptGroup> orderedPromptGroups,
+        List<ImageRecord> imagesWithoutPrompts)
+    {
+        if (imagesWithoutPrompts.Count > 0)
+            orderedPromptGroups.Add(new(PromptGroup.None, "", imagesWithoutPrompts.ToImmutableArray()));
+    }
+
+    private sealed record GenerationDetails(string Prompt, string NegativePrompt, double? Cfg, int? Steps,
+        string Model, string ModelKind);
 
     private sealed record Node(string Id, string ClassType, JsonObject Inputs);
 
@@ -173,9 +238,10 @@ public static partial class ComfyMetadata
 
         public Node? Get(string id) =>
             nodes[id] is JsonObject node && node["inputs"] is JsonObject inputs
-                ? new(id, node["class_type"]?.GetValue<string>() ?? "", inputs) : null;
+                && node["class_type"] is JsonValue classType && classType.TryGetValue<string>(out var name)
+                ? new(id, name, inputs) : null;
 
-        private IEnumerable<Node> All => nodes.Select(pair => Get(pair.Key)).OfType<Node>();
+        private IEnumerable<Node> Nodes => nodes.Select(pair => Get(pair.Key)).OfType<Node>();
 
         public Node? Linked(JsonNode? value) =>
             value is JsonArray link && link.Count == 2 && link[0] is JsonValue target
@@ -183,7 +249,7 @@ public static partial class ComfyMetadata
 
         public Node? FindSampler()
         {
-            var samplers = All.Where(node => node.Inputs.ContainsKey("positive") && node.Inputs.ContainsKey("negative")
+            var samplers = Nodes.Where(node => node.Inputs.ContainsKey("positive") && node.Inputs.ContainsKey("negative")
                 || node.Inputs.ContainsKey("guider") || node.ClassType.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
                     && node.Inputs.ContainsKey("model")).ToList();
             return samplers.FirstOrDefault(node => node.ClassType is "KSampler" or "KSamplerAdvanced")
@@ -193,26 +259,26 @@ public static partial class ComfyMetadata
                 ?? samplers.FirstOrDefault();
         }
 
-        public string? ResolveText(JsonNode? value, string role, int depth = 0, HashSet<string>? visited = null)
+        public string? ResolveText(JsonNode? value, string role, int depth = 0, HashSet<string>? visitedNodeIds = null)
         {
             if (depth > MaxDepth || value is null) return null;
             if (value is JsonValue scalar) return scalar.TryGetValue<string>(out var text) ? text : null;
             var node = Linked(value);
-            visited ??= [];
-            if (node is null || !visited.Add(node.Id)) return null;
+            visitedNodeIds ??= [];
+            if (node is null || !visitedNodeIds.Add(node.Id)) return null;
             foreach (var key in TextKeys)
             {
                 if (!node.Inputs.TryGetPropertyValue(key, out var input) || input is null) continue;
                 if (input is JsonValue && input.GetValueKind() == JsonValueKind.String) return input.GetValue<string>();
-                if (input is JsonArray && ResolveText(input, role, depth + 1, visited) is { } linkedText) return linkedText;
+                if (input is JsonArray && ResolveText(input, role, depth + 1, visitedNodeIds) is { } linkedText) return linkedText;
             }
             var opposite = role == "positive" ? "negative" : "positive";
             foreach (var key in new[] { role }.Concat(ConditioningKeys))
-                if (node.Inputs[key] is JsonArray && ResolveText(node.Inputs[key], role, depth + 1, visited) is { } text) return text;
+                if (node.Inputs[key] is JsonArray && ResolveText(node.Inputs[key], role, depth + 1, visitedNodeIds) is { } text) return text;
             foreach (var (key, input) in node.Inputs)
             {
                 if (input is not JsonArray || key == opposite || NonTextLinks.Contains(key) || ConditioningKeys.Contains(key) || key == role) continue;
-                if (ResolveText(input, role, depth + 1, visited) is { } text) return text;
+                if (ResolveText(input, role, depth + 1, visitedNodeIds) is { } text) return text;
             }
             return null;
         }
@@ -233,25 +299,25 @@ public static partial class ComfyMetadata
             return null;
         }
 
-        public (string Model, string Kind) ResolveModel(JsonNode? value, int depth = 0, HashSet<string>? visited = null)
+        public (string Model, string Kind) ResolveModel(JsonNode? value, int depth = 0, HashSet<string>? visitedNodeIds = null)
         {
             var node = Linked(value);
-            visited ??= [];
-            if (depth > MaxDepth || node is null || !visited.Add(node.Id)) return ("", "");
+            visitedNodeIds ??= [];
+            if (depth > MaxDepth || node is null || !visitedNodeIds.Add(node.Id)) return ("", "");
             if (ModelOf(node) is { } found) return found;
             foreach (var (key, input) in node.Inputs.OrderByDescending(pair => pair.Key == "model"))
             {
                 if (input is not JsonArray || !key.Contains("model", StringComparison.OrdinalIgnoreCase)) continue;
-                var resolved = ResolveModel(input, depth + 1, visited);
+                var resolved = ResolveModel(input, depth + 1, visitedNodeIds);
                 if (resolved.Model.Length > 0) return resolved;
             }
             return ("", "");
         }
 
         public (string Model, string Kind) AnyModel() =>
-            All.Select(ModelOf).FirstOrDefault(found => found is not null) ?? ("", "");
+            Nodes.Select(ModelOf).FirstOrDefault(found => found is not null) ?? ("", "");
 
-        public string? FirstText() => All
+        public string? FirstText() => Nodes
             .Where(node => node.ClassType.Contains("TextEncode", StringComparison.OrdinalIgnoreCase))
             .Select(node => TextKeys.Select(key => node.Inputs[key]).OfType<JsonValue>()
                 .FirstOrDefault(input => input.GetValueKind() == JsonValueKind.String)?.GetValue<string>())

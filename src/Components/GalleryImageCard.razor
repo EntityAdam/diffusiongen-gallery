@@ -9,7 +9,7 @@
         @if (Thumbnail is not null)
         { <img src="@Thumbnail" alt="@Image.Name" loading="lazy" draggable="false" /> }
         else { <div class="thumbnail-placeholder">Loading preview...</div> }
-        @if (Image.IsVideo) { <span class="video-badge" aria-label="@($"Video, {Image.FormatDuration()}")">&#9654; @Image.FormatDuration()</span> }
+        @if (Image.IsVideo) { <span class="video-badge" aria-label="@($"Video, {GalleryService.FormatDuration(Image)}")">&#9654; @GalleryService.FormatDuration(Image)</span> }
     </button>
     <div class="card-info"><h3 title="@Image.Name">@Image.Name</h3>
         <div class="card-meta">
@@ -38,7 +38,7 @@
             </div>
             <span class="muted">@(Image.Reviewed ? "Reviewed" : "Pending")</span>
         </div>
-        @if (Image.Collections.Count > 0) { <div class="collection-chips">@foreach (var name in Image.Collections) { <span>@name</span> }</div> }
+        @if (!Image.Collections.IsEmpty) { <div class="collection-chips">@foreach (var name in Image.Collections) { <span>@name</span> }</div> }
     </div>
     <div class="card-actions">
         <button disabled="@Busy" class="@(Image.Favorite ? "selected" : "")" @onclick="Favorite" aria-label="Toggle favorite">@(Image.Favorite ? "\u2605" : "\u2606") Favorite</button>

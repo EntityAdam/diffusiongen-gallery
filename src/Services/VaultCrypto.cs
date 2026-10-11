@@ -3,20 +3,33 @@ using System.Text;
 
 namespace Gallery.Services;
 
-public static class VaultCrypto
+internal static class VaultCrypto
 {
     public const int Iterations = 600_000;
+    private const int NonceSizeBytes = 12;
+    private const int AuthenticationTagSizeBytes = 16;
+    private const int MagicSizeBytes = 8;
+    private const int EnvelopeHeaderSizeBytes = MagicSizeBytes + NonceSizeBytes + AuthenticationTagSizeBytes;
+    private const int RecoveryWordCount = 32;
     private static readonly byte[] Magic = "DPNG0001"u8.ToArray();
-    private static readonly string[] First = "amber aqua azure birch coral dusk ember fern frost gold jade lunar mist moss oak pearl".Split(' ');
-    private static readonly string[] Second = "bay bird bloom brook cloud dune field flame glen hill lake leaf moon reed star wave".Split(' ');
+    private static readonly string[] recoveryWordPrefixes = "amber aqua azure birch coral dusk ember fern frost gold jade lunar mist moss oak pearl".Split(' ');
+    private static readonly string[] recoveryWordSuffixes = "bay bird bloom brook cloud dune field flame glen hill lake leaf moon reed star wave".Split(' ');
 
-    public static byte[] Derive(string secret, byte[] salt) =>
+    public static byte[] Derive(string secret, ReadOnlySpan<byte> salt) =>
         Rfc2898DeriveBytes.Pbkdf2(secret, salt, Iterations, HashAlgorithmName.SHA256, 32);
 
     public static byte[] ContentFingerprint(ReadOnlySpan<byte> masterKey, string sourceSha256)
     {
-        var hash = Convert.FromHexString(sourceSha256);
-        if (hash.Length != 32) throw new InvalidOperationException("Invalid source SHA-256 in the image catalog.");
+        byte[] hash;
+        try { hash = Convert.FromHexString(sourceSha256); }
+        catch (FormatException exception)
+        {
+            throw new InvalidOperationException(
+                $"Source SHA-256 value '{sourceSha256}' must contain exactly 64 hexadecimal characters.", exception);
+        }
+        if (hash.Length != 32)
+            throw new InvalidOperationException(
+                $"Source SHA-256 value '{sourceSha256}' must contain exactly 64 hexadecimal characters.");
         Span<byte> fingerprintKey = stackalloc byte[32];
         HKDF.DeriveKey(HashAlgorithmName.SHA256, masterKey, fingerprintKey,
             salt: ReadOnlySpan<byte>.Empty, info: "DiffusionGenGallery/content-fingerprint/v1"u8);
@@ -26,47 +39,97 @@ public static class VaultCrypto
 
     public static byte[] Encrypt(ReadOnlySpan<byte> plain, ReadOnlySpan<byte> key, string purpose)
     {
-        var result = new byte[Magic.Length + 12 + 16 + plain.Length];
-        Magic.CopyTo(result, 0);
-        var nonce = result.AsSpan(8, 12);
+        var encryptedEnvelopeBytes = AllocateEncryptedEnvelope(plain.Length);
+        var nonce = encryptedEnvelopeBytes.AsSpan(MagicSizeBytes, NonceSizeBytes);
         RandomNumberGenerator.Fill(nonce);
-        using var aes = new AesGcm(key, 16);
-        aes.Encrypt(nonce, plain, result.AsSpan(36), result.AsSpan(20, 16), Encoding.UTF8.GetBytes(purpose));
-        return result;
+        EncryptPayload(plain, key, purpose, nonce, encryptedEnvelopeBytes);
+        return encryptedEnvelopeBytes;
     }
 
     public static byte[] Decrypt(ReadOnlySpan<byte> envelope, ReadOnlySpan<byte> key, string purpose)
     {
-        if (envelope.Length < 36 || !envelope[..8].SequenceEqual(Magic))
-            throw new CryptographicException("Invalid encrypted file format.");
-        var plain = new byte[envelope.Length - 36];
-        using var aes = new AesGcm(key, 16);
+        ValidateEncryptedEnvelope(envelope);
+        var plaintextBytes = new byte[envelope.Length - EnvelopeHeaderSizeBytes];
         try
         {
-            aes.Decrypt(envelope.Slice(8, 12), envelope[36..], envelope.Slice(20, 16), plain,
-                Encoding.UTF8.GetBytes(purpose));
-            return plain;
+            DecryptPayload(envelope, key, purpose, plaintextBytes);
+            return plaintextBytes;
         }
         catch
         {
-            CryptographicOperations.ZeroMemory(plain);
+            CryptographicOperations.ZeroMemory(plaintextBytes);
             throw;
         }
     }
 
     // Each independently random compound word represents 8 bits: 32 words = 256 bits.
     public static string CreateRecoveryPhrase() => string.Join(' ',
-        RandomNumberGenerator.GetBytes(32).Select(b => $"{First[b >> 4]}-{Second[b & 15]}"));
+        RandomNumberGenerator.GetBytes(RecoveryWordCount)
+            .Select(value => $"{recoveryWordPrefixes[value >> 4]}-{recoveryWordSuffixes[value & 15]}"));
 
     public static string NormalizeRecovery(string phrase)
     {
+        if (string.IsNullOrWhiteSpace(phrase))
+            throw new InvalidOperationException($"Recovery requires all {RecoveryWordCount} compound words in their original order.");
         var words = phrase.ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length != 32 || words.Any(word =>
-        {
-            var parts = word.Split('-');
-            return parts.Length != 2 || !First.Contains(parts[0]) || !Second.Contains(parts[1]);
-        }))
-            throw new InvalidOperationException("Recovery requires all 32 compound words in their original order.");
+        if (!IsValidRecoveryPhrase(words))
+            throw new InvalidOperationException($"Recovery requires all {RecoveryWordCount} compound words in their original order.");
         return string.Join(' ', words);
+    }
+
+    private static byte[] AllocateEncryptedEnvelope(int plaintextLength)
+    {
+        var encryptedEnvelopeBytes = new byte[EnvelopeHeaderSizeBytes + plaintextLength];
+        Magic.CopyTo(encryptedEnvelopeBytes, 0);
+        return encryptedEnvelopeBytes;
+    }
+
+    private static void EncryptPayload(
+        ReadOnlySpan<byte> plaintextBytes,
+        ReadOnlySpan<byte> key,
+        string purpose,
+        ReadOnlySpan<byte> nonce,
+        Span<byte> encryptedEnvelopeBytes)
+    {
+        using var aesGcm = new AesGcm(key, AuthenticationTagSizeBytes);
+        aesGcm.Encrypt(
+            nonce,
+            plaintextBytes,
+            encryptedEnvelopeBytes[EnvelopeHeaderSizeBytes..],
+            encryptedEnvelopeBytes.Slice(MagicSizeBytes + NonceSizeBytes, AuthenticationTagSizeBytes),
+            Encoding.UTF8.GetBytes(purpose));
+    }
+
+    private static void ValidateEncryptedEnvelope(ReadOnlySpan<byte> encryptedEnvelopeBytes)
+    {
+        if (encryptedEnvelopeBytes.Length < EnvelopeHeaderSizeBytes ||
+            !encryptedEnvelopeBytes[..MagicSizeBytes].SequenceEqual(Magic))
+            throw new CryptographicException("Invalid encrypted file format.");
+    }
+
+    private static void DecryptPayload(
+        ReadOnlySpan<byte> encryptedEnvelopeBytes,
+        ReadOnlySpan<byte> key,
+        string purpose,
+        Span<byte> plaintextBytes)
+    {
+        using var aesGcm = new AesGcm(key, AuthenticationTagSizeBytes);
+        aesGcm.Decrypt(
+            encryptedEnvelopeBytes.Slice(MagicSizeBytes, NonceSizeBytes),
+            encryptedEnvelopeBytes[EnvelopeHeaderSizeBytes..],
+            encryptedEnvelopeBytes.Slice(MagicSizeBytes + NonceSizeBytes, AuthenticationTagSizeBytes),
+            plaintextBytes,
+            Encoding.UTF8.GetBytes(purpose));
+    }
+
+    private static bool IsValidRecoveryPhrase(string[] words) =>
+        words.Length == RecoveryWordCount && words.All(IsValidRecoveryWord);
+
+    private static bool IsValidRecoveryWord(string word)
+    {
+        var parts = word.Split('-');
+        return parts.Length == 2 &&
+            recoveryWordPrefixes.Contains(parts[0]) &&
+            recoveryWordSuffixes.Contains(parts[1]);
     }
 }
