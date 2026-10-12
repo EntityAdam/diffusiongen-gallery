@@ -47,11 +47,12 @@ test("rating, favorite and deletion keys act on the hovered or focused card", as
     assert.equal(key("3", {}).defaultPrevented, true);
     doc.activeElement = card("focused");
     key("F", {});
-    key("Delete", {}, { shiftKey: false });
+    assert.equal(key("Delete", {}).defaultPrevented, false);
+    key("D", {}, { shiftKey: false });
     key("x", {}, { shiftKey: true });
     await flush();
     assert.deepEqual(calls, [["HandleGridKey", "3", "hovered", false], ["HandleGridKey", "f", "focused", false],
-        ["HandleGridKey", "delete", "focused", false], ["HandleGridKey", "x", "focused", true]]);
+        ["HandleGridKey", "d", "focused", false], ["HandleGridKey", "x", "focused", true]]);
 });
 
 test("shortcuts are ignored while typing, with modifiers, without a card, or behind a dialog", async () => {

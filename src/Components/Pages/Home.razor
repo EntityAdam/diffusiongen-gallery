@@ -390,7 +390,7 @@ else
             }
             else
             {
-                <p class="shortcut-hint muted">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>Del</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
+                <p class="shortcut-hint muted">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>D</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
                 <div class="image-grid density-@density">
                     @{ PromptGroup? previousGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
@@ -599,7 +599,7 @@ else
     private string viewerInitialId = "";
     private bool reviewMode;
     private int page;
-    private int PageSize => density switch { "compact" => 48, "large" => 12, _ => 24 };
+    private int PageSize => density switch { "compact" => 49, "large" => 12, _ => 24 };
     private string density = "comfortable";
     private string bulkTags = "", bulkCollection = "";
     private string? selectionAnchor;
@@ -834,7 +834,7 @@ else
             var keeper = KeeperOf(group);
             return group.ImageIds.Where(id => id != keeper.Id);
         }).ToList();
-        try { await Gallery.UpdateManyAsync(ids, image => image with { MarkedForDeletion = true }); }
+        try { await Gallery.UpdateManyAsync(ids, image => Gallery.SetDeletionMark(image, true)); }
         finally { await ReloadAsync(); }
         message = $"Marked {ids.Count} extra cop{(ids.Count == 1 ? "y" : "ies")} for deletion. Review and remove them from Remove marked images.";
     });
@@ -962,7 +962,7 @@ else
     private Task BulkRateAsync(int value) => BulkAsync("Rating selected images...", image => Gallery.SetCuration(image, value, null), value == 0 ? "Ratings cleared" : $"Rated {value} stars");
     private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image with { Favorite = value }, value ? "Added to favorites" : "Removed from favorites");
     private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image with { Reviewed = value }, "Marked reviewed");
-    private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => image with { MarkedForDeletion = value }, value ? "Marked for deletion" : "Deletion marks cleared");
+    private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => Gallery.SetDeletionMark(image, value), value ? "Marked for deletion" : "Deletion marks cleared");
     private Task BulkTagAsync()
     {
         var tags = bulkTags.Trim();
@@ -1000,15 +1000,15 @@ else
             "0" or "1" or "2" or "3" or "4" or "5" => current => Gallery.SetCuration(current, key[0] - '0', null),
             "f" when !image.Favorite => current => current with { Favorite = true },
             "f" => current => current with { Favorite = false },
-            "delete" when !image.MarkedForDeletion => current => current with { MarkedForDeletion = true },
-            "delete" => current => current with { MarkedForDeletion = false },
+            "d" when !image.MarkedForDeletion => current => Gallery.SetDeletionMark(current, true),
+            "d" => current => Gallery.SetDeletionMark(current, false),
             _ => null
         };
         if (update is null) return;
         var done = key switch
         {
             "f" => image.Favorite ? "Removed from favorites." : "Added to favorites.",
-            "delete" => image.MarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.",
+            "d" => image.MarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.",
             "0" => "Rating cleared.",
             _ => $"Rated {key} stars."
         };
@@ -1091,7 +1091,7 @@ else
 
     private Task MarkAsync(ImageRecord image) => RunAsync("Saving deletion mark...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => current with { MarkedForDeletion = !current.MarkedForDeletion });
+        await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.MarkedForDeletion));
         await ReloadAsync();
     });
 

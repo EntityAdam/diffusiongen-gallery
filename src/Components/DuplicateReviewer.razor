@@ -240,7 +240,11 @@
         if (Keep.Count == 0) throw new InvalidOperationException("Keep at least one copy in the group.");
         var ids = members.Select(member => member.Id).ToList();
         await Gallery.ApplyDuplicateDecisionAsync(ids, Keep);
-        members = members.Select(member => member with { MarkedForDeletion = !Keep.Contains(member.Id) }).ToList();
+        members = members.Select(member => member with
+        {
+            MarkedForDeletion = !Keep.Contains(member.Id),
+            Reviewed = !Keep.Contains(member.Id) || member.Reviewed
+        }).ToList();
         var marked = ids.Count - Keep.Count;
         appliedMarks += marked;
         applied.Add(groupIndex);
