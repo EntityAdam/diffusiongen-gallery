@@ -236,16 +236,16 @@ internal static partial class ComfyMetadata
         private static readonly string[] ConditioningKeys = ["conditioning", "conditioning_1", "conditioning_to", "conditioning_from", "conditioning_2", "cond", "base"];
         private static readonly HashSet<string> NonTextLinks = ["clip", "model", "vae", "image", "images", "control_net", "latent", "latent_image", "mask", "pixels", "samples", "style_model", "clip_vision_output", "upscale_model"];
 
-        public Node? Get(string id) =>
+        public Node? TryGet(string id) =>
             nodes[id] is JsonObject node && node["inputs"] is JsonObject inputs
                 && node["class_type"] is JsonValue classType && classType.TryGetValue<string>(out var name)
                 ? new(id, name, inputs) : null;
 
-        private IEnumerable<Node> Nodes => nodes.Select(pair => Get(pair.Key)).OfType<Node>();
+        private IEnumerable<Node> Nodes => nodes.Select(pair => TryGet(pair.Key)).OfType<Node>();
 
         public Node? Linked(JsonNode? value) =>
             value is JsonArray link && link.Count == 2 && link[0] is JsonValue target
-                ? Get(target.TryGetValue<string>(out var id) ? id : target.ToJsonString()) : null;
+                ? TryGet(target.TryGetValue<string>(out var id) ? id : target.ToJsonString()) : null;
 
         public Node? FindSampler()
         {

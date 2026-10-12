@@ -62,6 +62,7 @@ public sealed partial class GalleryService
             var record = await FindAsync(removalItem.Id, key);
             if (!record.MarkedForDeletion)
                 throw new InvalidOperationException("Image is no longer marked for deletion.");
+            await RecoverRecordRemovalAsync(record);
             var original = OriginalPath(record);
             if (RemovalPreviewHasChanged(record, removalItem, original))
                 throw new InvalidOperationException("Original file status changed. Review a new removal preview.");

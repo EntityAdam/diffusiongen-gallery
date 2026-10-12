@@ -5,6 +5,187 @@ namespace Gallery.Tests;
 
 public sealed class RemovalTests
 {
+    // Recovery preserves catalogued media for both staging formats and storage locations.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Listing_WhenRemovalIsInterrupted_RestoresCurrentAndLegacyCiphertextAtItsCataloguedPath(
+        bool imageWasMoved, bool stagingUsesLegacyIdentity)
+    {
+        // Arrange
+        using var testVault = new TestVault();
+        await testVault.InitializeAsync();
+        var imageRecord = await ImportRecoveryImageAsync(testVault, imageWasMoved);
+        var stagingIdentity = stagingUsesLegacyIdentity ? Guid.NewGuid().ToString("N") : imageRecord.Id;
+        var stagedPath = imageRecord.StoredPath + ".removing-" + stagingIdentity;
+        var expectedCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
+        File.Move(imageRecord.StoredPath, stagedPath);
+
+        // Act
+        var imageRecords = await testVault.Service.ListAsync();
+        var actualCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
+        var stagedFileExists = File.Exists(stagedPath);
+        await testVault.Service.VerifyImportedAsync(imageRecord.Id);
+
+        // Assert
+        Assert.Equal(imageRecord.Id, Assert.Single(imageRecords).Id);
+        Assert.Equal(imageRecord.StoredPath, imageRecords[0].StoredPath);
+        Assert.Equal(expectedCiphertext, actualCiphertext);
+        TestAssertions.False(stagedFileExists, $"recovery consumes staged ciphertext at {stagedPath}");
+    }
+
+    // Retrying the removal itself must recover staging without requiring an intervening listing.
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Removal_WhenRetriedWithoutListing_DeletesRecoveredCiphertextAndCatalogTogether(
+        bool imageWasMoved, bool stagingUsesLegacyIdentity)
+    {
+        // Arrange
+        using var testVault = new TestVault();
+        await testVault.InitializeAsync();
+        var imageRecord = await ImportRecoveryImageAsync(testVault, imageWasMoved);
+        await testVault.Service.UpdateAsync(imageRecord.Id, imageRecordEdit => imageRecordEdit.MarkedForDeletion = true);
+        var removalItems = await testVault.Service.PrepareRemovalAsync([imageRecord.Id]);
+        var stagingIdentity = stagingUsesLegacyIdentity ? Guid.NewGuid().ToString("N") : imageRecord.Id;
+        var stagedPath = imageRecord.StoredPath + ".removing-" + stagingIdentity;
+        File.Move(imageRecord.StoredPath, stagedPath);
+
+        // Act
+        var removalResults = await testVault.Service.RemoveAsync(
+            removalItems, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "");
+        var storedFileExists = File.Exists(imageRecord.StoredPath);
+        var stagedFileExists = File.Exists(stagedPath);
+        var imageRecords = await testVault.Service.ListAsync();
+
+        // Assert
+        var removalResult = Assert.Single(removalResults);
+        Assert.Equal(imageRecord.Id, removalResult.Id);
+        TestAssertions.True(removalResult.Removed, "the retried removal deletes the selected image");
+        Assert.Null(removalResult.Error);
+        TestAssertions.False(storedFileExists, "the retried removal deletes the stored ciphertext");
+        TestAssertions.False(stagedFileExists, "the retried removal leaves no staging residue");
+        Assert.Empty(imageRecords);
+    }
+
+    // Recovery reconciles equal copies, but preserves every copy when their bytes disagree.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Listing_WhenMultipleStagedCopiesAgree_RestoresOneAndRemovesOnlyDuplicates(bool imageWasMoved)
+    {
+        // Arrange
+        using var testVault = new TestVault();
+        await testVault.InitializeAsync();
+        var imageRecord = await ImportRecoveryImageAsync(testVault, imageWasMoved);
+        var expectedCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
+        var currentStagedPath = imageRecord.StoredPath + ".removing-" + imageRecord.Id;
+        var legacyStagedPath = imageRecord.StoredPath + ".removing-" + Guid.NewGuid().ToString("N");
+        File.Copy(imageRecord.StoredPath, legacyStagedPath);
+        File.Move(imageRecord.StoredPath, currentStagedPath);
+
+        // Act
+        var imageRecords = await testVault.Service.ListAsync();
+        var actualCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
+        var currentStageExists = File.Exists(currentStagedPath);
+        var legacyStageExists = File.Exists(legacyStagedPath);
+
+        // Assert
+        Assert.Equal(imageRecord.Id, Assert.Single(imageRecords).Id);
+        Assert.Equal(expectedCiphertext, actualCiphertext);
+        TestAssertions.False(currentStageExists, "the current staging copy was recovered");
+        TestAssertions.False(legacyStageExists, "the identical legacy staging copy was removed");
+    }
+
+    // A conflict must fail before restoring or deleting either staged copy.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Listing_WhenStagedCopiesConflict_PreservesBothCiphertextsAndTheCatalog(bool imageWasMoved)
+    {
+        // Arrange
+        using var testVault = new TestVault();
+        await testVault.InitializeAsync();
+        var imageRecord = await ImportRecoveryImageAsync(testVault, imageWasMoved);
+        var expectedCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
+        byte[] conflictingCiphertext = [1, 2, 3];
+        var currentStagedPath = imageRecord.StoredPath + ".removing-" + imageRecord.Id;
+        var legacyStagedPath = imageRecord.StoredPath + ".removing-" + Guid.NewGuid().ToString("N");
+        await File.WriteAllBytesAsync(legacyStagedPath, conflictingCiphertext);
+        File.Move(imageRecord.StoredPath, currentStagedPath);
+        var expectedCatalogPayload = await testVault.Store.ReadRecordAsync(imageRecord.Id);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<IOException>(() => testVault.Service.ListAsync());
+        var currentCiphertext = await File.ReadAllBytesAsync(currentStagedPath);
+        var legacyCiphertext = await File.ReadAllBytesAsync(legacyStagedPath);
+        var catalogPayload = await testVault.Store.ReadRecordAsync(imageRecord.Id);
+        var storedFileExists = File.Exists(imageRecord.StoredPath);
+
+        // Assert
+        TestAssertions.Exception<IOException>(exception, "recovery identifies the image and preserves conflicting copies",
+            imageRecord.Id, "conflicting", "preserved");
+        Assert.Equal(expectedCiphertext, currentCiphertext);
+        Assert.Equal(conflictingCiphertext, legacyCiphertext);
+        Assert.Equal(expectedCatalogPayload, catalogPayload);
+        TestAssertions.False(storedFileExists, "a conflicting copy is not chosen for restoration");
+    }
+
+    // A staged-copy conflict blocks destructive source handling as well as catalog deletion.
+    [Fact]
+    public async Task Removal_WhenStoredAndStagedCiphertextsConflict_PreservesOriginalAndCatalog()
+    {
+        // Arrange
+        using var testVault = new TestVault();
+        await testVault.InitializeAsync();
+        var sourcePath = Path.Combine(testVault.Root, "source.png");
+        var expectedSourceBytes = GalleryTests.MakePng();
+        await File.WriteAllBytesAsync(sourcePath, expectedSourceBytes);
+        var imageRecord = await testVault.Service.ImportAsync(
+            new MemoryStream(expectedSourceBytes), "source.png", testVault.Root, sourcePath);
+        await testVault.Service.UpdateAsync(imageRecord.Id, imageRecordEdit => imageRecordEdit.MarkedForDeletion = true);
+        var removalItems = await testVault.Service.PrepareRemovalAsync([imageRecord.Id]);
+        var expectedCatalogPayload = await testVault.Store.ReadRecordAsync(imageRecord.Id);
+        var expectedCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
+        var stagedPath = imageRecord.StoredPath + ".removing-" + imageRecord.Id;
+        File.Copy(imageRecord.StoredPath, stagedPath);
+        byte[] conflictingCiphertext = [1, 2, 3];
+        await File.WriteAllBytesAsync(imageRecord.StoredPath, conflictingCiphertext);
+
+        // Act
+        var removalResults = await testVault.Service.RemoveAsync(
+            removalItems, ExistingOriginalAction.Delete, MissingOriginalAction.Discard, "");
+        var sourceBytes = await File.ReadAllBytesAsync(sourcePath);
+        var stagedCiphertext = await File.ReadAllBytesAsync(stagedPath);
+        var storedCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
+        var catalogPayload = await testVault.Store.ReadRecordAsync(imageRecord.Id);
+
+        // Assert
+        var removalResult = Assert.Single(removalResults);
+        Assert.Equal(imageRecord.Id, removalResult.Id);
+        TestAssertions.False(removalResult.Removed, "conflicting ciphertext prevents removal");
+        TestAssertions.Contains("conflicting", removalResult.Error!, "removal explains the ciphertext conflict");
+        Assert.Equal(expectedSourceBytes, sourceBytes);
+        Assert.Equal(expectedCiphertext, stagedCiphertext);
+        Assert.Equal(conflictingCiphertext, storedCiphertext);
+        Assert.Equal(expectedCatalogPayload, catalogPayload);
+    }
+
+    private static async Task<ImageRecord> ImportRecoveryImageAsync(TestVault testVault, bool imageWasMoved)
+    {
+        var imageRecord = await testVault.Service.ImportAsync(
+            new MemoryStream(GalleryTests.MakePng()), "image.png", "browser-folder");
+        if (!imageWasMoved) return imageRecord;
+        var destinationFolder = Path.Combine(testVault.Root, "moved-images");
+        Directory.CreateDirectory(destinationFolder);
+        await testVault.Service.MoveAsync(imageRecord.Id, destinationFolder, "moved");
+        return imageRecord with { StoredPath = Path.Combine(destinationFolder, "moved.dpng") };
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

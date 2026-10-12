@@ -239,31 +239,64 @@ public sealed partial class GalleryService
     private async Task RecoverInterruptedRemovalsAsync(byte[] key)
     {
         var records = await ListWithKeyAsync(key);
+        var stagedPathsByStoredPath = records.Select(record => Path.GetDirectoryName(record.StoredPath)!)
+            .Distinct(StringComparer.Ordinal).Where(Directory.Exists)
+            .SelectMany(directory => Directory.EnumerateFiles(directory))
+            .Where(IsRemovalStagingFile)
+            .ToLookup(RemovalOriginalPath, StringComparer.Ordinal);
+        foreach (var record in records)
+            await RecoverStagedRemovalAsync(record, stagedPathsByStoredPath[record.StoredPath].ToArray());
+
         var imageRoot = Path.Combine(vault.Root, "images");
         IEnumerable<string> stagedRemovals = Directory.Exists(imageRoot)
             ? Directory.EnumerateFiles(imageRoot, "*.removing-*", SearchOption.AllDirectories)
             : Array.Empty<string>();
         foreach (var path in stagedRemovals)
         {
-            var record = records.FirstOrDefault(item =>
-                string.Equals(path, RemovalStagingPath(item), StringComparison.OrdinalIgnoreCase));
-            if (record is null)
-            {
+            if (IsRemovalStagingFile(path) && !records.Any(record =>
+                string.Equals(record.StoredPath, RemovalOriginalPath(path), StringComparison.OrdinalIgnoreCase)))
                 File.Delete(path);
-                continue;
-            }
-
-            if (!File.Exists(record.StoredPath))
-            {
-                File.Move(path, record.StoredPath);
-                continue;
-            }
-
-            if (!await FilesMatchAsync(path, record.StoredPath))
-                throw new IOException($"Interrupted removal left conflicting encrypted copies for image '{record.Id}'; both were preserved.");
-            File.Delete(path);
         }
     }
+
+    private static Task RecoverRecordRemovalAsync(ImageRecord record)
+    {
+        var directory = Path.GetDirectoryName(record.StoredPath)!;
+        if (!Directory.Exists(directory)) return Task.CompletedTask;
+        var stagingPrefix = record.StoredPath + ".removing-";
+        var stagedPaths = Directory.EnumerateFiles(directory)
+            .Where(path => path.StartsWith(stagingPrefix, StringComparison.Ordinal) && IsRemovalStagingFile(path))
+            .ToArray();
+        return RecoverStagedRemovalAsync(record, stagedPaths);
+    }
+
+    private static async Task RecoverStagedRemovalAsync(ImageRecord record, string[] stagedPaths)
+    {
+        if (stagedPaths.Length == 0) return;
+
+        var storedImageExists = SourceExists(record.StoredPath);
+        var comparisonPath = storedImageExists ? record.StoredPath : stagedPaths[0];
+        foreach (var stagedPath in stagedPaths)
+        {
+            if (!SourceExists(stagedPath) || !await FilesMatchAsync(stagedPath, comparisonPath))
+                throw new IOException($"Interrupted removal left conflicting encrypted copies for image '{record.Id}'; all copies were preserved.");
+        }
+
+        if (!storedImageExists) File.Move(stagedPaths[0], record.StoredPath);
+        foreach (var stagedPath in stagedPaths)
+        {
+            if (storedImageExists || stagedPath != stagedPaths[0]) File.Delete(stagedPath);
+        }
+    }
+
+    private static bool IsRemovalStagingFile(string path)
+    {
+        var markerIndex = path.LastIndexOf(".removing-", StringComparison.Ordinal);
+        return markerIndex >= 0 && Guid.TryParseExact(path[(markerIndex + ".removing-".Length)..], "N", out _);
+    }
+
+    private static string RemovalOriginalPath(string path) =>
+        path[..path.LastIndexOf(".removing-", StringComparison.Ordinal)];
 
     private static string RemovalStagingPath(ImageRecord record) =>
         record.StoredPath + ".removing-" + record.Id;
