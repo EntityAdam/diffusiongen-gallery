@@ -1,10 +1,12 @@
+using Gallery.Services.Processors;
+using Gallery.Services.DataManagers.Converters;
 using System.Collections.Immutable;
 using System.Text;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Gallery.Services;
+namespace Gallery.Services.DataManagers;
 
 internal sealed record KeySlot(ImmutableArray<byte> Salt, ImmutableArray<byte> WrappedKey);
 internal sealed record VaultHeader(
@@ -36,22 +38,38 @@ internal sealed class VaultStore
         Root = Path.GetFullPath(root);
     }
 
+    private static bool IsValidPassphrase(string? passphrase) =>
+        !string.IsNullOrWhiteSpace(passphrase) && passphrase.Length >= 14;
+
     public static void ValidatePassphrase(string passphrase)
     {
-        if (string.IsNullOrWhiteSpace(passphrase) || passphrase.Length < 14)
+        if (!IsValidPassphrase(passphrase))
             throw new InvalidOperationException("Use a passphrase of at least 14 characters; a long unique phrase is recommended.");
     }
 
     public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase)
     {
         ValidatePassphrase(passphrase);
+        return await CreateUnderGateAsync(passphrase);
+    }
+
+    private async Task<(byte[] Key, string Recovery)> CreateUnderGateAsync(string passphrase)
+    {
         await gate.WaitAsync();
+        try { return await CreateWithOwnedKeyAsync(passphrase); }
+        finally { gate.Release(); }
+    }
+
+    private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase)
+    {
         var key = RandomNumberGenerator.GetBytes(VaultKeySizeBytes);
         try
         {
             if (Exists) throw new InvalidOperationException("A vault already exists. Unlock it instead.");
             Directory.CreateDirectory(Root);
-            var (vaultHeader, recoveryPhrase) = CreateInitialVaultHeader(key, passphrase);
+            VaultHeader vaultHeader;
+            string recoveryPhrase;
+            (vaultHeader, recoveryPhrase) = CreateInitialVaultHeader(key, passphrase);
             await CreateHeaderAsync(vaultHeader);
             return (key, recoveryPhrase);
         }
@@ -60,7 +78,6 @@ internal sealed class VaultStore
             CryptographicOperations.ZeroMemory(key);
             throw;
         }
-        finally { gate.Release(); }
     }
 
     public Task<byte[]> UnlockWithPassphraseAsync(string passphrase) =>
@@ -220,26 +237,4 @@ internal sealed class VaultStore
         return serializerOptions;
     }
 
-    private sealed class ImmutableByteArrayJsonConverter : JsonConverter<ImmutableArray<byte>>
-    {
-        public override ImmutableArray<byte> Read(
-            ref Utf8JsonReader reader,
-            Type typeToConvert,
-            JsonSerializerOptions options)
-        {
-            if (reader.TokenType != JsonTokenType.String)
-                throw new JsonException("Vault byte data must be base64-encoded.");
-            return ImmutableArray.CreateRange(reader.GetBytesFromBase64());
-        }
-
-        public override void Write(
-            Utf8JsonWriter writer,
-            ImmutableArray<byte> immutableBytes,
-            JsonSerializerOptions options)
-        {
-            if (immutableBytes.IsDefault)
-                throw new JsonException("Vault byte data cannot be uninitialized.");
-            writer.WriteBase64StringValue(immutableBytes.AsSpan());
-        }
-    }
 }

@@ -1,9 +1,11 @@
-using System.Security.Cryptography;
+namespace Gallery.Services.Sessions.Leases;
 
-namespace Gallery.Services;
-
-internal sealed class KeyLease(byte[] bytes) : IDisposable
+// The session owns the copied key and its cleanup; this scope only delegates access and release.
+internal sealed class KeyLease(Func<byte[]> readLeasedKeyBytes, Action clearLeasedKeyBytes) : IDisposable
 {
-    public byte[] Bytes { get; } = bytes;
-    public void Dispose() => CryptographicOperations.ZeroMemory(Bytes);
+    private readonly Func<byte[]> readLeasedKeyBytes = readLeasedKeyBytes;
+    private readonly Action clearLeasedKeyBytes = clearLeasedKeyBytes;
+
+    public byte[] Bytes => readLeasedKeyBytes();
+    public void Dispose() => clearLeasedKeyBytes();
 }

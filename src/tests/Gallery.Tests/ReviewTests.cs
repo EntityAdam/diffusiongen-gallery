@@ -1,3 +1,4 @@
+using Gallery.Core.Processors;
 using Gallery.Core;
 using Gallery.Models;
 using Gallery.Services;
@@ -5,6 +6,7 @@ using Gallery.Services;
 namespace Gallery.Tests;
 
 // Direct transition tests pin review-state changes; service tests cover their persistence and file effects.
+[Trait("Category", "acceptance")]
 public sealed class ReviewTests
 {
     [Fact]
@@ -14,15 +16,15 @@ public sealed class ReviewTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "undo.png", "folder");
-        await fixture.Service.UpdateAsync(record.Id, image => { image.Rating = 3; image.Favorite = true; image.Tags = "original"; });
-        var before = ReviewState.Capture(Assert.Single(await fixture.Service.ListAsync()));
+        await fixture.Service.UpdateAsync(record.Id, image => image with { Rating = 3, Favorite = true, Tags = "original" });
+        var before = fixture.Service.CaptureReviewState(Assert.Single(await fixture.Service.ListAsync()));
         // Act
-        await fixture.Service.UpdateAsync(record.Id, image => ReviewDecision.Apply(image, ReviewAction.MarkDeletion));
-        await fixture.Service.UpdateAsync(record.Id, image => image.Description = "New note");
+        await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.ApplyReviewDecision(image, ReviewAction.MarkDeletion));
+        await fixture.Service.UpdateAsync(record.Id, image => image with { Description = "New note" });
         await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.RestoreReviewState(image, before));
         // Assert
         var restored = Assert.Single(await fixture.Service.ListAsync());
-        Assert.Equal(before, ReviewState.Capture(restored));
+        Assert.Equal(before, fixture.Service.CaptureReviewState(restored));
         Assert.Equal("original", restored.Tags);
         Assert.Equal("New note", restored.Description);
         TestAssertions.True(File.Exists(restored.StoredPath), $"the original image remains at {restored.StoredPath}");
@@ -41,7 +43,7 @@ public sealed class ReviewTests
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "review.png", "folder");
         // Act
-        await fixture.Service.UpdateAsync(record.Id, image => ReviewDecision.Apply(image, action, 4));
+        await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.ApplyReviewDecision(image, action, 4));
 
         // Assert
         var stored = Assert.Single(await fixture.Service.ListAsync());
@@ -56,10 +58,11 @@ public sealed class ReviewTests
     public void ReviewDecision_WhenDeletionIsRevisedToKeep_UnmarksWithoutErasingOtherCuration()
     {
         // Arrange
+        using var fixture = new TestVault();
         var record = new ImageRecordEdit(new ImageRecord { Rating = 5, Favorite = true, MarkedForDeletion = true });
 
         // Act
-        ReviewDecision.Apply(record, ReviewAction.Keep);
+        record = fixture.Service.ApplyReviewDecision(record, ReviewAction.Keep);
 
         // Assert
         TestAssertions.True(record.Reviewed, "the keep decision marks the record reviewed");
@@ -81,12 +84,9 @@ public sealed class ReviewTests
         var actionError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, (ReviewAction)99));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(ratingError,
-            "the validation message identifies the invalid rating and both allowed bounds", "Rating 0", "between", "1", "5");
+        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the validation message identifies the invalid rating and both allowed bounds", "Rating 0", "between", "1", "5"), ratingError);
         TestAssertions.False(reviewedAfterInvalidRating, "invalid rating leaves the review state unchanged");
         TestAssertions.False(record.Reviewed, "invalid rating leaves the review state unchanged");
-        TestAssertions.Exception<InvalidOperationException>(actionError,
-            "the validation message identifies the invalid action and choices",
-            "99", "Keep", "Favorite", "MarkDeletion", "Rate");
+        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the validation message identifies the invalid action and choices", "99", "Keep", "Favorite", "MarkDeletion", "Rate"), actionError);
     }
 }

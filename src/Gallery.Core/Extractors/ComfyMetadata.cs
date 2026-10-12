@@ -4,7 +4,7 @@ using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using Gallery.Models;
 
-namespace Gallery.Core;
+namespace Gallery.Core.Extractors;
 
 /// <summary>
 /// Finds ComfyUI documents embedded in imported files and extracts generation parameters.
@@ -17,16 +17,14 @@ internal static partial class ComfyMetadata
     public const int Version = 1;
     private const int MaxDepth = 32;
 
-    public sealed record Documents(string? ApiPrompt, string? Workflow);
+    internal sealed record Documents(string? ApiPrompt, string? Workflow);
 
     /// <summary>Keyword/value text entries from the metadata JSON stored on a record.</summary>
     public static IEnumerable<(string Keyword, string Value)> TextEntries(string metadataJson)
-    {
-        var document = ParseMetadataDocument(metadataJson);
-        if (document is null) yield break;
-        foreach (var entry in ExtractPngAndVideoEntries(document)) yield return entry;
-        foreach (var entry in ExtractExifEntries(document)) yield return entry;
-    }
+        => ExtractTextEntries(ParseMetadataDocument(metadataJson));
+
+    private static IEnumerable<(string Keyword, string Value)> ExtractTextEntries(JsonObject? document)
+        => document is null ? [] : ExtractPngAndVideoEntries(document).Concat(ExtractExifEntries(document));
 
     private static JsonObject? ParseMetadataDocument(string metadataJson)
     {
@@ -34,7 +32,10 @@ internal static partial class ComfyMetadata
         try { return JsonNode.Parse(metadataJson) as JsonObject; }
         catch (JsonException exception)
         {
-            throw new InvalidOperationException("Stored generation metadata is not valid JSON.", exception);
+            string excerpt = JsonSerializer.Serialize(metadataJson[..Math.Min(metadataJson.Length, 80)]);
+            throw new StoredMetadataFormatException($"Stored generation metadata is not valid JSON. Input excerpt: {excerpt}.",
+                GalleryLogEvent.ParseMetadata,
+                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Metadata.InputExcerpt", excerpt)), exception);
         }
     }
 
@@ -63,10 +64,12 @@ internal static partial class ComfyMetadata
         }
     }
 
-    public static Documents Find(string metadataJson)
+    public static Documents Find(string metadataJson) => FindDocuments(TextEntries(metadataJson));
+
+    private static Documents FindDocuments(IEnumerable<(string Keyword, string Value)> entries)
     {
         string? prompt = null, workflow = null;
-        foreach (var (_, value) in TextEntries(metadataJson))
+        foreach (var (_, value) in entries)
         {
             Classify(value, ref prompt, ref workflow, 0);
             if (prompt is not null && workflow is not null) break;
@@ -81,17 +84,17 @@ internal static partial class ComfyMetadata
         var match = PrefixedJson().Match(text);
         if (match.Success) text = text[match.Length..];
         if (!text.StartsWith('{')) return;
-        JsonObject? json;
-        try { json = JsonNode.Parse(text) as JsonObject; }
+        JsonObject? jsonObject;
+        try { jsonObject = JsonNode.Parse(text) as JsonObject; }
         catch (JsonException) { return; }
-        if (json is null) return;
+        if (jsonObject is null) return;
 
-        if (IsWorkflow(json)) { workflow ??= text; return; }
-        if (IsApiPrompt(json)) { prompt ??= text; return; }
+        if (IsWorkflow(jsonObject)) { workflow ??= text; return; }
+        if (IsApiPrompt(jsonObject)) { prompt ??= text; return; }
         // Video Helper Suite stores {"prompt": ..., "workflow": ...} in one comment tag; values may be objects or strings.
         foreach (var name in new[] { "prompt", "workflow" })
         {
-            var inner = json[name];
+            var inner = jsonObject[name];
             if (inner is JsonObject innerObject) Classify(innerObject.ToJsonString(), ref prompt, ref workflow, depth + 1);
             else if (inner is JsonValue innerValue && innerValue.TryGetValue<string>(out var innerText))
                 Classify(innerText, ref prompt, ref workflow, depth + 1);
@@ -105,8 +108,8 @@ internal static partial class ComfyMetadata
             && node["class_type"] is JsonValue classType && classType.TryGetValue<string>(out _)
             && node["inputs"] is JsonObject);
 
-    private static string ReadString(JsonNode? value) =>
-        value is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text) ? text : "";
+    private static string ReadString(JsonNode? jsonNode) =>
+        jsonNode is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text) ? text : "";
 
     [GeneratedRegex(@"^(?:workflow|prompt)\s*:\s*(?=\{)", RegexOptions.IgnoreCase)]
     private static partial Regex PrefixedJson();
@@ -129,15 +132,15 @@ internal static partial class ComfyMetadata
     public static GenerationInfo ParseApiPrompt(string apiPrompt)
     {
         var graph = ParseApiPromptGraph(apiPrompt);
-        var details = ResolveGenerationDetails(graph);
+        var generationDetails = ResolveGenerationDetails(graph);
         return new GenerationInfo
         {
-            Prompt = details.Prompt.Trim(),
-            NegativePrompt = details.NegativePrompt.Trim(),
-            Cfg = details.Cfg,
-            Steps = details.Steps,
-            Model = details.Model,
-            ModelKind = details.ModelKind
+            Prompt = generationDetails.Prompt.Trim(),
+            NegativePrompt = generationDetails.NegativePrompt.Trim(),
+            Cfg = generationDetails.Cfg,
+            Steps = generationDetails.Steps,
+            Model = generationDetails.Model,
+            ModelKind = generationDetails.ModelKind
         };
     }
 
@@ -172,7 +175,9 @@ internal static partial class ComfyMetadata
     /// <summary>Groups exactly matching prompts (shared groups first, largest first), then unique and missing prompts.</summary>
     public static List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> orderedImages)
     {
-        var (promptGroups, imagesWithoutPrompts) = CollectPromptGroups(orderedImages);
+        List<(string Prompt, List<ImageRecord> Images)> promptGroups;
+        List<ImageRecord> imagesWithoutPrompts;
+        (promptGroups, imagesWithoutPrompts) = CollectPromptGroups(orderedImages);
         var sharedPromptGroups = OrderSharedPromptGroups(promptGroups);
         var orderedPromptGroups = new List<PromptGroup>(sharedPromptGroups);
         AppendUniquelyPromptedImages(orderedPromptGroups, promptGroups);
@@ -230,28 +235,32 @@ internal static partial class ComfyMetadata
 
     private sealed record Node(string Id, string ClassType, JsonObject Inputs);
 
-    private sealed class Graph(JsonObject nodes)
+    private sealed class Graph(JsonObject nodesById)
     {
         private static readonly string[] TextKeys = ["text", "text_g", "t5xxl", "prompt", "positive_prompt", "string", "value", "text_l", "clip_l"];
         private static readonly string[] ConditioningKeys = ["conditioning", "conditioning_1", "conditioning_to", "conditioning_from", "conditioning_2", "cond", "base"];
         private static readonly HashSet<string> NonTextLinks = ["clip", "model", "vae", "image", "images", "control_net", "latent", "latent_image", "mask", "pixels", "samples", "style_model", "clip_vision_output", "upscale_model"];
 
         public Node? TryGet(string id) =>
-            nodes[id] is JsonObject node && node["inputs"] is JsonObject inputs
+            nodesById[id] is JsonObject node && node["inputs"] is JsonObject inputs
                 && node["class_type"] is JsonValue classType && classType.TryGetValue<string>(out var name)
                 ? new(id, name, inputs) : null;
 
-        private IEnumerable<Node> Nodes => nodes.Select(pair => TryGet(pair.Key)).OfType<Node>();
+        private IEnumerable<Node> Nodes => nodesById.Select(pair => TryGet(pair.Key)).OfType<Node>();
 
-        public Node? Linked(JsonNode? value) =>
-            value is JsonArray link && link.Count == 2 && link[0] is JsonValue target
+        public Node? Linked(JsonNode? jsonNode) =>
+            jsonNode is JsonArray link && link.Count == 2 && link[0] is JsonValue target
                 ? TryGet(target.TryGetValue<string>(out var id) ? id : target.ToJsonString()) : null;
 
-        public Node? FindSampler()
+        public Node? FindSampler() => SelectPreferredSampler(Nodes.Where(IsSamplerCandidate).ToList());
+
+        private static bool IsSamplerCandidate(Node node) =>
+            node.Inputs.ContainsKey("positive") && node.Inputs.ContainsKey("negative")
+            || node.Inputs.ContainsKey("guider") || node.ClassType.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
+                && node.Inputs.ContainsKey("model");
+
+        private static Node? SelectPreferredSampler(IReadOnlyList<Node> samplers)
         {
-            var samplers = Nodes.Where(node => node.Inputs.ContainsKey("positive") && node.Inputs.ContainsKey("negative")
-                || node.Inputs.ContainsKey("guider") || node.ClassType.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
-                    && node.Inputs.ContainsKey("model")).ToList();
             return samplers.FirstOrDefault(node => node.ClassType is "KSampler" or "KSamplerAdvanced")
                 ?? samplers.FirstOrDefault(node => node.Inputs["guider"] is JsonArray)
                 ?? samplers.FirstOrDefault(node => node.Inputs.ContainsKey("positive") && node.Inputs.ContainsKey("steps"))
@@ -259,22 +268,42 @@ internal static partial class ComfyMetadata
                 ?? samplers.FirstOrDefault();
         }
 
-        public string? ResolveText(JsonNode? value, string role, int depth = 0, HashSet<string>? visitedNodeIds = null)
+        public string? ResolveText(JsonNode? jsonNode, string role, int depth = 0, HashSet<string>? visitedNodeIds = null)
+            => TraverseText(jsonNode, role, depth, visitedNodeIds);
+
+        private string? TraverseText(JsonNode? jsonNode, string role, int depth = 0, HashSet<string>? visitedNodeIds = null)
         {
-            if (depth > MaxDepth || value is null) return null;
-            if (value is JsonValue scalar) return scalar.TryGetValue<string>(out var text) ? text : null;
-            var node = Linked(value);
+            if (depth > MaxDepth || jsonNode is null) return null;
+            if (jsonNode is JsonValue scalar) return scalar.TryGetValue<string>(out var text) ? text : null;
+            var node = Linked(jsonNode);
             visitedNodeIds ??= [];
             if (node is null || !visitedNodeIds.Add(node.Id)) return null;
+            return ResolvePreferredText(node, role, depth, visitedNodeIds)
+                ?? ResolveConditioningText(node, role, depth, visitedNodeIds)
+                ?? ResolveFallbackText(node, role, depth, visitedNodeIds);
+        }
+
+        private string? ResolvePreferredText(Node node, string role, int depth, HashSet<string> visitedNodeIds)
+        {
             foreach (var key in TextKeys)
             {
                 if (!node.Inputs.TryGetPropertyValue(key, out var input) || input is null) continue;
                 if (input is JsonValue && input.GetValueKind() == JsonValueKind.String) return input.GetValue<string>();
                 if (input is JsonArray && ResolveText(input, role, depth + 1, visitedNodeIds) is { } linkedText) return linkedText;
             }
-            var opposite = role == "positive" ? "negative" : "positive";
+            return null;
+        }
+
+        private string? ResolveConditioningText(Node node, string role, int depth, HashSet<string> visitedNodeIds)
+        {
             foreach (var key in new[] { role }.Concat(ConditioningKeys))
                 if (node.Inputs[key] is JsonArray && ResolveText(node.Inputs[key], role, depth + 1, visitedNodeIds) is { } text) return text;
+            return null;
+        }
+
+        private string? ResolveFallbackText(Node node, string role, int depth, HashSet<string> visitedNodeIds)
+        {
+            var opposite = role == "positive" ? "negative" : "positive";
             foreach (var (key, input) in node.Inputs)
             {
                 if (input is not JsonArray || key == opposite || NonTextLinks.Contains(key) || ConditioningKeys.Contains(key) || key == role) continue;
@@ -283,28 +312,40 @@ internal static partial class ComfyMetadata
             return null;
         }
 
-        public double? ResolveNumber(JsonNode? value, string key, int depth = 0)
+        public double? ResolveNumber(JsonNode? jsonNode, string key, int depth = 0)
+            => TraverseNumber(jsonNode, key, depth);
+
+        private double? TraverseNumber(JsonNode? jsonNode, string key, int depth = 0)
         {
-            if (depth > MaxDepth || value is null) return null;
-            if (value is JsonValue scalar)
-            {
-                if (scalar.GetValueKind() == JsonValueKind.Number) return scalar.GetValue<double>();
-                return scalar.TryGetValue<string>(out var text) && double.TryParse(text, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
-            }
-            var node = Linked(value);
+            if (depth > MaxDepth || jsonNode is null) return null;
+            if (jsonNode is JsonValue scalar) return ParseScalarNumber(scalar);
+            var node = Linked(jsonNode);
             if (node is null) return null;
             foreach (var name in new[] { key, "value", "int", "float", "number" })
                 if (node.Inputs[name] is { } input && ResolveNumber(input, key, depth + 1) is { } number) return number;
             return null;
         }
 
-        public (string Model, string Kind) ResolveModel(JsonNode? value, int depth = 0, HashSet<string>? visitedNodeIds = null)
+        private static double? ParseScalarNumber(JsonValue scalar)
         {
-            var node = Linked(value);
+            if (scalar.GetValueKind() == JsonValueKind.Number) return scalar.GetValue<double>();
+            return scalar.TryGetValue<string>(out var text) && double.TryParse(text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+        }
+
+        public (string Model, string Kind) ResolveModel(JsonNode? jsonNode, int depth = 0, HashSet<string>? visitedNodeIds = null)
+            => TraverseModel(jsonNode, depth, visitedNodeIds);
+
+        private (string Model, string Kind) TraverseModel(JsonNode? jsonNode, int depth = 0, HashSet<string>? visitedNodeIds = null)
+        {
+            var node = Linked(jsonNode);
             visitedNodeIds ??= [];
             if (depth > MaxDepth || node is null || !visitedNodeIds.Add(node.Id)) return ("", "");
-            if (ModelOf(node) is { } found) return found;
+            return ModelOf(node) ?? FollowModelLinks(node, depth, visitedNodeIds);
+        }
+
+        private (string Model, string Kind) FollowModelLinks(Node node, int depth, HashSet<string> visitedNodeIds)
+        {
             foreach (var (key, input) in node.Inputs.OrderByDescending(pair => pair.Key == "model"))
             {
                 if (input is not JsonArray || !key.Contains("model", StringComparison.OrdinalIgnoreCase)) continue;
@@ -317,11 +358,14 @@ internal static partial class ComfyMetadata
         public (string Model, string Kind) AnyModel() =>
             Nodes.Select(ModelOf).FirstOrDefault(found => found is not null) ?? ("", "");
 
-        public string? FirstText() => Nodes
-            .Where(node => node.ClassType.Contains("TextEncode", StringComparison.OrdinalIgnoreCase))
-            .Select(node => TextKeys.Select(key => node.Inputs[key]).OfType<JsonValue>()
-                .FirstOrDefault(input => input.GetValueKind() == JsonValueKind.String)?.GetValue<string>())
-            .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
+        public string? FirstText() => FindFirstNonblankText(Nodes.Where(IsTextEncoder).Select(FirstString));
+
+        private static bool IsTextEncoder(Node node) => node.ClassType.Contains("TextEncode", StringComparison.OrdinalIgnoreCase);
+
+        private static string? FirstString(Node node) => TextKeys.Select(key => node.Inputs[key]).OfType<JsonValue>()
+            .FirstOrDefault(input => input.GetValueKind() == JsonValueKind.String)?.GetValue<string>();
+
+        private static string? FindFirstNonblankText(IEnumerable<string?> texts) => texts.FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
 
         private static (string Model, string Kind)? ModelOf(Node node)
         {

@@ -1,3 +1,4 @@
+using Gallery.Core.Processors;
 using System.Text;
 using Gallery.Core;
 using Gallery.Models;
@@ -7,7 +8,9 @@ using SixLabors.ImageSharp.PixelFormats;
 
 namespace Gallery.Tests;
 
-// Primitive hash/keeper tests isolate ranking and threshold boundaries that end-to-end scans cannot pin.
+// Curation scenarios enter the production gallery boundary; independent persisted-state arrangements
+// exercise migrated cached hashes without invoking the duplicate-rule implementation.
+[Trait("Category", "acceptance")]
 public sealed class CurationTests
 {
     private static byte[] MakePattern(int width, int height, int variant)
@@ -27,22 +30,22 @@ public sealed class CurationTests
     }
 
     [Fact]
-    public void DifferenceHash_WhenImagesAreResizedOrDifferent_MatchesOnlyTheResizedCopy()
+    public async Task DuplicateScan_WhenImagesAreResizedOrDifferent_ThenGroupsOnlyTheResizedCopy()
     {
         // Arrange
-        var original = DuplicateRules.DifferenceHash(MakePattern(320, 240, 0));
-        var resized = DuplicateRules.DifferenceHash(MakePattern(160, 120, 0));
-        var different = DuplicateRules.DifferenceHash(MakePattern(320, 240, 1));
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var original = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(320, 240, 0)), "original.png", "folder");
+        var resized = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(160, 120, 0)), "resized.png", "folder");
+        var different = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(320, 240, 1)), "different.png", "folder");
+        var expectedIds = new[] { original.Id, resized.Id }.Order(StringComparer.Ordinal).ToArray();
 
         // Act
-        var resizedDistance = DuplicateRules.HammingDistance(original, resized);
-        var differentDistance = DuplicateRules.HammingDistance(original, different);
+        var scan = await fixture.Service.ScanDuplicatesAsync();
 
-        // Assert
-        TestAssertions.True(resizedDistance <= DuplicateRules.Threshold,
-            $"the resized-copy distance ({resizedDistance}) is at most threshold {DuplicateRules.Threshold}");
-        TestAssertions.True(differentDistance > DuplicateRules.Threshold,
-            $"the different-image distance ({differentDistance}) is greater than threshold {DuplicateRules.Threshold}");
+        // Assert - the actual perceptual threshold groups the resized copy and excludes the different image
+        Assert.Equal(expectedIds, Assert.Single(scan.Groups).ImageIds.Order(StringComparer.Ordinal).ToArray());
+        TestAssertions.DoesNotContain(different.Id, scan.Groups.SelectMany(group => group.ImageIds), "different pixels do not join the resized-copy group");
     }
 
     [Fact]
@@ -63,8 +66,8 @@ public sealed class CurationTests
         var cachedResult = await fixture.Service.CachedDuplicateScanAsync();
         var encryptedSettings = new Dictionary<string, string>();
         foreach (var id in new[] { "duplicate-scan", "perceptual-hashes" })
-            encryptedSettings[id] = Encoding.UTF8.GetString((await fixture.Store.ReadSettingsAsync(id))!);
-        await fixture.Service.UpdateAsync(small.Id, image => image.Rating = 5);
+            encryptedSettings[id] = Encoding.UTF8.GetString((await fixture.RawStore.ReadSettingsAsync(id))!);
+        await fixture.Service.UpdateAsync(small.Id, image => image with { Rating = 5 });
         progress.Clear();
         var rescan = await fixture.Service.ScanDuplicatesAsync(new SyncProgress(progress.Add));
 
@@ -95,19 +98,20 @@ public sealed class CurationTests
     public void KeeperSelection_WhenCurationAndResolutionDiffer_PrefersTheHighestPriorityRecord()
     {
         // Arrange
+        using var fixture = new TestVault();
         var now = DateTimeOffset.UtcNow;
         var bigger = new ImageRecord { Id = "big", Width = 400, Height = 300, ImportedAt = now };
         var smaller = new ImageRecord { Id = "small", Width = 200, Height = 150, ImportedAt = now.AddDays(-1) };
         // Act
-        var resolutionKeeper = DuplicateRules.PickKeeper([smaller, bigger]).Id;
+        var resolutionKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
         smaller = smaller with { Favorite = true };
-        var favoriteKeeper = DuplicateRules.PickKeeper([smaller, bigger]).Id;
+        var favoriteKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
         bigger = bigger with { Rating = 3 };
-        var ratingKeeper = DuplicateRules.PickKeeper([smaller, bigger]).Id;
+        var ratingKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
         bigger = bigger with { MarkedForDeletion = true };
-        var unmarkedKeeper = DuplicateRules.PickKeeper([smaller, bigger]).Id;
+        var unmarkedKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
         var twin = new ImageRecord { Id = "twin", Width = 200, Height = 150, Favorite = true, ImportedAt = now.AddDays(-2) };
-        var oldestKeeper = DuplicateRules.PickKeeper([smaller, twin]).Id;
+        var oldestKeeper = fixture.Service.PickDuplicateKeeper([smaller, twin]).Id;
 
         // Assert
         Assert.Equal("big", resolutionKeeper);
@@ -117,24 +121,31 @@ public sealed class CurationTests
         Assert.Equal("twin", oldestKeeper);
     }
 
-    [Fact]
-    public void DuplicateGrouping_WhenShapesDiffer_RequiresIdenticalPixels()
+    // Exact pixels override shape differences; a perceptual match alone does not.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DuplicateScan_WhenShapesDiffer_ThenRequiresIdenticalPixels(bool identicalPixels)
     {
         // Arrange
-        var wide = new ImageRecord { Id = "wide", Width = 400, Height = 100, PngSha256 = "A" };
-        var square = new ImageRecord { Id = "square", Width = 100, Height = 100, PngSha256 = "B" };
-        var copy = new ImageRecord { Id = "copy", Width = 100, Height = 100, PngSha256 = "A" };
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var wide = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(400, 100, 0)), "wide.png", "folder");
+        var square = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(100, 100, 1)), "square.png", "folder");
+        var arrangedSquare = identicalPixels ? square with { PngSha256 = wide.PngSha256 } : square;
+        await DuplicateCacheArrangement.ArrangeAsync(fixture, [(wide, identicalPixels ? 0UL : 42UL), (arrangedSquare, identicalPixels ? ulong.MaxValue : 42UL)]);
 
         // Act
-        var unrelatedGroups = DuplicateRules.GroupDuplicates([wide, square], _ => 42UL, _ => null);
-        var exactGroups = DuplicateRules.GroupDuplicates([wide, copy],
-            image => image.Id == "wide" ? 0UL : ulong.MaxValue, _ => null);
+        var scan = await fixture.Service.ScanDuplicatesAsync();
 
-        // Assert
-        TestAssertions.Empty(unrelatedGroups, "different-shaped non-identical images are not grouped");
-        var exact = TestAssertions.Single(exactGroups,
-            "byte-identical images form one group even with different shapes");
-        TestAssertions.True(exact.Exact, "identical pixels are grouped as an exact duplicate");
+        // Assert - migrated catalog/cached hashes still enforce the shape and exact-pixel rule
+        if (identicalPixels)
+        {
+            var group = TestAssertions.Single(scan.Groups, "exact pixels form one group despite different shape and perceptual hashes");
+            TestAssertions.True(group.Exact, "equal normalized pixel hashes produce an exact group");
+        }
+        else
+            TestAssertions.Empty(scan.Groups, "equal perceptual hashes do not group different-shaped non-identical images");
     }
 
     [Fact]
@@ -148,7 +159,7 @@ public sealed class CurationTests
         var defaultDensity = (await fixture.Service.LoadPreferencesAsync()).GridDensity;
         await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact" });
         var savedDensity = (await fixture.Service.LoadPreferencesAsync()).GridDensity;
-        var storedPreferences = await fixture.Store.ReadSettingsAsync("ui-preferences");
+        var storedPreferences = await fixture.RawStore.ReadSettingsAsync("ui-preferences");
         await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "gigantic" });
         var normalizedDensity = (await fixture.Service.LoadPreferencesAsync()).GridDensity;
 
@@ -173,8 +184,7 @@ public sealed class CurationTests
         var failure = await Assert.ThrowsAsync<AggregateException>(() =>
             fixture.Service.UpdateManyAsync([first.Id, second.Id, "missing", first.Id], image =>
         {
-            image.Favorite = true;
-            image.Tags = LibraryRules.MergeTags(image.Tags, "batch");
+            return image with { Favorite = true, Tags = fixture.Service.MergeTags(image.Tags, "batch") };
         }));
 
         // Assert
@@ -195,16 +205,17 @@ public sealed class CurationTests
     public void InitialKeepers_WhenSomeCopiesAreMarkedForDeletion_PreservesARecommendedKeeper()
     {
         // Arrange
+        using var fixture = new TestVault();
         var big = new ImageRecord { Id = "big", Width = 400, Height = 300 };
         var small = new ImageRecord { Id = "small", Width = 200, Height = 150 };
         var tiny = new ImageRecord { Id = "tiny", Width = 100, Height = 75 };
         // Act
-        var initialKeepers = DuplicateRules.InitialKeepers([small, big, tiny]);
+        var initialKeepers = fixture.Service.InitialDuplicateKeepers([small, big, tiny]);
         tiny = tiny with { MarkedForDeletion = true };
-        var partialDecisionKeepers = DuplicateRules.InitialKeepers([big, small, tiny]);
+        var partialDecisionKeepers = fixture.Service.InitialDuplicateKeepers([big, small, tiny]);
         big = big with { MarkedForDeletion = true };
         small = small with { MarkedForDeletion = true };
-        var allMarkedKeepers = DuplicateRules.InitialKeepers([big, small, tiny]);
+        var allMarkedKeepers = fixture.Service.InitialDuplicateKeepers([big, small, tiny]);
 
         // Assert
         Assert.Equal(["big"], initialKeepers);
@@ -221,15 +232,15 @@ public sealed class CurationTests
         var a = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "a.png", "folder");
         var b = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "b.png", "folder");
         var c = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(80, 60, 0)), "c.png", "folder");
-        await fixture.Service.UpdateAsync(a.Id, image => image.MarkedForDeletion = true);
+        await fixture.Service.UpdateAsync(a.Id, image => image with { MarkedForDeletion = true });
         string[] group = [a.Id, b.Id, c.Id];
 
         // Act
         await fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string> { a.Id, c.Id });
         var marks = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id, image => image.MarkedForDeletion);
-        var emptyKeepersError = await Record.ExceptionAsync(() =>
+        var emptyKeepersError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string>()));
-        var outsideKeeperError = await Record.ExceptionAsync(() =>
+        var outsideKeeperError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string> { "elsewhere" }));
         var afterRejectedDecisions = await fixture.Service.ListAsync();
 
@@ -239,7 +250,7 @@ public sealed class CurationTests
         TestAssertions.False(marks[c.Id], "the chosen third copy is not marked for deletion");
 
         Assert.IsType<InvalidOperationException>(emptyKeepersError);
-        Assert.IsType<InvalidOperationException>(outsideKeeperError);
+        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the keeper validation identifies the invalid ID and all available choices", ["elsewhere", .. group]), outsideKeeperError);
         var unchanged = TestAssertions.Single(afterRejectedDecisions.Where(image => image.Id == b.Id),
             $"the original duplicate record {b.Id} remains after rejected decisions");
         TestAssertions.True(unchanged.MarkedForDeletion,

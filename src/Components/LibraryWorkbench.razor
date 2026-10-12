@@ -108,7 +108,13 @@
     private List<ImageRecord> compareImages = [];
     private readonly Dictionary<string, string> comparison = [];
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
-    protected override void OnParametersSet() => suggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
+    protected override void OnParametersSet()
+    {
+        suggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
+        var imagesById = Images.ToDictionary(image => image.Id);
+        for (var index = 0; index < compareImages.Count; index++)
+            if (imagesById.TryGetValue(compareImages[index].Id, out var image)) compareImages[index] = image;
+    }
 
     protected override Task OnInitializedAsync() => RunAsync("Loading saved views...", async () => views = await Gallery.LoadViewsAsync());
 
@@ -152,7 +158,7 @@
         await PublishJobAsync();
     }
 
-    private async Task ApplyBulkAsync(Action<ImageRecordEdit> change)
+    private async Task ApplyBulkAsync(Func<ImageRecordEdit, ImageRecordEdit> change)
     {
         var failures = new List<string>();
         var ids = SelectedIds.ToArray();
@@ -178,13 +184,14 @@
             throw new InvalidOperationException("Enter a collection or tags.");
         await ApplyBulkAsync(image =>
         {
-            image.Tags = Gallery.MergeTags(image.Tags, tags);
-            if (collection.Trim().Length > 0) Gallery.SetOrganization(image, image.Rating, image.Reviewed, collection);
+            var updated = image with { Tags = Gallery.MergeTags(image.Tags, tags) };
+            return collection.Trim().Length > 0
+                ? Gallery.SetOrganization(updated, updated.Rating, updated.Reviewed, collection) : updated;
         });
     });
 
     private Task RemoveCollectionAsync() => RunAsync("Updating collections...", () => ApplyBulkAsync(image =>
-        image.Collections.RemoveAll(name => name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase))));
+        image with { Collections = image.Collections.RemoveAll(name => name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase)) }));
 
     private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
         Gallery.SetCuration(image, rating == -1 ? null : rating,
@@ -253,11 +260,10 @@
     {
         await Gallery.UpdateAsync(suggestion.Id, image =>
         {
-            image.Description = suggestion.Description;
-            image.Tags = Gallery.MergeTags(image.Tags, suggestion.Tags);
-            image.AnalysisModel = suggestion.Model;
-            if (suggestion.Collection.Length > 0)
-                Gallery.SetOrganization(image, image.Rating, image.Reviewed, suggestion.Collection);
+            var updated = image with { Description = suggestion.Description,
+                Tags = Gallery.MergeTags(image.Tags, suggestion.Tags), AnalysisModel = suggestion.Model };
+            return suggestion.Collection.Length > 0
+                ? Gallery.SetOrganization(updated, updated.Rating, updated.Reviewed, suggestion.Collection) : updated;
         });
         suggestions.Remove(suggestion);
         jobMessage = $"{suggestions.Count} suggestions await approval.";
@@ -269,13 +275,15 @@
         comparison.Clear();
         var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
         if (selected.Count != 2) throw new InvalidOperationException("Select exactly two images.");
-        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, false);
+        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, ImageResolution.Fit);
         compareImages = selected;
     });
 
     private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
         await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
+        var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);
+        if (comparisonIndex >= 0) compareImages[comparisonIndex] = image with { Rating = value, Reviewed = true };
         await Changed.InvokeAsync();
     });
 

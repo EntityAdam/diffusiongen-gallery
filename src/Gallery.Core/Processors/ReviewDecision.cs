@@ -1,28 +1,19 @@
 using Gallery.Models;
 
-namespace Gallery.Core;
-
-public enum ReviewAction { Keep, Favorite, MarkDeletion, Rate }
-
-public sealed record ReviewState(bool Reviewed, bool Favorite, bool MarkedForDeletion, int Rating)
-{
-    internal static ReviewState Capture(ImageRecord image) => new(image.Reviewed, image.Favorite, image.MarkedForDeletion, image.Rating);
-}
+namespace Gallery.Core.Processors;
 
 internal static class ReviewDecision
 {
-    internal static void Apply(ImageRecordEdit image, ReviewAction action, int rating = 0)
-    {
-        if (!Enum.IsDefined(action)) throw new InvalidOperationException("Invalid review action.");
-        if (action == ReviewAction.Rate && rating is < 1 or > 5)
-            throw new InvalidOperationException("Choose a rating between 1 and 5.");
-        image.Reviewed = true;
-        if (action == ReviewAction.MarkDeletion) image.MarkedForDeletion = true;
-        else
+    internal static ImageRecordEdit Restore(ImageRecordEdit image, ReviewState state) =>
+        image with { Reviewed = state.Reviewed, Favorite = state.Favorite,
+            MarkedForDeletion = state.MarkedForDeletion, Rating = state.Rating };
+
+    internal static ImageRecordEdit Apply(ImageRecordEdit imageRecordEdit, ReviewAction action, int rating = 0) =>
+        imageRecordEdit with
         {
-            image.MarkedForDeletion = false;
-            if (action == ReviewAction.Favorite) image.Favorite = true;
-            if (action == ReviewAction.Rate) image.Rating = rating;
-        }
-    }
+            Reviewed = true,
+            MarkedForDeletion = action == ReviewAction.MarkDeletion,
+            Favorite = action == ReviewAction.Favorite || imageRecordEdit.Favorite,
+            Rating = action == ReviewAction.Rate ? rating : imageRecordEdit.Rating
+        };
 }

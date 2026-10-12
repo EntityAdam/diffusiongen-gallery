@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Gallery.Services;
+namespace Gallery.Services.Processors;
 
 internal static class VaultCrypto
 {
@@ -67,13 +67,16 @@ internal static class VaultCrypto
         RandomNumberGenerator.GetBytes(RecoveryWordCount)
             .Select(value => $"{recoveryWordPrefixes[value >> 4]}-{recoveryWordSuffixes[value & 15]}"));
 
+    private static string RecoveryRequirementMessage =>
+        $"Recovery requires all {RecoveryWordCount} compound words in their original order.";
+
     public static string NormalizeRecovery(string phrase)
     {
         if (string.IsNullOrWhiteSpace(phrase))
-            throw new InvalidOperationException($"Recovery requires all {RecoveryWordCount} compound words in their original order.");
+            throw new InvalidOperationException(RecoveryRequirementMessage);
         var words = phrase.ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         if (!IsValidRecoveryPhrase(words))
-            throw new InvalidOperationException($"Recovery requires all {RecoveryWordCount} compound words in their original order.");
+            throw new InvalidOperationException(RecoveryRequirementMessage);
         return string.Join(' ', words);
     }
 

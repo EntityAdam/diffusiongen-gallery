@@ -131,7 +131,7 @@
                 if (stale.Count > 0) await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)stale.Select(entry => entry.Value).ToArray());
                 foreach (var entry in stale) urls.Remove(entry.Key);
             }
-            var data = await Gallery.ViewerImageAsync(id, full);
+            var data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
             if (disposed || forGeneration != generation) return "";
             var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
             urls[(id, full)] = url;

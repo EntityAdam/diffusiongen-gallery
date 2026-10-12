@@ -1,6 +1,6 @@
 using Gallery.Models;
 
-namespace Gallery.Core;
+namespace Gallery.Core.Processors;
 
 internal static class LibraryRules
 {
@@ -8,19 +8,15 @@ internal static class LibraryRules
         string.Join(", ", (existing + "," + additions).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase));
 
-    public static void SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection)
+    public static ImageRecordEdit SetOrganization(ImageRecordEdit imageRecordEdit, int rating, bool imageIsReviewed, string? collection)
     {
-        ArgumentNullException.ThrowIfNull(image);
-        image.Rating = rating;
-        image.Reviewed = reviewed;
-        if (collection is not null && !image.Collections.Contains(collection.Trim(), StringComparer.OrdinalIgnoreCase))
-            image.Collections.Add(collection.Trim());
+        var collections = imageRecordEdit.Collections;
+        if (collection is not null && !collections.Contains(collection.Trim(), StringComparer.OrdinalIgnoreCase))
+            collections = collections.Add(collection.Trim());
+        return imageRecordEdit with { Rating = rating, Reviewed = imageIsReviewed, Collections = collections };
     }
 
-    public static void SetCuration(ImageRecordEdit image, int? rating, bool? reviewed)
-    {
-        ArgumentNullException.ThrowIfNull(image);
-        if (rating is not null) image.Rating = rating.Value;
-        if (reviewed is not null) image.Reviewed = reviewed.Value;
-    }
+    public static ImageRecordEdit SetCuration(ImageRecordEdit imageRecordEdit, int? rating, bool? imageIsReviewed) =>
+        imageRecordEdit with { Rating = rating ?? imageRecordEdit.Rating,
+            Reviewed = imageIsReviewed ?? imageRecordEdit.Reviewed };
 }

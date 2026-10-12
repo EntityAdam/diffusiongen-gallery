@@ -1,3 +1,7 @@
+using Gallery.Core;
+using Gallery.Services.Processors;
+using Gallery.Services.DataManagers;
+using Gallery.Services.Sessions;
 using System.Security.Cryptography;
 using Gallery.Services;
 using Microsoft.Extensions.Configuration;
@@ -5,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 namespace Gallery.Tests;
 
 // Direct crypto/session tests pin primitive guarantees that service-level vault flows cannot isolate.
+[Trait("Category", "class_test")]
 public sealed class CryptoTests
 {
     [Fact]
@@ -38,7 +43,9 @@ public sealed class CryptoTests
 
         // Act
         encrypted[offset] ^= 1;
-        var error = Record.Exception(() => VaultCrypto.Decrypt(encrypted, key, "image:123"));
+        var error = offset == 0
+            ? Assert.Throws<CryptographicException>(() => VaultCrypto.Decrypt(encrypted, key, "image:123"))
+            : Assert.Throws<AuthenticationTagMismatchException>(() => VaultCrypto.Decrypt(encrypted, key, "image:123"));
 
         // Assert
         Assert.IsAssignableFrom<CryptographicException>(error);
@@ -52,9 +59,9 @@ public sealed class CryptoTests
         var encrypted = VaultCrypto.Encrypt("private image"u8, key, "image:123");
 
         // Act
-        var wrongKey = Record.Exception(() => VaultCrypto.Decrypt(encrypted, RandomNumberGenerator.GetBytes(32), "image:123"));
-        var wrongContext = Record.Exception(() => VaultCrypto.Decrypt(encrypted, key, "thumbnail:123"));
-        var truncated = Record.Exception(() => VaultCrypto.Decrypt(encrypted[..20], key, "image:123"));
+        var wrongKey = Assert.Throws<AuthenticationTagMismatchException>(() => VaultCrypto.Decrypt(encrypted, RandomNumberGenerator.GetBytes(32), "image:123"));
+        var wrongContext = Assert.Throws<AuthenticationTagMismatchException>(() => VaultCrypto.Decrypt(encrypted, key, "thumbnail:123"));
+        var truncated = Assert.Throws<CryptographicException>(() => VaultCrypto.Decrypt(encrypted[..20], key, "image:123"));
 
         // Assert
         Assert.IsAssignableFrom<CryptographicException>(wrongKey);
@@ -72,8 +79,8 @@ public sealed class CryptoTests
 
         // Act
         var normalized = VaultCrypto.NormalizeRecovery(whitespacePhrase);
-        var shortPhraseError = Record.Exception(() => VaultCrypto.NormalizeRecovery("wrong words"));
-        var unknownWordError = Record.Exception(() => VaultCrypto.NormalizeRecovery(unknownWords));
+        var shortPhraseError = Assert.Throws<InvalidOperationException>(() => VaultCrypto.NormalizeRecovery("wrong words"));
+        var unknownWordError = Assert.Throws<InvalidOperationException>(() => VaultCrypto.NormalizeRecovery(unknownWords));
 
         // Assert
         Assert.Equal(32, phrase.Split(' ').Length);
@@ -93,14 +100,14 @@ public sealed class CryptoTests
         // Act
         var passphraseKey = await restarted.UnlockWithPassphraseAsync(TestVault.Passphrase);
         var recoveryKey = await restarted.UnlockWithRecoveryPhraseAsync(recovery);
-        var wrongPassphrase = await Record.ExceptionAsync(() => restarted.UnlockWithPassphraseAsync("wrong passphrase"));
-        var wrongRotationKey = await Record.ExceptionAsync(() => restarted.ChangePassphraseAsync(RandomNumberGenerator.GetBytes(32), "new strong secret passphrase"));
+        var wrongPassphrase = await Assert.ThrowsAsync<AuthenticationTagMismatchException>(() => restarted.UnlockWithPassphraseAsync("wrong passphrase"));
+        var wrongRotationKey = await Assert.ThrowsAsync<AuthenticationTagMismatchException>(() => restarted.ChangePassphraseAsync(RandomNumberGenerator.GetBytes(32), "new strong secret passphrase"));
         await restarted.ChangePassphraseAsync(key, "new strong secret passphrase");
-        var previousPassphrase = await Record.ExceptionAsync(() => restarted.UnlockWithPassphraseAsync(TestVault.Passphrase));
+        var previousPassphrase = await Assert.ThrowsAsync<AuthenticationTagMismatchException>(() => restarted.UnlockWithPassphraseAsync(TestVault.Passphrase));
         var rotatedKey = await restarted.UnlockWithPassphraseAsync("new strong secret passphrase");
         var rotatedRecoveryKey = await restarted.UnlockWithRecoveryPhraseAsync(recovery);
         var header = await File.ReadAllTextAsync(Path.Combine(fixture.Root, "vault.json"));
-        var repeatedCreation = await Record.ExceptionAsync(() => fixture.Vault.CreateAsync(TestVault.Passphrase));
+        var repeatedCreation = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Vault.CreateAsync(TestVault.Passphrase));
 
         // Assert
         Assert.Equal(key, passphraseKey);
@@ -123,7 +130,7 @@ public sealed class CryptoTests
         using var fixture = new TestVault();
 
         // Act
-        var error = await Record.ExceptionAsync(() => fixture.Vault.CreateAsync("short"));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Vault.CreateAsync("short"));
 
         // Assert
         Assert.IsType<InvalidOperationException>(error);
@@ -138,19 +145,19 @@ public sealed class CryptoTests
         var key = RandomNumberGenerator.GetBytes(32);
         var originalKey = key.ToArray();
         session.Unlock(key);
-        var lease = session.Borrow();
+        var lease = session.AcquireUnlockedSession().Borrow();
         var borrowedKey = lease.Bytes;
 
         // Act
         session.Lock();
         lease.Dispose();
-        var lockedBorrowError = Record.Exception(() => session.Borrow());
+        var lockedBorrowError = Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession().Borrow());
 
         // Assert
         TestAssertions.False(session.IsUnlocked, "the session is locked");
         Assert.Equal(originalKey, key);
         Assert.All(borrowedKey, value => Assert.Equal(0, value));
-        Assert.IsType<InvalidOperationException>(lockedBorrowError);
+        Assert.IsType<VaultLockedException>(lockedBorrowError);
     }
 
     [Fact]
@@ -174,11 +181,11 @@ public sealed class CryptoTests
             {
                 try
                 {
-                    using var lease = session.Borrow();
+                    using var lease = session.AcquireUnlockedSession().Borrow();
                     if (lease.Bytes.Any(value => value != lease.Bytes[0]))
                         Interlocked.Increment(ref inconsistentSnapshots);
                 }
-                catch (InvalidOperationException)
+                catch (VaultLockedException)
                 {
                     // A concurrent lock may win before the read; a partial key snapshot is never valid.
                 }
@@ -190,152 +197,5 @@ public sealed class CryptoTests
 
         // Assert
         Assert.Equal(0, inconsistentSnapshots);
-    }
-}
-
-internal static class TestAssertions
-{
-    public static void True(bool actual, string expected) =>
-        Assert.True(actual, $"Expected: {expected}; Actual: {actual}.");
-
-    public static void False(bool actual, string expected) =>
-        Assert.False(actual, $"Expected: {expected}; Actual: {actual}.");
-
-    public static void Contains(string expected, string actual, string behavior) =>
-        Assert.True(actual.Contains(expected, StringComparison.Ordinal),
-            $"Expected: {behavior} (containing \"{expected}\"); Actual: \"{actual}\".");
-
-    public static void StartsWith(string expected, string actual, string behavior) =>
-        Assert.True(actual.StartsWith(expected, StringComparison.Ordinal),
-            $"Expected: {behavior} (starting with \"{expected}\"); Actual: \"{actual}\".");
-
-    public static void EndsWith(string expected, string actual, string behavior) =>
-        Assert.True(actual.EndsWith(expected, StringComparison.Ordinal),
-            $"Expected: {behavior} (ending with \"{expected}\"); Actual: \"{actual}\".");
-
-    public static void DoesNotContain(string expected, string actual, string behavior) =>
-        Assert.False(actual.Contains(expected, StringComparison.Ordinal),
-            $"Expected: {behavior} (not containing \"{expected}\"); Actual: \"{actual}\".");
-
-    public static void DoesNotContain<T>(T expected, IEnumerable<T> actual, string behavior)
-    {
-        var values = actual.ToArray();
-        Assert.False(values.Contains(expected),
-            $"Expected: {behavior} (excluding \"{expected}\"); Actual: [{string.Join(", ", values)}].");
-    }
-
-    public static void Contains<T>(T expected, IEnumerable<T> actual, string behavior)
-    {
-        var values = actual.ToArray();
-        Assert.True(values.Contains(expected),
-            $"Expected: {behavior} (including \"{expected}\"); Actual: [{string.Join(", ", values)}].");
-    }
-
-    public static void Contains<T>(IEnumerable<T> actual, Predicate<T> predicate, string behavior)
-    {
-        var values = actual.ToArray();
-        Assert.True(values.Any(value => predicate(value)),
-            $"Expected: {behavior}; Actual: [{string.Join(", ", values)}].");
-    }
-
-    public static T Single<T>(IEnumerable<T> actual, string behavior)
-    {
-        var values = actual.ToArray();
-        Assert.True(values.Length == 1,
-            $"Expected: exactly one value because {behavior}; Actual: {values.Length} values [{string.Join(", ", values)}].");
-        return values[0];
-    }
-
-    public static void Null(object? actual, string behavior) =>
-        Assert.True(actual is null, $"Expected: null because {behavior}; Actual: {actual ?? "<null>"}.");
-
-    public static T NotNull<T>(T? actual, string behavior) where T : class
-    {
-        Assert.True(actual is not null, $"Expected: a non-null value because {behavior}; Actual: {actual?.ToString() ?? "<null>"}.");
-        return actual!;
-    }
-
-    public static void Empty<T>(IEnumerable<T> actual, string behavior)
-    {
-        var values = actual.ToArray();
-        Assert.True(values.Length == 0,
-            $"Expected: no values because {behavior}; Actual: {values.Length} values [{string.Join(", ", values)}].");
-    }
-
-    public static T Throws<T>(Action action, string behavior, params string[] expectedMessageParts) where T : Exception
-    {
-        var exception = Assert.Throws<T>(action);
-        AssertMessageParts(exception, behavior, expectedMessageParts);
-        return exception;
-    }
-
-    public static T ThrowsAny<T>(Action action, string behavior, params string[] expectedMessageParts) where T : Exception
-    {
-        var exception = Assert.ThrowsAny<T>(action);
-        AssertMessageParts(exception, behavior, expectedMessageParts);
-        return exception;
-    }
-
-    public static async Task<T> ThrowsAsync<T>(Func<Task> action, string behavior, params string[] expectedMessageParts)
-        where T : Exception
-    {
-        var exception = await Assert.ThrowsAsync<T>(action);
-        AssertMessageParts(exception, behavior, expectedMessageParts);
-        return exception;
-    }
-
-    public static async Task<T> ThrowsAnyAsync<T>(Func<Task> action, string behavior, params string[] expectedMessageParts)
-        where T : Exception
-    {
-        var exception = await Assert.ThrowsAnyAsync<T>(action);
-        AssertMessageParts(exception, behavior, expectedMessageParts);
-        return exception;
-    }
-
-    private static void AssertMessageParts(Exception exception, string behavior, IEnumerable<string> expectedMessageParts)
-    {
-        foreach (var expectedPart in expectedMessageParts)
-            Contains(expectedPart, exception.Message, behavior);
-    }
-
-    public static T Exception<T>(Exception? actual, string behavior, params string[] expectedMessageParts) where T : Exception
-    {
-        var exception = Assert.IsType<T>(actual);
-        AssertMessageParts(exception, behavior, expectedMessageParts);
-        return exception;
-    }
-}
-
-internal sealed class TestVault : IDisposable
-{
-    public const string Passphrase = "a strong unique test passphrase";
-    public string Root { get; } = Path.Combine(Path.GetTempPath(), "gallery-tests-" + Guid.NewGuid().ToString("N"));
-    public IConfiguration Configuration { get; }
-    public VaultStore Vault { get; }
-    public GalleryStore Store { get; }
-    public VaultSession Session { get; } = new();
-    public GalleryService Service { get; }
-
-    public TestVault(VideoTools? video = null)
-    {
-        Configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Gallery:DataDirectory"] = Root
-        }).Build();
-        Vault = new(Root);
-        Store = new(Path.Combine(Root, "gallery.db"));
-        Service = new(Store, Vault, Session, video);
-    }
-
-    public async Task InitializeAsync()
-    {
-        var created = await Vault.CreateAsync(Passphrase);
-        Session.Unlock(created.Key);
-    }
-
-    public void Dispose()
-    {
-        Session.Dispose();
-        if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
     }
 }

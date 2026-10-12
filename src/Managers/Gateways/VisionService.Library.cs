@@ -2,7 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Gallery.Models;
 
-namespace Gallery.Services;
+namespace Gallery.Managers.Gateways;
 
 internal sealed partial class VisionService
 {
@@ -74,10 +74,10 @@ internal sealed partial class VisionService
     private static bool HasValidRating(GalleryFilter galleryFilter) => galleryFilter.MinRating is >= 0 and <= 5;
 
     private static bool HasValidOrientation(GalleryFilter galleryFilter)
-        => new[] { "all", "landscape", "portrait", "square" }.Contains(galleryFilter.Orientation);
+        => new[] { GalleryFilter.AnyValue, "landscape", "portrait", "square" }.Contains(galleryFilter.Orientation);
 
     private static bool HasValidReviewState(GalleryFilter galleryFilter)
-        => new[] { "all", "reviewed", "pending" }.Contains(galleryFilter.Review);
+        => new[] { GalleryFilter.AnyValue, "reviewed", "pending" }.Contains(galleryFilter.Review);
 
     private static bool HasValidSearchText(GalleryFilter galleryFilter)
         => galleryFilter.Search.Length <= MaximumSearchQueryLength;

@@ -5,18 +5,20 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
-namespace Gallery.Core;
+namespace Gallery.Core.Processors;
 
 internal static class DuplicateRules
 {
+    private const int DifferenceHashDimension = 8;
+
     public const int Threshold = 6;
     public const string EmptyKeeperCandidatesMessage =
         "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
 
     public static ulong DifferenceHash(byte[] imageBytes)
     {
-        using var normalizedImage = LoadNormalizedImage(imageBytes);
-        return ComputeDifferenceHash(normalizedImage);
+        using var image = LoadNormalizedImage(imageBytes);
+        return ComputeDifferenceHash(image);
     }
 
     private static Image<L8> LoadNormalizedImage(byte[] imageBytes)
@@ -24,7 +26,7 @@ internal static class DuplicateRules
         var image = Image.Load<L8>(imageBytes);
         try
         {
-            image.Mutate(context => context.Resize(new ResizeOptions { Size = new Size(9, 8), Mode = ResizeMode.Stretch }));
+            image.Mutate(context => context.Resize(new ResizeOptions { Size = new Size(DifferenceHashDimension + 1, DifferenceHashDimension), Mode = ResizeMode.Stretch }));
             return image;
         }
         catch
@@ -34,13 +36,13 @@ internal static class DuplicateRules
         }
     }
 
-    private static ulong ComputeDifferenceHash(Image<L8> normalizedImage)
+    private static ulong ComputeDifferenceHash(Image<L8> image)
     {
         ulong hash = 0;
         var bit = 0;
-        for (var y = 0; y < 8; y++)
-            for (var x = 0; x < 8; x++, bit++)
-                if (normalizedImage[x, y].PackedValue > normalizedImage[x + 1, y].PackedValue) hash |= 1UL << bit;
+        for (var y = 0; y < DifferenceHashDimension; y++)
+            for (var x = 0; x < DifferenceHashDimension; x++, bit++)
+                if (image[x, y].PackedValue > image[x + 1, y].PackedValue) hash |= 1UL << bit;
         return hash;
     }
 
@@ -50,13 +52,13 @@ internal static class DuplicateRules
         Func<ImageRecord, ulong> hashOf, Func<string, long?> fileLength)
     {
         var imageHashes = records.Select(hashOf).ToArray();
-        var duplicateSets = new DisjointSet(records.Count);
-        ConnectDuplicateRecords(records, imageHashes, duplicateSets);
-        return BuildDuplicateGroups(records, imageHashes, duplicateSets, fileLength);
+        var disjointSet = new DisjointSet(records.Count);
+        ConnectDuplicateRecords(records, imageHashes, disjointSet);
+        return BuildDuplicateGroups(records, imageHashes, disjointSet, fileLength);
     }
 
     private static void ConnectDuplicateRecords(IReadOnlyList<ImageRecord> records, ulong[] imageHashes,
-        DisjointSet duplicateSets)
+        DisjointSet disjointSet)
     {
         for (var candidateIndex = 0; candidateIndex < records.Count; candidateIndex++)
             for (var comparisonIndex = candidateIndex + 1; comparisonIndex < records.Count; comparisonIndex++)
@@ -66,21 +68,20 @@ internal static class DuplicateRules
                 if (candidateRecord.MediaType != comparisonRecord.MediaType) continue;
                 if (AreDuplicates(candidateRecord, comparisonRecord, imageHashes[candidateIndex],
                     imageHashes[comparisonIndex]))
-                    duplicateSets.Union(candidateIndex, comparisonIndex);
+                    disjointSet.Union(candidateIndex, comparisonIndex);
             }
     }
 
     private static List<DuplicateGroup> BuildDuplicateGroups(IReadOnlyList<ImageRecord> records, ulong[] imageHashes,
-        DisjointSet duplicateSets, Func<string, long?> fileLength)
+        DisjointSet disjointSet, Func<string, long?> fileLength)
     {
-        var duplicateGroups = BuildDuplicateComponents(records.Count, duplicateSets)
-            .Select(componentIndexes => CreateDuplicateGroup(componentIndexes, records, imageHashes, fileLength))
-            .ToList();
+        var duplicateGroups = BuildDuplicateComponents(records.Count, disjointSet)
+            .Select(componentIndexes => CreateDuplicateGroup(componentIndexes, records, imageHashes, fileLength));
         return OrderDuplicateGroups(duplicateGroups);
     }
 
-    private static IEnumerable<List<int>> BuildDuplicateComponents(int recordCount, DisjointSet duplicateSets) =>
-        Enumerable.Range(0, recordCount).GroupBy(duplicateSets.Find)
+    private static IEnumerable<List<int>> BuildDuplicateComponents(int recordCount, DisjointSet disjointSet) =>
+        Enumerable.Range(0, recordCount).GroupBy(disjointSet.Find)
             .Where(component => component.Count() > 1).Select(component => component.ToList());
 
     private static DuplicateGroup CreateDuplicateGroup(List<int> componentIndexes, IReadOnlyList<ImageRecord> records,
@@ -91,19 +92,19 @@ internal static class DuplicateRules
             foreach (var comparisonIndex in componentIndexes)
                 maxDistance = Math.Max(maxDistance, HammingDistance(imageHashes[candidateIndex], imageHashes[comparisonIndex]));
         var duplicateRecords = componentIndexes.Select(index => records[index]).ToList();
-        var keeper = PickKeeper(duplicateRecords);
+        var imageRecord = PickKeeper(duplicateRecords);
         var orderedDuplicateRecords = duplicateRecords
-            .OrderByDescending(imageRecord => imageRecord.Id == keeper.Id)
-            .ThenBy(imageRecord => imageRecord.ImportedAt).ToList();
-        var groupIsExact = duplicateRecords.All(imageRecord => imageRecord.PngSha256.Length > 0
-            && imageRecord.PngSha256 == keeper.PngSha256);
+            .OrderByDescending(duplicateImageRecord => duplicateImageRecord.Id == imageRecord.Id)
+            .ThenBy(duplicateImageRecord => duplicateImageRecord.ImportedAt).ToList();
+        var groupIsExact = duplicateRecords.All(duplicateImageRecord => duplicateImageRecord.PngSha256.Length > 0
+            && duplicateImageRecord.PngSha256 == imageRecord.PngSha256);
         var reclaimableBytes = orderedDuplicateRecords.Skip(1)
-            .Sum(imageRecord => fileLength(imageRecord.StoredPath) ?? 0);
-        return new(keeper.Id, orderedDuplicateRecords.Select(imageRecord => imageRecord.Id).ToImmutableArray(),
+            .Sum(duplicateImageRecord => fileLength(duplicateImageRecord.StoredPath) ?? 0);
+        return new(imageRecord.Id, orderedDuplicateRecords.Select(duplicateImageRecord => duplicateImageRecord.Id).ToImmutableArray(),
             maxDistance, groupIsExact, reclaimableBytes);
     }
 
-    private static List<DuplicateGroup> OrderDuplicateGroups(List<DuplicateGroup> duplicateGroups) =>
+    private static List<DuplicateGroup> OrderDuplicateGroups(IEnumerable<DuplicateGroup> duplicateGroups) =>
         duplicateGroups.OrderByDescending(group => group.ReclaimableBytes)
             .ThenByDescending(group => group.ImageIds.Length).ToList();
 
@@ -119,24 +120,35 @@ internal static class DuplicateRules
     public static ImageRecord PickKeeper(IEnumerable<ImageRecord> imageRecords)
     {
         var candidates = imageRecords.ToList();
+        RequireKeeperCandidates(candidates);
+        return OrderKeeperCandidates(candidates).First();
+    }
+
+    private static void RequireKeeperCandidates(IReadOnlyCollection<ImageRecord> candidates)
+    {
         if (candidates.Count == 0) throw new InvalidOperationException(EmptyKeeperCandidatesMessage);
-        return candidates
+    }
+
+    private static IOrderedEnumerable<ImageRecord> OrderKeeperCandidates(IEnumerable<ImageRecord> candidates) => candidates
             .OrderBy(imageRecord => imageRecord.MarkedForDeletion)
             .ThenByDescending(imageRecord => imageRecord.Rating)
             .ThenByDescending(imageRecord => imageRecord.Favorite)
             .ThenByDescending(imageRecord => (long)imageRecord.Width * imageRecord.Height)
             .ThenByDescending(imageRecord => imageRecord.OriginalBytes)
-            .ThenBy(imageRecord => imageRecord.ImportedAt)
-            .First();
-    }
+            .ThenBy(imageRecord => imageRecord.ImportedAt);
 
     public static HashSet<string> InitialKeepers(IReadOnlyCollection<ImageRecord> groupRecords)
     {
-        var unmarkedImageIds = groupRecords.Where(imageRecord => !imageRecord.MarkedForDeletion)
-            .Select(imageRecord => imageRecord.Id).ToHashSet();
-        return unmarkedImageIds.Count > 0 && unmarkedImageIds.Count < groupRecords.Count
+        var unmarkedImageIds = CollectUnmarkedIds(groupRecords);
+        return HasPartialDeletionDecision(unmarkedImageIds, groupRecords.Count)
             ? unmarkedImageIds : [PickKeeper(groupRecords).Id];
     }
+
+    private static HashSet<string> CollectUnmarkedIds(IEnumerable<ImageRecord> records) =>
+        records.Where(record => !record.MarkedForDeletion).Select(record => record.Id).ToHashSet();
+
+    private static bool HasPartialDeletionDecision(IReadOnlyCollection<string> unmarkedIds, int recordCount) =>
+        unmarkedIds.Count > 0 && unmarkedIds.Count < recordCount;
 
     private static bool SimilarShape(ImageRecord candidateRecord, ImageRecord comparisonRecord)
     {

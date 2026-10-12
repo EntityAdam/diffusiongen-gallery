@@ -4,7 +4,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Gallery.Models;
 
-namespace Gallery.Services;
+namespace Gallery.Managers.Gateways;
 
 internal sealed partial class VisionService(HttpClient httpClient)
 {
@@ -109,7 +109,9 @@ internal sealed partial class VisionService(HttpClient httpClient)
     {
         using var httpRequestMessage = CreateAnalysisRequest(visionSettings, imageData, collections);
         using var httpResponseMessage = await SendAsync(visionSettings, httpRequestMessage);
-        return await ReadAnalysisAsync(httpResponseMessage, collections is not null);
+        if (collections is not null) return await ReadAnalysisWithCollectionAsync(httpResponseMessage);
+        var analysis = await ReadAnalysisAsync(httpResponseMessage);
+        return (analysis.Description, analysis.Tags, "", "");
     }
 
     private static HttpRequestMessage CreateAnalysisRequest(
@@ -142,15 +144,20 @@ internal sealed partial class VisionService(HttpClient httpClient)
         return httpRequestMessage;
     }
 
-    private static async Task<(string Description, string Tags, string Collection, string Warning)> ReadAnalysisAsync(
-        HttpResponseMessage httpResponseMessage, bool includeCollection)
+    private static async Task<(string Description, string Tags)> ReadAnalysisAsync(HttpResponseMessage httpResponseMessage)
     {
         using var jsonDocument = await ReadCompletionAsync(httpResponseMessage);
-        return ParseAnalysis(jsonDocument, includeCollection);
+        return ParseAnalysis(jsonDocument);
     }
 
-    private static (string Description, string Tags, string Collection, string Warning) ParseAnalysis(
-        JsonDocument jsonDocument, bool includeCollection)
+    private static async Task<(string Description, string Tags, string Collection, string Warning)> ReadAnalysisWithCollectionAsync(
+        HttpResponseMessage httpResponseMessage)
+    {
+        using var jsonDocument = await ReadCompletionAsync(httpResponseMessage);
+        return ParseAnalysisWithCollection(jsonDocument);
+    }
+
+    private static (string Description, string Tags) ParseAnalysis(JsonDocument jsonDocument)
     {
         if (jsonDocument.RootElement.ValueKind != JsonValueKind.Object
             || !jsonDocument.RootElement.TryGetProperty("description", out var descriptionValue) || descriptionValue.ValueKind != JsonValueKind.String)
@@ -160,19 +167,23 @@ internal sealed partial class VisionService(HttpClient httpClient)
             throw new InvalidOperationException("The vision model must return tags as an array of strings.");
         var tags = tagsValue.EnumerateArray().Select(tag => tag.ValueKind == JsonValueKind.String ? tag.GetString()!
             : throw new InvalidOperationException("The vision model returned a tag that is not a string.")).ToArray();
-        if (string.IsNullOrWhiteSpace(description) || description.Length > 10_000 || tags.Length > 100
-            || tags.Any(tag => tag.Length > 100 || tag.Contains(',')))
+        if (!HasValidAnalysisContent(description, tags))
             throw new InvalidOperationException("The vision model returned invalid description or tags.");
-        var collection = "";
-        var warning = "";
-        if (includeCollection)
-        {
-            var suggestedCollection = jsonDocument.RootElement.TryGetProperty("collection", out var value)
-                && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            if (!TryNormalizeCollectionName(suggestedCollection, out collection))
-                warning = "The model returned an invalid or missing collection. Description and tags are available for approval; no collection will be added.";
-        }
-        return (description, string.Join(", ", tags.Distinct(StringComparer.OrdinalIgnoreCase)), collection, warning);
+        return (description!, string.Join(", ", tags.Distinct(StringComparer.OrdinalIgnoreCase)));
+    }
+
+    private static bool HasValidAnalysisContent(string? description, string[] tags) =>
+        !string.IsNullOrWhiteSpace(description) && description.Length <= 10_000 && tags.Length <= 100
+        && tags.All(tag => tag.Length <= 100 && !tag.Contains(','));
+
+    private static (string Description, string Tags, string Collection, string Warning) ParseAnalysisWithCollection(JsonDocument jsonDocument)
+    {
+        var analysis = ParseAnalysis(jsonDocument);
+        var suggestedCollection = jsonDocument.RootElement.TryGetProperty("collection", out var value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        var warning = TryNormalizeCollectionName(suggestedCollection, out var collection) ? "" :
+            "The model returned an invalid or missing collection. Description and tags are available for approval; no collection will be added.";
+        return (analysis.Description, analysis.Tags, collection, warning);
     }
 
     private static bool TryNormalizeCollectionName(string? collection, out string normalizedCollection)

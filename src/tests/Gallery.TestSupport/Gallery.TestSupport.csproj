@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.assert" Version="2.9.3" />
+    <ProjectReference Include="../../Gallery.csproj" />
+    <InternalsVisibleTo Include="Gallery.Tests" />
+  </ItemGroup>
+</Project>

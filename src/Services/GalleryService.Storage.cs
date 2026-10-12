@@ -13,14 +13,22 @@ public sealed partial class GalleryService
     public async Task<StorageOverview> RefreshStorageOverviewAsync()
     {
         var records = await ListAsync();
-        var overview = await Task.Run(() => StorageOverviewCalculator.Measure(vault.Root, records));
-        await WriteEncryptedSettingAsync(overview, StorageOverviewId, StorageOverviewPurpose);
-        return overview;
+        var storageOverview = await Task.Run(() => StorageOverviewCalculator.Measure(vaultStore.Root, records));
+        await WriteEncryptedSettingAsync(storageOverview, StorageOverviewId, StorageOverviewPurpose);
+        return storageOverview;
     }
 
     private static class StorageOverviewCalculator
     {
         public static StorageOverview Measure(string vaultRoot, IEnumerable<ImageRecord> records)
+        {
+            var vaultMeasurement = MeasureVaultFiles(vaultRoot);
+            var imageMeasurement = MeasureImageFiles(records);
+            return new(vaultMeasurement.DatabaseBytes, imageMeasurement.FileCount, imageMeasurement.Bytes,
+                vaultMeasurement.FileCount, vaultMeasurement.Bytes, imageMeasurement.Missing, DateTimeOffset.UtcNow);
+        }
+
+        private static (long DatabaseBytes, int FileCount, long Bytes) MeasureVaultFiles(string vaultRoot)
         {
             var databasePath = Path.Combine(vaultRoot, "gallery.db");
             string[] databaseFiles = [databasePath, databasePath + "-wal", databasePath + "-shm"];
@@ -35,6 +43,11 @@ public sealed partial class GalleryService
                 if (databaseFiles.Contains(path)) databaseBytes += length.Value;
             }
 
+            return (databaseBytes, vaultFileCount, vaultBytes);
+        }
+
+        private static (int FileCount, long Bytes, int Missing) MeasureImageFiles(IEnumerable<ImageRecord> records)
+        {
             long imageBytes = 0;
             int imageFileCount = 0, missing = 0;
             foreach (var path in records.Select(record => record.StoredPath).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -44,7 +57,7 @@ public sealed partial class GalleryService
                 imageFileCount++;
                 imageBytes += length.Value;
             }
-            return new(databaseBytes, imageFileCount, imageBytes, vaultFileCount, vaultBytes, missing, DateTimeOffset.UtcNow);
+            return (imageFileCount, imageBytes, missing);
         }
 
     }

@@ -1,15 +1,13 @@
 @page "/"
 @using System.Collections.Immutable
 @implements IDisposable
-@inject VaultStore Vault
-@inject VaultSession Session
 @inject GalleryService Gallery
 @inject ILogger<Home> Logger
 @inject IJSRuntime JS
 
 <PageTitle>Diffusion Gen Gallery 02</PageTitle>
 
-@if (!Session.IsUnlocked)
+@if (!Gallery.IsUnlocked)
 {
 <section class="hero">
     <div>
@@ -30,14 +28,14 @@
     <div class="notice" role="status">@message</div>
 }
 
-@if (!Session.IsUnlocked)
+@if (!Gallery.IsUnlocked)
 {
     <section class="panel unlock-panel">
         <div class="panel-header"><span class="eyebrow">ENCRYPTED VAULT</span><span class="pill">AES-256-GCM</span></div>
-        <h2>@(Vault.Exists ? "Welcome back." : "Your gallery starts here.")</h2>
-        <p class="muted">@(Vault.Exists ? "Unlock your collection with your passphrase or recovery words." : "Choose a strong, unique passphrase. We will generate a separate recovery phrase for you to save offline.")</p>
+        <h2>@(Gallery.VaultExists ? "Welcome back." : "Your gallery starts here.")</h2>
+        <p class="muted">@(Gallery.VaultExists ? "Unlock your collection with your passphrase or recovery words." : "Choose a strong, unique passphrase. We will generate a separate recovery phrase for you to save offline.")</p>
         <form @onsubmit="UnlockAsync" @onsubmit:preventDefault>
-            @if (Vault.Exists)
+            @if (Gallery.VaultExists)
             {
                 <div class="segmented">
                     <button type="button" class="@(!useRecovery ? "active" : "")" @onclick="() => SwitchCredential(false)">Passphrase</button>
@@ -53,12 +51,12 @@
             {
                 <input id="secret" type="password" @bind="secret" autocomplete="off" minlength="14" required />
             }
-            @if (!Vault.Exists)
+            @if (!Gallery.VaultExists)
             {
                 <label for="confirm">Confirm passphrase</label>
                 <input id="confirm" type="password" @bind="confirm" autocomplete="off" minlength="14" required />
             }
-            <button class="primary full" disabled="@busy" type="submit">@(busy ? "Deriving encryption key..." : Vault.Exists ? "Unlock gallery" : "Create encrypted gallery") <span>&rarr;</span></button>
+            <button class="primary full" disabled="@busy" type="submit">@(busy ? "Deriving encryption key..." : Gallery.VaultExists ? "Unlock gallery" : "Create encrypted gallery") <span>&rarr;</span></button>
         </form>
         <div class="security-note"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted images cannot be recovered. Originals are retained unless you explicitly enable source deletion for a local folder import.</div>
     </section>
@@ -86,13 +84,13 @@ else
         <span class="eyebrow">YOUR WORKSPACE</span>
         @foreach (var item in Workflows)
         {
-            <button disabled="@(busy || libraryJob.Running && item.Id is "remove" or "ingest" or "settings")" class="@(workflow == item.Id ? "active" : "")" aria-current="@(workflow == item.Id ? "page" : null)" @onclick="() => SwitchWorkflowAsync(item.Id)">@item.Name</button>
+            <button disabled="@(busy || libraryJob.IsRunning && item.Id is "remove" or "ingest" or "settings")" class="@(workflow == item.Id ? "active" : "")" aria-current="@(workflow == item.Id ? "page" : null)" @onclick="() => SwitchWorkflowAsync(item.Id)">@item.Name</button>
         }
         <div class="security-note"><strong>@images.Count images</strong><span data-testid="pending-count">@PendingReviewCount awaiting review</span></div>
-        @if (libraryJob.Running || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
+        @if (libraryJob.IsRunning || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
         {
             <div class="job-indicator" role="status">
-                <strong>@(libraryJob.Running ? "Library job running" : "Library job")</strong>
+                <strong>@(libraryJob.IsRunning ? "Library job running" : "Library job")</strong>
                 <p>@libraryJob.Message</p>
                 @if (libraryJob.Suggestions > 0) { <p>@libraryJob.Suggestions suggestions await approval</p> }
                 <button disabled="@busy" @onclick="OpenLibraryJobAsync">Open job</button>
@@ -100,13 +98,13 @@ else
                 {
                     <button @onclick="StopLibraryJobAsync">Stop after current image</button>
                 }
-                @if (!libraryJob.Running && libraryJob.Suggestions == 0)
+                @if (!libraryJob.IsRunning && libraryJob.Suggestions == 0)
                 {
                     <button @onclick="DismissLibraryJob">Dismiss job status</button>
                 }
             </div>
         }
-        <button disabled="@(busy || libraryJob.Running)" @onclick="Lock">Lock vault</button>
+        <button disabled="@(busy || libraryJob.IsRunning)" @onclick="Lock">Lock vault</button>
     </nav>
     <div class="workflow-content">
     <div class="collection-header">
@@ -276,7 +274,7 @@ else
                     <p class="muted">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the vault header, database, and all .dpng files together.</p>
                     <button disabled="@busy" type="submit">Change passphrase</button>
                 </form>
-            <p class="muted vault-location">Vault location: <code>@Vault.Root</code></p>
+            <p class="muted vault-location">Vault location: <code>@Gallery.VaultRoot</code></p>
         </section>
     }
 
@@ -552,11 +550,11 @@ else
     }
 }
 
-@if (Session.IsUnlocked && viewerImages.Count > 0)
+@if (Gallery.IsUnlocked && viewerImages.Count > 0)
 {
     <FullscreenViewer Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged" />
 }
-@if (Session.IsUnlocked && reviewGroups.Count > 0)
+@if (Gallery.IsUnlocked && reviewGroups.Count > 0)
 {
     <DuplicateReviewer Groups="reviewGroups" Lookup="@(id => ImageById(id))" InitialGroup="reviewStartGroup" OnClose="CloseDuplicateReviewAsync" />
 }
@@ -674,7 +672,7 @@ else
         {
             busy = false;
             progress = "";
-            if (disposed) Session.Lock();
+            if (disposed) Gallery.LockVault();
         }
     }
 
@@ -684,12 +682,10 @@ else
     {
         try
         {
-            if (Vault.Exists)
+            if (Gallery.VaultExists)
             {
-                var key = useRecovery
-                    ? await Vault.UnlockWithRecoveryPhraseAsync(secret)
-                    : await Vault.UnlockWithPassphraseAsync(secret);
-                Session.Unlock(key);
+                if (useRecovery) await Gallery.UnlockWithRecoveryPhraseAsync(secret);
+                else await Gallery.UnlockWithPassphraseAsync(secret);
                 workflow = useRecovery ? "settings" : "library";
                 settingsTab = useRecovery ? "security" : "overview";
                 density = (await Gallery.LoadPreferencesAsync()).GridDensity;
@@ -697,10 +693,7 @@ else
             }
             else
             {
-                if (secret != confirm) throw new InvalidOperationException("Passphrases do not match.");
-                var created = await Vault.CreateAsync(secret);
-                Session.Unlock(created.Key);
-                recoveryPhrase = created.Recovery;
+                recoveryPhrase = await Gallery.CreateVaultAsync(secret, confirm);
             }
         }
         catch
@@ -841,7 +834,7 @@ else
             var keeper = KeeperOf(group);
             return group.ImageIds.Where(id => id != keeper.Id);
         }).ToList();
-        try { await Gallery.UpdateManyAsync(ids, image => image.MarkedForDeletion = true); }
+        try { await Gallery.UpdateManyAsync(ids, image => image with { MarkedForDeletion = true }); }
         finally { await ReloadAsync(); }
         message = $"Marked {ids.Count} extra cop{(ids.Count == 1 ? "y" : "ies")} for deletion. Review and remove them from Remove marked images.";
     });
@@ -893,7 +886,7 @@ else
         message = "Gallery overview refreshed.";
     });
     private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
-    private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.Running ? "ai" : libraryJob.Workflow);
+    private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.IsRunning ? "ai" : libraryJob.Workflow);
     private void DismissLibraryJob() => libraryJob = new(false, "", "", 0, false);
     private Task StopLibraryJobAsync() => workbench?.StopAnalysisAsync() ?? Task.CompletedTask;
     private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); selectionAnchor = null; }
@@ -939,7 +932,7 @@ else
         await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = value });
     });
 
-    private async Task CurateAsync(IReadOnlyCollection<string> ids, Action<ImageRecordEdit> update, string done)
+    private async Task CurateAsync(IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update, string done)
     {
         if (ids.Count == 0) return;
         try { await Gallery.UpdateManyAsync(ids, update); }
@@ -964,18 +957,18 @@ else
         message = done;
     }
 
-    private Task BulkAsync(string status, Action<ImageRecordEdit> update, string done) =>
+    private Task BulkAsync(string status, Func<ImageRecordEdit, ImageRecordEdit> update, string done) =>
         RunAsync(status, () => CurateAsync(librarySelection.ToList(), update, $"{done} ({librarySelection.Count} images)."));
     private Task BulkRateAsync(int value) => BulkAsync("Rating selected images...", image => Gallery.SetCuration(image, value, null), value == 0 ? "Ratings cleared" : $"Rated {value} stars");
-    private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image.Favorite = value, value ? "Added to favorites" : "Removed from favorites");
-    private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image.Reviewed = value, "Marked reviewed");
-    private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => image.MarkedForDeletion = value, value ? "Marked for deletion" : "Deletion marks cleared");
+    private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image with { Favorite = value }, value ? "Added to favorites" : "Removed from favorites");
+    private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image with { Reviewed = value }, "Marked reviewed");
+    private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => image with { MarkedForDeletion = value }, value ? "Marked for deletion" : "Deletion marks cleared");
     private Task BulkTagAsync()
     {
         var tags = bulkTags.Trim();
         if (tags.Length == 0) return Task.CompletedTask;
         bulkTags = "";
-        return BulkAsync("Adding tags...", image => image.Tags = Gallery.MergeTags(image.Tags, tags), "Tags added");
+        return BulkAsync("Adding tags...", image => image with { Tags = Gallery.MergeTags(image.Tags, tags) }, "Tags added");
     }
     private Task BulkCollectAsync()
     {
@@ -984,14 +977,15 @@ else
         bulkCollection = "";
         return BulkAsync("Adding to collection...", image =>
         {
-            if (!image.Collections.Contains(name, StringComparer.OrdinalIgnoreCase)) image.Collections.Add(name);
+            return image.Collections.Contains(name, StringComparer.OrdinalIgnoreCase)
+                ? image : image with { Collections = image.Collections.Add(name) };
         }, $"Added to {name}");
     }
 
     [JSInvokable]
     public async Task HandleGridKey(string key, string id, bool shift)
     {
-        if (!Session.IsUnlocked || busy || !ShowsGallery || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
+        if (!Gallery.IsUnlocked || busy || !ShowsGallery || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
         if (key == "escape") { ClearSelection(); selectionAnchor = null; StateHasChanged(); return; }
         if (!imagesById.TryGetValue(id, out var image)) return;
         if (key == "x")
@@ -1001,13 +995,13 @@ else
             StateHasChanged();
             return;
         }
-        Action<ImageRecordEdit>? update = key switch
+        Func<ImageRecordEdit, ImageRecordEdit>? update = key switch
         {
             "0" or "1" or "2" or "3" or "4" or "5" => current => Gallery.SetCuration(current, key[0] - '0', null),
-            "f" when !image.Favorite => current => current.Favorite = true,
-            "f" => current => current.Favorite = false,
-            "delete" when !image.MarkedForDeletion => current => current.MarkedForDeletion = true,
-            "delete" => current => current.MarkedForDeletion = false,
+            "f" when !image.Favorite => current => current with { Favorite = true },
+            "f" => current => current with { Favorite = false },
+            "delete" when !image.MarkedForDeletion => current => current with { MarkedForDeletion = true },
+            "delete" => current => current with { MarkedForDeletion = false },
             _ => null
         };
         if (update is null) return;
@@ -1044,7 +1038,7 @@ else
         {
             try
             {
-                await Gallery.ImportFolderAsync(importPath, recursive, deleteSources: deleteSources,
+                await Gallery.ImportFolderAsync(importPath, recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder, sourceRetention: deleteSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
                     reportProgress: update => InvokeAsync(() =>
                     {
                         if (disposed) return;
@@ -1061,6 +1055,7 @@ else
             catch (ImportFolderException exception)
             {
                 importFailures = exception.Failures.InnerExceptions.Select(failure => failure.Message).ToList();
+                if (!disposed) await ReloadAsync();
                 throw;
             }
             if (disposed) return;
@@ -1090,13 +1085,13 @@ else
 
     private Task FavoriteAsync(ImageRecord image) => RunAsync("Saving favorite...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => current.Favorite = !current.Favorite);
+        await Gallery.UpdateAsync(image.Id, current => current with { Favorite = !current.Favorite });
         await ReloadAsync();
     });
 
     private Task MarkAsync(ImageRecord image) => RunAsync("Saving deletion mark...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => current.MarkedForDeletion = !current.MarkedForDeletion);
+        await Gallery.UpdateAsync(image.Id, current => current with { MarkedForDeletion = !current.MarkedForDeletion });
         await ReloadAsync();
     });
 
@@ -1129,12 +1124,19 @@ else
     {
         EnsureNoLibraryJob();
         if (!confirmRemoval) throw new InvalidOperationException("Confirm removal first.");
-        removalResults = await Gallery.RemoveAsync(removalPlan, existingOriginalAction, missingOriginalAction, restoreFolder);
-        foreach (var result in removalResults.Where(result => result.Error is not null))
-            Logger.LogWarning("Image removal issue for {ImageId}: {Error}", result.Id, result.Error);
-        CancelRemoval();
-        CloseDetail();
-        await ReloadAsync();
+        removalResults = [];
+        try
+        {
+            await Gallery.RemoveAsync(removalPlan, existingOriginalAction, missingOriginalAction, restoreFolder, removalResults.Add);
+        }
+        finally
+        {
+            foreach (var result in removalResults.Where(result => result.Error is not null))
+                Logger.LogWarning("Image removal issue for {ImageId}: {Error}", result.Id, result.Error);
+            CancelRemoval();
+            CloseDetail();
+            await ReloadAsync();
+        }
         message = $"Removed {removalResults.Count(result => result.Removed)} images. {removalResults.Count(result => result.Error is not null)} issue(s); review the removal results.";
     });
 
@@ -1204,7 +1206,7 @@ else
     {
         var file = await Gallery.ExportAsync(image.Id);
         try { await DownloadAsync(file); }
-        finally { file.ClearContentBytes(); }
+        finally { GalleryService.ClearExportContent(file); }
         message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the vault.";
     });
 
@@ -1212,7 +1214,7 @@ else
     {
         var file = await Gallery.WorkflowAsync(image.Id) ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
         try { await DownloadAsync(file); }
-        finally { file.ClearContentBytes(); }
+        finally { GalleryService.ClearExportContent(file); }
         message = $"Saved the ComfyUI workflow as {file.FileName}.";
     });
 
@@ -1220,7 +1222,7 @@ else
     {
         var file = await Gallery.ExportZipAsync(librarySelection.ToList());
         try { await DownloadAsync(file); }
-        finally { file.ClearContentBytes(); }
+        finally { GalleryService.ClearExportContent(file); }
         message = $"Saved {librarySelection.Count} decrypted copies as {file.FileName}. They are no longer protected by the vault.";
     });
 
@@ -1253,7 +1255,7 @@ else
     private Task SaveNotesAsync() => RunAsync("Saving notes...", async () =>
     {
         if (selected is null) return;
-        await Gallery.UpdateAsync(selected.Id, image => { image.Description = editDescription.Trim(); image.Tags = editTags.Trim(); });
+        await Gallery.UpdateAsync(selected.Id, image => image with { Description = editDescription.Trim(), Tags = editTags.Trim() });
         await ReloadAsync();
         message = "Notes saved.";
     });
@@ -1264,9 +1266,7 @@ else
         var result = await Gallery.AnalyzeImageAsync(settings, preview);
         await Gallery.UpdateAsync(selected.Id, image =>
         {
-            image.Description = result.Description;
-            image.Tags = result.Tags;
-            image.AnalysisModel = settings.Model;
+            return image with { Description = result.Description, Tags = result.Tags, AnalysisModel = settings.Model };
         });
         await ReloadAsync();
         editDescription = selected!.Description;
@@ -1288,9 +1288,7 @@ else
         EnsureNoLibraryJob();
         try
         {
-            if (newPassphrase != newConfirm) throw new InvalidOperationException("New passphrases do not match.");
-            using var key = Session.Borrow();
-            await Vault.ChangePassphraseAsync(key.Bytes, newPassphrase);
+            await Gallery.ChangePassphraseAsync(newPassphrase, newConfirm);
             message = "Passphrase updated. Your recovery words are unchanged.";
         }
         finally { newPassphrase = newConfirm = ""; }
@@ -1298,12 +1296,12 @@ else
 
     private void EnsureNoLibraryJob()
     {
-        if (libraryJob.Running) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or vault settings.");
+        if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or vault settings.");
     }
 
     private void Lock()
     {
-        Session.Lock();
+        Gallery.LockVault();
         images.Clear();
         thumbnails.Clear();
         CloseDetail();

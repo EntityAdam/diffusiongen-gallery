@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
 
-namespace Gallery.Services;
+namespace Gallery.Managers.Gateways;
 
 internal sealed class VideoToolsOptions
 {
@@ -33,11 +33,11 @@ internal sealed class VideoTools
     internal sealed record ProbeResult(int Width, int Height, double DurationSeconds, string FormatName,
         ImmutableArray<KeyValuePair<string, string>> Tags);
 
-    private readonly VideoToolsOptions options;
+    private readonly VideoToolsOptions videoToolsOptions;
 
-    internal VideoTools(VideoToolsOptions? options = null)
+    internal VideoTools(VideoToolsOptions? videoToolsOptions = null)
     {
-        this.options = options ?? new VideoToolsOptions();
+        this.videoToolsOptions = videoToolsOptions ?? new VideoToolsOptions();
     }
 
     internal bool IsAvailable =>
@@ -49,9 +49,9 @@ internal sealed class VideoTools
     private string? ResolveToolPath(string executableName)
     {
         string executableFileName = OperatingSystem.IsWindows() ? executableName + ".exe" : executableName;
-        if (!string.IsNullOrWhiteSpace(options.ConfiguredPath))
+        if (!string.IsNullOrWhiteSpace(videoToolsOptions.ConfiguredPath))
         {
-            string configuredPath = options.ConfiguredPath;
+            string configuredPath = videoToolsOptions.ConfiguredPath;
             string configuredDirectory = Directory.Exists(configuredPath)
                 || (!File.Exists(configuredPath) && !Path.HasExtension(configuredPath))
                 ? configuredPath
@@ -59,7 +59,7 @@ internal sealed class VideoTools
             return FindExecutableInDirectory(configuredDirectory, executableFileName);
         }
 
-        foreach (string searchPath in options.SearchPaths)
+        foreach (string searchPath in videoToolsOptions.SearchPaths)
         {
             string? executable = FindExecutableInDirectory(searchPath, executableFileName);
             if (executable is not null) return executable;
@@ -95,26 +95,28 @@ internal sealed class VideoTools
     {
         using JsonDocument jsonDocument = JsonDocument.Parse(json);
         JsonElement root = jsonDocument.RootElement;
-        VideoStreamMetadata? videoStream = ReadFirstVideoStream(root);
-        FormatMetadata format = ReadFormatMetadata(root);
-        double duration = format.DurationSeconds > 0
-            ? format.DurationSeconds
-            : videoStream?.DurationSeconds ?? 0;
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("ffprobe returned an invalid metadata object.");
+        VideoStreamMetadata? videoStreamMetadata = ReadFirstVideoStream(root);
+        FormatMetadata formatMetadata = ReadFormatMetadata(root);
+        double duration = formatMetadata.DurationSeconds ?? videoStreamMetadata?.DurationSeconds ?? 0;
         return new(
-            videoStream?.Width ?? 0,
-            videoStream?.Height ?? 0,
+            videoStreamMetadata?.Width ?? 0,
+            videoStreamMetadata?.Height ?? 0,
             duration,
-            format.Name,
-            format.Tags);
+            formatMetadata.Name,
+            formatMetadata.Tags);
     }
 
     private static VideoStreamMetadata? ReadFirstVideoStream(JsonElement root)
     {
         if (!root.TryGetProperty("streams", out JsonElement streams) || streams.ValueKind != JsonValueKind.Array)
-            return null;
+            throw new InvalidOperationException("ffprobe returned an invalid streams array.");
 
         foreach (JsonElement stream in streams.EnumerateArray())
         {
+            if (stream.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("ffprobe returned an invalid stream object.");
             if (ReadString(stream, "codec_type") != "video" || IsAttachedPicture(stream)) continue;
             return new(
                 ReadInteger(stream, "width"),
@@ -132,44 +134,56 @@ internal sealed class VideoTools
 
     private static FormatMetadata ReadFormatMetadata(JsonElement root)
     {
-        if (!root.TryGetProperty("format", out JsonElement format))
-            return new("", 0, ImmutableArray<KeyValuePair<string, string>>.Empty);
+        if (!root.TryGetProperty("format", out JsonElement format) || format.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("ffprobe returned an invalid format object.");
 
         string name = ReadString(format, "format_name");
-        double duration = ReadNumber(format, "duration");
+        double? duration = ReadNumber(format, "duration");
         ImmutableArray<KeyValuePair<string, string>> tags = ReadTags(format);
         return new(name, duration, tags);
     }
 
     private static ImmutableArray<KeyValuePair<string, string>> ReadTags(JsonElement format)
     {
-        if (!format.TryGetProperty("tags", out JsonElement formatTags) || formatTags.ValueKind != JsonValueKind.Object)
+        if (!format.TryGetProperty("tags", out JsonElement formatTags))
             return ImmutableArray<KeyValuePair<string, string>>.Empty;
+        if (formatTags.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("ffprobe returned invalid format tags.");
 
         var tags = ImmutableArray.CreateBuilder<KeyValuePair<string, string>>();
         foreach (JsonProperty tag in formatTags.EnumerateObject())
         {
-            if (tag.Value.ValueKind == JsonValueKind.String)
-                tags.Add(new(tag.Name, tag.Value.GetString() ?? ""));
+            if (tag.Value.ValueKind != JsonValueKind.String)
+                throw new InvalidOperationException($"ffprobe returned an invalid tag value for '{tag.Name}'.");
+            tags.Add(new(tag.Name, tag.Value.GetString()!));
         }
         return tags.ToImmutable();
     }
 
     private static string ReadString(JsonElement element, string name) =>
         element.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? ""
-            : "";
+            ? value.GetString()!
+            : throw new InvalidOperationException($"ffprobe returned an invalid {name} value.");
 
     private static int ReadInteger(JsonElement element, string name) =>
         element.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.Number
-            ? value.GetInt32()
-            : 0;
-
-    private static double ReadNumber(JsonElement element, string name) =>
-        element.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String
-        && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+        && value.TryGetInt32(out int parsed) && parsed > 0
             ? parsed
-            : 0;
+            : throw new InvalidOperationException($"ffprobe returned an invalid {name} value.");
+
+    private static double? ReadNumber(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out JsonElement value)) return null;
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            string? text = value.GetString();
+            if (text == "N/A") return null;
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+                && double.IsFinite(parsed) && parsed >= 0)
+                return parsed;
+        }
+        throw new InvalidOperationException($"ffprobe returned an invalid {name} value.");
+    }
 
     private static ProcessStartInfo CreateProcessStartInfo(string executable, IReadOnlyList<string> arguments)
     {
@@ -205,6 +219,7 @@ internal sealed class VideoTools
         byte[]? standardOutput = null;
         string? standardError = null;
         Exception? failure = null;
+        Exception? cleanupFailure = null;
 
         try
         {
@@ -227,11 +242,13 @@ internal sealed class VideoTools
         }
         finally
         {
-            await StopProcessAsync(process, processExitTask);
+            cleanupFailure = await ObserveFailureAsync(StopProcessAsync(process, processExitTask));
+            if (cleanupFailure is not null) cancellationTokenSource.Cancel();
         }
 
         List<Exception> drainFailures = await ObserveDrainFailuresAsync(standardOutputTask, standardErrorTask,
             failure, cancellationTokenSource.IsCancellationRequested);
+        if (cleanupFailure is not null) drainFailures.Insert(0, cleanupFailure);
         if (failure is not null)
         {
             if (drainFailures.Count > 0)
@@ -248,6 +265,8 @@ internal sealed class VideoTools
     {
         while (!processExitTask.IsCompleted)
         {
+            if (standardOutputTask.IsFaulted || standardOutputTask.IsCanceled) await standardOutputTask;
+            if (standardErrorTask.IsFaulted || standardErrorTask.IsCanceled) await standardErrorTask;
             var pendingTasks = new List<Task> { processExitTask };
             if (!standardOutputTask.IsCompleted) pendingTasks.Add(standardOutputTask);
             if (!standardErrorTask.IsCompleted) pendingTasks.Add(standardErrorTask);
@@ -261,8 +280,7 @@ internal sealed class VideoTools
     {
         if (!process.HasExited)
         {
-            try { process.Kill(entireProcessTree: true); }
-            catch (InvalidOperationException) { }
+            process.Kill(entireProcessTree: true);
         }
         if (processExitTask is not null) await process.WaitForExitAsync();
     }
@@ -314,7 +332,7 @@ internal sealed class VideoTools
         return memoryStream.ToArray();
     }
 
-    private readonly record struct VideoStreamMetadata(int Width, int Height, double DurationSeconds);
-    private readonly record struct FormatMetadata(string Name, double DurationSeconds,
+    private readonly record struct VideoStreamMetadata(int Width, int Height, double? DurationSeconds);
+    private readonly record struct FormatMetadata(string Name, double? DurationSeconds,
         ImmutableArray<KeyValuePair<string, string>> Tags);
 }

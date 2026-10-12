@@ -70,7 +70,7 @@ public sealed record ExportFile
     [JsonPropertyName("Content")]
     public ImmutableArray<byte> ContentBytes => ImmutableArray.CreateRange(content);
     internal byte[] CopyContentBytes() => content.ToArray();
-    internal void ClearContentBytes() => CryptographicOperations.ZeroMemory(content);
+    internal ReadOnlyMemory<byte> OwnedContent => content;
 }
 
 public sealed record PromptGroup(string Kind, string Prompt, ImmutableArray<ImageRecord> Images)

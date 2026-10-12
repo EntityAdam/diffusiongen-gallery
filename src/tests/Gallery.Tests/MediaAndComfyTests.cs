@@ -1,3 +1,7 @@
+using Gallery.Services.Processors;
+using Gallery.Core.Extractors;
+using Gallery.Core.Processors;
+using Gallery.Managers.Gateways;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
@@ -13,6 +17,7 @@ using SixLabors.ImageSharp.PixelFormats;
 
 namespace Gallery.Tests;
 
+[Trait("Category", "acceptance")]
 public sealed class MediaAndComfyTests
 {
     // A typical SDXL text-to-image graph: checkpoint -> LoRA -> KSampler, prompt fed through a primitive string node.
@@ -32,7 +37,7 @@ public sealed class MediaAndComfyTests
     """;
 
     // Flux/Wan style: UNETLoader -> ModelSamplingFlux -> CFGGuider -> SamplerCustomAdvanced with BasicScheduler steps.
-    private const string CustomSamplerPrompt = """
+    internal const string CustomSamplerPrompt = """
     {
       "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "wan2.1_t2v_14B_fp8.safetensors", "weight_dtype": "default"}},
       "2": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 8}},
@@ -49,79 +54,17 @@ public sealed class MediaAndComfyTests
     }
     """;
 
-    private const string UiWorkflow = """{"last_node_id": 9, "last_link_id": 9, "nodes": [{"id": 3, "type": "KSampler"}], "links": [], "version": 0.4}""";
+    internal const string UiWorkflow = """{"last_node_id": 9, "last_link_id": 9, "nodes": [{"id": 3, "type": "KSampler"}], "links": [], "version": 0.4}""";
 
-    private static string PngMetadata(params (string Keyword, string Value)[] entries) =>
+    internal static string PngMetadata(params (string Keyword, string Value)[] entries) =>
         new JsonObject { ["png"] = new JsonArray(entries.Select(entry => (JsonNode)new JsonObject { ["Keyword"] = entry.Keyword, ["Value"] = entry.Value }).ToArray()) }
             .ToJsonString();
 
     [Fact]
-    public void ExtractsKSamplerGraphThroughLoraAndPrimitiveNodes()
+    public void PromptGrouping_WhenPromptsRepeat_ThenOrdersSharedUniqueAndMissingGroups()
     {
-        var info = ComfyMetadata.Extract(PngMetadata(("prompt", KSamplerPrompt), ("workflow", UiWorkflow)))!;
-        Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", info.Prompt);
-        Assert.Equal("blurry, lowres", info.NegativePrompt);
-        Assert.Equal(30, info.Steps);
-        Assert.Equal(6.5, info.Cfg);
-        Assert.Equal("sdxl/juggernautXL_v9.safetensors", info.Model);
-        Assert.Equal("Checkpoint", info.ModelKind);
-        Assert.True(info.HasWorkflow);
-        Assert.True(info.HasApiPrompt);
-    }
-
-    [Fact]
-    public void ExtractsSamplerCustomAdvancedGuiderAndDiffusionModel()
-    {
-        var info = ComfyMetadata.ParseApiPrompt(CustomSamplerPrompt);
-        Assert.Equal("a red fox running through snow", info.Prompt);
-        Assert.Equal("static, watermark", info.NegativePrompt);
-        Assert.Equal(25, info.Steps);
-        Assert.Equal(5, info.Cfg);
-        Assert.Equal("wan2.1_t2v_14B_fp8.safetensors", info.Model);
-        Assert.Equal("Diffusion model", info.ModelKind);
-    }
-
-    [Fact]
-    public void FindsDocumentsInVideoCommentsAndExifPrefixes()
-    {
-        var vhs = new JsonObject { ["prompt"] = KSamplerPrompt, ["workflow"] = JsonNode.Parse(UiWorkflow) }.ToJsonString();
-        var video = new JsonObject
-        {
-            ["video"] = new JsonArray(new JsonObject { ["Keyword"] = "major_brand", ["Value"] = "isom" },
-                new JsonObject { ["Keyword"] = "comment", ["Value"] = vhs })
-        }.ToJsonString();
-        var fromVideo = ComfyMetadata.Find(video);
-        Assert.NotNull(fromVideo.ApiPrompt);
-        Assert.NotNull(fromVideo.Workflow);
-        Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", ComfyMetadata.Extract(video)!.Prompt);
-
-        var exif = new JsonObject
-        {
-            ["png"] = new JsonArray(),
-            ["exif"] = new JsonArray("Make: Prompt:" + KSamplerPrompt.ReplaceLineEndings(""), "ImageDescription: Workflow:" + UiWorkflow)
-        }.ToJsonString();
-        var fromExif = ComfyMetadata.Find(exif);
-        Assert.NotNull(fromExif.ApiPrompt);
-        Assert.Equal(UiWorkflow, fromExif.Workflow);
-        Assert.Equal(UiWorkflow, ComfyMetadata.WorkflowForExport(exif));
-    }
-
-    [Fact]
-    public void IgnoresNonComfyMetadata()
-    {
-        Assert.Null(ComfyMetadata.Extract(PngMetadata(("parameters", "a1111 prompt, Steps: 20"))));
-        Assert.Null(ComfyMetadata.Extract(""));
-        Assert.Throws<InvalidOperationException>(() => ComfyMetadata.Extract("not json"));
-        Assert.Null(ComfyMetadata.Extract(PngMetadata(("prompt", """{"1":{"class_type":123,"inputs":{}}}"""))));
-        var workflowOnly = ComfyMetadata.Extract(PngMetadata(("workflow", UiWorkflow)))!;
-        Assert.True(workflowOnly.HasWorkflow);
-        Assert.False(workflowOnly.HasApiPrompt);
-        Assert.Equal("", workflowOnly.Prompt);
-    }
-
-    [Fact]
-    public void GroupsExactPromptsLargestFirstThenUniqueThenMissing()
-    {
+        // Arrange
+        using var fixture = new TestVault();
         ImageRecord Make(string name, string? prompt) => new()
         {
             Name = name, Generation = prompt is null ? null : new GenerationInfo { Prompt = prompt }
@@ -131,147 +74,306 @@ public sealed class MediaAndComfyTests
             Make("a1", "cat"), Make("u1", "unique"), Make("n1", null), Make("b1", "dog"), Make("b2", "dog"),
             Make("a2", "cat"), Make("b3", "dog"), Make("c1", "Cat")
         };
-        var groups = ComfyMetadata.GroupByPrompt(ordered);
+
+        // Act
+        var groups = fixture.Service.GroupByPrompt(ordered);
+
+        // Assert
         Assert.Equal(["shared:dog", "shared:cat", "unique:", "none:"], groups.Select(group => $"{group.Kind}:{group.Prompt}"));
         Assert.Equal(["b1", "b2", "b3"], groups[0].Images.Select(image => image.Name));
         Assert.Equal(["u1", "c1"], groups[2].Images.Select(image => image.Name));
         Assert.Equal(["n1"], groups[3].Images.Select(image => image.Name));
     }
 
-    [Fact]
-    public void FiltersByMediaAndExactPrompt()
+    // Each criterion selects the exact matching image and preserves complete membership.
+    [Theory]
+    [InlineData("video", "", "video")]
+    [InlineData("image", "", "image")]
+    [InlineData("all", "cat", "image")]
+    public void GalleryFilter_WhenMediaOrPromptIsSpecified_ThenSelectsExactMatches(string media, string prompt, string expectedName)
     {
+        // Arrange
+        using var fixture = new TestVault();
         var image = new ImageRecord { Name = "image", Generation = new GenerationInfo { Prompt = "cat" } };
         var video = new ImageRecord { Name = "video", MediaType = "video", Generation = new GenerationInfo { Prompt = "cat " } };
-        var all = new[] { image, video };
-        Assert.Equal([video], GalleryFilterProcessor.Apply(new GalleryFilter { Media = "video" }, all));
-        Assert.Equal([image], GalleryFilterProcessor.Apply(new GalleryFilter { Media = "image" }, all));
-        Assert.Equal([image], GalleryFilterProcessor.Apply(new GalleryFilter { Prompt = "cat" }, all));
-        Assert.Equal("0:00", GalleryService.FormatDuration(new ImageRecord()));
-        Assert.Equal("1:05", GalleryService.FormatDuration(new ImageRecord { DurationSeconds = 65.4 }));
+        ImageRecord[] expectedRecords = [expectedName == "image" ? image : video];
+        var filter = new GalleryFilter { Media = media, Prompt = prompt };
+
+        // Act
+        var records = fixture.Service.Filter(new[] { image, video }, filter).ToArray();
+
+        // Assert
+        Assert.Equal(expectedRecords, records);
+    }
+
+    // Duration formatting uses zero for an unknown duration and rounds finite seconds consistently.
+    [Theory]
+    [InlineData(0, "0:00")]
+    [InlineData(65.4, "1:05")]
+    public void Duration_WhenFormatted_ThenShowsMinutesAndSeconds(double duration, string expectedText)
+    {
+        // Arrange
+        var record = new ImageRecord { DurationSeconds = duration };
+
+        // Act
+        var text = GalleryService.FormatDuration(record);
+
+        // Assert
+        Assert.Equal(expectedText, text);
+    }
+
+    internal static JsonObject MakeProbeMetadata() => (JsonObject)System.Text.Json.Nodes.JsonNode.Parse("""
+        {"streams":[{"codec_type":"video","width":1280,"height":720,"duration":"2.5"}],
+         "format":{"format_name":"mp4","duration":"3","tags":{"comment":"workflow"}}}
+        """)!;
+
+    [Fact]
+    public async Task Import_WhenComfyImageIsImported_ThenParsesGeneration()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+
+        // Act
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+
+        // Assert
+        Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", record.Generation!.Prompt);
+        Assert.Equal(1, record.MetadataVersion);
     }
 
     [Fact]
-    public void ParsesFfprobeJson()
+    public async Task Export_WhenComfyImageIsExported_ThenPreservesUncompressedWorkflowText()
     {
-        const string json = """
-        {"streams": [
-            {"index": 0, "codec_type": "audio"},
-            {"index": 1, "codec_type": "video", "width": 1280, "height": 720, "duration": "4.000000"}],
-         "format": {"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "4.250000",
-            "tags": {"major_brand": "isom", "comment": "{\"prompt\": {}}"}}}
-        """;
-        var probe = VideoTools.ParseProbe(json);
-        Assert.Equal(1280, probe.Width);
-        Assert.Equal(720, probe.Height);
-        Assert.Equal(4.25, probe.DurationSeconds);
-        Assert.Contains("mp4", probe.FormatName);
-        Assert.Contains(probe.Tags, tag => tag.Key == "comment");
-    }
-
-    [Fact]
-    public async Task ImportParsesGenerationAndExportKeepsUncompressedWorkflowText()
-    {
+        // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
-        Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", record.Generation!.Prompt);
-        Assert.Equal(ComfyMetadata.Version, record.MetadataVersion);
 
+        // Act
         var export = await fixture.Service.ExportAsync(record.Id);
+
+        // Assert
         Assert.Equal("comfy.png", export.FileName);
         Assert.Equal("image/png", export.ContentType);
-        // ComfyUI reads workflows from tEXt chunks; ImageSharp would otherwise write long text as zTXt.
         var exportBytes = export.CopyContentBytes();
         Assert.Equal(["prompt", "workflow"], TextChunkKeywords(exportBytes, "tEXt").Where(k => k is "prompt" or "workflow").Order());
         Assert.Empty(TextChunkKeywords(exportBytes, "zTXt"));
+    }
 
+    [Fact]
+    public async Task WorkflowExport_WhenWorkflowExists_ThenReturnsItsDocument()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+
+        // Act
         var workflow = await fixture.Service.WorkflowAsync(record.Id);
+
+        // Assert
         Assert.Equal("comfy.workflow.json", workflow!.FileName);
         Assert.Equal(UiWorkflow, System.Text.Encoding.UTF8.GetString(workflow.CopyContentBytes()));
+    }
 
+    [Fact]
+    public async Task WorkflowExport_WhenImageHasNoWorkflow_ThenReturnsNoDocument()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
         var plain = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "plain.png", "folder");
-        Assert.Null(plain.Generation);
-        Assert.Null(await fixture.Service.WorkflowAsync(plain.Id));
 
+        // Act
+        var workflow = await fixture.Service.WorkflowAsync(plain.Id);
+
+        // Assert
+        Assert.Null(plain.Generation);
+        Assert.Null(workflow);
+    }
+
+    [Fact]
+    public async Task ZipExport_WhenComfyAndPlainImagesAreSelected_ThenIncludesBothNamedEntries()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+        var plain = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "plain.png", "folder");
+
+        // Act
         var zip = await fixture.Service.ExportZipAsync([record.Id, plain.Id]);
+
+        // Assert
         using var archive = new ZipArchive(new MemoryStream(zip.CopyContentBytes()));
         Assert.Equal(["comfy.png", "plain.png"], archive.Entries.Select(entry => entry.FullName).Order());
     }
 
     [Fact]
-    public async Task ListBackfillsGenerationForOlderRecords()
+    public async Task List_WhenLegacyRecordLacksGeneration_ThenBackfillsGeneration()
     {
+        // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
-        await fixture.Service.UpdateAsync(record.Id, current => { current.Generation = null; current.MetadataVersion = 0; });
-        var listed = Assert.Single(await fixture.Service.ListAsync());
+        await fixture.Service.UpdateAsync(record.Id, current => current with { Generation = null, MetadataVersion = 0 });
+
+        // Act
+        var records = await fixture.Service.ListAsync();
+
+        // Assert
+        var listed = Assert.Single(records);
         Assert.Equal(30, listed.Generation!.Steps);
-        Assert.Equal(ComfyMetadata.Version, listed.MetadataVersion);
+        Assert.Equal(1, listed.MetadataVersion);
     }
 
     [Fact]
-    public async Task VideoImportWithoutFfmpegFailsClearly()
+    public async Task VideoImport_WhenFfmpegIsUnavailable_ThenReportsClearFailure()
     {
+        // Arrange
         var missingPath = Path.Combine(Path.GetTempPath(), "no-ffmpeg-here-" + Guid.NewGuid().ToString("N"));
         var missing = new VideoTools(new VideoToolsOptions(missingPath));
         using var fixture = new TestVault(missing);
         await fixture.InitializeAsync();
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+
+        // Act
+        var error = await Assert.ThrowsAsync<VideoToolUnavailableException>(() =>
             fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder"));
-        Assert.Equal(VideoTools.MissingMessage, error.Message);
+
+        // Assert
+        TestAssertions.Exception<VideoToolUnavailableException>(new ExpectedException("the missing video tools have installation and configuration remedies", "Install", "ffmpeg", "Gallery:FFmpegPath", "MP4")
+        { HttpStatusCode = System.Net.HttpStatusCode.InternalServerError, Severity = Severity.Error,
+          Reason = "Required video tools are unavailable.", LogEventValue = "Video.PrepareImport",
+          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Video.RequiredTools", "ffmpeg, ffprobe") }, error);
         Assert.Empty(await fixture.Service.ListAsync());
     }
 
-    [Fact]
-    public async Task ImportsMp4WithFfmpegAndExportsOriginalBytes()
+    [InstalledVideoToolsFact]
+    public async Task VideoImport_WhenFfmpegIsAvailable_ThenPreservesDimensionsAndGeneration()
     {
-        var tools = new VideoTools();
-        if (!tools.IsAvailable) return; // ffmpeg is optional; covered by the missing-ffmpeg test.
-        var source = Path.Combine(Path.GetTempPath(), "gallery-test-" + Guid.NewGuid().ToString("N") + ".mp4");
-        try
+        // Arrange
+        using var arrangement = await RealVideoArrangement.CreateSourceAsync();
+
+        // Act
+        var record = await arrangement.TestVault.Service.ImportAsync(new MemoryStream(arrangement.Bytes), "clip.mp4", "folder");
+
+        // Assert - real media decoding preserves the video and Comfy metadata contract
+        TestAssertions.True(record.IsVideo, "the imported MP4 is classified as video");
+        Assert.EndsWith(".dmp4", record.StoredPath);
+        Assert.Equal((160, 90), (record.Width, record.Height));
+        Assert.InRange(record.DurationSeconds, 1.5, 2.5);
+        Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", record.Generation!.Prompt);
+        TestAssertions.True(record.Generation.HasWorkflow, "the imported video retains workflow metadata");
+    }
+
+    [InstalledVideoToolsFact]
+    public async Task VideoExport_WhenFfmpegImportCompletes_ThenReturnsOriginalBytes()
+    {
+        // Arrange
+        using var arrangement = await RealVideoArrangement.CreateImportedAsync();
+
+        // Act
+        var export = await arrangement.TestVault.Service.ExportAsync(arrangement.ImageRecord!.Id);
+
+        // Assert - the encrypted video exports as its original MP4 without transcoding
+        Assert.Equal(("clip.mp4", "video/mp4"), (export.FileName, export.ContentType));
+        Assert.Equal(arrangement.Bytes, export.CopyContentBytes());
+    }
+
+    [InstalledVideoToolsFact]
+    public async Task VideoVerification_WhenImportedMediaIsUnchanged_ThenAcceptsItsCiphertextAndHash()
+    {
+        // Arrange
+        using var arrangement = await RealVideoArrangement.CreateImportedAsync();
+
+        // Act
+        var error = await Record.ExceptionAsync(() => arrangement.TestVault.Service.VerifyImportedAsync(arrangement.ImageRecord!.Id));
+
+        // Assert - real MP4 verification validates encrypted source content
+        TestAssertions.Null(error, "unchanged imported MP4 passes authentication and source-hash verification");
+    }
+
+    [InstalledVideoToolsFact]
+    public async Task VideoThumbnail_WhenRealFrameIsDecoded_ThenReturnsPngData()
+    {
+        // Arrange
+        using var arrangement = await RealVideoArrangement.CreateImportedAsync();
+
+        // Act
+        var thumbnail = await arrangement.TestVault.Service.ThumbnailAsync(arrangement.ImageRecord!.Id);
+
+        // Assert - video thumbnails expose the decoded PNG frame
+        TestAssertions.StartsWith("data:image/png;base64,", thumbnail, "real video frame becomes a PNG thumbnail");
+    }
+
+    [InstalledVideoToolsFact]
+    public async Task VideoPreview_WhenRealFrameIsDecoded_ThenReturnsPngData()
+    {
+        // Arrange
+        using var arrangement = await RealVideoArrangement.CreateImportedAsync();
+
+        // Act
+        var preview = await arrangement.TestVault.Service.PreviewAsync(arrangement.ImageRecord!.Id);
+
+        // Assert - preview exposes a PNG representation of the decoded frame
+        TestAssertions.StartsWith("data:image/png;base64,", preview, "real video frame becomes a PNG preview");
+    }
+
+    [InstalledVideoToolsFact]
+    public async Task VideoOpen_WhenOriginalIsRequested_ThenReturnsTheOriginalStreamAndType()
+    {
+        // Arrange
+        using var arrangement = await RealVideoArrangement.CreateImportedAsync();
+
+        // Act
+        var (media, type) = await arrangement.TestVault.Service.OpenMediaAsync(arrangement.ImageRecord!.Id);
+
+        // Assert - the streamed representation has complete original MP4 bytes
+        await using (media)
         {
-            var comment = new JsonObject { ["prompt"] = KSamplerPrompt.ReplaceLineEndings(""), ["workflow"] = JsonNode.Parse(UiWorkflow) }.ToJsonString();
-            var start = new ProcessStartInfo(tools.FindTool("ffmpeg")!) { RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
-            foreach (var argument in new[] { "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10:duration=2",
-                "-pix_fmt", "yuv420p", "-metadata", $"comment={comment}", "-y", source })
-                start.ArgumentList.Add(argument);
-            using (var process = Process.Start(start)!)
-            {
-                var stderr = await process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
-                Assert.True(process.ExitCode == 0, stderr);
-            }
-            using var fixture = new TestVault(tools);
-            await fixture.InitializeAsync();
-            var bytes = await File.ReadAllBytesAsync(source);
-            var record = await fixture.Service.ImportAsync(new MemoryStream(bytes), "clip.mp4", "folder");
-            Assert.True(record.IsVideo);
-            Assert.EndsWith(".dmp4", record.StoredPath);
-            Assert.Equal((160, 90), (record.Width, record.Height));
-            Assert.InRange(record.DurationSeconds, 1.5, 2.5);
-            Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", record.Generation!.Prompt);
-            Assert.True(record.Generation.HasWorkflow);
-            await fixture.Service.VerifyImportedAsync(record.Id);
-            Assert.StartsWith("data:image/png;base64,", await fixture.Service.ThumbnailAsync(record.Id));
-            Assert.StartsWith("data:image/png;base64,", await fixture.Service.PreviewAsync(record.Id));
-            var export = await fixture.Service.ExportAsync(record.Id);
-            Assert.Equal(("clip.mp4", "video/mp4"), (export.FileName, export.ContentType));
-            Assert.Equal(bytes, export.CopyContentBytes());
-            var (media, type) = await fixture.Service.OpenMediaAsync(record.Id);
-            await using (media) Assert.Equal(bytes.Length, media.Length);
+            using var output = new MemoryStream();
+            await media.CopyToAsync(output);
+            Assert.Equal(arrangement.Bytes, output.ToArray());
             Assert.Equal("video/mp4", type);
         }
-        finally { File.Delete(source); }
     }
 
     [Fact]
-    public void DuplicateGroupingNeverMixesImagesAndVideos()
+    public async Task DuplicateScan_WhenMediaTypesDiffer_ThenDoesNotMixImagesAndVideos()
     {
-        var image = new ImageRecord { Name = "image", PngSha256 = "same" };
-        var video = new ImageRecord { Name = "video", PngSha256 = "same", MediaType = "video" };
-        Assert.Empty(DuplicateRules.GroupDuplicates([image, video], _ => 0, _ => null));
+        // Arrange
+        using var transport = new MediaProcessTransport(MakeProbeMetadata().ToJsonString());
+        using var fixture = new TestVault(transport.VideoTools);
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var video = await fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder");
+        var migratedVideo = video with { PngSha256 = image.PngSha256 };
+        await DuplicateCacheArrangement.ArrangeAsync(fixture, [(image, 0UL), (migratedVideo, 0UL)]);
+
+        // Act
+        var scan = await fixture.Service.ScanDuplicatesAsync();
+
+        // Assert - even matching migrated pixel/hash values cannot cross media families
+        TestAssertions.Empty(scan.Groups, "image and video records are never grouped together");
+    }
+
+    internal static string CarrierMetadata(string carrier)
+    {
+        if (carrier == "video")
+        {
+            var documents = new JsonObject { ["prompt"] = KSamplerPrompt, ["workflow"] = JsonNode.Parse(UiWorkflow) }.ToJsonString();
+            return new JsonObject { ["video"] = new JsonArray(new JsonObject { ["Keyword"] = "major_brand", ["Value"] = "isom" }, new JsonObject { ["Keyword"] = "comment", ["Value"] = documents }) }.ToJsonString();
+        }
+        return new JsonObject { ["png"] = new JsonArray(), ["exif"] = new JsonArray("Make: Prompt:" + KSamplerPrompt.ReplaceLineEndings(""), "ImageDescription: Workflow:" + UiWorkflow) }.ToJsonString();
+    }
+
+    internal static async Task<ImageRecord> ArrangeStoredMetadataAsync(TestVault fixture, string metadata)
+    {
+        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy-metadata.png", "folder");
+        var legacy = record with { Metadata = metadata, MetadataVersion = 0, Generation = null };
+        await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(legacy), fixture.Session.Key, $"record:{record.Id}"));
+        return legacy;
     }
 
     private static byte[] MakeComfyPng()

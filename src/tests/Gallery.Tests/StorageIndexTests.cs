@@ -1,3 +1,5 @@
+using Gallery.Services.Processors;
+using Gallery.Services.DataManagers;
 using System.Security.Cryptography;
 using Gallery.Services;
 using Microsoft.Data.Sqlite;
@@ -5,28 +7,9 @@ using Microsoft.Data.Sqlite;
 namespace Gallery.Tests;
 
 // Direct fingerprint and SQLite migration tests cover persistence invariants unavailable through the UI boundary.
+[Trait("Category", "acceptance")]
 public sealed class StorageIndexTests
 {
-    [Fact]
-    public void Fingerprint_WhenHashIsValid_IsDeterministicVaultSpecificAndDomainSeparated()
-    {
-        // Arrange
-        var key = RandomNumberGenerator.GetBytes(32);
-        var hash = SHA256.HashData("source image"u8);
-
-        // Act
-        var fingerprint = VaultCrypto.ContentFingerprint(key, Convert.ToHexString(hash));
-
-        // Assert
-        Assert.Equal(32, fingerprint.Length);
-        Assert.Equal(fingerprint, VaultCrypto.ContentFingerprint(key, Convert.ToHexString(hash).ToLowerInvariant()));
-        Assert.NotEqual(fingerprint, VaultCrypto.ContentFingerprint(RandomNumberGenerator.GetBytes(32), Convert.ToHexString(hash)));
-        Assert.NotEqual(fingerprint, HMACSHA256.HashData(key, hash));
-        Assert.NotEqual(hash, fingerprint);
-        TestAssertions.Throws<InvalidOperationException>(
-            () => VaultCrypto.ContentFingerprint(key, "AB"),
-            "invalid source fingerprints identify the offending value and expected hash format", "AB", "SHA-256", "64");
-    }
 
     [Fact]
     public async Task Import_WhenNamesAreRepeated_AssignsDistinctIdsAndShardedPaths()
@@ -69,8 +52,8 @@ public sealed class StorageIndexTests
         var service = new GalleryService(store, fixture.Vault, fixture.Session);
         // Act
         var migratedRecords = await service.ListAsync();
-        var migrated = migratedRecords.Single();
-        var fingerprintPresent = await store.ContainsFingerprintAsync(VaultCrypto.ContentFingerprint(fixture.Session.Key, migrated.Sha256));
+        var migrated = TestAssertions.Single(migratedRecords, "legacy migration retains one image");
+        var fingerprintPresent = await store.ContainsFingerprintAsync(migrated.Sha256, fixture.Session.Key);
         var duplicateError = await Record.ExceptionAsync(() => service.ImportAsync(new MemoryStream(bytes), "different-name.png", "another-folder"));
         await fixture.Vault.ChangePassphraseAsync(fixture.Session.Key, "a different strong passphrase");
         fixture.Session.Lock();
@@ -90,10 +73,8 @@ public sealed class StorageIndexTests
         Assert.Equal(Path.Combine(fixture.Root, "legacy-flat.dpng"), migrated.StoredPath);
         TestAssertions.True(File.Exists(migrated.StoredPath), $"the legacy image remains at {migrated.StoredPath}");
         TestAssertions.True(fingerprintPresent, "the legacy image's fingerprint is backfilled");
-        TestAssertions.Exception<InvalidOperationException>(duplicateError,
-            "the duplicate is rejected as already imported", "already in the gallery");
-        TestAssertions.Exception<InvalidOperationException>(rotatedDuplicateError,
-            "the duplicate remains rejected after rotation", "already in the gallery");
+        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the duplicate is rejected as already imported", "already in the gallery"), duplicateError);
+        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the duplicate remains rejected after rotation", "already in the gallery"), rotatedDuplicateError);
         Assert.Contains(plan, detail => detail.Contains("images_fingerprint", StringComparison.Ordinal));
     }
 
@@ -135,7 +116,7 @@ public sealed class StorageIndexTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
-        await fixture.Store.UpdateAsync(first.Id, new byte[40]);
+        await fixture.RawStore.UpdateAsync(first.Id, new byte[40]);
 
         // Act
         var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "two.png", "folder");
@@ -173,29 +154,10 @@ public sealed class StorageIndexTests
         var results = await Task.WhenAll(ImportAsync(), ImportAsync(), ImportAsync());
 
         // Assert
-        Assert.All(failures, exception => TestAssertions.Exception<InvalidOperationException>(
-            exception, "competing imports reject only duplicate content", "already in the gallery"));
+        Assert.All(failures, exception => TestAssertions.Exception<InvalidOperationException>(new ExpectedException("competing imports reject only duplicate content", "already in the gallery"), exception));
         Assert.Single(results, success => success);
         Assert.Single(await fixture.Service.ListAsync());
         Assert.Single(Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories));
-    }
-
-    [Fact]
-    public async Task FingerprintIndex_WhenDuplicateIsInserted_RejectsTheSecondRecord()
-    {
-        // Arrange
-        using var fixture = new TestVault();
-        await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
-        var fingerprint = VaultCrypto.ContentFingerprint(fixture.Session.Key, image.Sha256);
-        // Act
-        var exception = await TestAssertions.ThrowsAsync<SqliteException>(
-            () => fixture.Store.InsertAsync("duplicate-id", [1], [2], fingerprint),
-            "the unique index rejects a duplicate fingerprint");
-
-        // Assert
-        Assert.Equal(19, exception.SqliteErrorCode);
-        Assert.Single(await fixture.Service.ListAsync());
     }
 
     private static SqliteConnection Connect(TestVault fixture) =>
