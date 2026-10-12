@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text.Json;
 using Gallery.Models;
 
 namespace Gallery.Services;
@@ -10,67 +8,71 @@ public sealed partial class GalleryService
     private const string StorageOverviewPurpose = "storage-overview:v1";
 
     public async Task<StorageOverview?> CachedStorageOverviewAsync()
-    {
-        using var key = session.Borrow();
-        var encrypted = await store.ReadSettingsAsync(StorageOverviewId);
-        if (encrypted is null) return null;
-        var plain = VaultCrypto.Decrypt(encrypted, key.Bytes, StorageOverviewPurpose);
-        try
-        {
-            return JsonSerializer.Deserialize<StorageOverview>(plain)
-                ?? throw new InvalidOperationException("Invalid storage overview.");
-        }
-        finally { CryptographicOperations.ZeroMemory(plain); }
-    }
+        => await ReadEncryptedSettingAsync<StorageOverview>(StorageOverviewId, StorageOverviewPurpose);
 
     public async Task<StorageOverview> RefreshStorageOverviewAsync()
     {
         var records = await ListAsync();
-        var overview = await Task.Run(() => MeasureStorage(records));
-        using var key = session.Borrow();
-        var plain = JsonSerializer.SerializeToUtf8Bytes(overview);
-        try { await store.SaveSettingsAsync(VaultCrypto.Encrypt(plain, key.Bytes, StorageOverviewPurpose), StorageOverviewId); }
-        finally { CryptographicOperations.ZeroMemory(plain); }
-        return overview;
+        var storageOverview = await Task.Run(() => StorageOverviewCalculator.Measure(vaultStore.Root, records));
+        await WriteEncryptedSettingAsync(storageOverview, StorageOverviewId, StorageOverviewPurpose);
+        return storageOverview;
     }
 
-    private StorageOverview MeasureStorage(IEnumerable<ImageRecord> records)
+    private static class StorageOverviewCalculator
     {
-        var database = Path.Combine(vault.Root, "gallery.db");
-        string[] databaseFiles = [database, database + "-wal", database + "-shm"];
-        long databaseBytes = 0, vaultBytes = 0;
-        var vaultFiles = 0;
-        foreach (var path in databaseFiles.Append(Path.Combine(vault.Root, "vault.json")))
+        public static StorageOverview Measure(string vaultRoot, IEnumerable<ImageRecord> records)
         {
-            var length = FileLength(path);
-            if (length is null) continue;
-            vaultFiles++;
-            vaultBytes += length.Value;
-            if (databaseFiles.Contains(path)) databaseBytes += length.Value;
+            var vaultMeasurement = MeasureVaultFiles(vaultRoot);
+            var imageMeasurement = MeasureImageFiles(records);
+            return new(vaultMeasurement.DatabaseBytes, imageMeasurement.FileCount, imageMeasurement.Bytes,
+                vaultMeasurement.FileCount, vaultMeasurement.Bytes, imageMeasurement.Missing, DateTimeOffset.UtcNow);
         }
 
-        long imageBytes = 0;
-        int imageFiles = 0, missing = 0;
-        foreach (var path in records.Select(record => record.StoredPath).Distinct(StringComparer.OrdinalIgnoreCase))
+        private static (long DatabaseBytes, int FileCount, long Bytes) MeasureVaultFiles(string vaultRoot)
         {
-            var length = FileLength(path);
-            if (length is null) { missing++; continue; }
-            imageFiles++;
-            imageBytes += length.Value;
+            var databasePath = Path.Combine(vaultRoot, "gallery.db");
+            string[] databaseFiles = [databasePath, databasePath + "-wal", databasePath + "-shm"];
+            long databaseBytes = 0, vaultBytes = 0;
+            var vaultFileCount = 0;
+            foreach (var path in databaseFiles.Append(Path.Combine(vaultRoot, "vault.json")))
+            {
+                var length = FileLength(path);
+                if (length is null) continue;
+                vaultFileCount++;
+                vaultBytes += length.Value;
+                if (databaseFiles.Contains(path)) databaseBytes += length.Value;
+            }
+
+            return (databaseBytes, vaultFileCount, vaultBytes);
         }
-        return new(databaseBytes, imageFiles, imageBytes, vaultFiles, vaultBytes, missing, DateTimeOffset.UtcNow);
+
+        private static (int FileCount, long Bytes, int Missing) MeasureImageFiles(IEnumerable<ImageRecord> records)
+        {
+            long imageBytes = 0;
+            int imageFileCount = 0, missing = 0;
+            foreach (var path in records.Select(record => record.StoredPath).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var length = FileLength(path);
+                if (length is null) { missing++; continue; }
+                imageFileCount++;
+                imageBytes += length.Value;
+            }
+            return (imageFileCount, imageBytes, missing);
+        }
+
     }
 
     private static long? FileLength(string path)
     {
         try
         {
-            var info = new FileInfo(path);
-            return info.Exists ? info.Length : null;
+            return new FileInfo(path).Length;
         }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            return null;
+            throw new IOException($"Could not read file length for '{path}'.", exception);
         }
     }
 }

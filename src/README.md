@@ -4,8 +4,9 @@ A standalone local-only .NET 10 / Blazor Server gallery. It shares `src03`'s
 charcoal, mint, typography, and Diffusion Gen branding, but has no project or
 runtime dependency on it. `gallery01` is frozen; all new development lives here.
 This is an independent source copy, not a shared project.
-Reusable gallery models and domain rules live in `src/Gallery.Core`; the web
-project owns persistence, encryption, external integrations and presentation.
+Gallery models, domain rules, persistence, and the web host are built into the
+single `Gallery` production assembly. The domain behavior is exposed through
+the gallery service entry points.
 
 ## Run
 

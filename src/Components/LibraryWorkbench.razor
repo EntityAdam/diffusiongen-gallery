@@ -1,6 +1,4 @@
 @inject GalleryService Gallery
-@inject LibraryService Library
-@inject VisionService Vision
 @inject ILogger<LibraryWorkbench> Logger
 @implements IDisposable
 
@@ -32,7 +30,7 @@
                 <button disabled="@working" @onclick="SaveViewAsync">Save view</button>
                 @foreach (var view in views)
                 {
-                    <div class="saved-view"><button disabled="@working" @onclick="() => FilterChanged.InvokeAsync(view.Filter.Clone())">@view.Name</button><button disabled="@working" aria-label="@($"Delete saved view {view.Name}")" @onclick="() => DeleteViewAsync(view.Name)">&times;</button></div>
+                    <div class="saved-view"><button disabled="@working" @onclick="() => FilterChanged.InvokeAsync(view.Filter with { })">@view.Name</button><button disabled="@working" aria-label="@($"Delete saved view {view.Name}")" @onclick="() => DeleteViewAsync(view.Name)">&times;</button></div>
                 }
             </div>
             <div>
@@ -110,9 +108,15 @@
     private List<ImageRecord> compareImages = [];
     private readonly Dictionary<string, string> comparison = [];
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
-    protected override void OnParametersSet() => suggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
+    protected override void OnParametersSet()
+    {
+        suggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
+        var imagesById = Images.ToDictionary(image => image.Id);
+        for (var index = 0; index < compareImages.Count; index++)
+            if (imagesById.TryGetValue(compareImages[index].Id, out var image)) compareImages[index] = image;
+    }
 
-    protected override Task OnInitializedAsync() => RunAsync("Loading saved views...", async () => views = await Library.LoadViewsAsync());
+    protected override Task OnInitializedAsync() => RunAsync("Loading saved views...", async () => views = await Gallery.LoadViewsAsync());
 
     private async Task RunAsync(string message, Func<Task> action, bool reportJob = false)
     {
@@ -154,7 +158,7 @@
         await PublishJobAsync();
     }
 
-    private async Task ApplyBulkAsync(Action<ImageRecord> change)
+    private async Task ApplyBulkAsync(Func<ImageRecordEdit, ImageRecordEdit> change)
     {
         var failures = new List<string>();
         var ids = SelectedIds.ToArray();
@@ -180,40 +184,41 @@
             throw new InvalidOperationException("Enter a collection or tags.");
         await ApplyBulkAsync(image =>
         {
-            image.Tags = LibraryRules.MergeTags(image.Tags, tags);
-            if (collection.Trim().Length > 0) LibraryRules.SetOrganization(image, image.Rating, image.Reviewed, collection);
+            var updated = image with { Tags = Gallery.MergeTags(image.Tags, tags) };
+            return collection.Trim().Length > 0
+                ? Gallery.SetOrganization(updated, updated.Rating, updated.Reviewed, collection) : updated;
         });
     });
 
     private Task RemoveCollectionAsync() => RunAsync("Updating collections...", () => ApplyBulkAsync(image =>
-        image.Collections.RemoveAll(name => name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase))));
+        image with { Collections = image.Collections.RemoveAll(name => name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase)) }));
 
     private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
-        LibraryRules.SetCuration(image, rating == -1 ? null : rating,
+        Gallery.SetCuration(image, rating == -1 ? null : rating,
             reviewStatus == "unchanged" ? null : reviewStatus == "reviewed")));
 
     private Task SaveViewAsync() => RunAsync("Saving view...", async () =>
     {
-        await Library.SaveViewAsync(viewName, Filter);
-        views = await Library.LoadViewsAsync();
+        await Gallery.SaveViewAsync(viewName, Filter);
+        views = await Gallery.LoadViewsAsync();
         notice = "Saved view stored encrypted.";
     });
 
     private Task DeleteViewAsync(string name) => RunAsync("Deleting view...", async () =>
     {
-        await Library.DeleteViewAsync(name);
-        views = await Library.LoadViewsAsync();
+        await Gallery.DeleteViewAsync(name);
+        views = await Gallery.LoadViewsAsync();
     });
 
     private Task InterpretAsync() => RunAsync("Interpreting search locally...", async () =>
     {
-        suggestedFilter = await Vision.InterpretSearchAsync(await Gallery.SettingsAsync(), query, Collections.ToArray());
+        suggestedFilter = await Gallery.InterpretSearchAsync(await Gallery.SettingsAsync(), query, Collections.ToArray());
         notice = "Search interpretation ready to inspect.";
     }, reportJob: true);
 
     private async Task ApplySearchAsync()
     {
-        if (suggestedFilter is not null) await FilterChanged.InvokeAsync(suggestedFilter.Clone());
+        if (suggestedFilter is not null) await FilterChanged.InvokeAsync(suggestedFilter with { });
         suggestedFilter = null;
     }
 
@@ -234,7 +239,7 @@
             await InvokeAsync(StateHasChanged);
             try
             {
-                var result = await Vision.AnalyzeImageWithCollectionAsync(settings, await Gallery.PreviewAsync(image.Id), Collections.ToArray());
+                var result = await Gallery.AnalyzeImageWithCollectionAsync(settings, await Gallery.PreviewAsync(image.Id), Collections.ToArray());
                 if (disposed) break;
                 suggestions.RemoveAll(suggestion => suggestion.Id == image.Id);
                 suggestions.Add(new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model, result.Warning));
@@ -255,11 +260,10 @@
     {
         await Gallery.UpdateAsync(suggestion.Id, image =>
         {
-            image.Description = suggestion.Description;
-            image.Tags = LibraryRules.MergeTags(image.Tags, suggestion.Tags);
-            image.AnalysisModel = suggestion.Model;
-            if (suggestion.Collection.Length > 0)
-                LibraryRules.SetOrganization(image, image.Rating, image.Reviewed, suggestion.Collection);
+            var updated = image with { Description = suggestion.Description,
+                Tags = Gallery.MergeTags(image.Tags, suggestion.Tags), AnalysisModel = suggestion.Model };
+            return suggestion.Collection.Length > 0
+                ? Gallery.SetOrganization(updated, updated.Rating, updated.Reviewed, suggestion.Collection) : updated;
         });
         suggestions.Remove(suggestion);
         jobMessage = $"{suggestions.Count} suggestions await approval.";
@@ -271,14 +275,15 @@
         comparison.Clear();
         var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
         if (selected.Count != 2) throw new InvalidOperationException("Select exactly two images.");
-        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, false);
+        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, ImageResolution.Fit);
         compareImages = selected;
     });
 
     private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => LibraryRules.SetOrganization(current, value, true, null));
-        image.Rating = value; image.Reviewed = true;
+        await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
+        var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);
+        if (comparisonIndex >= 0) compareImages[comparisonIndex] = image with { Rating = value, Reviewed = true };
         await Changed.InvokeAsync();
     });
 

@@ -2,39 +2,28 @@ using System.Net;
 using Gallery.Components;
 using Gallery.Services;
 
-var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://127.0.0.1:5189");
-builder.WebHost.UseStaticWebAssets();
-builder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
+var webApplicationBuilder = WebApplication.CreateBuilder(args);
+webApplicationBuilder.WebHost.UseUrls("http://127.0.0.1:5189");
+webApplicationBuilder.WebHost.UseStaticWebAssets();
+var configuredVaultRoot = webApplicationBuilder.Configuration["Gallery:DataDirectory"];
+var vaultRoot = string.IsNullOrWhiteSpace(configuredVaultRoot)
+    ? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "DiffusionGenGallery02")
+    : configuredVaultRoot;
+var normalizedVaultRoot = Path.GetFullPath(vaultRoot);
+webApplicationBuilder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
 {
     options.DisconnectedCircuitRetentionPeriod = TimeSpan.Zero;
 });
-builder.Services.AddSingleton<VaultStore>();
-builder.Services.AddSingleton<GalleryStore>();
-builder.Services.AddSingleton(services => new VideoTools(services.GetRequiredService<IConfiguration>()));
-builder.Services.AddScoped<VaultSession>();
-builder.Services.AddScoped<GalleryService>();
-builder.Services.AddScoped<LibraryService>();
-builder.Services.AddHttpClient<VisionService>(client => client.Timeout = Timeout.InfiniteTimeSpan)
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-    {
-        AllowAutoRedirect = false,
-        UseProxy = false
-    });
+GalleryService.Register(webApplicationBuilder.Services, webApplicationBuilder.Configuration, normalizedVaultRoot);
 
-var app = builder.Build();
+var webApplication = webApplicationBuilder.Build();
 // Binding and Host validation both matter: reject DNS rebinding and accidental LAN exposure.
-app.Use(async (context, next) =>
+webApplication.Use(async (context, next) =>
 {
-    var remote = context.Connection.RemoteIpAddress;
-    var host = context.Request.Host.Host;
-    var origin = context.Request.Headers.Origin.ToString();
-    if (remote is null || !IPAddress.IsLoopback(remote)
-        || !(host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || IPAddress.TryParse(host, out var ip) && IPAddress.IsLoopback(ip))
-        || (origin.Length > 0 && (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)
-            || !uri.Authority.Equals(context.Request.Host.Value, StringComparison.OrdinalIgnoreCase)
-            || !uri.Scheme.Equals(context.Request.Scheme, StringComparison.OrdinalIgnoreCase))))
+    if (IsUntrustedLocalRequest(context.Connection.RemoteIpAddress, context.Request.Host,
+        context.Request.Headers.Origin.ToString(), context.Request.Scheme))
     {
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
         return;
@@ -45,7 +34,15 @@ app.Use(async (context, next) =>
     context.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'none'";
     await next();
 });
-app.UseAntiforgery();
-app.MapStaticAssets();
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
-app.Run();
+webApplication.UseAntiforgery();
+webApplication.MapStaticAssets();
+webApplication.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+webApplication.Run();
+
+static bool IsUntrustedLocalRequest(IPAddress? remote, HostString host, string origin, string scheme) =>
+    remote is null || !IPAddress.IsLoopback(remote)
+        || !(host.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(host.Host, out var ip) && IPAddress.IsLoopback(ip))
+        || (origin.Length > 0 && (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+            || !uri.Authority.Equals(host.Value, StringComparison.OrdinalIgnoreCase)
+            || !uri.Scheme.Equals(scheme, StringComparison.OrdinalIgnoreCase)));

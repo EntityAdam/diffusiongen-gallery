@@ -14,5 +14,15 @@
     </PackageReference>
     <Using Include="Xunit" />
     <ProjectReference Include="..\..\Gallery.csproj" />
+    <ProjectReference Include="../Gallery.TestSupport/Gallery.TestSupport.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Gallery.ProcessMediator/Gallery.ProcessMediator.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="CopyProcessMediator" AfterTargets="Build">
+    <ItemGroup>
+      <ProcessMediatorFiles Include="../Gallery.ProcessMediator/bin/$(Configuration)/net10.0/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ProcessMediatorFiles)" DestinationFolder="$(OutDir)ProcessMediator" />
+  </Target>
 </Project>
