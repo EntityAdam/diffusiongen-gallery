@@ -172,6 +172,12 @@ public sealed partial class GalleryService
         return LibraryRules.SetCuration(image, rating, reviewed);
     }
 
+    public ImageRecordEdit SetDeletionMark(ImageRecordEdit image, bool markedForDeletion)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        return LibraryRules.SetDeletionMark(image, markedForDeletion);
+    }
+
     public ImageRecordEdit SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection)
     {
         ArgumentNullException.ThrowIfNull(image);

@@ -14,7 +14,7 @@ document.addEventListener("drop", preventImageDrop, true);
 
 // Keyboard curation for the focused or hovered gallery card.
 window.galleryGrid = {
-    keys: ["0", "1", "2", "3", "4", "5", "f", "delete", "x", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
+    keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
     attach: function (reference, doc) {
         const grid = window.galleryGrid;
         grid.detach();

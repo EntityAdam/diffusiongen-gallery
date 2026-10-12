@@ -18,5 +18,12 @@ internal static class LibraryRules
 
     public static ImageRecordEdit SetCuration(ImageRecordEdit imageRecordEdit, int? rating, bool? imageIsReviewed) =>
         imageRecordEdit with { Rating = rating ?? imageRecordEdit.Rating,
-            Reviewed = imageIsReviewed ?? imageRecordEdit.Reviewed };
+            Reviewed = (rating is > 0) || (imageIsReviewed ?? imageRecordEdit.Reviewed) };
+
+    public static ImageRecordEdit SetDeletionMark(ImageRecordEdit imageRecordEdit, bool markedForDeletion) =>
+        imageRecordEdit with
+        {
+            MarkedForDeletion = markedForDeletion,
+            Reviewed = markedForDeletion || imageRecordEdit.Reviewed
+        };
 }

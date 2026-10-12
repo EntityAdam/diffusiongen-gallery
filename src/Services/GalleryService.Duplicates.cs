@@ -195,7 +195,7 @@ public sealed partial class GalleryService
                 $"Kept images [{string.Join(", ", invalidKeeperIds)}] must belong to the group. Valid image IDs: [{string.Join(", ", groupIds)}].");
         var retainedIds = keep.ToHashSet(StringComparer.Ordinal);
         await UpdateManyAsync(groupIds,
-            record => record with { MarkedForDeletion = !retainedIds.Contains(record.Id) });
+            record => SetDeletionMark(record, !retainedIds.Contains(record.Id)));
     }
 
     private async Task<T?> ReadEncryptedSettingAsync<T>(string id, string purpose) where T : class

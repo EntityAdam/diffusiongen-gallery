@@ -53,6 +53,35 @@ public sealed class LibraryTests
         TestAssertions.True(image.Reviewed, "the previous reviewed state is preserved after validation fails");
     }
 
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(5, true)]
+    [InlineData(0, false)]
+    [InlineData(null, false)]
+    public void Curation_WhenRatingIsAssigned_MarksReviewedOnlyForNonzeroRatings(int? rating, bool expectedReviewed)
+    {
+        using var fixture = new TestVault();
+        var image = new ImageRecordEdit(new ImageRecord { Reviewed = false });
+
+        image = fixture.Service.SetCuration(image, rating, false);
+
+        Assert.Equal(expectedReviewed, image.Reviewed);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void DeletionMark_WhenChanged_OnlyMarkingReviewed(bool markedForDeletion, bool expectedReviewed)
+    {
+        using var fixture = new TestVault();
+        var image = new ImageRecordEdit(new ImageRecord { Reviewed = false });
+
+        image = fixture.Service.SetDeletionMark(image, markedForDeletion);
+
+        Assert.Equal(markedForDeletion, image.MarkedForDeletion);
+        Assert.Equal(expectedReviewed, image.Reviewed);
+    }
+
     [Fact]
     public async Task Organization_WhenAppliedToImage_PersistsEncryptedWithoutMovingFiles()
     {

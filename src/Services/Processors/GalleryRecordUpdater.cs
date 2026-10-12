@@ -6,8 +6,14 @@ namespace Gallery.Services.Processors;
 
 internal static class GalleryRecordUpdater
 {
-    public static ImageRecord Apply(ImageRecord original, Func<ImageRecordEdit, ImageRecordEdit> update) =>
-        update(new ImageRecordEdit(original)).ToRecord(original);
+    public static ImageRecord Apply(ImageRecord original, Func<ImageRecordEdit, ImageRecordEdit> update)
+    {
+        var updated = update(new ImageRecordEdit(original)).ToRecord(original);
+        if ((updated.Rating > 0 && updated.Rating != original.Rating)
+            || (updated.MarkedForDeletion && !original.MarkedForDeletion))
+            updated = updated with { Reviewed = true };
+        return updated;
+    }
 
     public static async Task UpdateBatchAsync(IReadOnlyList<string> ids, Func<string, Task> update)
     {

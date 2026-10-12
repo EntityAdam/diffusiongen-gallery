@@ -110,7 +110,7 @@ They combine with each other and with the full filter panel, and appear in the
 active-filter chips like any other filter.
 
 **Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
-Compact shows 48 smaller cards per page with condensed details, Comfortable shows
+Compact shows 49 smaller cards per page with condensed details, Comfortable shows
 24 and Large shows 12. The choice is saved encrypted per vault and restored on
 unlock.
 
@@ -127,22 +127,24 @@ Removal keeps its own separate deletion
 selection. Virtual collections do not change file locations.
 
 **Keyboard curation** works on the focused card, or the card under the pointer:
-`1`-`5` rate, `0` clears the rating, `F` toggles favorite, `Delete` toggles the
+`1`-`5` rate, `0` clears the rating, `F` toggles favorite, `D` toggles the
 deletion mark, `X` toggles selection (`Shift+X` selects a range), `Esc` clears the
 selection and the arrow keys move focus between cards. Shortcuts are ignored while
 typing in a field or while a dialog or the full screen viewer is open. When a marked
 image is hidden by the active filter, the next image moves under the pointer, so
-repeated `Delete` presses cull images in sequence.
+repeated `D` presses cull images in sequence.
 
 Gallery cards retain filenames and pixel dimensions. A shield icon indicates
 encrypted storage. Five interactive stars show each rating: click a star to save
-that rating, or click the current rating again to clear it. Card ratings do not
-change review status, favorites or deletion marks.
+that rating, or click the current rating again to clear it. Assigning a nonzero
+rating or marking an image for deletion also marks it reviewed; clearing a rating
+or removing a deletion mark does not change review status.
 
 **Organize** adds/removes collection membership, merges tags without
 discarding existing tags, and applies 0-5 ratings and reviewed/pending status.
-Rating and review status independently default to **Leave unchanged** so rating
-images cannot accidentally reset their review state, or vice versa.
+Rating and review status default to **Leave unchanged**. Assigning a nonzero
+rating marks the images reviewed; an explicit pending status does not override
+that rule.
 Select exactly two images for side-by-side comparison, with independent rating
 buttons that also mark each image reviewed. Filters support collections,
 minimum ratings, review status and unorganized images; sort by highest rating.

@@ -269,8 +269,8 @@
 
     private Task MarkAsync() => RunAsync(async () =>
     {
-        await Gallery.UpdateAsync(Current.Id, image => image with { MarkedForDeletion = !image.MarkedForDeletion });
-        latestImagesById[Current.Id] = ApplyEdit(Current, image => image with { MarkedForDeletion = !image.MarkedForDeletion });
+        await Gallery.UpdateAsync(Current.Id, image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
+        latestImagesById[Current.Id] = ApplyEdit(Current, image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
         await OnImageChanged.InvokeAsync(Current);
     });
 

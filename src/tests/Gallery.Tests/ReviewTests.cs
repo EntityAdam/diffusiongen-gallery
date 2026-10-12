@@ -10,6 +10,22 @@ namespace Gallery.Tests;
 public sealed class ReviewTests
 {
     [Fact]
+    public async Task Curation_WhenRatingOrDeletionMarkIsApplied_PersistsAsReviewed()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var rated = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "rated.png", "folder");
+        var marked = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "marked.png", "folder");
+
+        await fixture.Service.UpdateAsync(rated.Id, image => image with { Rating = 3 });
+        await fixture.Service.UpdateAsync(marked.Id, image => image with { MarkedForDeletion = true });
+
+        var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
+        TestAssertions.True(stored[rated.Id].Reviewed, "assigning a rating marks the persisted record reviewed");
+        TestAssertions.True(stored[marked.Id].Reviewed, "marking for deletion marks the persisted record reviewed");
+    }
+
+    [Fact]
     public async Task Review_WhenUndoIsApplied_RestoresCurationWithoutChangingNotesOrFiles()
     {
         // Arrange
