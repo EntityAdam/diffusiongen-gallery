@@ -19,7 +19,7 @@ using static Gallery.Tests.MediaAndComfyTests;
 namespace Gallery.Tests;
 
 // Legacy catalog documents are arranged independently; all observed behavior enters the
-// gallery list/workflow boundary, retaining the real parser, store and migration behavior.
+// gallery load/workflow boundary, retaining the real parser, store and migration behavior.
 [Trait("Category", "acceptance")]
 public sealed class TestComfyMetadataMigration
 {
@@ -35,7 +35,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert - gather the returned generation metadata
         var info = Assert.Single(records).Generation!;
@@ -60,7 +60,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, PngMetadata(("prompt", CustomSamplerPrompt)));
 
         // Act
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert - gather the returned generation metadata
         var info = Assert.Single(records).Generation!;
@@ -86,7 +86,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, CarrierMetadata(carrier));
 
         // Act
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert - the catalog exposes generation from either carrier
         Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", Assert.Single(records).Generation!.Prompt);
@@ -123,7 +123,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert - catalog migration preserves absence of generation metadata
         Assert.Null(Assert.Single(records).Generation);
@@ -146,7 +146,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ListAsync());
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.LoadAsync());
 
         // Assert - the boundary identifies the failing catalog image and preserves its parse cause
         TestAssertions.Exception<StoredMetadataFormatException>(expectedException, exception.InnerException);
@@ -163,7 +163,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert - gather the returned generation metadata
         var generation = Assert.Single(records).Generation!;

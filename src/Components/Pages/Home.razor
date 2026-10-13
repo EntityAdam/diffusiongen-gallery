@@ -1037,7 +1037,7 @@ else
 
     private async Task ReloadAsync()
     {
-        images = await Gallery.ListAsync();
+        images = await Gallery.LoadAsync();
         imagesById = images.ToDictionary(image => image.Id);
         UpdateDuplicateGroups();
         if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
@@ -1169,15 +1169,6 @@ else
         }
         workflow = value;
         ClearSelection();
-        if (value == "remove")
-        {
-            return RunAsync("Recovering interrupted removals...", async () =>
-            {
-                await Gallery.RecoverInterruptedRemovalsAsync();
-                page = 0;
-                await ReloadAsync();
-            });
-        }
         if (value == "duplicates")
         {
             return RunAsync("Loading duplicates...", async () =>

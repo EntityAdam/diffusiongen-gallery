@@ -30,7 +30,7 @@ public sealed class RemovalTests
         Assert.False(File.Exists(record.StoredPath));
         Assert.True(File.Exists(orphanPath));
 
-        await fixture.Service.RecoverInterruptedRemovalsAsync();
+        await fixture.Service.LoadAsync();
         Assert.True(File.Exists(record.StoredPath));
         Assert.False(File.Exists(stagedPath));
         Assert.False(File.Exists(orphanPath));
@@ -48,7 +48,7 @@ public sealed class RemovalTests
         await File.WriteAllBytesAsync(conflictingPath, [1, 2, 3]);
 
         Assert.Equal(record.Id, Assert.Single(await fixture.Service.ListAsync()).Id);
-        await Assert.ThrowsAsync<IOException>(() => fixture.Service.RecoverInterruptedRemovalsAsync());
+        await Assert.ThrowsAsync<IOException>(() => fixture.Service.LoadAsync());
         Assert.True(File.Exists(record.StoredPath));
         Assert.True(File.Exists(stagedPath));
         Assert.True(File.Exists(conflictingPath));
@@ -73,8 +73,7 @@ public sealed class RemovalTests
         File.Move(imageRecord.StoredPath, stagedPath);
 
         // Act
-        await testVault.Service.RecoverInterruptedRemovalsAsync();
-        var imageRecords = await testVault.Service.ListAsync();
+        var imageRecords = await testVault.Service.LoadAsync();
         var actualCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
         var stagedFileExists = File.Exists(stagedPath);
         await testVault.Service.VerifyImportedAsync(imageRecord.Id);
@@ -141,8 +140,7 @@ public sealed class RemovalTests
         File.Move(imageRecord.StoredPath, currentStagedPath);
 
         // Act
-        await testVault.Service.RecoverInterruptedRemovalsAsync();
-        var imageRecords = await testVault.Service.ListAsync();
+        var imageRecords = await testVault.Service.LoadAsync();
         var actualCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
         var currentStageExists = File.Exists(currentStagedPath);
         var legacyStageExists = File.Exists(legacyStagedPath);
@@ -173,7 +171,7 @@ public sealed class RemovalTests
         var expectedCatalogPayload = await testVault.RawStore.ReadRecordAsync(imageRecord.Id);
 
         // Act
-        var exception = await Assert.ThrowsAsync<IOException>(() => testVault.Service.RecoverInterruptedRemovalsAsync());
+        var exception = await Assert.ThrowsAsync<IOException>(() => testVault.Service.LoadAsync());
         var currentCiphertext = await File.ReadAllBytesAsync(currentStagedPath);
         var legacyCiphertext = await File.ReadAllBytesAsync(legacyStagedPath);
         var catalogPayload = await testVault.RawStore.ReadRecordAsync(imageRecord.Id);
@@ -592,8 +590,7 @@ public sealed class RemovalTests
         File.Move(record.StoredPath, stagedPath);
 
         // Act
-        await fixture.Service.RecoverInterruptedRemovalsAsync();
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert
         Assert.Equal(record.Id, Assert.Single(records).Id);
@@ -614,8 +611,7 @@ public sealed class RemovalTests
         await fixture.Store.DeleteAsync(record.Id);
 
         // Act
-        await fixture.Service.RecoverInterruptedRemovalsAsync();
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert
         Assert.Empty(records);

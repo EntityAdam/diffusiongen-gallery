@@ -252,44 +252,75 @@ public sealed partial class GalleryService
     public async Task<List<ImageRecord>> ListAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        return await ListWithKeyAsync(key.Bytes);
+    }
+
+    public async Task<List<ImageRecord>> LoadAsync()
+    {
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        return await LoadGalleryWithKeyAsync(key.Bytes);
+    }
+
+    private async Task<List<ImageRecord>> LoadGalleryWithKeyAsync(byte[] key)
+    {
         await galleryStore.Gate.WaitAsync();
         try
         {
-            await BackfillFingerprintsAsync(key.Bytes);
+            var records = await ListWithKeyAsync(key);
+            await RecoverInterruptedRemovalsAsync(records);
+            await BackfillFingerprintsAsync(key);
+            await BackfillGenerationAsync(records, key);
+            return records;
         }
         finally { galleryStore.Gate.Release(); }
-        var records = await ListWithKeyAsync(key.Bytes);
-        await BackfillGenerationAsync(records, key.Bytes);
-        return records;
     }
 
-    public async Task RecoverInterruptedRemovalsAsync()
+    private async Task RecoverInterruptedRemovalsAsync(List<ImageRecord> records)
     {
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        await galleryStore.Gate.WaitAsync();
-        try { await RecoverInterruptedRemovalsAsync(key.Bytes); }
-        finally { galleryStore.Gate.Release(); }
+        var stagedPaths = FindRemovalStagingFiles(records);
+        await RestoreCataloguedRemovalsAsync(records, stagedPaths);
+        DeleteOrphanedRemovals(records, stagedPaths);
     }
 
-    private async Task RecoverInterruptedRemovalsAsync(byte[] key)
+    private string[] FindRemovalStagingFiles(List<ImageRecord> records)
     {
-        var records = await ListWithKeyAsync(key);
-        var stagedPathsByStoredPath = records.Select(record => Path.GetDirectoryName(record.StoredPath)!)
-            .Distinct(StringComparer.Ordinal).Where(Directory.Exists)
-            .SelectMany(directory => Directory.EnumerateFiles(directory))
-            .Where(IsRemovalStagingFile)
-            .ToLookup(RemovalOriginalPath, StringComparer.Ordinal);
+        var imageRoot = Path.Combine(vaultStore.Root, "images");
+        var stagedPaths = Directory.Exists(imageRoot)
+            ? Directory.EnumerateFiles(imageRoot, "*.removing-*", SearchOption.AllDirectories).ToList()
+            : [];
+        var externalDirectories = records.Select(record => Path.GetDirectoryName(record.StoredPath)!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(directory => !IsWithinImageRoot(directory, imageRoot));
+        foreach (var directory in externalDirectories)
+        {
+            if (Directory.Exists(directory))
+                stagedPaths.AddRange(Directory.EnumerateFiles(directory, "*.removing-*"));
+        }
+        return stagedPaths.Where(IsRemovalStagingFile).ToArray();
+    }
+
+    private static bool IsWithinImageRoot(string directory, string imageRoot)
+    {
+        var relative = Path.GetRelativePath(imageRoot, directory);
+        return relative == "." || (!Path.IsPathRooted(relative) && relative != ".."
+            && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+    }
+
+    private static async Task RestoreCataloguedRemovalsAsync(List<ImageRecord> records, string[] stagedPaths)
+    {
+        var stagedPathsByStoredPath = stagedPaths.ToLookup(RemovalOriginalPath, StringComparer.OrdinalIgnoreCase);
         foreach (var record in records)
             await RecoverStagedRemovalAsync(record, stagedPathsByStoredPath[record.StoredPath].ToArray());
+    }
 
+    private void DeleteOrphanedRemovals(List<ImageRecord> records, string[] stagedPaths)
+    {
         var imageRoot = Path.Combine(vaultStore.Root, "images");
-        IEnumerable<string> stagedRemovals = Directory.Exists(imageRoot)
-            ? Directory.EnumerateFiles(imageRoot, "*.removing-*", SearchOption.AllDirectories)
-            : Array.Empty<string>();
-        foreach (var path in stagedRemovals)
+        var storedPaths = records.Select(record => record.StoredPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in stagedPaths)
         {
-            if (IsRemovalStagingFile(path) && !records.Any(record =>
-                string.Equals(record.StoredPath, RemovalOriginalPath(path), StringComparison.OrdinalIgnoreCase)))
+            if (IsWithinImageRoot(Path.GetDirectoryName(path)!, imageRoot)
+                && !storedPaths.Contains(RemovalOriginalPath(path)))
                 File.Delete(path);
         }
     }
@@ -351,34 +382,27 @@ public sealed partial class GalleryService
     {
         var staleRecordIndices = records.Select((record, index) => (record, index))
             .Where(item => item.record.MetadataVersion < ComfyMetadata.Version).ToList();
-        if (staleRecordIndices.Count == 0) return;
-        await galleryStore.Gate.WaitAsync();
-        try
+        foreach (var staleRecordIndex in staleRecordIndices)
         {
-            foreach (var staleRecordIndex in staleRecordIndices)
+            ImageRecord record;
+            int index;
+            (record, index) = staleRecordIndex;
+            try
             {
-                ImageRecord record;
-                int index;
-                (record, index) = staleRecordIndex;
-                try
+                var edit = new ImageRecordEdit(record)
                 {
-                    var original = await FindAsync(record.Id, key);
-                    var edit = new ImageRecordEdit(original)
-                    {
-                        Generation = ComfyMetadata.Extract(original.Metadata),
-                        MetadataVersion = ComfyMetadata.Version
-                    };
-                    var refreshedImageRecord = edit.ToRecord(original);
-                    await galleryStore.UpdateAsync(refreshedImageRecord, key);
-                    records[index] = refreshedImageRecord;
-                }
-                catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or StoredMetadataFormatException)
-                {
-                    throw new InvalidOperationException($"Could not backfill generation metadata for image '{record.Id}'.", exception);
-                }
+                    Generation = ComfyMetadata.Extract(record.Metadata),
+                    MetadataVersion = ComfyMetadata.Version
+                };
+                var refreshedImageRecord = edit.ToRecord(record);
+                await galleryStore.UpdateAsync(refreshedImageRecord, key);
+                records[index] = refreshedImageRecord;
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or StoredMetadataFormatException)
+            {
+                throw new InvalidOperationException($"Could not backfill generation metadata for image '{record.Id}'.", exception);
             }
         }
-        finally { galleryStore.Gate.Release(); }
     }
 
     private Task<List<ImageRecord>> ListWithKeyAsync(byte[] key) => galleryStore.ReadRecordsAsync(key);
