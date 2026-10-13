@@ -9,14 +9,72 @@ internal sealed class VaultSession : IDisposable
 {
     // The session owns its key; synchronized leases receive disposable copies.
     private readonly object syncRoot = new();
+    private readonly Timer? autoLockTimer;
     private byte[]? key;
     private UnlockedVaultSession? unlockedSession;
+    private DateTimeOffset lastAccessUtc = DateTimeOffset.UtcNow;
+    private TimeSpan? inactivityTimeout;
+
+    public event Action? AutoLocked;
+
+    public VaultSession() : this(TimeSpan.FromSeconds(5)) { }
+
+    internal VaultSession(TimeSpan timerInterval)
+    {
+        autoLockTimer = new Timer(OnAutoLockTimerTick, null, timerInterval, timerInterval);
+    }
+
+    public TimeSpan? InactivityTimeout
+    {
+        get { lock (syncRoot) return inactivityTimeout; }
+        set
+        {
+            bool locked;
+            lock (syncRoot)
+            {
+                inactivityTimeout = value;
+                locked = CheckInactivityTimeout();
+            }
+            if (locked) AutoLocked?.Invoke();
+        }
+    }
+
+    public DateTimeOffset LastAccessUtc
+    {
+        get { lock (syncRoot) return lastAccessUtc; }
+    }
+
+    public void RecordActivity()
+    {
+        bool locked;
+        lock (syncRoot)
+        {
+            if (key is not null)
+            {
+                locked = CheckInactivityTimeout();
+                if (!locked) lastAccessUtc = DateTimeOffset.UtcNow;
+            }
+            else
+            {
+                locked = false;
+            }
+        }
+        if (locked) AutoLocked?.Invoke();
+    }
+
     public bool IsUnlocked
     {
         get
         {
+            bool locked;
             lock (syncRoot)
-                return key is not null;
+            {
+                locked = CheckInactivityTimeout();
+                var unlocked = key is not null;
+                if (!locked) return unlocked;
+            }
+            AutoLocked?.Invoke();
+            return false;
         }
     }
 
@@ -25,28 +83,59 @@ internal sealed class VaultSession : IDisposable
         get
         {
             lock (syncRoot)
-                return key?.ToArray() ?? throw new InvalidOperationException("Unlock the vault first.");
+            {
+                if (CheckInactivityTimeout())
+                {
+                    // Locked due to timeout
+                }
+                else if (key is not null)
+                {
+                    lastAccessUtc = DateTimeOffset.UtcNow;
+                    return key.ToArray();
+                }
+            }
+            throw new InvalidOperationException("Unlock the vault first.");
         }
     }
 
     internal UnlockedVaultSession AcquireUnlockedSession()
     {
+        bool locked;
         lock (syncRoot)
-            return unlockedSession ?? throw new VaultLockedException("Unlock the vault first.", GalleryLogEvent.AcquireVaultKey,
-                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "locked")));
+        {
+            locked = CheckInactivityTimeout();
+            if (!locked)
+            {
+                lastAccessUtc = DateTimeOffset.UtcNow;
+                return unlockedSession ?? throw new VaultLockedException("Unlock the vault first.", GalleryLogEvent.AcquireVaultKey,
+                    new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "locked")));
+            }
+        }
+        AutoLocked?.Invoke();
+        throw new VaultLockedException("The vault locked automatically due to inactivity.", GalleryLogEvent.AcquireVaultKey,
+            new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "timed_out")));
     }
 
     private KeyLease BorrowKey(byte[] unlockedKey)
     {
+        bool locked;
         lock (syncRoot)
         {
-            if (!ReferenceEquals(key, unlockedKey))
-                throw new VaultLockedException("Unlock the vault first. This unlocked session has been revoked.",
-                    GalleryLogEvent.AcquireVaultKey,
-                    new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "revoked")));
-            var leasedKeyBytes = unlockedKey.ToArray();
-            return new KeyLease(() => leasedKeyBytes, () => CryptographicOperations.ZeroMemory(leasedKeyBytes));
+            locked = CheckInactivityTimeout();
+            if (!locked)
+            {
+                lastAccessUtc = DateTimeOffset.UtcNow;
+                if (!ReferenceEquals(key, unlockedKey))
+                    throw new VaultLockedException("Unlock the vault first. This unlocked session has been revoked.",
+                        GalleryLogEvent.AcquireVaultKey,
+                        new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "revoked")));
+                var leasedKeyBytes = unlockedKey.ToArray();
+                return new KeyLease(() => leasedKeyBytes, () => CryptographicOperations.ZeroMemory(leasedKeyBytes));
+            }
         }
+        AutoLocked?.Invoke();
+        throw new VaultLockedException("The vault locked automatically due to inactivity.", GalleryLogEvent.AcquireVaultKey,
+            new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "timed_out")));
     }
 
     public void Unlock(byte[] value)
@@ -57,6 +146,7 @@ internal sealed class VaultSession : IDisposable
         {
             ClearKey();
             key = replacementKey;
+            lastAccessUtc = DateTimeOffset.UtcNow;
             unlockedSession = new UnlockedVaultSession(() => BorrowKey(replacementKey));
         }
     }
@@ -67,7 +157,34 @@ internal sealed class VaultSession : IDisposable
             ClearKey();
     }
 
-    public void Dispose() => Lock();
+    public void Dispose()
+    {
+        autoLockTimer?.Dispose();
+        Lock();
+    }
+
+    private void OnAutoLockTimerTick(object? state)
+    {
+        bool locked;
+        lock (syncRoot)
+        {
+            locked = CheckInactivityTimeout();
+        }
+        if (locked) AutoLocked?.Invoke();
+    }
+
+    internal bool CheckInactivityTimeout()
+    {
+        if (key is not null && inactivityTimeout is { } timeout && timeout > TimeSpan.Zero)
+        {
+            if (DateTimeOffset.UtcNow - lastAccessUtc >= timeout)
+            {
+                ClearKey();
+                return true;
+            }
+        }
+        return false;
+    }
 
     private void ClearKey()
     {

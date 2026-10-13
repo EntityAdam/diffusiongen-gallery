@@ -104,7 +104,9 @@ else
                 }
             </div>
         }
-        <button disabled="@(busy || libraryJob.IsRunning)" @onclick="Lock">Lock vault</button>
+        <button type="button" class="danger panic-button" disabled="@busy" title="Panic: immediately lock vault, purge memory and wipe media (Ctrl+Shift+L)" @onclick="PanicAsync">
+            <span>&#9888; Panic</span> <kbd>Ctrl+Shift+L</kbd>
+        </button>
     </nav>
     <div class="workflow-content">
     <div class="collection-header">
@@ -194,11 +196,11 @@ else
             <p class="muted duplicate-hint">
                 @if (duplicateScan is null) { <span>Duplicates have not been scanned yet.</span> }
                 else { <span>Last duplicate scan found @VisibleDuplicateGroups.Sum(group => group.ImageIds.Length - 1).ToString("N0") likely duplicate(s), about @GalleryService.FormatBytes(VisibleDuplicateGroups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
-                <button type="button" class="text-button" disabled="@busy" @onclick='() => SwitchSettingsTabAsync("duplicates")'>Find duplicates &rarr;</button>
+                <button type="button" class="text-button" disabled="@busy" @onclick='() => SwitchWorkflowAsync("duplicates")'>Find duplicates &rarr;</button>
             </p>
         </section>
     }
-    @if (workflow == "settings" && settingsTab == "duplicates")
+    @if (workflow == "duplicates")
     {
         <section class="panel duplicates" aria-labelledby="duplicates-title">
             <div class="panel-header">
@@ -306,6 +308,34 @@ else
     {
         <section class="panel settings">
             <h3>Vault security</h3>
+            <div class="security-section">
+                <h4>Inactivity auto-lock</h4>
+                <p class="muted">Automatically drop encryption keys from memory and lock the vault when no mouse, keyboard or touch activity is detected.</p>
+                <div class="setting-row">
+                    <label for="auto-lock">Auto-lock timer</label>
+                    <select id="auto-lock" value="@autoLockMinutes" @onchange="UpdateAutoLockMinutesAsync" disabled="@busy">
+                        <option value="0">Disabled (never lock automatically)</option>
+                        <option value="5">5 minutes</option>
+                        <option value="15">15 minutes (default)</option>
+                        <option value="30">30 minutes</option>
+                        <option value="60">60 minutes (1 hour)</option>
+                    </select>
+                </div>
+                <p class="muted">
+                    @(autoLockMinutes == 0
+                        ? "Auto-lock is currently disabled. The vault remains unlocked until manually locked or closed."
+                        : $"The vault will automatically lock after {autoLockMinutes} minutes of inactivity.")
+                </p>
+            </div>
+
+            <div class="security-section">
+                <h4>Panic / Emergency quick-lock</h4>
+                <p class="muted">Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> (or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>, or <kbd>Shift</kbd>+<kbd>Esc</kbd>) anywhere in the application to instantly lock the vault, zero-out keys in RAM, revoke media blob URLs, and clear browser caches.</p>
+                <button type="button" class="danger" disabled="@busy" @onclick="PanicAsync">Trigger panic lock now</button>
+            </div>
+
+            <div class="security-section">
+                <h4>Passphrase</h4>
                 <form @onsubmit="ChangePassphraseAsync" @onsubmit:preventDefault>
                     <label for="new-passphrase">New passphrase</label>
                     <input id="new-passphrase" type="password" @bind="newPassphrase" minlength="14" autocomplete="off" required />
@@ -314,6 +344,7 @@ else
                     <p class="muted">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the vault header, database, and all .dpng files together.</p>
                     <button disabled="@busy" type="submit">Change passphrase</button>
                 </form>
+            </div>
             <p class="muted vault-location">Vault location: <code>@Gallery.VaultRoot</code></p>
         </section>
     }
@@ -615,12 +646,13 @@ else
     [
         ("library", "Library"), ("review", "Guided review"), ("organize", "Organize"),
         ("explore", "Explore & saved views"), ("ai", "Local intelligence"),
+        ("duplicates", "Duplicate finder"),
         ("remove", "Remove marked images"), ("ingest", "Ingest images"),
         ("settings", "Settings")
     ];
     private static readonly (string Id, string Name)[] SettingsTabs =
     [
-        ("overview", "Overview"), ("duplicates", "Duplicates"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
+        ("overview", "Overview"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
@@ -635,7 +667,7 @@ else
         && (backupDestinationType == "local"
             ? backupLocalDirectory.Trim().Length > 0
             : backupAzureContainer.Trim().Length > 0 && backupOptions.HasAzureCredentials);
-    private bool ShowsGallery => workflow is not ("ingest" or "settings");
+    private bool ShowsGallery => workflow is not ("ingest" or "settings" or "duplicates");
     private int PendingReviewCount => images.Count(image => !image.Reviewed && !image.MarkedForDeletion);
     private bool deleteSources, confirmSourceDeletion;
     private readonly HashSet<string> removalSelection = [];
@@ -660,6 +692,8 @@ else
     private List<DuplicateGroup> reviewGroups = [];
     private int reviewStartGroup;
     private DotNetObjectReference<Home>? gridReference;
+    private DotNetObjectReference<Home>? securityReference;
+    private int autoLockMinutes = UiPreferences.DefaultAutoLockMinutes;
     private sealed record QuickFilter(string Label, Func<GalleryFilter, bool> IsActive, Func<GalleryFilter, bool, GalleryFilter> Toggle, Func<IEnumerable<ImageRecord>, int> Count);
     private static readonly QuickFilter[] QuickFilters =
     [
@@ -727,6 +761,22 @@ else
         }
     }
 
+    protected override void OnInitialized()
+    {
+        Gallery.OnAutoLocked += HandleAutoLocked;
+    }
+
+    private void HandleAutoLocked()
+    {
+        _ = InvokeAsync(() =>
+        {
+            if (disposed || !Gallery.IsUnlocked) return;
+            Lock();
+            message = "Vault locked due to inactivity.";
+            StateHasChanged();
+        });
+    }
+
     private void SwitchCredential(bool recovery) { useRecovery = recovery; secret = ""; }
 
     private Task UnlockAsync() => RunAsync("Unlocking vault...", async () =>
@@ -739,7 +789,12 @@ else
                 else await Gallery.UnlockWithPassphraseAsync(secret);
                 workflow = useRecovery ? "settings" : "library";
                 settingsTab = useRecovery ? "security" : "overview";
-                density = (await Gallery.LoadPreferencesAsync()).GridDensity;
+                var preferences = await Gallery.LoadPreferencesAsync();
+                density = preferences.GridDensity;
+                autoLockMinutes = preferences.AutoLockMinutes;
+                Gallery.ConfigureAutoLock(autoLockMinutes);
+                try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
+                catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
                 await ReloadAsync();
             }
             else
@@ -758,7 +813,12 @@ else
     private Task FinishSetupAsync() => RunAsync("Opening gallery...", async () =>
     {
         if (!recoverySaved) throw new InvalidOperationException("Save your recovery words first.");
-        density = (await Gallery.LoadPreferencesAsync()).GridDensity;
+        var preferences = await Gallery.LoadPreferencesAsync();
+        density = preferences.GridDensity;
+        autoLockMinutes = preferences.AutoLockMinutes;
+        Gallery.ConfigureAutoLock(autoLockMinutes);
+        try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         await ReloadAsync();
         recoveryPhrase = "";
     });
@@ -768,6 +828,7 @@ else
         images = await Gallery.ListAsync();
         imagesById = images.ToDictionary(image => image.Id);
         UpdateDuplicateGroups();
+        if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
         settings = await Gallery.SettingsAsync();
         selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
         if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }
@@ -822,6 +883,14 @@ else
         }
         workflow = value;
         ClearSelection();
+        if (value == "duplicates")
+        {
+            return RunAsync("Loading duplicates...", async () =>
+            {
+                await LoadCachedDuplicatesAsync();
+                await LoadDuplicateThumbnailsAsync();
+            });
+        }
         if (value == "settings")
         {
             settingsTab = "overview";
@@ -838,11 +907,6 @@ else
     private Task SwitchSettingsTabAsync(string value)
     {
         settingsTab = value;
-        if (value == "duplicates") return RunAsync("Loading duplicates...", async () =>
-        {
-            await LoadCachedDuplicatesAsync();
-            await LoadDuplicateThumbnailsAsync();
-        });
         return value == "overview" && storageOverview is null
             ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync())
             : value == "backups" && backupOptions is null
@@ -880,7 +944,9 @@ else
     {
         var result = await Gallery.CreateIncrementalBackupAsync();
         backupOptions = await Gallery.LoadBackupOptionsAsync();
-        message = $"Incremental backup created: {result.MediaFilesCopied:N0} changed media file(s) of {result.TotalMediaFiles:N0}, {GalleryService.FormatBytes(result.BytesWritten)}.";
+        message = result.Skipped
+            ? $"No changes since the last backup ({result.BackupName}); no incremental backup was created."
+            : $"Incremental backup created: {result.MediaFilesCopied:N0} changed media file(s) of {result.TotalMediaFiles:N0}, {GalleryService.FormatBytes(result.BytesWritten)}.";
     });
     private async Task LoadCachedDuplicatesAsync()
     {
@@ -940,7 +1006,7 @@ else
         return RunAsync("Refreshing library...", async () =>
         {
             await ReloadAsync();
-            if (workflow == "settings" && settingsTab == "duplicates") await LoadDuplicateThumbnailsAsync();
+            if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
             message = summary;
         });
     }
@@ -1015,7 +1081,7 @@ else
         density = value;
         page = Math.Min(first / PageSize, PageCount - 1);
         await LoadThumbnailsAsync();
-        await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = value });
+        await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = value, AutoLockMinutes = autoLockMinutes });
     });
 
     private async Task CurateAsync(IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update, string done)
@@ -1107,6 +1173,8 @@ else
         if (!firstRender) return;
         gridReference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("galleryGrid.attach", gridReference);
+        securityReference = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("gallerySecurity.attach", securityReference, autoLockMinutes);
     }
     private Task PreviousAsync() => RunAsync("Loading previews...", async () => { page--; await LoadThumbnailsAsync(); });
     private Task NextAsync() => RunAsync("Loading previews...", async () => { page++; await LoadThumbnailsAsync(); });
@@ -1385,8 +1453,50 @@ else
         if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or vault settings.");
     }
 
+    private async Task UpdateAutoLockMinutesAsync(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var minutes))
+        {
+            autoLockMinutes = Math.Clamp(minutes, 0, 1440);
+            Gallery.ConfigureAutoLock(autoLockMinutes);
+            try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
+            catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+            await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = density, AutoLockMinutes = autoLockMinutes });
+        }
+    }
+
+    [JSInvokable]
+    public async Task TriggerPanicLock()
+    {
+        await InvokeAsync(PanicAsync);
+    }
+
+    [JSInvokable]
+    public async Task TriggerAutoLock()
+    {
+        await InvokeAsync(() =>
+        {
+            if (!Gallery.IsUnlocked) return;
+            Lock();
+            message = "Vault locked due to inactivity.";
+            StateHasChanged();
+        });
+    }
+
+    private async Task PanicAsync()
+    {
+        try { await JS.InvokeVoidAsync("gallerySecurity.purgeAllMedia"); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        Gallery.Panic();
+        Lock();
+        message = "Vault locked and memory purged.";
+        StateHasChanged();
+    }
+
     private void Lock()
     {
+        try { _ = JS.InvokeVoidAsync("gallerySecurity.purgeAllMedia"); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         Gallery.LockVault();
         images.Clear();
         thumbnails.Clear();
@@ -1429,7 +1539,9 @@ else
     public void Dispose()
     {
         disposed = true;
+        Gallery.OnAutoLocked -= HandleAutoLocked;
         Lock();
         gridReference?.Dispose();
+        securityReference?.Dispose();
     }
 }

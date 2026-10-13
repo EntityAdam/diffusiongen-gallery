@@ -53,4 +53,97 @@ public static class LifecycleContracts
         Assert.Equal(original, snapshot.ToArray());
         Assert.Equal(new byte[] { 1, 2, 3 }, original);
     }
+
+    [Fact]
+    public static async Task VaultSession_WhenInactivityTimeoutElapses_ThenAutoLocksAndRaisesEvent()
+    {
+        // Arrange
+        using var session = new VaultSession(TimeSpan.FromMilliseconds(20));
+        byte[] key = Enumerable.Repeat((byte)99, 32).ToArray();
+        session.Unlock(key);
+        session.InactivityTimeout = TimeSpan.FromMilliseconds(50);
+        var autoLockedTcs = new TaskCompletionSource<bool>();
+        session.AutoLocked += () => autoLockedTcs.TrySetResult(true);
+
+        // Act
+        Assert.True(session.IsUnlocked);
+        var signaled = await Task.WhenAny(autoLockedTcs.Task, Task.Delay(2000));
+
+        // Assert
+        Assert.Equal(autoLockedTcs.Task, signaled);
+        Assert.False(session.IsUnlocked);
+        Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession());
+    }
+
+    [Fact]
+    public static async Task VaultSession_WhenActivityRecorded_ThenPostponesAutoLock()
+    {
+        // Arrange
+        using var session = new VaultSession(TimeSpan.FromMilliseconds(20));
+        byte[] key = Enumerable.Repeat((byte)99, 32).ToArray();
+        session.Unlock(key);
+        session.InactivityTimeout = TimeSpan.FromMilliseconds(250);
+
+        // Act - record activity halfway through
+        await Task.Delay(130);
+        session.RecordActivity();
+        Assert.True(session.IsUnlocked);
+
+        // Wait another 130ms (total 260ms from start, but only 130ms since RecordActivity)
+        await Task.Delay(130);
+        Assert.True(session.IsUnlocked);
+
+        // Wait for timeout to actually elapse (another 160ms)
+        await Task.Delay(160);
+        Assert.False(session.IsUnlocked);
+    }
+
+    [Fact]
+    public static void VaultSession_WhenAutoLockDisabled_ThenDoesNotAutoLock()
+    {
+        // Arrange
+        using var session = new VaultSession();
+        byte[] key = Enumerable.Repeat((byte)99, 32).ToArray();
+        session.Unlock(key);
+        session.InactivityTimeout = TimeSpan.Zero;
+
+        // Act
+        session.CheckInactivityTimeout();
+
+        // Assert
+        Assert.True(session.IsUnlocked);
+    }
+
+    [Fact]
+    public static void VaultSession_Lock_RevokesUnlockedSessionAndZeroesKey()
+    {
+        // Arrange
+        using var session = new VaultSession();
+        byte[] key = Enumerable.Repeat((byte)99, 32).ToArray();
+        session.Unlock(key);
+        var unlockedSession = session.AcquireUnlockedSession();
+
+        // Act
+        session.Lock();
+
+        // Assert
+        Assert.False(session.IsUnlocked);
+        Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession());
+        Assert.Throws<VaultLockedException>(() => unlockedSession.Borrow());
+    }
+
+    [Fact]
+    public static async Task GalleryService_Panic_LocksVaultImmediately()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        Assert.True(fixture.Service.IsUnlocked);
+
+        // Act
+        fixture.Service.Panic();
+
+        // Assert
+        Assert.False(fixture.Service.IsUnlocked);
+    }
 }

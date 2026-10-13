@@ -93,6 +93,17 @@ form > button { margin-top: 18px; }
 .overview-stats span { font-size: 12px; }
 @media (max-width: 760px) { .overview-stats { grid-template-columns: 1fr; } }
 .settings p { font-size: 12px; margin-top: 14px; }
+.security-section { border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 16px 0; background: #10161c; }
+.security-section h4 { margin: 0 0 6px; font-size: 14px; }
+.security-section p { margin: 6px 0 12px; font-size: 12px; color: var(--muted); }
+.security-section .setting-row { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.security-section select { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 13px; }
+.security-section kbd { font-size: 11px; padding: 2px 6px; background: #ffffff14; border: 1px solid #ffffff29; border-radius: 4px; color: var(--fg); }
+button.danger { color: #f2a8a4; border-color: #f2a8a444; background: #f2a8a411; }
+button.danger:hover:not(:disabled) { background: #f2a8a424; border-color: #f2a8a488; }
+.workflow-nav button.panic-button { display: flex; justify-content: space-between; align-items: center; color: #f2a8a4; border: 1px solid #f2a8a433; background: #f2a8a40d; padding: 8px 10px; font-size: 12px; }
+.workflow-nav button.panic-button:hover:not(:disabled) { background: #f2a8a41f; border-color: #f2a8a466; }
+.workflow-nav button.panic-button kbd { font-size: 10px; padding: 2px 5px; background: #ffffff12; border: 1px solid #ffffff22; border-radius: 4px; color: var(--muted); }
 .vault-location code { overflow-wrap: anywhere; }
 .gallery-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 28px; align-items: start; }
 .filters { padding: 22px; position: sticky; top: 20px; }

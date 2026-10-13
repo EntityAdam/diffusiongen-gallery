@@ -50,6 +50,70 @@ internal sealed class GalleryStore(string databasePath)
         source.BackupDatabase(destination);
     }
 
+    // Hashes the schema and every row of a snapshot in a deterministic order. The file bytes cannot be
+    // used directly because writing backup status into the settings table changes the database on every run.
+    public static async Task<string> ComputeContentFingerprintAsync(string snapshotPath, string excludedSettingId)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = snapshotPath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString());
+        await connection.OpenAsync();
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+        var tables = new List<string>();
+        using (var schemaCommand = connection.CreateCommand())
+        {
+            schemaCommand.CommandText = "SELECT type, name, COALESCE(sql, '') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name";
+            await using var reader = await schemaCommand.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                AppendFingerprintValue(hash, reader.GetString(0));
+                AppendFingerprintValue(hash, reader.GetString(1));
+                AppendFingerprintValue(hash, reader.GetString(2));
+                if (reader.GetString(0) == "table") tables.Add(reader.GetString(1));
+            }
+        }
+
+        foreach (var table in tables)
+        {
+            using var rowsCommand = connection.CreateCommand();
+            var quoted = "\"" + table.Replace("\"", "\"\"") + "\"";
+            rowsCommand.CommandText = table == "settings"
+                ? $"SELECT * FROM {quoted} WHERE id <> $excluded ORDER BY rowid"
+                : $"SELECT * FROM {quoted} ORDER BY rowid";
+            if (table == "settings")
+                rowsCommand.Parameters.AddWithValue("$excluded", excludedSettingId);
+            AppendFingerprintValue(hash, "table:" + table);
+            await using var reader = await rowsCommand.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                AppendFingerprintValue(hash, "row");
+                for (var column = 0; column < reader.FieldCount; column++)
+                    AppendFingerprintValue(hash, reader.IsDBNull(column) ? null : reader.GetValue(column));
+            }
+        }
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static void AppendFingerprintValue(IncrementalHash hash, object? value)
+    {
+        var (tag, bytes) = value switch
+        {
+            null => ((byte)0, Array.Empty<byte>()),
+            byte[] blob => ((byte)1, blob),
+            string text => ((byte)2, System.Text.Encoding.UTF8.GetBytes(text)),
+            long integer => ((byte)3, BitConverter.GetBytes(integer)),
+            double real => ((byte)4, BitConverter.GetBytes(real)),
+            _ => ((byte)5, System.Text.Encoding.UTF8.GetBytes(Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? ""))
+        };
+        hash.AppendData([tag]);
+        hash.AppendData(BitConverter.GetBytes(bytes.Length));
+        hash.AppendData(bytes);
+    }
+
     private async Task InitializeSchemaAsync(SqliteConnection sqliteConnection)
     {
         await schemaGate.WaitAsync();

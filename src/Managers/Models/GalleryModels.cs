@@ -93,7 +93,9 @@ public sealed record UiPreferences
 {
     public const string ComfortableDensity = "comfortable";
     public static readonly ImmutableArray<string> Densities = ["compact", ComfortableDensity, "large"];
+    public const int DefaultAutoLockMinutes = 15;
     public string GridDensity { get; init; } = ComfortableDensity;
+    public int AutoLockMinutes { get; init; } = DefaultAutoLockMinutes;
 }
 
 public sealed record DuplicateGroup(
@@ -138,7 +140,8 @@ public sealed record BackupRunResult(
     int MediaFilesCopied,
     int TotalMediaFiles,
     long BytesWritten,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    bool Skipped = false);
 
 public sealed record GalleryFilter
 {

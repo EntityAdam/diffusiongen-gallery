@@ -99,3 +99,114 @@ test("full screen viewer forwards declared extra keys only", async () => {
     window.galleryViewer.detach(element);
     assert.equal(keydown, null);
 });
+
+test("gallerySecurity recognizes panic hotkeys and triggers panic lock", async () => {
+    const listeners = new Map();
+    const calls = [];
+    const doc = {
+        activeElement: null,
+        addEventListener(name, handler, capture) {
+            listeners.set(name, handler);
+        },
+        removeEventListener(name) { listeners.delete(name); },
+        querySelectorAll() { return []; }
+    };
+    const revokedUrls = [];
+    const window = {
+        URL: {
+            revokeObjectURL(url) { revokedUrls.push(url); }
+        }
+    };
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+        window, Element: class { }, document: { addEventListener() { } }, URL: window.URL, setInterval, clearInterval, Date
+    });
+
+    const dotNetRef = {
+        invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); }
+    };
+    window.gallerySecurity.attach(dotNetRef, 15, doc);
+
+    window.gallerySecurity.trackUrl("blob:http://localhost/test-blob-1");
+    assert.equal(window.gallerySecurity.activeUrls.has("blob:http://localhost/test-blob-1"), true);
+
+    const keydown = listeners.get("keydown");
+    assert.ok(keydown);
+
+    keydown({ key: "l", ctrlKey: true, shiftKey: false, defaultPrevented: false, preventDefault() {} });
+    assert.equal(calls.length, 0);
+
+    let prevented = false;
+    keydown({ key: "L", ctrlKey: true, shiftKey: true, defaultPrevented: false, preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.deepEqual(calls, [["TriggerPanicLock"]]);
+    assert.deepEqual(revokedUrls, ["blob:http://localhost/test-blob-1"]);
+    assert.equal(window.gallerySecurity.activeUrls.size, 0);
+
+    assert.equal(window.gallerySecurity.isPanicKey({ key: "l", altKey: true, shiftKey: true }), true);
+    assert.equal(window.gallerySecurity.isPanicKey({ key: "Escape", shiftKey: true }), true);
+    assert.equal(window.gallerySecurity.isPanicKey({ key: "Escape", shiftKey: false }), false);
+
+    window.gallerySecurity.detach();
+});
+
+test("gallerySecurity purgeAllMedia clears tracked blobs and DOM images/videos", () => {
+    const revoked = [];
+    const window = {
+        URL: { revokeObjectURL: url => revoked.push(url) }
+    };
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+        window, Element: class { }, document: { addEventListener() { } }, URL: window.URL
+    });
+
+    window.gallerySecurity.trackUrl("blob:http://localhost/image-1");
+    window.gallerySecurity.trackUrl("blob:http://localhost/video-1");
+    window.gallerySecurity.trackUrl("https://external.com/not-blob");
+
+    const img = { src: "blob:http://localhost/image-1", removeAttribute() {} };
+    let videoPaused = false;
+    const video = { src: "blob:http://localhost/video-1", pause() { videoPaused = true; }, load() {} };
+    const doc = {
+        querySelectorAll(sel) {
+            if (sel === "img") return [img];
+            if (sel === "video") return [video];
+            return [];
+        }
+    };
+
+    window.gallerySecurity.purgeAllMedia(doc);
+    assert.equal(revoked.includes("blob:http://localhost/image-1"), true);
+    assert.equal(revoked.includes("blob:http://localhost/video-1"), true);
+    assert.equal(img.src.startsWith("data:image/gif;base64"), true);
+    assert.equal(video.src, "");
+    assert.equal(videoPaused, true);
+    assert.equal(window.gallerySecurity.activeUrls.size, 0);
+});
+
+test("gallerySecurity idle auto-lock triggers after configured inactivity", async () => {
+    const listeners = new Map();
+    const calls = [];
+    const doc = {
+        addEventListener(name, handler) { listeners.set(name, handler); },
+        removeEventListener(name) { listeners.delete(name); },
+        querySelectorAll() { return []; }
+    };
+    const window = {
+        URL: { revokeObjectURL() {} }
+    };
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+        window, Element: class { }, document: { addEventListener() { } }, URL: window.URL, setInterval, clearInterval, Date
+    });
+
+    const dotNetRef = {
+        invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); }
+    };
+    window.gallerySecurity.attach(dotNetRef, 0.0001, doc);
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const visibilityHandler = listeners.get("visibilitychange");
+    doc.visibilityState = "visible";
+    visibilityHandler();
+
+    assert.deepEqual(calls, [["TriggerAutoLock"]]);
+    window.gallerySecurity.detach();
+});
