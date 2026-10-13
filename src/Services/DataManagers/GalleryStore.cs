@@ -15,6 +15,7 @@ internal sealed class GalleryStore(string databasePath)
 
     private readonly string databasePath = Path.GetFullPath(databasePath);
     public SemaphoreSlim Gate { get; } = new(1);
+    public SemaphoreSlim BackupGate { get; } = new(1);
     private readonly SemaphoreSlim schemaGate = new(1);
 
     private async Task<SqliteConnection> OpenAsync()
@@ -35,6 +36,18 @@ internal sealed class GalleryStore(string databasePath)
             await sqliteConnection.DisposeAsync();
             throw;
         }
+    }
+
+    public async Task CreateSnapshotAsync(string destinationPath)
+    {
+        await using var source = await OpenAsync();
+        await using var destination = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = destinationPath,
+            Pooling = false
+        }.ToString());
+        await destination.OpenAsync();
+        source.BackupDatabase(destination);
     }
 
     private async Task InitializeSchemaAsync(SqliteConnection sqliteConnection)

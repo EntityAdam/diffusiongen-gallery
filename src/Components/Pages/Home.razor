@@ -262,6 +262,46 @@ else
     {
         <LlmEndpointSettings SavedSettings="settings" Saved="value => settings = value" />
     }
+    @if (workflow == "settings" && settingsTab == "backups")
+    {
+        <section class="panel settings" aria-labelledby="backup-settings-title">
+            <div class="panel-header"><h3 id="backup-settings-title">Vault backups</h3></div>
+            <p class="muted">Backups contain the vault header, a consistent database snapshot, and encrypted media. Incremental backups include a fresh database snapshot and only changed media; keep the full backup and every later incremental archive in the chain.</p>
+            <label for="backup-destination">Destination</label>
+            <select id="backup-destination" @bind="backupDestinationType" disabled="@busy">
+                <option value="local">Local folder or NAS (SMB)</option>
+                <option value="azure">Azure Storage Account</option>
+            </select>
+            @if (backupDestinationType == "local")
+            {
+                <label for="backup-local-directory">Folder path</label>
+                <input id="backup-local-directory" @bind="backupLocalDirectory" placeholder="\\NAS\Backups\DiffusionGen" disabled="@busy" />
+                <p class="muted">The app uses its Windows account to access the folder. Ensure that account can create and write files on the share.</p>
+            }
+            else
+            {
+                <label for="backup-azure-container">Blob container</label>
+                <input id="backup-azure-container" @bind="backupAzureContainer" placeholder="gallery-backups" disabled="@busy" />
+                <label for="backup-azure-prefix">Optional blob prefix</label>
+                <input id="backup-azure-prefix" @bind="backupAzurePrefix" placeholder="diffusiongen" disabled="@busy" />
+                <label for="backup-azure-connection">Storage connection string</label>
+                <input id="backup-azure-connection" type="password" @bind="backupAzureConnectionString"
+                       placeholder="@(backupOptions?.HasAzureCredentials == true ? "Saved securely; leave blank to keep it" : "Paste the Storage Account connection string")"
+                       autocomplete="new-password" disabled="@busy" />
+                <p class="muted">The connection string is encrypted inside the vault and is never displayed after saving. Use a dedicated account/container with access limited to backups.</p>
+            }
+            <div class="actions">
+                <button type="button" disabled="@busy" @onclick="SaveBackupOptionsAsync">Save destination</button>
+                <button type="button" class="primary" disabled="@(busy || !BackupDestinationReady)" @onclick="CreateFullBackupAsync">Create full backup</button>
+                <button type="button" disabled="@(busy || !BackupDestinationReady || backupOptions?.LastBackupName is null)" @onclick="CreateIncrementalBackupAsync">Create incremental backup</button>
+            </div>
+            @if (backupOptions?.LastBackupName is { } lastBackup)
+            {
+                <p class="muted">Last successful @backupOptions.LastBackupType backup: <code>@lastBackup</code></p>
+            }
+            <p class="muted">A full backup starts a new chain. Incremental backups require the previous archive to remain in the same destination. No backup is deleted automatically.</p>
+        </section>
+    }
     @if (workflow == "settings" && settingsTab == "security")
     {
         <section class="panel settings">
@@ -580,10 +620,21 @@ else
     ];
     private static readonly (string Id, string Name)[] SettingsTabs =
     [
-        ("overview", "Overview"), ("duplicates", "Duplicates"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
+        ("overview", "Overview"), ("duplicates", "Duplicates"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
+    private BackupOptions? backupOptions;
+    private string backupDestinationType = "local", backupLocalDirectory = "", backupAzureContainer = "", backupAzurePrefix = "", backupAzureConnectionString = "";
+    private bool BackupDestinationReady => backupOptions is not null
+        && backupAzureConnectionString.Length == 0
+        && backupOptions.DestinationType == backupDestinationType
+        && backupOptions.LocalDirectory == backupLocalDirectory.Trim()
+        && backupOptions.AzureContainer == backupAzureContainer.Trim()
+        && backupOptions.AzurePrefix == backupAzurePrefix.Trim().Trim('/')
+        && (backupDestinationType == "local"
+            ? backupLocalDirectory.Trim().Length > 0
+            : backupAzureContainer.Trim().Length > 0 && backupOptions.HasAzureCredentials);
     private bool ShowsGallery => workflow is not ("ingest" or "settings");
     private int PendingReviewCount => images.Count(image => !image.Reviewed && !image.MarkedForDeletion);
     private bool deleteSources, confirmSourceDeletion;
@@ -794,8 +845,43 @@ else
         });
         return value == "overview" && storageOverview is null
             ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync())
+            : value == "backups" && backupOptions is null
+                ? RunAsync("Loading backup settings...", async () =>
+                {
+                    backupOptions = await Gallery.LoadBackupOptionsAsync();
+                    backupDestinationType = backupOptions.DestinationType;
+                    backupLocalDirectory = backupOptions.LocalDirectory;
+                    backupAzureContainer = backupOptions.AzureContainer;
+                    backupAzurePrefix = backupOptions.AzurePrefix;
+                })
             : Task.CompletedTask;
     }
+
+    private Task SaveBackupOptionsAsync() => RunAsync("Saving backup destination...", async () =>
+    {
+        backupOptions = await Gallery.SaveBackupOptionsAsync(backupDestinationType, backupLocalDirectory,
+            backupAzureContainer, backupAzurePrefix, backupAzureConnectionString);
+        backupAzureConnectionString = "";
+        backupDestinationType = backupOptions.DestinationType;
+        backupLocalDirectory = backupOptions.LocalDirectory;
+        backupAzureContainer = backupOptions.AzureContainer;
+        backupAzurePrefix = backupOptions.AzurePrefix;
+        message = "Backup destination saved in the encrypted vault.";
+    });
+
+    private Task CreateFullBackupAsync() => RunAsync("Creating full backup...", async () =>
+    {
+        var result = await Gallery.CreateFullBackupAsync();
+        backupOptions = await Gallery.LoadBackupOptionsAsync();
+        message = $"Full backup created: {result.MediaFilesCopied:N0} encrypted media file(s), {GalleryService.FormatBytes(result.BytesWritten)}.";
+    });
+
+    private Task CreateIncrementalBackupAsync() => RunAsync("Creating incremental backup...", async () =>
+    {
+        var result = await Gallery.CreateIncrementalBackupAsync();
+        backupOptions = await Gallery.LoadBackupOptionsAsync();
+        message = $"Incremental backup created: {result.MediaFilesCopied:N0} changed media file(s) of {result.TotalMediaFiles:N0}, {GalleryService.FormatBytes(result.BytesWritten)}.";
+    });
     private async Task LoadCachedDuplicatesAsync()
     {
         duplicateScan ??= await Gallery.CachedDuplicateScanAsync();
@@ -1315,6 +1401,9 @@ else
         workflow = "library";
         settingsTab = "overview";
         storageOverview = null;
+        backupOptions = null;
+        backupDestinationType = "local";
+        backupLocalDirectory = backupAzureContainer = backupAzurePrefix = backupAzureConnectionString = "";
         browsingFilter = null;
         libraryJob = new(false, "", "", 0, false);
         deleteSources = confirmSourceDeletion = false;

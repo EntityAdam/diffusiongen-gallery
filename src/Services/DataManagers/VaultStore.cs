@@ -38,6 +38,17 @@ internal sealed class VaultStore
         Root = Path.GetFullPath(root);
     }
 
+    public async Task CopyHeaderAsync(string destinationPath)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            if (!Exists) throw new InvalidOperationException("The vault header is missing.");
+            File.Copy(HeaderPath, destinationPath, overwrite: false);
+        }
+        finally { gate.Release(); }
+    }
+
     private static bool IsValidPassphrase(string? passphrase) =>
         !string.IsNullOrWhiteSpace(passphrase) && passphrase.Length >= 14;
 
