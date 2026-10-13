@@ -123,6 +123,23 @@ public sealed record StorageOverview(
 
 }
 
+public sealed record BackupOptions(
+    string DestinationType,
+    string LocalDirectory,
+    string AzureContainer,
+    string AzurePrefix,
+    bool HasAzureCredentials,
+    string? LastBackupName,
+    string? LastBackupType);
+
+public sealed record BackupRunResult(
+    string BackupType,
+    string BackupName,
+    int MediaFilesCopied,
+    int TotalMediaFiles,
+    long BytesWritten,
+    DateTimeOffset CreatedAt);
+
 public sealed record GalleryFilter
 {
     public const string AnyValue = "all";

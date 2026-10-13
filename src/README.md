@@ -66,14 +66,31 @@ only to loopback. Gallery02 does not import or share src03's configuration.
 
 The left navigation separates Library, Guided review, Organize, Explore & saved
 views, Local intelligence, Remove marked images, Ingest images and Settings.
-**Settings** opens on a **Gallery overview** with tabs for **Duplicates**, **LLM endpoints** and
-**Vault security**. The overview shows database size (`gallery.db` plus its WAL/SHM
+**Settings** opens on a **Gallery overview** with tabs for **Duplicates**, **Backups**,
+**LLM endpoints** and **Vault security**. The overview shows database size (`gallery.db` plus its WAL/SHM
 files, which include encrypted thumbnails), total file count (catalogued encrypted
 image files plus vault header/database files) and total size on disk, auto-scaled
 from B through PB. Measurements are cached encrypted in the vault with a "Last
 updated" time and are only recalculated when you select **Refresh** (or the first
 time no cached overview exists). Catalogued images missing from disk are reported
 and excluded from the totals. The overview also summarizes the last duplicate scan.
+
+**Settings > Backups** writes ZIP snapshot archives to one configured destination:
+a local folder/SMB share or an Azure Blob Storage container. The app uses its Windows
+account for SMB access. Azure requires an existing container and a Storage Account
+connection string; that credential is stored encrypted in the vault and is not shown
+again after saving. Use a dedicated Storage Account for backups. A **full backup**
+contains `vault.json`, a consistent SQLite database snapshot (including encrypted
+thumbnails), an encrypted media manifest, and all catalogued encrypted `.dpng` and
+`.dmp4` files, including media moved outside the vault folder. An **incremental
+backup** includes a fresh database/header snapshot and only new or changed encrypted
+media. Each archive has a companion `.manifest` file; manifests are encrypted and
+link each increment to its parent. Keep the full archive, every subsequent incremental
+archive in that chain, and their `.manifest` companions together. A new full backup
+starts a separate chain. Backups are manual; the app does not schedule runs or prune
+older archives. Backup destinations cannot be inside the vault. The stored media paths
+are absolute, so restoring a vault on a different machine or drive requires restoring
+media to the paths recorded in that backup as well.
 
 **Settings > Duplicates** finds likely duplicates, including resized or
 re-encoded copies that import's exact-byte check cannot catch. Each image gets a
@@ -364,10 +381,11 @@ makes the vault's encrypted content unrecoverable, assuming strong credentials
 and uncompromised cryptography. Damage or loss of the vault header is also
 unrecoverable without its backup.
 
-Back up `vault.json`, `gallery.db` (including any live SQLite WAL), and **all**
-`.dpng` files, including files moved outside the default vault folder. Prefer
-backups while the application is stopped. A passphrase change affects only the
-current header; old backups can still be unlocked using their old passphrase.
+Use **Settings > Backups** to create consistent live snapshots of `vault.json`,
+`gallery.db`, and all catalogued encrypted media. A full backup plus its incremental
+chain is needed to reconstruct the latest snapshot; keep every archive and companion
+manifest. A passphrase change affects only the current header; backups made before
+that change can still be unlocked using the old passphrase.
 Stored file paths are absolute: moving a vault to another machine/drive is not
 an automatic portable-library migration.
 
