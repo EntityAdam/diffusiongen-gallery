@@ -211,7 +211,7 @@ public sealed class MediaAndComfyTests
     }
 
     [Fact]
-    public async Task List_WhenLegacyRecordLacksGeneration_ThenBackfillsGeneration()
+    public async Task Load_WhenLegacyRecordLacksGeneration_ThenBackfillsGeneration()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -220,7 +220,7 @@ public sealed class MediaAndComfyTests
         await fixture.Service.UpdateAsync(record.Id, current => current with { Generation = null, MetadataVersion = 0 });
 
         // Act
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Service.LoadAsync();
 
         // Assert
         var listed = Assert.Single(records);

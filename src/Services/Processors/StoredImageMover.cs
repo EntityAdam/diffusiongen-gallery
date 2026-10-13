@@ -30,15 +30,4 @@ internal static class StoredImageMover
     }
 
     public static void RollBackCopiedDestination(string target) => File.Delete(target);
-
-    public static void RemoveOldCopy(string source, string target)
-    {
-        try { File.Delete(source); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw new InvalidOperationException(
-                $"The image was moved to '{target}', but the old encrypted copy at '{source}' could not be removed. Remove that extra copy after checking the destination.",
-                exception);
-        }
-    }
 }

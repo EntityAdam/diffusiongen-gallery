@@ -109,8 +109,12 @@
             <p><strong>@Gallery.VaultName</strong></p>
             <p class="text-muted-foreground">Unlock your gallery with your passphrase or recovery words.</p>
             <form @onsubmit="UnlockAsync" @onsubmit:preventDefault>
-                <GalleryCredentialInput @bind-Value="secret" @bind-UseRecovery="useRecovery" Disabled="@busy" />
-                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@busy" Type="submit">@(busy ? "Unlocking gallery..." : "Unlock gallery") <ArrowRightIcon aria-hidden="true" /></Button>
+                @if (importRunning && importProgress is not null)
+                {
+                    <p class="mt-4 text-sm text-muted-foreground" role="status">Ingestion is still running: @importProgress.Completed@(importProgress.Total is int lockedTotal ? $" / {lockedTotal}" : "") files processed. Unlock to follow its progress.</p>
+                }
+                <GalleryCredentialInput @bind-Value="secret" @bind-UseRecovery="useRecovery" Disabled="@(busy && !importRunning)" />
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@(busy && !importRunning)" Type="submit">@(busy && !importRunning ? "Unlocking gallery..." : "Unlock gallery") <ArrowRightIcon aria-hidden="true" /></Button>
             </form>
         }
         else
@@ -165,6 +169,37 @@ else
                 }
             </div>
         }
+        @if (driveQueue.HasWork || driveQueue.State == DriveQueueState.Paused)
+        {
+            <div class="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs break-words" role="status" aria-live="polite" data-testid="drive-queue">
+                <strong>Background file operations</strong>
+                @if (driveQueue.Pending > 0 && driveQueue.State is DriveQueueState.Running or DriveQueueState.Waiting)
+                {
+                    <Progress Value="@DriveQueuePercent" aria-label="Background file operation progress" />
+                }
+                <p>@DriveQueueSummary</p>
+                @if (driveQueue.Activity.Length > 0) { <p class="text-muted-foreground">@driveQueue.Activity</p> }
+                @if (driveQueue.Failed > 0) { <p class="text-destructive">@driveQueue.Failed operation(s) failed. Files were left unchanged.</p> }
+                <div class="flex flex-wrap gap-2">
+                    @if (driveQueue.State is DriveQueueState.Paused or DriveQueueState.Faulted)
+                    {
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="ResumeDriveOperations">Resume</Button>
+                    }
+                    else if (driveQueue.Pending > 0)
+                    {
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="PauseDriveOperationsAsync">Pause</Button>
+                    }
+                    @if (driveQueue.Failed > 0)
+                    {
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="RetryDriveOperationsAsync">Retry failed</Button>
+                    }
+                    @if (driveQueue.Pending > 0 || driveQueue.Failed > 0)
+                    {
+                        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" title="Discard queued work. Files it would have changed stay on disk." OnClick="CancelDriveOperationsAsync">Cancel</Button>
+                    }
+                </div>
+            </div>
+        }
         <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="w-full justify-between" Disabled="@busy" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
             <span class="inline-flex items-center gap-2"><ShieldAlertIcon Size="16" aria-hidden="true" /> Panic</span> <kbd>Ctrl+Shift+L</kbd>
         </Button>
@@ -189,6 +224,7 @@ else
                     <Label For="source" Class="mt-4 mb-2 block">Local folder path</Label>
                     <Input id="source" @bind-Value="importPath" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
                     <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recursive" Class="mt-0.5" @bind-Checked="recursive" Disabled="@busy"  /><Label For="check-recursive" Class="text-sm leading-relaxed">Include subfolders</Label></div>
+                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recordtimings" Class="mt-0.5" @bind-Checked="recordTimings" Disabled="@busy"  /><Label For="check-recordtimings" Class="text-sm leading-relaxed">Record performance timings (logged without file or folder names)</Label></div>
                     <div class="mt-4 flex items-start gap-3"><Checkbox id="check-deletesources" Class="mt-0.5" @bind-Checked="deleteSources" Disabled="@busy"  /><Label For="check-deletesources" Class="text-sm leading-relaxed">Delete originals after verified import</Label></div>
                     @if (deleteSources)
                     {
@@ -222,6 +258,13 @@ else
             {
                 <details open class="text-destructive"><summary>@importFailures.Count file(s) reported issues</summary>
                     @foreach (var failure in importFailures) { <p>@failure</p> }
+                </details>
+            }
+            @if (timingReport is not null)
+            {
+                <details open class="mt-4"><summary>Performance timings</summary>
+                    <p class="text-sm text-muted-foreground">Also written to the application log. Contains no file or folder names.</p>
+                    <pre class="mt-2 overflow-x-auto rounded-md bg-muted p-3 text-xs">@timingReport</pre>
                 </details>
             }
         </Card>
@@ -259,8 +302,16 @@ else
                 {
                     <Alert Variant="AlertVariant.Destructive">@storageOverview.MissingImageFiles catalogued image file(s) were not found on disk and are not counted.</Alert>
                 }
+                @if (storageOverview.IndexPending)
+                {
+                    <p class="text-muted-foreground" data-testid="index-pending">The file index is still being built in the background; some sizes were measured directly. Refresh once background file operations finish.</p>
+                }
                 <p class="text-muted-foreground" data-testid="overview-updated">Last updated <time datetime="@storageOverview.UpdatedAt.ToString("O")">@storageOverview.UpdatedAt.ToLocalTime().ToString("g")</time>. Cached values are shown until you refresh.</p>
             }
+            <p class="text-muted-foreground flex flex-wrap items-center gap-2">
+                <span>Sizes come from a cached file index. Rebuild it if files were changed outside the gallery.</span>
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@busy" OnClick="RebuildStorageIndexAsync">Rebuild file index</Button>
+            </p>
             <p class="text-muted-foreground flex flex-wrap items-center gap-2">
                 @if (duplicateScan is null) { <span>Duplicates have not been scanned yet.</span> }
                 else { <span>Last duplicate scan found @VisibleDuplicateGroups.Sum(group => group.ImageIds.Length - 1).ToString("N0") likely duplicate(s), about @GalleryService.FormatBytes(VisibleDuplicateGroups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
@@ -555,7 +606,7 @@ else
                             </div>
                         }
                         firstOnPage = false;
-                        <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)"
+                        <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)" ThumbnailFailed="@thumbnailFailures.Contains(image.Id)"
                                           Busy="busy" Selected="isSelected" ShowSelection="@(workflow != "remove")"
                                           RemovalMode="@(workflow == "remove")" RemovalSelected="@removalSelection.Contains(image.Id)"
                                           Select="args => SelectCard(image.Id, args.ShiftKey)" Open="() => OpenAsync(image)"
@@ -844,6 +895,7 @@ else
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
+    private DriveQueueStatus driveQueue = DriveQueueStatus.Empty;
     private BackupOptions? backupOptions;
     private string backupDestinationType = "local", backupLocalDirectory = "", backupAzureContainer = "", backupAzurePrefix = "", backupAzureConnectionString = "";
     private bool BackupDestinationReady => backupOptions is not null
@@ -904,7 +956,14 @@ else
     private List<ImageRecord> images = [];
     private List<string> importFailures = [];
     private ImportProgress? importProgress;
+    private bool importRunning;
+    private bool recordTimings;
+    private string? timingReport;
     private readonly Dictionary<string, string> thumbnails = [];
+    private readonly HashSet<string> staleThumbnails = [];
+    private readonly HashSet<string> thumbnailFailures = [];
+    private CancellationTokenSource? thumbnailLoad;
+    private Task? thumbnailTask;
     private ImageRecord? selected;
     private bool disposed;
     private List<ImageRecord> Filtered
@@ -920,13 +979,19 @@ else
     }
     private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
     private IEnumerable<ImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
-    private async Task RunAsync(string status, Func<Task> action)
+    private async Task RunAsync(string status, Func<Task> action, bool allowDuringImport = false)
     {
-        if (busy) return;
+        var nested = allowDuringImport && busy && importRunning;
+        if (busy && !nested) return;
+        var outerProgress = progress;
         busy = true;
         progress = status;
         error = message = "";
-        try { await action(); }
+        try
+        {
+            if (!nested) await PauseThumbnailLoadAsync();
+            await action();
+        }
         catch (System.Security.Cryptography.CryptographicException exception)
         {
             Logger.LogWarning(exception, "Gallery authentication or integrity check failed");
@@ -943,19 +1008,69 @@ else
         }
         finally
         {
-            busy = false;
-            progress = "";
+            busy = nested;
+            progress = nested ? outerProgress : "";
             if (disposed) Gallery.LockVault();
+            else if (!nested) ResumeThumbnailLoad();
         }
     }
 
     protected override void OnInitialized()
     {
         Gallery.OnAutoLocked += HandleAutoLocked;
+        Gallery.DriveQueueChanged += HandleDriveQueueChanged;
+        driveQueue = Gallery.DriveQueueStatus;
         newGalleryName = GalleryService.GenerateVaultName();
         newGalleryDirectory = GalleryService.DefaultVaultDirectory(newGalleryName);
         galleryRename = Gallery.VaultExists ? Gallery.VaultName : "";
     }
+
+    private void HandleDriveQueueChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            if (disposed) return;
+            driveQueue = Gallery.DriveQueueStatus;
+            StateHasChanged();
+        });
+    }
+
+    private int DriveQueuePercent => driveQueue.Completed + driveQueue.Pending == 0 ? 0
+        : Math.Clamp(100 * driveQueue.Completed / (driveQueue.Completed + driveQueue.Pending), 0, 100);
+
+    private string DriveQueueSummary => driveQueue.State switch
+    {
+        DriveQueueState.Paused => $"Paused with {driveQueue.Pending:N0} operation(s) queued. Queued work is kept.",
+        DriveQueueState.Waiting => $"{driveQueue.Pending:N0} operation(s) waiting to retry.",
+        DriveQueueState.Faulted => $"Stopped unexpectedly with {driveQueue.Pending:N0} operation(s) queued. Resume or retry to continue.",
+        DriveQueueState.Running => $"{driveQueue.Completed:N0} done, {driveQueue.Pending:N0} queued.",
+        _ => driveQueue.Pending > 0 ? $"{driveQueue.Pending:N0} operation(s) queued; they continue the next time the gallery is unlocked." : "No queued work."
+    };
+
+    private Task PauseDriveOperationsAsync() => RunDriveControlAsync(Gallery.PauseDriveOperationsAsync);
+
+    private void ResumeDriveOperations() => Gallery.ResumeDriveOperations();
+
+    private Task RetryDriveOperationsAsync() => RunDriveControlAsync(Gallery.RetryFailedDriveOperationsAsync);
+
+    private Task CancelDriveOperationsAsync() => RunDriveControlAsync(Gallery.CancelDriveOperationsAsync);
+
+    // Queue controls stay available while other workflows are busy, so they do not go through RunAsync.
+    private async Task RunDriveControlAsync(Func<Task> action)
+    {
+        try { await action(); }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            Logger.LogError(exception, "Background file operation control failed");
+            message = "The background file operation could not be changed. Try again.";
+        }
+    }
+
+    private Task RebuildStorageIndexAsync() => RunAsync("Scheduling file index rebuild...", async () =>
+    {
+        await Gallery.RebuildStorageIndexAsync();
+        message = "The file index is being rebuilt in the background. Refresh the overview when it finishes.";
+    });
 
     private void HandleAutoLocked()
     {
@@ -976,7 +1091,7 @@ else
             {
                 if (useRecovery) await Gallery.UnlockWithRecoveryPhraseAsync(secret);
                 else await Gallery.UnlockWithPassphraseAsync(secret);
-                workflow = "library";
+                workflow = importRunning ? "ingest" : "library";
                 settingsTab = "overview";
                 var preferences = await Gallery.LoadPreferencesAsync();
                 density = preferences.GridDensity;
@@ -994,7 +1109,7 @@ else
             throw;
         }
         finally { secret = confirm = ""; }
-    });
+    }, allowDuringImport: true);
 
     private Task FinishSetupAsync() => RunAsync("Opening gallery...", async () =>
     {
@@ -1011,7 +1126,7 @@ else
 
     private async Task ReloadAsync()
     {
-        images = await Gallery.ListAsync();
+        images = await Gallery.LoadAsync();
         imagesById = images.ToDictionary(image => image.Id);
         UpdateDuplicateGroups();
         if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
@@ -1024,16 +1139,90 @@ else
         await LoadThumbnailsAsync();
     }
 
-    private async Task LoadThumbnailsAsync()
+    // Thumbnails decrypt in the background so the grid renders immediately with placeholders.
+    // Existing previews stay visible while they are refreshed, which avoids flicker after edits.
+    private Task LoadThumbnailsAsync()
     {
-        thumbnails.Clear();
-        foreach (var image in PageImages) thumbnails[image.Id] = await Gallery.ThumbnailAsync(image.Id);
+        var pageIds = PageImages.Select(image => image.Id).ToHashSet();
+        foreach (var id in thumbnails.Keys.Where(id => !pageIds.Contains(id)).ToList()) thumbnails.Remove(id);
+        staleThumbnails.Clear();
+        staleThumbnails.UnionWith(pageIds);
+        thumbnailFailures.Clear();
+        StartThumbnailLoad();
+        return Task.CompletedTask;
     }
 
-    private async Task LoadMissingThumbnailsAsync()
+    private Task LoadMissingThumbnailsAsync()
     {
-        foreach (var image in PageImages)
-            if (!thumbnails.ContainsKey(image.Id)) thumbnails[image.Id] = await Gallery.ThumbnailAsync(image.Id);
+        StartThumbnailLoad();
+        return Task.CompletedTask;
+    }
+
+    private void StartThumbnailLoad()
+    {
+        StopThumbnailLoad();
+        var ids = PendingThumbnailIds();
+        if (ids.Count == 0) return;
+        thumbnailLoad = new CancellationTokenSource();
+        thumbnailTask = LoadThumbnailsInBackgroundAsync(ids, thumbnailLoad.Token);
+    }
+
+    private List<string> PendingThumbnailIds() => PageImages.Select(image => image.Id)
+        .Where(id => (!thumbnails.ContainsKey(id) || staleThumbnails.Contains(id)) && !thumbnailFailures.Contains(id))
+        .ToList();
+
+    private void StopThumbnailLoad()
+    {
+        thumbnailLoad?.Cancel();
+        thumbnailLoad?.Dispose();
+        thumbnailLoad = null;
+    }
+
+    private async Task PauseThumbnailLoadAsync()
+    {
+        var running = thumbnailTask;
+        StopThumbnailLoad();
+        thumbnailTask = null;
+        if (running is not null) await running;
+    }
+
+    private void ResumeThumbnailLoad()
+    {
+        if (disposed || !Gallery.IsUnlocked || thumbnailTask is { IsCompleted: false }) return;
+        StartThumbnailLoad();
+    }
+
+    private async Task LoadThumbnailsInBackgroundAsync(List<string> ids, CancellationToken token)
+    {
+        await Task.Yield();
+        var lastRender = System.Diagnostics.Stopwatch.GetTimestamp();
+        var changed = false;
+        foreach (var id in ids)
+        {
+            if (token.IsCancellationRequested || disposed || !Gallery.IsUnlocked) break;
+            try
+            {
+                var thumbnail = await Gallery.ThumbnailAsync(id);
+                if (token.IsCancellationRequested) break;
+                thumbnails[id] = thumbnail;
+                staleThumbnails.Remove(id);
+                changed = true;
+            }
+            catch (Exception exception)
+            {
+                if (token.IsCancellationRequested || !Gallery.IsUnlocked) break;
+                Logger.LogWarning(exception, "Thumbnail could not be loaded");
+                thumbnailFailures.Add(id);
+                staleThumbnails.Remove(id);
+            }
+            if (changed && System.Diagnostics.Stopwatch.GetElapsedTime(lastRender).TotalMilliseconds >= 100)
+            {
+                StateHasChanged();
+                lastRender = System.Diagnostics.Stopwatch.GetTimestamp();
+                changed = false;
+            }
+        }
+        if (changed && !disposed) StateHasChanged();
     }
 
     private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
@@ -1370,15 +1559,19 @@ else
         EnsureNoLibraryJob();
         if (deleteSources && !confirmSourceDeletion)
             throw new InvalidOperationException("Confirm source deletion before importing, or disable it to keep originals.");
+        var deletingSources = deleteSources;
         importFailures = [];
+        timingReport = null;
+        var timings = recordTimings ? new IngestionTimings() : null;
         importProgress = new ImportProgress(null, 0, 0, 0, "Scanning selected folder...");
+        importRunning = true;
         await InvokeAsync(StateHasChanged);
         var lastProgressRender = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             try
             {
-                await Gallery.ImportFolderAsync(importPath, recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder, sourceRetention: deleteSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
+                await Gallery.ImportFolderAsync(importPath, recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder, sourceRetention: deletingSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
                     reportProgress: update => InvokeAsync(() =>
                     {
                         if (disposed) return;
@@ -1390,28 +1583,37 @@ else
                             StateHasChanged();
                             lastProgressRender.Restart();
                         }
-                    }));
+                    }), timings: timings);
             }
             catch (ImportFolderException exception)
             {
                 importFailures = exception.Failures.InnerExceptions.Select(failure => failure.Message).ToList();
-                if (!disposed) await ReloadAsync();
+                if (!disposed && Gallery.IsUnlocked) await ReloadAsync();
                 throw;
             }
             if (disposed) return;
             importProgress = importProgress with { Status = "Refreshing library..." };
             await InvokeAsync(StateHasChanged);
-            await ReloadAsync();
+            if (Gallery.IsUnlocked) await ReloadAsync();
             if (disposed) return;
             importProgress = importProgress with { Status = importProgress.Total == 0 ? "No supported images found." : "Ingestion complete." };
             message = $"Imported {importProgress.Imported} images. {importFailures.Count} file(s) reported errors."
-                + (deleteSources ? " Sources of verified imports were deleted unless an error was reported; duplicates were retained." : " Sources were retained.");
+                + (deletingSources ? " Sources of verified imports were deleted unless an error was reported; duplicates were retained." : " Sources were retained.");
         }
         catch
         {
             if (importProgress is not null)
                 importProgress = importProgress with { Status = "Ingestion stopped. See the error above; completed imports were retained." };
             throw;
+        }
+        finally
+        {
+            importRunning = false;
+            if (timings is not null)
+            {
+                timingReport = timings.CreateReport().ToString();
+                Logger.LogInformation("{IngestionTimings}", timingReport);
+            }
         }
         deleteSources = confirmSourceDeletion = false;
     });
@@ -1685,11 +1887,19 @@ else
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         Gallery.LockVault();
         images.Clear();
+        StopThumbnailLoad();
+        thumbnailTask = null;
         thumbnails.Clear();
+        staleThumbnails.Clear();
+        thumbnailFailures.Clear();
         CloseDetail();
         secret = confirm = recoveryPhrase = newPassphrase = newConfirm = error = message = importPath = "";
-        importFailures.Clear();
-        importProgress = null;
+        if (!importRunning)
+        {
+            importFailures.Clear();
+            importProgress = null;
+            timingReport = null;
+        }
         settings = new();
         filter = new();
         page = 0;
@@ -1727,6 +1937,7 @@ else
     {
         disposed = true;
         Gallery.OnAutoLocked -= HandleAutoLocked;
+        Gallery.DriveQueueChanged -= HandleDriveQueueChanged;
         Lock();
         gridReference?.Dispose();
         securityReference?.Dispose();

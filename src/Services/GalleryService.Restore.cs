@@ -173,6 +173,7 @@ public sealed partial class GalleryService
             }
             await ClearLocationSettingsAsync(store, key);
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
+            await StopDrivePlayerAsync();
             await vaultSession.LockAndDrainAsync();
             EnsureActive();
             PublishStagedVault(staging, destination);

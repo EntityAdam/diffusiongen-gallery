@@ -141,17 +141,20 @@ public sealed partial class GalleryService : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposalStarted, 1) != 0) return;
+        drivePlayer.Dispose();
         vaultSession.Dispose();
         _ = ReleaseCheckoutAfterOperationsAsync();
         ownedHttpClient?.Dispose();
     }
 
+    // Waits for leased work (ingestion, queued drive work) without holding the lifecycle gate, so the user can
+    // unlock again while that work continues. The checkout is kept if the gallery was unlocked meanwhile.
     private async Task ReleaseCheckoutAfterOperationsAsync()
     {
+        await vaultSession.WhenDrainedAsync();
         await lifecycleGate.WaitAsync();
         try
         {
-            await vaultSession.LockAndDrainAsync();
             if (!vaultSession.IsUnlocked)
             {
                 checkout?.Dispose();

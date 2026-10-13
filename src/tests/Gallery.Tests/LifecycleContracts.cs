@@ -37,6 +37,28 @@ public static class LifecycleContracts
     }
 
     [Fact]
+    public static async Task VaultSession_WhenLockedWhileLeaseIsHeld_ThenLeaseKeyRemainsUsableUntilReleased()
+    {
+        // Arrange
+        using var session = new VaultSession();
+        byte[] original = Enumerable.Repeat((byte)42, 32).ToArray();
+        session.Unlock(original);
+        var lease = session.AcquireUnlockedSession().Borrow();
+
+        // Act
+        var drain = session.LockAndDrainAsync();
+        byte[] keyWhileLocked = lease.Bytes.ToArray();
+        var drainedEarly = drain.IsCompleted;
+        lease.Dispose();
+        await drain.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.False(session.IsUnlocked);
+        Assert.False(drainedEarly);
+        Assert.Equal(original, keyWhileLocked);
+    }
+
+    [Fact]
     public static void ExportContent_WhenItsOwnerClearsIt_ThenOwnedBufferIsZeroAndPublishedSnapshotIsIndependent()
     {
         // Arrange

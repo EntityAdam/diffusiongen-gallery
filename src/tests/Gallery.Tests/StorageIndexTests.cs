@@ -10,6 +10,42 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class StorageIndexTests
 {
+    [Fact]
+    public async Task Loading_WhenCatalogNeedsMaintenance_ThenComposesRecoveryAndMigrationsWhileListingOnlyReads()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var legacy = await MediaAndComfyTests.ArrangeStoredMetadataAsync(fixture, "");
+        await using (var connection = Connect(fixture))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE images SET fingerprint = NULL";
+            await command.ExecuteNonQueryAsync();
+        }
+        var stagedPath = legacy.StoredPath + ".removing-" + legacy.Id;
+        File.Move(legacy.StoredPath, stagedPath);
+        var originalPayload = await fixture.RawStore.ReadRecordAsync(legacy.Id);
+
+        var listed = Assert.Single(await fixture.Service.ListAsync());
+
+        Assert.Equal(0, listed.MetadataVersion);
+        Assert.Equal(originalPayload, await fixture.RawStore.ReadRecordAsync(legacy.Id));
+        Assert.False(await fixture.Store.ContainsFingerprintAsync(legacy.Sha256, fixture.Session.Key));
+        Assert.True(File.Exists(stagedPath));
+        Assert.False(File.Exists(legacy.StoredPath));
+
+        var loaded = Assert.Single(await fixture.Service.LoadAsync());
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        Assert.Equal(Gallery.Core.Extractors.ComfyMetadata.Version, loaded.MetadataVersion);
+        Assert.True(await fixture.Store.ContainsFingerprintAsync(legacy.Sha256, fixture.Session.Key));
+        Assert.True(File.Exists(legacy.StoredPath));
+        Assert.False(File.Exists(stagedPath));
+        await fixture.Service.VerifyImportedAsync(legacy.Id);
+        Assert.Equal(loaded.MetadataVersion, Assert.Single(await fixture.Service.ListAsync()).MetadataVersion);
+    }
+
 
     [Fact]
     public async Task Import_WhenNamesAreRepeated_AssignsDistinctIdsAndShardedPaths()
@@ -33,6 +69,25 @@ public sealed class StorageIndexTests
     }
 
     [Fact]
+    public async Task Store_WhenDatabaseFileIsDeletedAfterSchemaSetup_RecreatesSchemaOnNextOpen()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        foreach (var name in new[] { "gallery.db-wal", "gallery.db-shm", "gallery.db" })
+            File.Delete(Path.Combine(fixture.Root, name));
+
+        // Act
+        var records = await fixture.Store.ReadRecordsAsync(fixture.Session.Key);
+        var reimported = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+
+        // Assert
+        TestAssertions.Empty(records, "a recreated database starts empty");
+        Assert.True(await fixture.Store.ContainsFingerprintAsync(reimported.Sha256, fixture.Session.Key));
+    }
+
+    [Fact]
     public async Task LegacySchema_WhenFingerprintColumnIsMissing_BackfillsWithoutMovingFilesAndPreservesDuplicateDetection()
     {
         // Arrange
@@ -51,7 +106,8 @@ public sealed class StorageIndexTests
         var store = new GalleryStore(Path.Combine(fixture.Vault.Root, "gallery.db"));
         var service = new GalleryService(store, fixture.Vault, fixture.Session);
         // Act
-        var migratedRecords = await service.ListAsync();
+        var migratedRecords = await service.LoadAsync();
+        await service.WaitForDriveOperationsAsync();
         var migrated = TestAssertions.Single(migratedRecords, "legacy migration retains one image");
         var fingerprintPresent = await store.ContainsFingerprintAsync(migrated.Sha256, fixture.Session.Key);
         var duplicateError = await Record.ExceptionAsync(() => service.ImportAsync(new MemoryStream(bytes), "different-name.png", "another-folder"));
@@ -96,7 +152,7 @@ public sealed class StorageIndexTests
             await command.ExecuteNonQueryAsync();
         }
         // Act
-        var authenticationError = await Record.ExceptionAsync(() => fixture.Service.ListAsync());
+        var authenticationError = await Record.ExceptionAsync(() => fixture.Service.LoadAsync());
         await using var verify = Connect(fixture);
         await verify.OpenAsync();
         using var query = verify.CreateCommand();

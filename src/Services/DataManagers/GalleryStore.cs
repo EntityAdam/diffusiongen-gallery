@@ -10,13 +10,14 @@ using Microsoft.Data.Sqlite;
 
 namespace Gallery.Services.DataManagers;
 
-internal sealed class GalleryStore(string databasePath)
+internal sealed partial class GalleryStore(string databasePath)
 {
 
     private readonly string databasePath = Path.GetFullPath(databasePath);
     public SemaphoreSlim Gate { get; } = new(1);
     public SemaphoreSlim BackupGate { get; } = new(1);
     private readonly SemaphoreSlim schemaGate = new(1);
+    private volatile bool schemaReady;
 
     public async Task InitializeAsync()
     {
@@ -37,6 +38,8 @@ internal sealed class GalleryStore(string databasePath)
 
     private async Task<SqliteConnection> OpenAsync()
     {
+        // Purge deletes the database while this store may be reused for a new gallery in the same folder.
+        if (schemaReady && !File.Exists(databasePath)) schemaReady = false;
         var sqliteConnection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
@@ -131,15 +134,19 @@ internal sealed class GalleryStore(string databasePath)
         hash.AppendData(bytes);
     }
 
+    // Schema setup runs once per store instead of on every connection.
     private async Task InitializeSchemaAsync(SqliteConnection sqliteConnection)
     {
+        if (schemaReady) return;
         await schemaGate.WaitAsync();
         try
         {
+            if (schemaReady) return;
             await CreateBaseSchemaAsync(sqliteConnection);
             if (!await HasFingerprintColumnAsync(sqliteConnection))
                 await AddFingerprintColumnAsync(sqliteConnection);
             await CreateFingerprintIndexAsync(sqliteConnection);
+            schemaReady = true;
         }
         finally
         {
@@ -206,10 +213,30 @@ internal sealed class GalleryStore(string databasePath)
     public async Task InsertAsync(ImageRecord record, ImageThumbnail thumbnail, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
+        await InsertAsync(sqliteConnection, record, thumbnail, key);
+    }
+
+    private static async Task InsertAsync(SqliteConnection sqliteConnection, ImageRecord record, ImageThumbnail thumbnail, byte[] key)
+    {
         using var sqliteCommand = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, record.Id, EncodeRecord(record, key),
             VaultCrypto.Encrypt(thumbnail.PngBytes, key, $"thumbnail:{record.Id}"),
             VaultCrypto.ContentFingerprint(key, record.Sha256));
         await sqliteCommand.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>Opens one connection reused for every duplicate check and catalog insert of an import.</summary>
+    public async Task<ImportCatalog> OpenImportCatalogAsync() => new(await OpenAsync());
+
+    // Not thread-safe: callers serialize use through Gate, as ingestion already does.
+    internal sealed class ImportCatalog(SqliteConnection sqliteConnection) : IAsyncDisposable
+    {
+        public Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key) =>
+            GalleryStore.ContainsFingerprintAsync(sqliteConnection, contentSha256, key);
+
+        public Task InsertAsync(ImageRecord record, ImageThumbnail thumbnail, byte[] key) =>
+            GalleryStore.InsertAsync(sqliteConnection, record, thumbnail, key);
+
+        public ValueTask DisposeAsync() => sqliteConnection.DisposeAsync();
     }
 
     // Caller holds Gate so backfill and ingestion cannot interleave in this process.
@@ -258,6 +285,11 @@ internal sealed class GalleryStore(string databasePath)
     public async Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
+        return await ContainsFingerprintAsync(sqliteConnection, contentSha256, key);
+    }
+
+    private static async Task<bool> ContainsFingerprintAsync(SqliteConnection sqliteConnection, string contentSha256, byte[] key)
+    {
         using var sqliteCommand = GalleryStoreCommandFactory.CreateContainsFingerprint(sqliteConnection, VaultCrypto.ContentFingerprint(key, contentSha256));
         return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync()) != 0;
     }

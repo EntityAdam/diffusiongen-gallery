@@ -1,4 +1,6 @@
 using Gallery.Models;
+using Gallery.Services.DataManagers.Models;
+using Gallery.Services.Processors;
 
 namespace Gallery.Services;
 
@@ -12,20 +14,28 @@ public sealed partial class GalleryService
 
     public async Task<StorageOverview> RefreshStorageOverviewAsync()
     {
-        var records = await ListAsync();
-        var storageOverview = await Task.Run(() => StorageOverviewCalculator.Measure(vaultStore.Root, records));
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        var records = await ListWithKeyAsync(key.Bytes);
+        var indexedLengths = await galleryStore.ReadMediaIndexAsync();
+        var indexPending = await IsMediaIndexPendingAsync(key.Bytes);
+        var (overview, measured) = await Task.Run(() =>
+            StorageOverviewCalculator.Measure(vaultStore.Root, records, indexedLengths, key.Bytes));
+        await galleryStore.IndexFilesAsync(measured);
+        var storageOverview = overview with { IndexPending = indexPending };
         await WriteEncryptedSettingAsync(storageOverview, StorageOverviewId, StorageOverviewPurpose);
         return storageOverview;
     }
 
     private static class StorageOverviewCalculator
     {
-        public static StorageOverview Measure(string vaultRoot, IEnumerable<ImageRecord> records)
+        public static (StorageOverview Overview, List<(byte[] Directory, IndexedFile File)> Measured) Measure(
+            string vaultRoot, IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
         {
             var vaultMeasurement = MeasureVaultFiles(vaultRoot);
-            var imageMeasurement = MeasureImageFiles(records);
-            return new(vaultMeasurement.DatabaseBytes, imageMeasurement.FileCount, imageMeasurement.Bytes,
-                vaultMeasurement.FileCount, vaultMeasurement.Bytes, imageMeasurement.Missing, DateTimeOffset.UtcNow);
+            var imageMeasurement = MeasureImageFiles(records, indexedLengths, key);
+            return (new(vaultMeasurement.DatabaseBytes, imageMeasurement.FileCount, imageMeasurement.Bytes,
+                vaultMeasurement.FileCount, vaultMeasurement.Bytes, imageMeasurement.Missing, DateTimeOffset.UtcNow),
+                imageMeasurement.Measured);
         }
 
         private static (long DatabaseBytes, int FileCount, long Bytes) MeasureVaultFiles(string vaultRoot)
@@ -46,18 +56,27 @@ public sealed partial class GalleryService
             return (databaseBytes, vaultFileCount, vaultBytes);
         }
 
-        private static (int FileCount, long Bytes, int Missing) MeasureImageFiles(IEnumerable<ImageRecord> records)
+        // Indexed files are counted from the database; only files the index has not seen are measured on disk.
+        private static (int FileCount, long Bytes, int Missing, List<(byte[] Directory, IndexedFile File)> Measured) MeasureImageFiles(
+            IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
         {
             long imageBytes = 0;
             int imageFileCount = 0, missing = 0;
+            var measured = new List<(byte[] Directory, IndexedFile File)>();
             foreach (var path in records.Select(record => record.StoredPath).Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var length = FileLength(path);
-                if (length is null) { missing++; continue; }
+                var target = VaultCrypto.PathFingerprint(key, path);
+                if (!indexedLengths.TryGetValue(Convert.ToHexString(target), out var length))
+                {
+                    var measuredLength = FileLength(path);
+                    if (measuredLength is null) { missing++; continue; }
+                    length = measuredLength.Value;
+                    measured.Add((VaultCrypto.PathFingerprint(key, Path.GetDirectoryName(path)!), new IndexedFile(target, length)));
+                }
                 imageFileCount++;
-                imageBytes += length.Value;
+                imageBytes += length;
             }
-            return (imageFileCount, imageBytes, missing);
+            return (imageFileCount, imageBytes, missing, measured);
         }
 
     }

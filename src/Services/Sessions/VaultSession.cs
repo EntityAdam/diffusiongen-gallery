@@ -28,6 +28,16 @@ internal sealed class VaultSession : IDisposable
         }
     }
 
+    /// <summary>Waits for outstanding leases without changing the lock state.</summary>
+    internal Task WhenDrainedAsync()
+    {
+        lock (syncRoot)
+        {
+            if (activeLeases == 0) return Task.CompletedTask;
+            return (drained ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+        }
+    }
+
     public event Action? AutoLocked;
 
     public VaultSession() : this(TimeSpan.FromSeconds(5)) { }
@@ -129,6 +139,8 @@ internal sealed class VaultSession : IDisposable
             new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "timed_out")));
     }
 
+    // A lease owns an independent copy of the key. Long-running operations (e.g. folder ingestion) hold a
+    // lease, do not count as user activity, and deliberately keep running after the gallery locks.
     private KeyLease BorrowKey(byte[] unlockedKey)
     {
         bool locked;
