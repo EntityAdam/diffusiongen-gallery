@@ -33,6 +33,25 @@ public sealed class StorageIndexTests
     }
 
     [Fact]
+    public async Task Store_WhenDatabaseFileIsDeletedAfterSchemaSetup_RecreatesSchemaOnNextOpen()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        foreach (var name in new[] { "gallery.db-wal", "gallery.db-shm", "gallery.db" })
+            File.Delete(Path.Combine(fixture.Root, name));
+
+        // Act
+        var records = await fixture.Store.ReadRecordsAsync(fixture.Session.Key);
+        var reimported = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+
+        // Assert
+        TestAssertions.Empty(records, "a recreated database starts empty");
+        Assert.True(await fixture.Store.ContainsFingerprintAsync(reimported.Sha256, fixture.Session.Key));
+    }
+
+    [Fact]
     public async Task LegacySchema_WhenFingerprintColumnIsMissing_BackfillsWithoutMovingFilesAndPreservesDuplicateDetection()
     {
         // Arrange

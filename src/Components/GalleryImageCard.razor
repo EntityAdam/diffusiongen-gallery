@@ -8,7 +8,7 @@
     <button class="image-open relative block aspect-square w-full overflow-hidden bg-background p-0 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 [&_img]:h-full [&_img]:w-full [&_img]:object-contain" disabled="@Busy" @onclick="Open">
         @if (Thumbnail is not null)
         { <img src="@Thumbnail" alt="@Image.Name" loading="lazy" draggable="false" /> }
-        else { <div class="grid h-full place-items-center text-xs text-muted-foreground">Loading preview...</div> }
+        else { <div class="grid h-full place-items-center text-xs text-muted-foreground" aria-busy="@(ThumbnailFailed ? "false" : "true")">@(ThumbnailFailed ? "Preview unavailable" : "Loading preview...")</div> }
         @if (Image.IsVideo) { <span class="pointer-events-none absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/80 px-2 py-1 text-xs text-white" aria-label="@($"Video, {GalleryService.FormatDuration(Image)}")"><PlayIcon Size="12" aria-hidden="true" /> @GalleryService.FormatDuration(Image)</span> }
     </button>
     <div class="card-info p-4 [&>h3]:truncate [&>h3]:text-sm"><h3 title="@Image.Name">@Image.Name</h3>
@@ -53,6 +53,7 @@
 @code {
     [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
     [Parameter] public string? Thumbnail { get; set; }
+    [Parameter] public bool ThumbnailFailed { get; set; }
     [Parameter] public bool Busy { get; set; }
     [Parameter] public bool Selected { get; set; }
     [Parameter] public bool ShowSelection { get; set; }

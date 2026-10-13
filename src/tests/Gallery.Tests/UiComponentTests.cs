@@ -36,6 +36,21 @@ public sealed class UiComponentTests
     }
 
     [Theory]
+    [InlineData(false, "Loading preview...")]
+    [InlineData(true, "Preview unavailable")]
+    public async Task ImageCard_WhenThumbnailIsNotYetDecrypted_ThenShowsPlaceholder(bool failed, string expected)
+    {
+        var html = await RenderAsync<GalleryImageCard>(new()
+        {
+            [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "pending", Name = "Pending" },
+            [nameof(GalleryImageCard.ThumbnailFailed)] = failed
+        });
+
+        Assert.Contains(expected, html);
+        Assert.DoesNotContain("<img", html);
+    }
+
+    [Theory]
     [InlineData(false, "input", "password")]
     [InlineData(true, "textarea", null)]
     public async Task Credentials_WhenModeChanges_ThenPreservesSecretFieldAndTabSemantics(

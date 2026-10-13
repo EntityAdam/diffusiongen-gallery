@@ -348,6 +348,38 @@ public sealed class GalleryTests
         Assert.Equal(5, Directory.GetFiles(folder).Length);
     }
 
+    [Fact]
+    public async Task FolderImport_WhenTimingsAreRecorded_ReportsStagesWithoutFileOrFolderNames()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "secret-folder-name");
+        Directory.CreateDirectory(folder);
+        var bytes = MakePng(24, 16);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "private-first.png"), bytes);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "private-duplicate.png"), bytes);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "private-second.png"), MakePng(30, 18));
+        var timings = new IngestionTimings();
+
+        // Act
+        await Assert.ThrowsAsync<ImportFolderException>(() =>
+            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder, timings: timings));
+        var report = timings.CreateReport();
+        var text = report.ToString();
+
+        // Assert
+        Assert.Equal((3, 2, 1), (report.FilesFound, report.Imported, report.Failed));
+        Assert.Equal(3, report.Stages.Single(stage => stage.Stage == IngestionStage.File).Count);
+        // Parallel workers can both decode the duplicate before one is rejected at persist time.
+        Assert.InRange(report.Stages.Single(stage => stage.Stage == IngestionStage.Decode).Count, 2, 3);
+        Assert.Equal(2, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogInsert).Count);
+        Assert.Equal(bytes.Length * 2L + MakePng(30, 18).Length, report.SourceBytes);
+        TestAssertions.True(report.WallMs > 0, "wall time is measured");
+        foreach (var forbidden in new[] { "secret-folder-name", "private-", fixture.Root, Path.GetTempPath() })
+            Assert.DoesNotContain(forbidden, text, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
