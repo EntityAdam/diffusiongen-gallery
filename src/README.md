@@ -405,6 +405,11 @@ references original image files. Keep gallery01 on its own original gallery.
   allowing subsequent reimport. Ciphertext is staged before catalog removal; database
   errors attempt to put it back. Filesystem and SQLite changes are not a single atomic
   transaction: interruptions can leave `.removing-*` ciphertext or a restored PNG.
+  Opening **Remove marked images** recovers interrupted removals: catalogued
+  ciphertext is restored and orphaned staging files are cleaned up. This maintenance
+  scans media directories and reports filesystem failures without discarding copies.
+  Unlocking and browsing read the catalog without scanning the media directory tree,
+  so a NAS directory-enumeration failure does not prevent opening the gallery.
   Cleanup failures report the residue path. Retained backups/copies are not removed.
   Permanent removal bypasses the Recycle Bin and is not secure SSD/NVMe erasure.
 - Configure a loaded vision-capable model and a literal loopback or private LAN,

@@ -255,13 +255,20 @@ public sealed partial class GalleryService
         await galleryStore.Gate.WaitAsync();
         try
         {
-            await RecoverInterruptedRemovalsAsync(key.Bytes);
             await BackfillFingerprintsAsync(key.Bytes);
         }
         finally { galleryStore.Gate.Release(); }
         var records = await ListWithKeyAsync(key.Bytes);
         await BackfillGenerationAsync(records, key.Bytes);
         return records;
+    }
+
+    public async Task RecoverInterruptedRemovalsAsync()
+    {
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        await galleryStore.Gate.WaitAsync();
+        try { await RecoverInterruptedRemovalsAsync(key.Bytes); }
+        finally { galleryStore.Gate.Release(); }
     }
 
     private async Task RecoverInterruptedRemovalsAsync(byte[] key)

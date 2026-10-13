@@ -8,13 +8,59 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class RemovalTests
 {
+    [Fact]
+    public async Task Listing_WhenRemovalIsInterrupted_ThenReadsCatalogAndThumbnailWithoutTouchingStaging()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await ImportRecoveryImageAsync(fixture, false);
+        var stagedPath = record.StoredPath + ".removing-" + record.Id;
+        File.Move(record.StoredPath, stagedPath);
+        var orphanDirectory = Path.Combine(fixture.Root, "images", "unrelated-shard");
+        Directory.CreateDirectory(orphanDirectory);
+        var orphanPath = Path.Combine(orphanDirectory, "orphan.dpng.removing-" + Guid.NewGuid().ToString("N"));
+        await File.WriteAllBytesAsync(orphanPath, [1, 2, 3]);
+
+        var records = await fixture.Service.ListAsync();
+        var thumbnail = await fixture.Service.ThumbnailAsync(record.Id);
+
+        Assert.Equal(record.Id, Assert.Single(records).Id);
+        Assert.StartsWith("data:image/png;base64,", thumbnail);
+        Assert.True(File.Exists(stagedPath));
+        Assert.False(File.Exists(record.StoredPath));
+        Assert.True(File.Exists(orphanPath));
+
+        await fixture.Service.RecoverInterruptedRemovalsAsync();
+        Assert.True(File.Exists(record.StoredPath));
+        Assert.False(File.Exists(stagedPath));
+        Assert.False(File.Exists(orphanPath));
+    }
+
+    [Fact]
+    public async Task Listing_WhenStagedCopiesConflict_ThenCanBrowseWhileExplicitRecoveryReportsConflict()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await ImportRecoveryImageAsync(fixture, false);
+        var stagedPath = record.StoredPath + ".removing-" + record.Id;
+        File.Copy(record.StoredPath, stagedPath);
+        var conflictingPath = record.StoredPath + ".removing-" + Guid.NewGuid().ToString("N");
+        await File.WriteAllBytesAsync(conflictingPath, [1, 2, 3]);
+
+        Assert.Equal(record.Id, Assert.Single(await fixture.Service.ListAsync()).Id);
+        await Assert.ThrowsAsync<IOException>(() => fixture.Service.RecoverInterruptedRemovalsAsync());
+        Assert.True(File.Exists(record.StoredPath));
+        Assert.True(File.Exists(stagedPath));
+        Assert.True(File.Exists(conflictingPath));
+    }
+
     // Recovery preserves catalogued media for both staging formats and storage locations.
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Listing_WhenRemovalIsInterrupted_ThenRestoresCurrentAndLegacyCiphertextAtItsCataloguedPath(
+    public async Task Recovery_WhenRemovalIsInterrupted_ThenRestoresCurrentAndLegacyCiphertextAtItsCataloguedPath(
         bool imageWasMoved, bool stagingUsesLegacyIdentity)
     {
         // Arrange
@@ -27,6 +73,7 @@ public sealed class RemovalTests
         File.Move(imageRecord.StoredPath, stagedPath);
 
         // Act
+        await testVault.Service.RecoverInterruptedRemovalsAsync();
         var imageRecords = await testVault.Service.ListAsync();
         var actualCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
         var stagedFileExists = File.Exists(stagedPath);
@@ -81,7 +128,7 @@ public sealed class RemovalTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Listing_WhenMultipleStagedCopiesAgree_ThenRestoresOneAndRemovesOnlyDuplicates(bool imageWasMoved)
+    public async Task Recovery_WhenMultipleStagedCopiesAgree_ThenRestoresOneAndRemovesOnlyDuplicates(bool imageWasMoved)
     {
         // Arrange
         using var testVault = new TestVault();
@@ -94,6 +141,7 @@ public sealed class RemovalTests
         File.Move(imageRecord.StoredPath, currentStagedPath);
 
         // Act
+        await testVault.Service.RecoverInterruptedRemovalsAsync();
         var imageRecords = await testVault.Service.ListAsync();
         var actualCiphertext = await File.ReadAllBytesAsync(imageRecord.StoredPath);
         var currentStageExists = File.Exists(currentStagedPath);
@@ -110,7 +158,7 @@ public sealed class RemovalTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Listing_WhenStagedCopiesConflict_ThenPreservesBothCiphertextsAndTheCatalog(bool imageWasMoved)
+    public async Task Recovery_WhenStagedCopiesConflict_ThenPreservesBothCiphertextsAndTheCatalog(bool imageWasMoved)
     {
         // Arrange
         using var testVault = new TestVault();
@@ -125,7 +173,7 @@ public sealed class RemovalTests
         var expectedCatalogPayload = await testVault.RawStore.ReadRecordAsync(imageRecord.Id);
 
         // Act
-        var exception = await Assert.ThrowsAsync<IOException>(() => testVault.Service.ListAsync());
+        var exception = await Assert.ThrowsAsync<IOException>(() => testVault.Service.RecoverInterruptedRemovalsAsync());
         var currentCiphertext = await File.ReadAllBytesAsync(currentStagedPath);
         var legacyCiphertext = await File.ReadAllBytesAsync(legacyStagedPath);
         var catalogPayload = await testVault.RawStore.ReadRecordAsync(imageRecord.Id);
@@ -534,7 +582,7 @@ public sealed class RemovalTests
     }
 
     [Fact]
-    public async Task Listing_WhenRemovalIsInterruptedBeforeCatalogDeletion_ThenRecoversCiphertext()
+    public async Task Recovery_WhenRemovalIsInterruptedBeforeCatalogDeletion_ThenRecoversCiphertext()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -544,17 +592,18 @@ public sealed class RemovalTests
         File.Move(record.StoredPath, stagedPath);
 
         // Act
+        await fixture.Service.RecoverInterruptedRemovalsAsync();
         var records = await fixture.Service.ListAsync();
 
         // Assert
         Assert.Equal(record.Id, Assert.Single(records).Id);
-        TestAssertions.True(File.Exists(record.StoredPath), $"listing restores the staged file to {record.StoredPath}");
-        TestAssertions.False(File.Exists(stagedPath), $"listing clears the staged file at {stagedPath}");
+        TestAssertions.True(File.Exists(record.StoredPath), $"recovery restores the staged file to {record.StoredPath}");
+        TestAssertions.False(File.Exists(stagedPath), $"recovery clears the staged file at {stagedPath}");
         await fixture.Service.VerifyImportedAsync(record.Id);
     }
 
     [Fact]
-    public async Task Listing_WhenCatalogEntryIsDeleted_ThenCleansStagedCiphertext()
+    public async Task Recovery_WhenCatalogEntryIsDeleted_ThenCleansStagedCiphertext()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -565,11 +614,12 @@ public sealed class RemovalTests
         await fixture.Store.DeleteAsync(record.Id);
 
         // Act
+        await fixture.Service.RecoverInterruptedRemovalsAsync();
         var records = await fixture.Service.ListAsync();
 
         // Assert
         Assert.Empty(records);
-        TestAssertions.False(File.Exists(stagedPath), $"listing deletes orphaned staged ciphertext at {stagedPath}");
+        TestAssertions.False(File.Exists(stagedPath), $"recovery deletes orphaned staged ciphertext at {stagedPath}");
     }
 
     [Fact]
