@@ -3,13 +3,11 @@ using Gallery.Components;
 using Gallery.Services;
 
 var webApplicationBuilder = WebApplication.CreateBuilder(args);
-webApplicationBuilder.WebHost.UseUrls("http://127.0.0.1:5189");
+webApplicationBuilder.WebHost.UseUrls(webApplicationBuilder.Configuration["urls"] ?? "http://127.0.0.1:5189");
 webApplicationBuilder.WebHost.UseStaticWebAssets();
 var configuredVaultRoot = webApplicationBuilder.Configuration["Gallery:DataDirectory"];
 var vaultRoot = string.IsNullOrWhiteSpace(configuredVaultRoot)
-    ? Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DiffusionGenGallery02")
+    ? GalleryService.DefaultVaultDirectory(GalleryService.GenerateVaultName())
     : configuredVaultRoot;
 var normalizedVaultRoot = Path.GetFullPath(vaultRoot);
 webApplicationBuilder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>

@@ -59,6 +59,8 @@ form > button { margin-top: 18px; }
 .pill { border: 1px solid #75e0b133; background: #75e0b109; color: var(--mint); padding: 6px 9px; border-radius: 99px; font-size: 9px; white-space: nowrap; }
 .unlock-panel { max-width: 510px; margin: 0 auto; padding: 34px; }
 .unlock-panel h2 { margin-top: 25px; }
+.folder-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; margin-top: 16px; }
+.folder-list button { text-align: left; overflow-wrap: anywhere; }
 .segmented { display: flex; gap: 5px; margin: 24px 0; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: #10151c; }
 .segmented button { flex: 1; border: 0; font-size: 12px; background: transparent; }
 .segmented button.active { color: var(--mint); background: #21322b; }
@@ -104,7 +106,6 @@ button.danger:hover:not(:disabled) { background: #f2a8a424; border-color: #f2a8a
 .workflow-nav button.panic-button { display: flex; justify-content: space-between; align-items: center; color: #f2a8a4; border: 1px solid #f2a8a433; background: #f2a8a40d; padding: 8px 10px; font-size: 12px; }
 .workflow-nav button.panic-button:hover:not(:disabled) { background: #f2a8a41f; border-color: #f2a8a466; }
 .workflow-nav button.panic-button kbd { font-size: 10px; padding: 2px 5px; background: #ffffff12; border: 1px solid #ffffff22; border-radius: 4px; color: var(--muted); }
-.vault-location code { overflow-wrap: anywhere; }
 .gallery-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 28px; align-items: start; }
 .filters { padding: 22px; position: sticky; top: 20px; }
 .filters h3 { font-size: 13px; }

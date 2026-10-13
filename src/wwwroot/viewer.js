@@ -1,4 +1,4 @@
-// Native image/file drops can navigate away from the live vault circuit.
+// Native image/file drops can navigate away from the live gallery circuit.
 document.addEventListener("dragstart", event => {
     if (event.target instanceof Element && event.target.closest("img")) event.preventDefault();
 }, true);

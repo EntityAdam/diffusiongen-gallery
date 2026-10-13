@@ -12,5 +12,5 @@ public sealed class VaultLockedException : GalleryBusinessException
         ContextualData? contextualDataByName = null, Exception? innerException = null)
         : base(message, logEvent, contextualDataByName, innerException) { }
 
-    public override string Reason => "Unlock the vault first.";
+    public override string Reason => "Unlock the gallery first.";
 }

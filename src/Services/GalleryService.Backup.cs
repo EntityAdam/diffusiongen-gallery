@@ -35,6 +35,7 @@ public sealed partial class GalleryService
 
     private interface IBackupTarget
     {
+        Task<IReadOnlyList<string>> ListAsync();
         Task<bool> ExistsAsync(string name);
         Task DownloadAsync(string name, string destinationPath);
         Task UploadAsync(string name, string sourcePath);
@@ -42,7 +43,11 @@ public sealed partial class GalleryService
 
     private sealed class LocalBackupTarget(string directory) : IBackupTarget
     {
-        private string PathFor(string name) => Path.Combine(directory, name);
+        private string PathFor(string name) => Path.Combine(directory, ValidateArchiveName(name));
+
+        public Task<IReadOnlyList<string>> ListAsync() => Task.FromResult<IReadOnlyList<string>>(
+            Directory.EnumerateFiles(directory, "*.zip").Select(Path.GetFileName).OfType<string>()
+                .OrderDescending(StringComparer.Ordinal).ToArray());
 
         public Task<bool> ExistsAsync(string name) => Task.FromResult(File.Exists(PathFor(name)));
 
@@ -71,8 +76,20 @@ public sealed partial class GalleryService
 
     private sealed class AzureBackupTarget(BlobContainerClient container, string prefix) : IBackupTarget
     {
-        private string BlobName(string name) => prefix.Length == 0 ? name : $"{prefix}/{name}";
+        private string BlobName(string name) => prefix.Length == 0 ? ValidateArchiveName(name) : $"{prefix}/{ValidateArchiveName(name)}";
         private BlobClient Blob(string name) => container.GetBlobClient(BlobName(name));
+
+        public async Task<IReadOnlyList<string>> ListAsync()
+        {
+            var names = new List<string>();
+            var blobPrefix = prefix.Length == 0 ? "" : prefix + "/";
+            await foreach (var blob in container.GetBlobsAsync(prefix: blobPrefix))
+            {
+                var name = blob.Name[blobPrefix.Length..];
+                if (!name.Contains('/') && name.EndsWith(".zip", StringComparison.Ordinal)) names.Add(name);
+            }
+            return names.OrderDescending(StringComparer.Ordinal).ToArray();
+        }
 
         public async Task<bool> ExistsAsync(string name) =>
             (await Blob(name).ExistsAsync()).Value;
@@ -150,6 +167,7 @@ public sealed partial class GalleryService
 
     private async Task<BackupRunResult> CreateBackupAsync(bool incremental)
     {
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var settings = await ReadBackupSettingsAsync()
             ?? throw new InvalidOperationException("Configure a backup destination before starting a backup.");
         var target = CreateBackupTarget(settings);
@@ -167,7 +185,6 @@ public sealed partial class GalleryService
         await galleryStore.BackupGate.WaitAsync();
         try
         {
-            using var key = vaultSession.AcquireUnlockedSession().Borrow();
             BackupManifest? previousManifest = null;
             if (previousName is not null)
             {
@@ -270,7 +287,7 @@ public sealed partial class GalleryService
             var directory = Path.GetFullPath(settings.LocalDirectory);
             var vaultRoot = Path.GetFullPath(vaultStore.Root);
             if (IsPathWithin(directory, vaultRoot))
-                throw new InvalidOperationException("The backup folder cannot be inside the gallery vault.");
+                throw new InvalidOperationException("The backup folder cannot be inside the gallery data folder.");
             return new LocalBackupTarget(directory);
         }
         if (settings.DestinationType == "azure")
@@ -331,6 +348,14 @@ public sealed partial class GalleryService
     }
 
     private static string ManifestName(string archiveName) => archiveName + ".manifest";
+
+    private static string ValidateArchiveName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name is "." or ".."
+            || name.IndexOfAny(['/', '\\', ':']) >= 0 || Path.GetFileName(name) != name)
+            throw new InvalidOperationException("Backup names must be filenames, not paths.");
+        return name;
+    }
 
     private static async Task<string> HashFileAsync(string path)
     {

@@ -733,9 +733,9 @@ public sealed class GalleryTests
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
         using var input = new MemoryStream(MakePng());
         fixture.Session.Lock();
-        var expected = new ExpectedException("a locked vault refuses writes before accessing its secret key", "unlock", "vault", "first")
+        var expected = new ExpectedException("a locked gallery refuses writes before accessing its secret key", "unlock", "gallery", "first")
         { HttpStatusCode = System.Net.HttpStatusCode.BadRequest, Severity = Severity.Error,
-          Reason = "Unlock the vault first.", LogEventValue = "Vault.AcquireKey",
+          Reason = "Unlock the gallery first.", LogEventValue = "Vault.AcquireKey",
           ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Vault.State", "locked") };
 
         // Act

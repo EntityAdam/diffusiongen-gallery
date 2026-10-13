@@ -28,20 +28,45 @@ dotnet run --project .\src\Gallery.csproj --configuration Release "-p:SixLaborsL
 
 The license file is gitignored and must not be committed.
 
-Open **http://127.0.0.1:5189**. Create a vault with a unique passphrase of at least
+Open **http://127.0.0.1:5189**. Create a gallery with a unique passphrase of at least
 14 characters and **save the 32 recovery words offline before continuing**.
-The default vault is `%LOCALAPPDATA%\DiffusionGenGallery02`. To choose a different
-location, set `Gallery__DataDirectory` before launching:
+New galleries get a pseudo-random name and their own folder beneath the OS-specific
+local application data directory (`%LOCALAPPDATA%\DiffusionGenGallery02\galleries`
+on Windows). You can edit the name and directory before creation. The welcome
+screen remembers the last successfully opened gallery and offers **Switch gallery**
+to create, open, or restore another gallery. Enter a fully qualified local directory
+or UNC/SMB path in each directory field (or an absolute mounted SMB path on Linux/macOS).
+All directory locations use manual path entry; there are no folder-picker controls.
+To override the initial directory, set `Gallery__DataDirectory`:
 
 ```powershell
 $env:Gallery__DataDirectory = 'D:\PrivateGallery'
 dotnet run --project .\src\Gallery.csproj
 ```
 
+Gallery names are visible in the header, and the last-used directory is saved in
+`last-vault.json` in the application's local data directory. Media and catalog
+contents remain encrypted.
+
 The process binds to loopback and rejects non-loopback clients, untrusted Host
 headers, and cross-origin requests. Do not expose it through a proxy, tunnel,
 or public port. This is a single-owner local application, not a network service.
-Only one process should operate on a vault at a time.
+An unlocked gallery holds an exclusive filesystem checkout. Locking the gallery
+automatically releases its checkout after interrupted operations finish. Another
+browser session or application instance cannot unlock the same gallery concurrently.
+The `.vault-checkout` file is deliberately retained; its presence alone
+does not indicate an active checkout. SMB servers must honor exclusive file sharing.
+Multiple processes can use different galleries; give each a different loopback port,
+for example `dotnet run --project .\src\Gallery.csproj -- --urls http://127.0.0.1:5190`.
+
+**Settings > Manage gallery** renames a gallery without changing its directory, moves
+the gallery to a new/empty local or SMB folder, or purges it after typing **PURGE**.
+Moving consolidates all catalogued encrypted media (including media previously
+moved outside the gallery) into the new directory and updates the encrypted catalog.
+The source is removed only after verified copies and a database snapshot are
+published. Sign in again after moving. Purge destroys encrypted media, the catalog,
+thumbnails, settings, and the gallery header; original source files, backups, and
+unrelated files are retained. Purge is permanent deletion, not secure disk erasure.
 
 ## Workflow
 
@@ -53,7 +78,7 @@ an optional bearer API key and a request timeout (10-3600 seconds, default 180).
 without saving settings. You can also enter a model ID manually. Discovery does
 not verify vision capabilities; select a vision model for image analysis.
 **Save LLM settings** stores the configuration, including the key, encrypted in
-the vault. Unsaved form edits are isolated from the active configuration; leaving
+the gallery. Unsaved form edits are isolated from the active configuration; leaving
 the endpoint workflow discards them. The same saved connection, key and timeout apply to image analysis, collection
 suggestions and natural-language filter interpretation. Literal loopback and RFC 1918
 private LAN addresses are allowed: `10.0.0.0/8`, `172.16.0.0/12` (172.16 through
@@ -67,10 +92,10 @@ only to loopback. Gallery02 does not import or share src03's configuration.
 The left navigation separates Library, Guided review, Organize, Explore & saved
 views, Local intelligence, Duplicate finder, Remove marked images, Ingest images and Settings.
 **Settings** opens on a **Gallery overview** with tabs for **Backups**,
-**LLM endpoints** and **Vault security**. The overview shows database size (`gallery.db` plus its WAL/SHM
+**Manage gallery**, **LLM endpoints** and **Gallery security**. The overview shows database size (`gallery.db` plus its WAL/SHM
 files, which include encrypted thumbnails), total file count (catalogued encrypted
-image files plus vault header/database files) and total size on disk, auto-scaled
-from B through PB. Measurements are cached encrypted in the vault with a "Last
+image files plus gallery header/database files) and total size on disk, auto-scaled
+from B through PB. Measurements are cached encrypted in the gallery with a "Last
 updated" time and are only recalculated when you select **Refresh** (or the first
 time no cached overview exists). Catalogued images missing from disk are reported
 and excluded from the totals. The overview also summarizes the last duplicate scan.
@@ -78,28 +103,39 @@ and excluded from the totals. The overview also summarizes the last duplicate sc
 **Settings > Backups** writes ZIP snapshot archives to one configured destination:
 a local folder/SMB share or an Azure Blob Storage container. The app uses its Windows
 account for SMB access. Azure requires an existing container and a Storage Account
-connection string; that credential is stored encrypted in the vault and is not shown
+connection string; that credential is stored encrypted in the gallery and is not shown
 again after saving. Use a dedicated Storage Account for backups. A **full backup**
 contains `vault.json`, a consistent SQLite database snapshot (including encrypted
 thumbnails), an encrypted media manifest, and all catalogued encrypted `.dpng` and
-`.dmp4` files, including media moved outside the vault folder. An **incremental
+`.dmp4` files, including media moved outside the gallery folder. An **incremental
 backup** includes a fresh database/header snapshot and only new or changed encrypted
 media. If nothing has changed since the last backup (same media, database content,
-and vault header), no incremental archive is created and the chain is left as is.
+and gallery header), no incremental archive is created and the chain is left as is.
 Each archive has a companion `.manifest` file; manifests are encrypted and
 link each increment to its parent. Keep the full archive, every subsequent incremental
 archive in that chain, and their `.manifest` companions together. A new full backup
 starts a separate chain. Backups are manual; the app does not schedule runs or prune
-older archives. Backup destinations cannot be inside the vault. The stored media paths
-are absolute, so restoring a vault on a different machine or drive requires restoring
-media to the paths recorded in that backup as well.
+older archives. Backup destinations cannot be inside the gallery.
+
+**Switch gallery > Restore** supports a local/SMB backup folder or an Azure Blob
+container-level SAS URL with read and list permissions. **Find backups** lists available archives. Choose a full backup
+or the last incremental you want restored; restore follows its authenticated parent
+links and requires every archive back to the full backup. Companion manifests are
+not needed for restoration because archives contain the same encrypted manifests.
+Enter the backup gallery's passphrase or recovery words, a gallery name, and a new/empty
+destination. Restore verifies the header, database, and encrypted media before
+publishing anything, restores the latest catalog state (including deletions), and
+rewrites media paths into the chosen directory. The existing gallery and backup files
+are never overwritten. Sign in normally after restoration. Move and restore retain
+backup credentials/settings but reset backup chain status and cached storage
+measurements; create a new full backup before the next incremental.
 
 **Duplicate finder** finds likely duplicates, including resized or
 re-encoded copies that import's exact-byte check cannot catch. Each image gets a
 64-bit perceptual difference hash computed from its decrypted thumbnail;
 images within 6 of 64 bits and with a similar aspect ratio (or identical PNG
 pixels) are grouped. Fingerprints and the last scan result are cached encrypted
-in the vault, and rescans only fingerprint new or changed images. Each group shows
+in the gallery, and rescans only fingerprint new or changed images. Each group shows
 thumbnails, sizes and approximate reclaimable space, and recommends a keeper:
 unmarked first, then highest rating, favorite, most pixels, largest original and
 oldest import. **Mark other(s) for deletion** (per group) or **Mark all extra
@@ -130,7 +166,7 @@ active-filter chips like any other filter.
 
 **Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
 Compact shows 49 smaller cards per page with condensed details, Comfortable shows
-24 and Large shows 12. The choice is saved encrypted per vault and restored on
+24 and Large shows 12. The choice is saved encrypted per gallery and restored on
 unlock.
 
 Every gallery workflow except removal has a select button on each card. Click it to
@@ -218,16 +254,16 @@ The navigation job indicator stays visible when you change workflows, including
 image progress, a stop-after-current-image control and an **Open job** link.
 Completed suggestion counts remain visible until approved or dismissed. Stopping
 does not interrupt the current request; its configured timeout still applies.
-While an LLM job is running, locking, ingestion, removal, file moves and vault
+While an LLM job is running, locking, ingestion, removal, file moves and gallery
 configuration changes are blocked. Browsing and review remain available. Stop the
 job and wait for the current image to finish before changing files. Suggestions
 for images removed from the current library are discarded.
 
-The default port and vault are separate from gallery01. Do not run both apps
-against the same vault concurrently. No existing vault is automatically copied
+The default port and gallery are separate from gallery01. Do not run both apps
+against the same gallery concurrently. No existing gallery is automatically copied
 or modified. For testing an existing library, use a complete separate backup;
 stored image paths are absolute, so pointing at a copied database alone still
-references original image files. Keep gallery01 on its own original vault.
+references original image files. Keep gallery01 on its own original gallery.
 
 - **Ingest images** accepts a local folder path with optional recursive ingestion.
   Browser folder/file uploads are not supported. PNG, JPEG,
@@ -286,13 +322,13 @@ references original image files. Keep gallery01 on its own original vault.
   **Save copies (zip)** exports a selection (up to 1 GiB). Exports are plaintext
   once saved; protect them accordingly.
 - New imports use `images\<first two ID characters>\<next two ID characters>\<id>.dpng`
-  beneath the vault directory. Random IDs avoid filename collisions, and two-level
+  beneath the gallery directory. Random IDs avoid filename collisions, and two-level
   sharding spreads files across directories. Original/display names need not be
   unique. Existing files and user-selected move destinations are not relocated.
 - Duplicate detection uses a unique SQLite index on a 32-byte keyed fingerprint:
   HMAC-SHA256 of the binary source SHA-256, with a dedicated key derived from
-  the vault master key using HKDF-SHA256 and a versioned purpose label.
-  Fingerprints are stable across passphrase changes but differ between vaults.
+  the gallery master key using HKDF-SHA256 and a versioned purpose label.
+  Fingerprints are stable across passphrase changes but differ between galleries.
   A stolen database does not allow testing suspected content without the key,
   though fingerprints reveal content equality. Original hashes remain encrypted
   in image records. Matching is byte-exact, not perceptual.
@@ -361,7 +397,7 @@ references original image files. Keep gallery01 on its own original vault.
 
 ## Encryption and recovery
 
-Each vault has a cryptographically random 256-bit master key. AES-256-GCM
+Each gallery has a cryptographically random 256-bit master key. AES-256-GCM
 encrypts image files, SQLite record blobs, thumbnail blobs, and vision settings,
 with fresh random 96-bit nonces and 128-bit authentication tags. Authenticated
 context binds each blob to its record ID and purpose, preventing substitution
@@ -376,11 +412,11 @@ Only salts and authenticated wrapped keys are saved in `vault.json`; neither
 credential nor an unwrapped master key is saved to disk.
 
 Use the recovery-words tab to unlock after forgetting a passphrase, then change
-the passphrase in **Settings > Vault security** (recovery unlock opens it directly). Recovery words remain valid. They are
+the passphrase in **Settings > Gallery security** (recovery unlock opens it directly). Recovery words remain valid. They are
 shown only during creation and cannot be displayed again. There is **no
 backdoor, email reset, escrow, or machine-bound bypass**. Losing both credentials
-makes the vault's encrypted content unrecoverable, assuming strong credentials
-and uncompromised cryptography. Damage or loss of the vault header is also
+makes the gallery's encrypted content unrecoverable, assuming strong credentials
+and uncompromised cryptography. Damage or loss of the gallery header is also
 unrecoverable without its backup.
 
 Use **Settings > Backups** to create consistent live snapshots of `vault.json`,
@@ -388,17 +424,17 @@ Use **Settings > Backups** to create consistent live snapshots of `vault.json`,
 chain is needed to reconstruct the latest snapshot; keep every archive and companion
 manifest. A passphrase change affects only the current header; backups made before
 that change can still be unlocked using the old passphrase.
-Stored file paths are absolute: moving a vault to another machine/drive is not
+Stored file paths are absolute: moving a gallery to another machine/drive is not
 an automatic portable-library migration.
 
 Keys remain in memory only for the unlocked browser circuit and in-flight
 operations. Use **Panic** (`Ctrl+Shift+L`), reload, or disconnect to clear the session key.
 Tabs unlock independently; lock every unlocked tab or close the process.
-**Inactivity auto-lock** automatically locks the vault and zeroes keys from memory
-after a period of inactivity (default 15 minutes, configurable in **Settings > Vault security**
+**Inactivity auto-lock** automatically locks the gallery, releases its checkout after active
+operations finish, and zeroes keys from memory after a period of inactivity (default 15 minutes, configurable in **Settings > Gallery security**
 to 5, 15, 30, 60 minutes or disabled).
 **Panic / Emergency quick-lock** (`Ctrl+Shift+L`, `Alt+Shift+L`, or `Shift+Esc`, or the **Panic** button)
-immediately locks the vault, zeroes encryption keys in RAM, revokes all decrypted media blob URLs,
+immediately locks the gallery, releases its checkout after active work finishes, zeroes encryption keys in RAM, revokes all decrypted media blob URLs,
 and blanks all media elements in the browser DOM.
 Plaintext exists in browser/server memory while viewing
 and in the local vision server while analyzing. Browser extensions, malware,
@@ -419,6 +455,6 @@ image/catalog/thumbnail storage, duplicates, folder ingestion, move/rename
 safety, filtering, local endpoint restrictions, and vision request handling.
 Curation tests cover perceptual near-duplicate grouping, keeper choice, encrypted
 fingerprint/scan/preference caches, bulk updates and grid keyboard shortcuts.
-Storage tests also cover sharded paths, same-name imports, vault-specific
+Storage tests also cover sharded paths, same-name imports, gallery-specific
 fingerprints, legacy-schema backfill and rollback, indexed query plans,
 concurrent duplicate imports, and SQLite uniqueness enforcement.
