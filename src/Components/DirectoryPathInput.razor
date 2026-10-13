@@ -1,6 +1,6 @@
-<label for="@id">@Label</label>
-<input id="@id" value="@Value" @onchange="ChangedAsync" placeholder="@Placeholder" disabled="@Disabled" aria-describedby="@(id + "-hint")" />
-<p id="@(id + "-hint")" class="muted">Enter a fully qualified local directory or UNC path.</p>
+<Label For="@id" Class="mt-4 mb-2 block">@Label</Label>
+<Input id="@id" Value="@Value" ValueChanged="ValueChanged" Placeholder="@Placeholder" Disabled="@Disabled" aria-describedby="@(id + "-hint")" />
+<p id="@(id + "-hint")" class="text-muted-foreground">Enter a fully qualified local directory or UNC path.</p>
 
 @code {
     [Parameter] public string Label { get; set; } = "Gallery directory";
@@ -9,5 +9,4 @@
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public string Placeholder { get; set; } = @"C:\Pictures\Gallery or \\server\share\gallery";
     private readonly string id = "folder-" + Guid.NewGuid().ToString("N");
-    private Task ChangedAsync(ChangeEventArgs args) => ValueChanged.InvokeAsync(args.Value?.ToString() ?? "");
 }

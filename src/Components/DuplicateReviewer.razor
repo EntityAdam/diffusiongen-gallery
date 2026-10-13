@@ -3,63 +3,63 @@
 @inject IJSRuntime JS
 @inject ILogger<DuplicateReviewer> Logger
 
-<section class="fullscreen-viewer duplicate-reviewer" role="dialog" aria-modal="true" aria-label="Duplicate review" tabindex="-1" @ref="element" data-review="false" data-keys="arrowup arrowdown k a s">
-    <header class="viewer-toolbar">
+<section class="fullscreen-viewer fixed inset-0 z-50 flex flex-col bg-background outline-none duplicate-reviewer" role="dialog" aria-modal="true" aria-label="Duplicate review" tabindex="-1" @ref="element" data-review="false" data-keys="arrowup arrowdown k a s">
+    <header class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 [&_strong]:break-all">
         <div>
             <strong>Duplicate group @(groupIndex + 1) / @Groups.Count</strong>
-            <span class="muted"> &middot; copy @(imageIndex + 1) / @members.Count &middot; @Current.Name &middot; @Current.Width &times; @Current.Height &middot; @GalleryService.FormatBytes(Current.OriginalBytes)</span>
+            <span class="text-muted-foreground"> &middot; copy @(imageIndex + 1) / @members.Count &middot; @Current.Name &middot; @Current.Width &times; @Current.Height &middot; @GalleryService.FormatBytes(Current.OriginalBytes)</span>
         </div>
-        <div class="actions">
-            <button disabled="@(busy || imageIndex == 0)" @onclick="() => ShowImageAsync(imageIndex - 1)" title="Left arrow: previous copy">Previous copy &larr;</button>
-            <button disabled="@(busy || imageIndex + 1 >= members.Count)" @onclick="() => ShowImageAsync(imageIndex + 1)" title="Right arrow: next copy">Next copy &rarr;</button>
-            <button disabled="@(busy || groupIndex == 0)" @onclick="() => OpenGroupAsync(groupIndex - 1)" title="Up arrow: previous group">Previous group &uarr;</button>
-            <button disabled="@(busy || groupIndex + 1 >= Groups.Count)" @onclick="() => OpenGroupAsync(groupIndex + 1)" title="Down arrow: next group">Next group &darr;</button>
-            <button disabled="@busy" @onclick="() => SetSizeAsync(true)" aria-pressed="@(originalSize ? "true" : "false")">Original size (O)</button>
-            <button disabled="@busy" @onclick="() => SetSizeAsync(false)" aria-pressed="@(originalSize ? "false" : "true")">Fit window (P)</button>
-            <button disabled="@busy" @onclick="CloseAsync" aria-label="Close duplicate review">Close (Esc)</button>
+        <div class="flex flex-wrap items-center gap-2">
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || imageIndex == 0)" OnClick="() => ShowImageAsync(imageIndex - 1)" title="Left arrow: previous copy"><ChevronLeftIcon aria-hidden="true" />Previous copy</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || imageIndex + 1 >= members.Count)" OnClick="() => ShowImageAsync(imageIndex + 1)" title="Right arrow: next copy">Next copy<ChevronRightIcon aria-hidden="true" /></Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || groupIndex == 0)" OnClick="() => OpenGroupAsync(groupIndex - 1)" title="Up arrow: previous group"><ChevronUpIcon aria-hidden="true" />Previous group</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || groupIndex + 1 >= Groups.Count)" OnClick="() => OpenGroupAsync(groupIndex + 1)" title="Down arrow: next group"><ChevronDownIcon aria-hidden="true" />Next group</Button>
+            <Button Variant="@(originalSize ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => SetSizeAsync(true)" aria-pressed="@(originalSize ? "true" : "false")"><ScanIcon aria-hidden="true" />Original size (O)</Button>
+            <Button Variant="@(!originalSize ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => SetSizeAsync(false)" aria-pressed="@(originalSize ? "false" : "true")"><MaximizeIcon aria-hidden="true" />Fit window (P)</Button>
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@busy" OnClick="CloseAsync" aria-label="Close duplicate review"><XIcon aria-hidden="true" />Close (Esc)</Button>
         </div>
     </header>
-    <div class="review-controls duplicate-controls">
+    <div class="max-h-[35vh] shrink-0 space-y-3 overflow-auto border-b border-border bg-primary/5 px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-4">
         <div>
             <strong>@(applied.Contains(groupIndex) ? "Saved. Change your picks and apply again, or move on." : Keep.Count == 0 ? "Keep at least one copy." : "Choose one or more copies to keep.")</strong>
-            <p class="muted">Keeping @Keep.Count of @members.Count. Applying marks the other @(members.Count - Keep.Count) for deletion and clears marks on kept copies. @(Group.Exact ? "Exact copies." : $"Similar images (difference {Group.MaxDistance}/64).") Nothing is deleted until you use Remove marked images.</p>
+            <p class="text-muted-foreground">Keeping @Keep.Count of @members.Count. Applying marks the other @(members.Count - Keep.Count) for deletion and clears marks on kept copies. @(Group.Exact ? "Exact copies." : $"Similar images (difference {Group.MaxDistance}/64).") Nothing is deleted until you use Remove marked images.</p>
         </div>
-        <div class="actions">
-            <button disabled="@busy" aria-pressed="@(Keep.Contains(Current.Id) ? "true" : "false")" @onclick="() => ToggleKeep(Current.Id)">@(Keep.Contains(Current.Id) ? "\u2713 Keeping this copy" : "Keep this copy") (K)</button>
-            <button disabled="@busy" @onclick="KeepOnlyCurrent">Keep only this</button>
-            <button disabled="@busy" @onclick="KeepAll">Keep all</button>
-            <button class="primary" disabled="@(busy || Keep.Count == 0)" @onclick="ApplyAsync">@(groupIndex + 1 < Groups.Count ? "Apply & next group" : "Apply") (A)</button>
-            <button disabled="@(busy || groupIndex + 1 >= Groups.Count)" @onclick="() => OpenGroupAsync(groupIndex + 1)">Skip group (S)</button>
+        <div class="flex flex-wrap items-center gap-2">
+            <Button Variant="@(Keep.Contains(Current.Id) ? ButtonVariant.Secondary : ButtonVariant.Outline)" Disabled="@busy" aria-pressed="@(Keep.Contains(Current.Id) ? "true" : "false")" OnClick="() => ToggleKeep(Current.Id)"><CheckIcon aria-hidden="true" />@(Keep.Contains(Current.Id) ? "Keeping this copy" : "Keep this copy") (K)</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="KeepOnlyCurrent">Keep only this</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="KeepAll">Keep all</Button>
+            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(busy || Keep.Count == 0)" OnClick="ApplyAsync">@(groupIndex + 1 < Groups.Count ? "Apply & next group" : "Apply") (A)</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || groupIndex + 1 >= Groups.Count)" OnClick="() => OpenGroupAsync(groupIndex + 1)">Skip group (S)</Button>
         </div>
     </div>
-    <div class="viewer-image-area @(originalSize ? "original-size" : "fit-window")">
+    <div class="viewer-image-area relative min-h-0 flex-1 overflow-auto [&>p]:absolute [&>p]:top-3 [&>p]:left-4 [&>p]:text-primary @(originalSize ? "original-size" : "fit-window")">
         @if (busy) { <p role="status">Loading...</p> }
         @if (imageData.Length > 0) { <img @key="Current.Id" src="@imageData" alt="@Current.Name" draggable="false" /> }
-        <span class="duplicate-verdict @(Keep.Contains(Current.Id) ? "keep" : "drop")">@(Keep.Contains(Current.Id) ? "Keep" : "Will be marked for deletion")</span>
+        <span class="duplicate-verdict pointer-events-none absolute top-3 right-4 rounded-full px-3 py-1 text-xs font-semibold @(Keep.Contains(Current.Id) ? "keep" : "drop")">@(Keep.Contains(Current.Id) ? "Keep" : "Will be marked for deletion")</span>
     </div>
-    <div class="duplicate-strip" role="group" aria-label="Copies in this group">
+    <div class="flex shrink-0 gap-3 overflow-x-auto border-t border-border bg-background px-4 py-3" role="group" aria-label="Copies in this group">
         @for (var position = 0; position < members.Count; position++)
         {
             var index = position;
             var member = members[index];
             var kept = Keep.Contains(member.Id);
-            <div class="strip-item @(index == imageIndex ? "current" : "") @(kept ? "kept" : "dropped")" @key="member.Id">
-                <button type="button" class="strip-view" disabled="@busy" aria-current="@(index == imageIndex ? "true" : null)" title="@($"View {member.Name}")" @onclick="() => ShowImageAsync(index)">
+            <div class="strip-item flex w-32 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card sm:w-40 @(index == imageIndex ? "current" : "") @(kept ? "kept" : "dropped")" @key="member.Id">
+                <button type="button" class="flex flex-col gap-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 [&_img]:h-20 [&_img]:w-full [&_img]:bg-background [&_img]:object-contain" disabled="@busy" aria-current="@(index == imageIndex ? "true" : null)" title="@($"View {member.Name}")" @onclick="() => ShowImageAsync(index)">
                     @if (thumbs.TryGetValue(member.Id, out var thumbnail)) { <img src="@thumbnail" alt="" draggable="false" /> }
-                    else { <span class="thumbnail-placeholder">Preview</span> }
-                    <span class="strip-name">@member.Name</span>
-                    <span class="strip-meta">@member.Width &times; @member.Height &middot; @GalleryService.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.Favorite ? " · Favorite" : "")</span>
-                    @if (member.Id == recommendedId) { <span class="strip-meta recommended">Recommended</span> }
+                    else { <span class="grid h-full place-items-center text-xs text-muted-foreground">Preview</span> }
+                    <span class="truncate px-2 text-xs font-semibold">@member.Name</span>
+                    <span class="px-2 text-xs text-muted-foreground">@member.Width &times; @member.Height &middot; @GalleryService.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.Favorite ? " · Favorite" : "")</span>
+                    @if (member.Id == recommendedId) { <span class="px-2 text-xs text-muted-foreground text-primary">Recommended</span> }
                 </button>
-                <button type="button" class="strip-keep" disabled="@busy" aria-pressed="@(kept ? "true" : "false")" aria-label="@($"Keep {member.Name}")" @onclick="() => ToggleKeep(member.Id)">@(kept ? "\u2713 Keep" : "Keep")</button>
+                <Button Variant="@(kept ? ButtonVariant.Default : ButtonVariant.Outline)" Size="ButtonSize.Sm" Class="mx-2 my-2" Disabled="@busy" aria-pressed="@(kept ? "true" : "false")" aria-label="@($"Keep {member.Name}")" OnClick="() => ToggleKeep(member.Id)"><CheckIcon aria-hidden="true" />Keep</Button>
             </div>
         }
     </div>
-    <footer class="viewer-status">
+    <footer class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-muted-foreground">
         <span>@status</span>
         <span>Left/Right: copies / Up/Down: groups / K: toggle keep / A: apply / S: skip / O: 100% / P: fit / Esc: close</span>
     </footer>
-    @if (error.Length > 0) { <div class="notice error viewer-error" role="alert">@error</div> }
+    @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive" Class="absolute right-4 bottom-16 left-4">@error</Alert> }
 </section>
 
 @code {

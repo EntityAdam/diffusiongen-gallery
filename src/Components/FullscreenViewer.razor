@@ -3,55 +3,55 @@
 @inject IJSRuntime JS
 @inject ILogger<FullscreenViewer> Logger
 
-<section class="fullscreen-viewer" role="dialog" aria-modal="true" aria-label="@(ReviewMode ? "Guided review session" : "Full screen image viewer")" tabindex="-1" @ref="element" data-review="@ReviewMode.ToString().ToLowerInvariant()">
-    <header class="viewer-toolbar">
-        <div><strong>@Current.Name</strong><span class="muted"> @(index + 1) / @Images.Count &middot; @Current.Width &times; @Current.Height</span></div>
-        <div class="actions">
-            <button disabled="@(busy || index == 0)" @onclick="() => NavigateAsync(-1)" title="Left arrow: previous image">Previous &larr;</button>
-            <button disabled="@(busy || index + 1 >= Images.Count)" @onclick="() => NavigateAsync(1)" title="Right arrow: next image">Next &rarr;</button>
+<section class="fullscreen-viewer fixed inset-0 z-50 flex flex-col bg-background outline-none" role="dialog" aria-modal="true" aria-label="@(ReviewMode ? "Guided review session" : "Full screen image viewer")" tabindex="-1" @ref="element" data-review="@ReviewMode.ToString().ToLowerInvariant()">
+    <header class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 [&_strong]:break-all">
+        <div><strong>@Current.Name</strong><span class="text-muted-foreground"> @(index + 1) / @Images.Count &middot; @Current.Width &times; @Current.Height</span></div>
+        <div class="flex flex-wrap items-center gap-2">
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || index == 0)" OnClick="() => NavigateAsync(-1)" title="Left arrow: previous image"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || index + 1 >= Images.Count)" OnClick="() => NavigateAsync(1)" title="Right arrow: next image">Next<ChevronRightIcon aria-hidden="true" /></Button>
             @if (!ReviewMode)
             {
-                <button disabled="@busy" @onclick="MarkAsync" aria-pressed="@Current.MarkedForDeletion">@(Current.MarkedForDeletion ? "Unmark deletion" : "Mark deletion") (D)</button>
-                <button disabled="@busy" @onclick="FavoriteAsync" aria-pressed="@Current.Favorite">@(Current.Favorite ? "Unfavorite" : "Favorite") (F)</button>
+                <Button Variant="@(Current.MarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="MarkAsync" aria-pressed="@Current.MarkedForDeletion"><TrashIcon aria-hidden="true" />@(Current.MarkedForDeletion ? "Unmark deletion" : "Mark deletion") (D)</Button>
+                <Button Variant="@(Current.Favorite ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="FavoriteAsync" aria-pressed="@Current.Favorite"><HeartIcon Fill="@(Current.Favorite ? "currentColor" : "none")" aria-hidden="true" />@(Current.Favorite ? "Unfavorite" : "Favorite") (F)</Button>
             }
-            <button disabled="@busy" @onclick="() => SetSizeAsync(true)" aria-pressed="@originalSize">Original size (O)</button>
-            <button disabled="@busy" @onclick="() => SetSizeAsync(false)" aria-pressed="@(!originalSize)">Fit window (P)</button>
-            <button disabled="@busy" @onclick="CloseAsync" aria-label="Close full screen viewer">Close (Esc)</button>
+            <Button Variant="@(originalSize ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => SetSizeAsync(true)" aria-pressed="@originalSize"><ScanIcon aria-hidden="true" />Original size (O)</Button>
+            <Button Variant="@(!originalSize ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => SetSizeAsync(false)" aria-pressed="@(!originalSize)"><MaximizeIcon aria-hidden="true" />Fit window (P)</Button>
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@busy" OnClick="CloseAsync" aria-label="Close full screen viewer"><XIcon aria-hidden="true" />Close (Esc)</Button>
         </div>
     </header>
     @if (ReviewMode)
     {
-        <div class="review-controls">
+        <div class="max-h-[35vh] shrink-0 space-y-3 overflow-auto border-b border-border bg-primary/5 px-4 py-3 text-sm">
             <div><strong>@(reviewComplete ? UntouchedCount > 0 ? "End reached. Images still need a decision." : "Session complete." : "Make a decision, then move on.")</strong>
-                <p class="muted">@decisions.Count reviewed / @skipped.Count skipped / @UntouchedCount untouched / @Images.Count in session. Decisions save immediately. Skip leaves an image pending; marking never deletes files.</p>
+                <p class="text-muted-foreground">@decisions.Count reviewed / @skipped.Count skipped / @UntouchedCount untouched / @Images.Count in session. Decisions save immediately. Skip leaves an image pending; marking never deletes files.</p>
             </div>
             @if (!reviewComplete)
             {
-                <div class="actions">
-                    <button class="primary" disabled="@busy" @onclick="() => DecideAsync(ReviewAction.Keep)">Keep (K)</button>
-                    <button disabled="@busy" @onclick="() => DecideAsync(ReviewAction.Favorite)">Favorite (F)</button>
-                    <button disabled="@busy" @onclick="() => DecideAsync(ReviewAction.MarkDeletion)">Mark deletion (D)</button>
-                    <button disabled="@busy" @onclick="SkipAsync">Skip (S)</button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Keep)">Keep (K)</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Favorite)">Favorite (F)</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.MarkDeletion)">Mark deletion (D)</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SkipAsync">Skip (S)</Button>
                     @for (var score = 1; score <= 5; score++)
                     {
                         var value = score;
-                        <button disabled="@busy" @onclick="() => DecideAsync(ReviewAction.Rate, value)" title="Rate, mark reviewed and advance">@value / 5</button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Rate, value)" title="Rate, mark reviewed and advance">@value / 5</Button>
                     }
                 </div>
             }
             else
             {
                 <p role="status">Your decisions are saved. Skipped images remain in the pending queue. Close to refresh the library, or go back to revise a decision.</p>
-                <button disabled="@busy" @onclick="() => NavigateAsync(0)">Revisit last image</button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => NavigateAsync(0)">Revisit last image</Button>
                 @if (UntouchedCount > 0)
                 {
-                    <button class="primary" disabled="@busy" @onclick="ContinueRemainingAsync">Continue remaining (@UntouchedCount)</button>
+                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="ContinueRemainingAsync">Continue remaining (@UntouchedCount)</Button>
                 }
             }
-            <button disabled="@(busy || undo.Count == 0)" @onclick="UndoAsync">Undo last decision</button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || undo.Count == 0)" OnClick="UndoAsync">Undo last decision</Button>
         </div>
     }
-    <div class="viewer-image-area @(originalSize ? "original-size" : "fit-window")">
+    <div class="viewer-image-area relative min-h-0 flex-1 overflow-auto [&>p]:absolute [&>p]:top-3 [&>p]:left-4 [&>p]:text-primary @(originalSize ? "original-size" : "fit-window")">
         @if (busy) { <p role="status">Loading...</p> }
         @if (imageData.Length > 0 && !reviewComplete)
         {
@@ -61,11 +61,11 @@
             { <img @key="Current.Id" src="@imageData" alt="@Current.Name" draggable="false" /> }
         }
     </div>
-    <footer class="viewer-status">
+    <footer class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-muted-foreground">
         <span>@(Current.Favorite ? "Favorite" : "Not favorite") &middot; @(Current.MarkedForDeletion ? "Marked for deletion" : "Not marked") &middot; @(Current.Reviewed ? "Reviewed" : "Pending review") / @Current.Rating out of 5 &middot; @(originalSize ? "100% size (scroll to explore)" : "Fit to window")</span>
         <span>@(ReviewMode ? "K: keep / F: favorite / D: mark deletion / S: skip / 1-5: rate / Arrows: browse / O: 100% / P: fit / Esc: close" : "Left: previous / Right: next / D: deletion mark / F: favorite / O: 100% / P: fit / Esc: close")</span>
     </footer>
-    @if (error.Length > 0) { <div class="notice error viewer-error" role="alert">@error</div> }
+    @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive" Class="absolute right-4 bottom-16 left-4">@error</Alert> }
 </section>
 
 @code {

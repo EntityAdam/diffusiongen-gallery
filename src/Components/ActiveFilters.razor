@@ -1,11 +1,11 @@
-<div class="active-filters" aria-label="Active filters">
+<div class="mb-4 flex flex-wrap items-center gap-2" aria-label="Active filters">
     @foreach (var chip in Chips)
     {
-        <button disabled="@Disabled" @onclick="() => RemoveAsync(chip.Clear)" aria-label="@($"Remove filter: {chip.Label}")">@chip.Label &times;</button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Class="h-auto max-w-full py-2 text-left whitespace-normal break-words" Disabled="@Disabled" OnClick="() => RemoveAsync(chip.Clear)" aria-label="@($"Remove filter: {chip.Label}")">@chip.Label <XIcon Size="14" aria-hidden="true" /></Button>
     }
     @if (Chips.Count > 0)
     {
-        <button class="text-button" disabled="@Disabled" @onclick="Reset">Clear all filters</button>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Class="h-auto px-0" Disabled="@Disabled" OnClick="Reset">Clear all filters</Button>
     }
 </div>
 
