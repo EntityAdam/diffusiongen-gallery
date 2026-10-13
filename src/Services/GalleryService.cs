@@ -99,6 +99,7 @@ public sealed partial class GalleryService
         this.vaultSession = vaultSession;
         this.videoTools = videoTools;
         this.visionService = visionService;
+        this.vaultSession.AutoLocked += () => OnAutoLocked?.Invoke();
     }
 
     public const long MaxFileBytes = 50 * 1024 * 1024;

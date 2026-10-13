@@ -29,7 +29,9 @@ public sealed partial class GalleryService
         string BackupType,
         string? ParentBackupName,
         DateTimeOffset CreatedAt,
-        Dictionary<string, BackupMediaEntry> Media);
+        Dictionary<string, BackupMediaEntry> Media,
+        string? DatabaseFingerprint = null,
+        string? VaultHeaderSha256 = null);
 
     private interface IBackupTarget
     {
@@ -175,12 +177,18 @@ public sealed partial class GalleryService
             await ListAsync();
             var mediaEntries = new Dictionary<string, BackupMediaEntry>(StringComparer.Ordinal);
             var stagedMedia = new Dictionary<string, string>(StringComparer.Ordinal);
+            string DatabaseFingerprint;
+            string vaultHeaderSha256;
             await galleryStore.Gate.WaitAsync();
             try
             {
                 var records = await galleryStore.ReadRecordsAsync(key.Bytes);
-                await vaultStore.CopyHeaderAsync(Path.Combine(stagingDirectory, "vault.json"));
-                await galleryStore.CreateSnapshotAsync(Path.Combine(stagingDirectory, "gallery.db"));
+                var vaultHeaderPath = Path.Combine(stagingDirectory, "vault.json");
+                var databasePath = Path.Combine(stagingDirectory, "gallery.db");
+                await vaultStore.CopyHeaderAsync(vaultHeaderPath);
+                await galleryStore.CreateSnapshotAsync(databasePath);
+                vaultHeaderSha256 = await HashFileAsync(vaultHeaderPath);
+                DatabaseFingerprint = await Gallery.Services.DataManagers.GalleryStore.ComputeContentFingerprintAsync(databasePath, BackupSettingsId);
 
                 foreach (var record in records)
                 {
@@ -216,7 +224,12 @@ public sealed partial class GalleryService
             }
             finally { galleryStore.Gate.Release(); }
 
-            var manifest = new BackupManifest(1, backupId, backupType, previousName, createdAt, mediaEntries);
+            if (incremental && previousManifest is not null
+                && IsUnchangedSince(previousManifest, mediaEntries, DatabaseFingerprint, vaultHeaderSha256))
+                return new(backupType, previousName!, 0, mediaEntries.Count, 0, createdAt, Skipped: true);
+
+            var manifest = new BackupManifest(1, backupId, backupType, previousName, createdAt, mediaEntries,
+                DatabaseFingerprint, vaultHeaderSha256);
             await WriteArchiveAsync(archivePath, manifest, stagedMedia, key.Bytes);
             await File.WriteAllBytesAsync(manifestPath, ReadArchiveManifest(archivePath));
             var archiveBytes = new FileInfo(archivePath).Length;
@@ -318,6 +331,30 @@ public sealed partial class GalleryService
     }
 
     private static string ManifestName(string archiveName) => archiveName + ".manifest";
+
+    private static async Task<string> HashFileAsync(string path)
+    {
+        await using var stream = File.OpenRead(path);
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream)).ToLowerInvariant();
+    }
+
+    // Manifests written before hashes were recorded have null hashes and are always treated as changed.
+    private static bool IsUnchangedSince(
+        BackupManifest previous, IReadOnlyDictionary<string, BackupMediaEntry> media,
+        string DatabaseFingerprint, string vaultHeaderSha256)
+    {
+        if (previous.DatabaseFingerprint != DatabaseFingerprint || previous.VaultHeaderSha256 != vaultHeaderSha256)
+            return false;
+        if (previous.Media.Count != media.Count) return false;
+        foreach (var (id, entry) in media)
+        {
+            if (!previous.Media.TryGetValue(id, out var previousEntry)
+                || previousEntry.Sha256 != entry.Sha256
+                || previousEntry.Extension != entry.Extension)
+                return false;
+        }
+        return true;
+    }
 
     private static byte[] ReadArchiveManifest(string archivePath)
     {

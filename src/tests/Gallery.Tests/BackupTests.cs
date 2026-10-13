@@ -66,6 +66,42 @@ public sealed class BackupTests
     }
 
     [Fact]
+    public async Task Backup_WhenNothingChanged_SkipsIncrementalBackup()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        var destination = Path.Combine(Path.GetTempPath(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
+            var full = await fixture.Service.CreateFullBackupAsync();
+            var filesAfterFull = Directory.GetFiles(destination).Length;
+
+            var skipped = await fixture.Service.CreateIncrementalBackupAsync();
+            Assert.True(skipped.Skipped);
+            Assert.Equal(full.BackupName, skipped.BackupName);
+            Assert.Equal(0, skipped.MediaFilesCopied);
+            Assert.Equal(0, skipped.BytesWritten);
+            Assert.Equal(filesAfterFull, Directory.GetFiles(destination).Length);
+            Assert.Equal(full.BackupName, (await fixture.Service.LoadBackupOptionsAsync()).LastBackupName);
+
+            await fixture.Service.UpdateAsync(first.Id, image => image with { Description = "Changed" });
+            var changed = await fixture.Service.CreateIncrementalBackupAsync();
+            Assert.False(changed.Skipped);
+            Assert.Equal(full.BackupName, ReadParentName(Path.Combine(destination, changed.BackupName), fixture.Session.Key));
+
+            var skippedAgain = await fixture.Service.CreateIncrementalBackupAsync();
+            Assert.True(skippedAgain.Skipped);
+            Assert.Equal(changed.BackupName, skippedAgain.BackupName);
+        }
+        finally
+        {
+            if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Backup_WhenIncrementalHasNoFullBase_RequiresFullBackupFirst()
     {
         using var fixture = new TestVault();

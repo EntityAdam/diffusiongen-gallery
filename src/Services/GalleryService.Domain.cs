@@ -104,6 +104,18 @@ public sealed partial class GalleryService : IDisposable
             throw new InvalidOperationException("Passphrases do not match.");
     }
 
+    public event Action? OnAutoLocked;
+
+    public void ConfigureAutoLock(int minutes) =>
+        vaultSession.InactivityTimeout = minutes > 0 ? TimeSpan.FromMinutes(minutes) : null;
+
+    public void ConfigureInactivityTimeout(TimeSpan? timeout) =>
+        vaultSession.InactivityTimeout = timeout;
+
+    public void RecordActivity() => vaultSession.RecordActivity();
+
+    public void Panic() => LockVault();
+
     public void LockVault() => vaultSession.Lock();
 
     public void Dispose()

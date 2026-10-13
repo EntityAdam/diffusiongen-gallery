@@ -156,19 +156,30 @@ public sealed class CurationTests
         await fixture.InitializeAsync();
 
         // Act
-        var defaultDensity = (await fixture.Service.LoadPreferencesAsync()).GridDensity;
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact" });
-        var savedDensity = (await fixture.Service.LoadPreferencesAsync()).GridDensity;
+        var initial = await fixture.Service.LoadPreferencesAsync();
+        var defaultDensity = initial.GridDensity;
+        var defaultAutoLock = initial.AutoLockMinutes;
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 30 });
+        var savedPreferences = await fixture.Service.LoadPreferencesAsync();
         var storedPreferences = await fixture.RawStore.ReadSettingsAsync("ui-preferences");
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "gigantic" });
-        var normalizedDensity = (await fixture.Service.LoadPreferencesAsync()).GridDensity;
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "gigantic", AutoLockMinutes = -5 });
+        var invalidFallback = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 0 });
+        var disabledAutoLock = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "large", AutoLockMinutes = 99999 });
+        var clampedHigh = await fixture.Service.LoadPreferencesAsync();
 
         // Assert
         Assert.Equal("comfortable", defaultDensity);
-        Assert.Equal("compact", savedDensity);
+        Assert.Equal(15, defaultAutoLock);
+        Assert.Equal("compact", savedPreferences.GridDensity);
+        Assert.Equal(30, savedPreferences.AutoLockMinutes);
         TestAssertions.DoesNotContain("compact", Encoding.UTF8.GetString(storedPreferences!),
             "encrypted preference settings do not expose the grid density");
-        Assert.Equal("comfortable", normalizedDensity);
+        Assert.Equal("comfortable", invalidFallback.GridDensity);
+        Assert.Equal(15, invalidFallback.AutoLockMinutes);
+        Assert.Equal(0, disabledAutoLock.AutoLockMinutes);
+        Assert.Equal(1440, clampedHigh.AutoLockMinutes);
     }
 
     [Fact]

@@ -65,8 +65,8 @@ does not encrypt traffic in transit. The gallery web application itself still bi
 only to loopback. Gallery02 does not import or share src03's configuration.
 
 The left navigation separates Library, Guided review, Organize, Explore & saved
-views, Local intelligence, Remove marked images, Ingest images and Settings.
-**Settings** opens on a **Gallery overview** with tabs for **Duplicates**, **Backups**,
+views, Local intelligence, Duplicate finder, Remove marked images, Ingest images and Settings.
+**Settings** opens on a **Gallery overview** with tabs for **Backups**,
 **LLM endpoints** and **Vault security**. The overview shows database size (`gallery.db` plus its WAL/SHM
 files, which include encrypted thumbnails), total file count (catalogued encrypted
 image files plus vault header/database files) and total size on disk, auto-scaled
@@ -84,7 +84,9 @@ contains `vault.json`, a consistent SQLite database snapshot (including encrypte
 thumbnails), an encrypted media manifest, and all catalogued encrypted `.dpng` and
 `.dmp4` files, including media moved outside the vault folder. An **incremental
 backup** includes a fresh database/header snapshot and only new or changed encrypted
-media. Each archive has a companion `.manifest` file; manifests are encrypted and
+media. If nothing has changed since the last backup (same media, database content,
+and vault header), no incremental archive is created and the chain is left as is.
+Each archive has a companion `.manifest` file; manifests are encrypted and
 link each increment to its parent. Keep the full archive, every subsequent incremental
 archive in that chain, and their `.manifest` companions together. A new full backup
 starts a separate chain. Backups are manual; the app does not schedule runs or prune
@@ -92,7 +94,7 @@ older archives. Backup destinations cannot be inside the vault. The stored media
 are absolute, so restoring a vault on a different machine or drive requires restoring
 media to the paths recorded in that backup as well.
 
-**Settings > Duplicates** finds likely duplicates, including resized or
+**Duplicate finder** finds likely duplicates, including resized or
 re-encoded copies that import's exact-byte check cannot catch. Each image gets a
 64-bit perceptual difference hash computed from its decrypted thumbnail;
 images within 6 of 64 bits and with a similar aspect ratio (or identical PNG
@@ -390,9 +392,15 @@ Stored file paths are absolute: moving a vault to another machine/drive is not
 an automatic portable-library migration.
 
 Keys remain in memory only for the unlocked browser circuit and in-flight
-operations. **Lock vault**, reload, or disconnect to clear the session key.
+operations. Use **Panic** (`Ctrl+Shift+L`), reload, or disconnect to clear the session key.
 Tabs unlock independently; lock every unlocked tab or close the process.
-There is no idle timer. Plaintext exists in browser/server memory while viewing
+**Inactivity auto-lock** automatically locks the vault and zeroes keys from memory
+after a period of inactivity (default 15 minutes, configurable in **Settings > Vault security**
+to 5, 15, 30, 60 minutes or disabled).
+**Panic / Emergency quick-lock** (`Ctrl+Shift+L`, `Alt+Shift+L`, or `Shift+Esc`, or the **Panic** button)
+immediately locks the vault, zeroes encryption keys in RAM, revokes all decrypted media blob URLs,
+and blanks all media elements in the browser DOM.
+Plaintext exists in browser/server memory while viewing
 and in the local vision server while analyzing. Browser extensions, malware,
 swap files, process dumps, screenshots, and plaintext source files are outside
 this at-rest encryption guarantee. SQLite reveals opaque IDs and blob sizes;

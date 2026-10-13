@@ -14,10 +14,19 @@ public sealed partial class GalleryService
 {
     private static class PreferencesNormalizer
     {
-        public static UiPreferences Normalize(UiPreferences preferences) =>
-            UiPreferences.Densities.Contains(preferences.GridDensity)
-                ? preferences
-                : preferences with { GridDensity = UiPreferences.ComfortableDensity };
+        public static UiPreferences Normalize(UiPreferences preferences)
+        {
+            var density = UiPreferences.Densities.Contains(preferences.GridDensity)
+                ? preferences.GridDensity
+                : UiPreferences.ComfortableDensity;
+            var autoLock = preferences.AutoLockMinutes switch
+            {
+                < 0 => UiPreferences.DefaultAutoLockMinutes,
+                > 1440 => 1440,
+                _ => preferences.AutoLockMinutes
+            };
+            return preferences with { GridDensity = density, AutoLockMinutes = autoLock };
+        }
     }
 
     private const string PerceptualHashesId = "perceptual-hashes";
