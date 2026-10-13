@@ -15,90 +15,91 @@
         <h1>A home for<br />every <span>what if.</span></h1>
         <p>Your private creative library. Organize with intent. Discover with local intelligence.</p>
     </div>
-    <div class="hero-art" aria-hidden="true"><div class="orbit"></div><div class="orbit second"></div><span>&#10035;</span><div class="art-caption">CREATE. COLLECT. KEEP.</div></div>
+    <div class="hero-art" aria-hidden="true"><div class="orbit"></div><div class="orbit second"></div><AsteriskIcon Size="74" ClassName="brand-mark" /><div class="art-caption">CREATE. COLLECT. KEEP.</div></div>
 </section>
 }
 
 @if (error.Length > 0)
 {
-    <div class="notice error" role="alert">@error <button class="icon-button" @onclick="() => error = string.Empty" aria-label="Dismiss error">&times;</button></div>
+    <Alert Variant="AlertVariant.Destructive" Class="mb-6 flex items-center justify-between gap-3">@error <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" OnClick="() => error = string.Empty" aria-label="Dismiss error"><XIcon aria-hidden="true" /></Button></Alert>
 }
 @if (message.Length > 0)
 {
-    <div class="notice" role="status">@message</div>
+    <div class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@message</div>
 }
 
 @if (!Gallery.IsUnlocked)
 {
-    <section class="panel unlock-panel">
-        <div class="panel-header"><span class="eyebrow">ENCRYPTED GALLERY</span><span class="pill">AES-256-GCM</span></div>
+    <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><span class="eyebrow">ENCRYPTED GALLERY</span><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">AES-256-GCM</Badge></div>
         @if (galleryScreen == "switch")
         {
             <h2>Switch gallery</h2>
-            <nav class="settings-tabs" aria-label="Switch gallery actions">
-                @foreach (var tab in GalleryTabs)
-                {
-                    <button type="button" class="@(galleryTab == tab.Id ? "active" : "")" aria-current="@(galleryTab == tab.Id ? "page" : null)"
-                            disabled="@busy" @onclick="() => SetGalleryTab(tab.Id)">@tab.Name</button>
-                }
-            </nav>
+            <Tabs Value="@galleryTab" ValueChanged="SetGalleryTab">
+                <TabsList Class="w-full" aria-label="Switch gallery actions">
+                    @foreach (var tab in GalleryTabs)
+                    {
+                        <TabsTrigger Value="@tab.Id" Class="flex-1" disabled="@busy">@tab.Name</TabsTrigger>
+                    }
+                </TabsList>
+            </Tabs>
             @if (galleryTab == "create")
             {
                 <h3>Create a gallery</h3>
-                <label for="new-gallery-name">Gallery name</label>
-                <input id="new-gallery-name" @bind="newGalleryName" maxlength="80" disabled="@busy" />
+                <Label For="new-gallery-name" Class="mt-4 mb-2 block">Gallery name</Label>
+                <Input id="new-gallery-name" @bind-Value="newGalleryName" maxlength="80" Disabled="@busy" />
                 <DirectoryPathInput Label="New gallery directory" @bind-Value="newGalleryDirectory" Disabled="@busy" />
                 <form @onsubmit="CreateGalleryAsync" @onsubmit:preventDefault>
-                    <label for="secret">Passphrase</label>
-                    <input id="secret" type="password" @bind="secret" autocomplete="off" minlength="14" required disabled="@busy" />
-                    <label for="confirm">Confirm passphrase</label>
-                    <input id="confirm" type="password" @bind="confirm" autocomplete="off" minlength="14" required disabled="@busy" />
-                    <button class="primary full" disabled="@busy" type="submit">@(busy ? "Deriving encryption key..." : "Create gallery") <span>&rarr;</span></button>
+                    <Label For="secret" Class="mt-4 mb-2 block">Passphrase</Label>
+                    <Input id="secret" Type="password" @bind-Value="secret" autocomplete="off" minlength="14" required Disabled="@busy" />
+                    <Label For="confirm" Class="mt-4 mb-2 block">Confirm passphrase</Label>
+                    <Input id="confirm" Type="password" @bind-Value="confirm" autocomplete="off" minlength="14" required Disabled="@busy" />
+                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@busy" Type="submit">@(busy ? "Deriving encryption key..." : "Create gallery") <ArrowRightIcon aria-hidden="true" /></Button>
                 </form>
             }
             else if (galleryTab == "open")
             {
                 <h3>Open an existing gallery</h3>
                 <DirectoryPathInput Label="Local folder or SMB path" @bind-Value="existingGalleryDirectory" Disabled="@busy" />
-                <button type="button" class="primary full" disabled="@busy" @onclick="UseExistingGalleryAsync">Use this gallery <span>&rarr;</span></button>
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@busy" OnClick="UseExistingGalleryAsync">Use this gallery <ArrowRightIcon aria-hidden="true" /></Button>
             }
             else
             {
                 <h3>Restore gallery</h3>
-                <p class="muted">Restore a full backup or the last incremental backup in its chain. The destination must be a new or empty folder.</p>
-                <div class="segmented" role="tablist" aria-label="Backup location">
-                    <button type="button" role="tab" aria-selected="@(restoreSourceType == "local")" class="@(restoreSourceType == "local" ? "active" : "")"
-                            disabled="@busy" @onclick='() => SetRestoreSource("local")'>From local backup</button>
-                    <button type="button" role="tab" aria-selected="@(restoreSourceType == "sas")" class="@(restoreSourceType == "sas" ? "active" : "")"
-                            disabled="@busy" @onclick='() => SetRestoreSource("sas")'>From cloud backup</button>
-                </div>
+                <p class="text-muted-foreground">Restore a full backup or the last incremental backup in its chain. The destination must be a new or empty folder.</p>
+                <Tabs Value="@restoreSourceType" ValueChanged="SetRestoreSource">
+                    <TabsList Class="w-full" aria-label="Backup location">
+                        <TabsTrigger Value="local" Class="flex-1" disabled="@busy"><FolderIcon Size="16" ClassName="mr-2" aria-hidden="true" />Local backup</TabsTrigger>
+                        <TabsTrigger Value="sas" Class="flex-1" disabled="@busy"><CloudIcon Size="16" ClassName="mr-2" aria-hidden="true" />Cloud backup</TabsTrigger>
+                    </TabsList>
+                </Tabs>
                 @if (restoreSourceType == "local")
                 {
                     <DirectoryPathInput Label="Local folder or SMB path" @bind-Value="restoreSourceDirectory" Disabled="@busy" />
                 }
                 else
                 {
-                    <label for="restore-sas">Container-level Azure Blob SAS URL</label>
-                    <input id="restore-sas" type="password" @bind="restoreSasUrl" autocomplete="off"
-                           placeholder="https://account.blob.core.windows.net/container?sv=...&amp;sr=c&amp;sp=rl&amp;sig=..."
-                           pattern="https://[^/?#]+/[^/?#]+\?[^#]+" required disabled="@busy" />
-                    <p class="muted">Use an HTTPS container SAS with read and list permissions. The SAS URL is used only for this restore and is not saved.</p>
+                    <Label For="restore-sas" Class="mt-4 mb-2 block">Container-level Azure Blob SAS URL</Label>
+                    <Input id="restore-sas" Type="password" @bind-Value="restoreSasUrl" autocomplete="off"
+                           Placeholder="https://account.blob.core.windows.net/container?sv=...&amp;sr=c&amp;sp=rl&amp;sig=..."
+                           pattern="https://[^/?#]+/[^/?#]+\?[^#]+" required Disabled="@busy" />
+                    <p class="text-muted-foreground">Use an HTTPS container SAS with read and list permissions. The SAS URL is used only for this restore and is not saved.</p>
                 }
-                <div class="actions">
-                    <button type="button" disabled="@busy" @onclick="ListRestoreBackupsAsync">Find backups</button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ListRestoreBackupsAsync">Find backups</Button>
                 </div>
-                <label for="restore-archive">Backup archive</label>
-                <select id="restore-archive" @bind="restoreArchive" disabled="@(busy || restoreArchives.Count == 0)">
+                <Label For="restore-archive" Class="mt-4 mb-2 block">Backup archive</Label>
+                <Select id="restore-archive" @bind-Value="restoreArchive" Disabled="@(busy || restoreArchives.Count == 0)">
                     <option value="">Select a full or final incremental backup</option>
                     @foreach (var archive in restoreArchives) { <option value="@archive">@archive</option> }
-                </select>
-                <label for="restored-gallery-name">Gallery name</label>
-                <input id="restored-gallery-name" @bind="newGalleryName" maxlength="80" disabled="@busy" />
+                </Select>
+                <Label For="restored-gallery-name" Class="mt-4 mb-2 block">Gallery name</Label>
+                <Input id="restored-gallery-name" @bind-Value="newGalleryName" maxlength="80" Disabled="@busy" />
                 <DirectoryPathInput Label="New gallery directory" @bind-Value="newGalleryDirectory" Disabled="@busy" />
                 <GalleryCredentialInput @bind-Value="restoreCredential" @bind-UseRecovery="restoreUseRecovery" Disabled="@busy" />
-                <button type="button" class="primary full" disabled="@(busy || string.IsNullOrWhiteSpace(restoreArchive))" @onclick="RestoreGalleryAsync">Restore gallery <span>&rarr;</span></button>
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreArchive))" OnClick="RestoreGalleryAsync">Restore gallery <ArrowRightIcon aria-hidden="true" /></Button>
             }
-            <button type="button" disabled="@busy" @onclick="ReturnToWelcome">Back to welcome</button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ReturnToWelcome">Back to welcome</Button>
         }
         else
         {
@@ -106,104 +107,109 @@
         @if (Gallery.VaultExists)
         {
             <p><strong>@Gallery.VaultName</strong></p>
-            <p class="muted">Unlock your gallery with your passphrase or recovery words.</p>
+            <p class="text-muted-foreground">Unlock your gallery with your passphrase or recovery words.</p>
             <form @onsubmit="UnlockAsync" @onsubmit:preventDefault>
                 <GalleryCredentialInput @bind-Value="secret" @bind-UseRecovery="useRecovery" Disabled="@busy" />
-                <button class="primary full" disabled="@busy" type="submit">@(busy ? "Unlocking gallery..." : "Unlock gallery") <span>&rarr;</span></button>
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@busy" Type="submit">@(busy ? "Unlocking gallery..." : "Unlock gallery") <ArrowRightIcon aria-hidden="true" /></Button>
             </form>
         }
         else
         {
-            <p class="muted">Open, create, or restore a gallery to continue.</p>
+            <p class="text-muted-foreground">Open, create, or restore a gallery to continue.</p>
         }
-        <button type="button" class="primary full" disabled="@busy" @onclick="OpenGallerySwitcher">Switch gallery <span>&rarr;</span></button>
-        <div class="security-note"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted images cannot be recovered.</div>
+        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@busy" OnClick="OpenGallerySwitcher">Switch gallery <ArrowRightIcon aria-hidden="true" /></Button>
+        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted images cannot be recovered.</div>
         }
-    </section>
+    </Card>
 }
 else if (recoveryPhrase.Length > 0)
 {
-    <section class="panel recovery-panel">
+    <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-4xl">
         <span class="eyebrow">SAVE THIS BEFORE CONTINUING</span>
         <h2>Your recovery words.</h2>
         <p>Write these 32 words down, in order, and keep them offline in a safe place. Anyone with these words can unlock your gallery. They are shown only now.</p>
-        <div class="word-grid">
+        <div class="my-6 grid grid-cols-2 gap-2 md:grid-cols-4 [&>div]:rounded-md [&>div]:border [&>div]:border-border [&>div]:bg-background [&>div]:p-3 [&>div]:font-mono [&>div]:text-xs [&_small]:text-muted-foreground">
             @foreach (var (word, index) in recoveryPhrase.Split(' ').Select((word, index) => (word, index)))
             {
                 <div><small>@(index + 1).</small> @word</div>
             }
         </div>
-        <label class="check"><input type="checkbox" @bind="recoverySaved" /> I saved all 32 words securely and understand there is no other recovery method.</label>
-        <button class="primary" disabled="@(!recoverySaved || busy)" @onclick="FinishSetupAsync">Open my gallery &rarr;</button>
-    </section>
+        <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recoverysaved" Class="mt-0.5" @bind-Checked="recoverySaved"  /><Label For="check-recoverysaved" Class="text-sm leading-relaxed">I saved all 32 words securely and understand there is no other recovery method.</Label></div>
+        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(!recoverySaved || busy)" OnClick="FinishSetupAsync">Open my gallery <ArrowRightIcon aria-hidden="true" /></Button>
+    </Card>
 }
 else
 {
-    <div class="workflow-layout">
-    <nav class="workflow-nav panel" aria-label="Gallery workflows">
+    <div class="grid grid-cols-1 items-start gap-6 md:grid-cols-[210px_minmax(0,1fr)]">
+    <Card Class="mb-6 flex flex-wrap gap-2 p-4 md:sticky md:top-5 md:flex-col" aria-label="Gallery workflows" role="navigation">
         <span class="eyebrow">YOUR WORKSPACE</span>
         @foreach (var item in Workflows)
         {
-            <button disabled="@(busy || libraryJob.IsRunning && item.Id is "remove" or "ingest" or "settings")" class="@(workflow == item.Id ? "active" : "")" aria-current="@(workflow == item.Id ? "page" : null)" @onclick="() => SwitchWorkflowAsync(item.Id)">@item.Name</button>
+            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || libraryJob.IsRunning && item.Id is "remove" or "ingest" or "settings")" Class="h-auto min-h-10 justify-start px-3 py-2 text-left text-sm whitespace-normal" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" />@item.Name</Button>
         }
-        <div class="security-note"><strong>@images.Count images</strong><span data-testid="pending-count">@PendingReviewCount awaiting review</span></div>
+        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground"><strong>@images.Count images</strong><span data-testid="pending-count">@PendingReviewCount awaiting review</span></div>
         @if (libraryJob.IsRunning || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
         {
-            <div class="job-indicator" role="status">
+            <div class="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs break-words" role="status">
                 <strong>@(libraryJob.IsRunning ? "Library job running" : "Library job")</strong>
                 <p>@libraryJob.Message</p>
                 @if (libraryJob.Suggestions > 0) { <p>@libraryJob.Suggestions suggestions await approval</p> }
-                <button disabled="@busy" @onclick="OpenLibraryJobAsync">Open job</button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="OpenLibraryJobAsync">Open job</Button>
                 @if (libraryJob.CanStop)
                 {
-                    <button @onclick="StopLibraryJobAsync">Stop after current image</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="StopLibraryJobAsync">Stop after current image</Button>
                 }
                 @if (!libraryJob.IsRunning && libraryJob.Suggestions == 0)
                 {
-                    <button @onclick="DismissLibraryJob">Dismiss job status</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="DismissLibraryJob">Dismiss job status</Button>
                 }
             </div>
         }
-        <button type="button" class="danger panic-button" disabled="@busy" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" @onclick="PanicAsync">
-            <span>&#9888; Panic</span> <kbd>Ctrl+Shift+L</kbd>
-        </button>
-    </nav>
-    <div class="workflow-content">
-    <div class="collection-header">
-        <div><span class="eyebrow">THE COLLECTION</span><h2>@Workflows.Single(item => item.Id == workflow).Name <span class="count">@images.Count</span></h2></div>
-        <div class="actions">
+        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="w-full justify-between" Disabled="@busy" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
+            <span class="inline-flex items-center gap-2"><ShieldAlertIcon Size="16" aria-hidden="true" /> Panic</span> <kbd>Ctrl+Shift+L</kbd>
+        </Button>
+    </Card>
+    <div class="min-w-0">
+    <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2><Badge Variant="BadgeVariant.Secondary" Class="bg-primary/10 text-primary">@images.Count</Badge></div></div>
+        <div class="flex flex-wrap items-center gap-2">
             @if (ShowsGallery)
             {
-                <button disabled="@(busy || !PageImages.Any())" @onclick="() => OpenViewer()">Full screen view</button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || !PageImages.Any())" OnClick="() => OpenViewer()"><MaximizeIcon aria-hidden="true" />Full screen view</Button>
             }
         </div>
     </div>
 
     @if (workflow == "ingest")
     {
-        <section class="panel">
-            <div class="panel-header"><h3>Bring your images home.</h3><span class="pill">PNG / JPEG / WEBP / MP4</span></div>
-            <p class="muted">Images are converted to PNG and encrypted as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
+        <Card Class="mb-6 p-5 md:p-6">
+            <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Bring your images home.</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">PNG / JPEG / WEBP / MP4</Badge></div>
+            <p class="text-muted-foreground">Images are converted to PNG and encrypted as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
                 <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
-                    <label for="source">Local folder path</label>
-                    <input id="source" @bind="importPath" placeholder="C:\Pictures\Diffusion" required disabled="@busy" />
-                    <label class="check"><input type="checkbox" @bind="recursive" disabled="@busy" /> Include subfolders</label>
-                    <label class="check"><input type="checkbox" @bind="deleteSources" disabled="@busy" /> Delete originals after verified import</label>
+                    <Label For="source" Class="mt-4 mb-2 block">Local folder path</Label>
+                    <Input id="source" @bind-Value="importPath" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
+                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recursive" Class="mt-0.5" @bind-Checked="recursive" Disabled="@busy"  /><Label For="check-recursive" Class="text-sm leading-relaxed">Include subfolders</Label></div>
+                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-deletesources" Class="mt-0.5" @bind-Checked="deleteSources" Disabled="@busy"  /><Label For="check-deletesources" Class="text-sm leading-relaxed">Delete originals after verified import</Label></div>
                     @if (deleteSources)
                     {
-                        <div class="notice error">Originals will be deleted without the Recycle Bin after the saved image, catalog and thumbnail are verified. This is not secure shredding: SSD/NVMe remnants, backups and snapshots may remain recoverable.</div>
-                        <label class="check"><input type="checkbox" @bind="confirmSourceDeletion" disabled="@busy" /> I understand this permanently removes successfully imported source files, not their forensic remnants.</label>
+                        <Alert Variant="AlertVariant.Destructive">Originals will be deleted without the Recycle Bin after the saved image, catalog and thumbnail are verified. This is not secure shredding: SSD/NVMe remnants, backups and snapshots may remain recoverable.</Alert>
+                        <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmsourcedeletion" Class="mt-0.5" @bind-Checked="confirmSourceDeletion" Disabled="@busy"  /><Label For="check-confirmsourcedeletion" Class="text-sm leading-relaxed">I understand this permanently removes successfully imported source files, not their forensic remnants.</Label></div>
                     }
-                    <button disabled="@busy" type="submit">Ingest this folder &rarr;</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" Type="submit">Ingest this folder <ArrowRightIcon aria-hidden="true" /></Button>
                 </form>
             @if (importProgress is not null)
             {
-                <div class="ingestion-progress" aria-busy="@(busy ? "true" : "false")">
-                    <label for="ingestion-progress">Image ingestion</label>
-                    <progress id="ingestion-progress" max="@Math.Max(1, importProgress.Total ?? 1)"
-                              value="@(importProgress.Total is null ? null : (double?)importProgress.Completed)"
-                              aria-label="Image ingestion progress"></progress>
-                    <p class="muted">
+                <div class="mt-5 space-y-2" aria-busy="@(busy ? "true" : "false")">
+                    <Label For="ingestion-progress" Class="mt-4 mb-2 block">Image ingestion</Label>
+                    @if (importProgress.Total is int progressTotal)
+                    {
+                        <Progress id="ingestion-progress" Value="@(Math.Clamp((int)(100L * importProgress.Completed / Math.Max(1, progressTotal)), 0, 100))" aria-label="Image ingestion progress" />
+                    }
+                    else
+                    {
+                        <div id="ingestion-progress" class="flex items-center gap-2 text-primary" role="status"><LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" />Discovering files...</div>
+                    }
+                    <p class="text-muted-foreground">
                         @if (importProgress.Total is int total)
                         {
                             <span>@importProgress.Completed / @total files processed &middot; @importProgress.Imported imported &middot; @importProgress.Failed reported issues</span>
@@ -214,116 +220,118 @@ else
             }
             @if (importFailures.Count > 0)
             {
-                <details open class="import-errors"><summary>@importFailures.Count file(s) reported issues</summary>
+                <details open class="text-destructive"><summary>@importFailures.Count file(s) reported issues</summary>
                     @foreach (var failure in importFailures) { <p>@failure</p> }
                 </details>
             }
-        </section>
+        </Card>
     }
     @if (workflow == "settings")
     {
-        <nav class="settings-tabs" aria-label="Settings sections">
-            @foreach (var tab in SettingsTabs)
-            {
-                <button type="button" class="@(settingsTab == tab.Id ? "active" : "")" aria-current="@(settingsTab == tab.Id ? "page" : null)" disabled="@busy" @onclick="() => SwitchSettingsTabAsync(tab.Id)">@tab.Name</button>
-            }
-        </nav>
+        <Tabs Value="@settingsTab" ValueChanged="SwitchSettingsTabAsync" Class="mb-4">
+            <TabsList Class="h-auto max-w-full flex-wrap justify-start gap-1" aria-label="Settings sections">
+                @foreach (var tab in SettingsTabs)
+                {
+                    <TabsTrigger Value="@tab.Id" disabled="@busy">@tab.Name</TabsTrigger>
+                }
+            </TabsList>
+        </Tabs>
     }
     @if (workflow == "settings" && settingsTab == "overview")
     {
-        <section class="panel storage-overview" aria-labelledby="storage-overview-title">
-            <div class="panel-header">
+        <Card Class="mb-6 p-5 md:p-6 storage-overview" aria-labelledby="storage-overview-title">
+            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 id="storage-overview-title">Gallery overview</h3>
-                <button type="button" disabled="@busy" @onclick="RefreshStorageOverviewAsync">@(busy && progress.StartsWith("Measuring") ? "Refreshing..." : "Refresh")</button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="RefreshStorageOverviewAsync">@(busy && progress.StartsWith("Measuring") ? "Refreshing..." : "Refresh")</Button>
             </div>
             @if (storageOverview is null)
             {
-                <p class="muted">Storage has not been measured yet. Select Refresh to calculate it.</p>
+                <p class="text-muted-foreground">Storage has not been measured yet. Select Refresh to calculate it.</p>
             }
             else
             {
-                <dl class="overview-stats">
-                    <div><dt>Database size</dt><dd data-testid="database-size">@GalleryService.FormatBytes(storageOverview.DatabaseBytes)</dd><span class="muted">gallery.db with WAL files, including thumbnails</span></div>
-                    <div><dt>Total file count</dt><dd data-testid="file-count">@storageOverview.TotalFileCount.ToString("N0")</dd><span class="muted">@storageOverview.ImageFileCount.ToString("N0") encrypted images + @storageOverview.VaultFileCount gallery files</span></div>
-                    <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryService.FormatBytes(storageOverview.TotalBytes)</dd><span class="muted">@GalleryService.FormatBytes(storageOverview.ImageBytes) of encrypted images</span></div>
+                <dl class="my-4 grid grid-cols-1 gap-3 lg:grid-cols-3 [&>div]:min-w-0 [&>div]:rounded-lg [&>div]:border [&>div]:border-border [&>div]:p-4 [&_dt]:text-xs [&_dt]:uppercase [&_dt]:text-muted-foreground [&_dd]:my-2 [&_dd]:text-2xl [&_dd]:text-primary [&_dd]:break-all [&_span]:text-xs">
+                    <div><dt>Database size</dt><dd data-testid="database-size">@GalleryService.FormatBytes(storageOverview.DatabaseBytes)</dd><span class="text-muted-foreground">gallery.db with WAL files, including thumbnails</span></div>
+                    <div><dt>Total file count</dt><dd data-testid="file-count">@storageOverview.TotalFileCount.ToString("N0")</dd><span class="text-muted-foreground">@storageOverview.ImageFileCount.ToString("N0") encrypted images + @storageOverview.VaultFileCount gallery files</span></div>
+                    <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryService.FormatBytes(storageOverview.TotalBytes)</dd><span class="text-muted-foreground">@GalleryService.FormatBytes(storageOverview.ImageBytes) of encrypted images</span></div>
                 </dl>
                 @if (storageOverview.MissingImageFiles > 0)
                 {
-                    <div class="notice error">@storageOverview.MissingImageFiles catalogued image file(s) were not found on disk and are not counted.</div>
+                    <Alert Variant="AlertVariant.Destructive">@storageOverview.MissingImageFiles catalogued image file(s) were not found on disk and are not counted.</Alert>
                 }
-                <p class="muted" data-testid="overview-updated">Last updated <time datetime="@storageOverview.UpdatedAt.ToString("O")">@storageOverview.UpdatedAt.ToLocalTime().ToString("g")</time>. Cached values are shown until you refresh.</p>
+                <p class="text-muted-foreground" data-testid="overview-updated">Last updated <time datetime="@storageOverview.UpdatedAt.ToString("O")">@storageOverview.UpdatedAt.ToLocalTime().ToString("g")</time>. Cached values are shown until you refresh.</p>
             }
-            <p class="muted duplicate-hint">
+            <p class="text-muted-foreground flex flex-wrap items-center gap-2">
                 @if (duplicateScan is null) { <span>Duplicates have not been scanned yet.</span> }
                 else { <span>Last duplicate scan found @VisibleDuplicateGroups.Sum(group => group.ImageIds.Length - 1).ToString("N0") likely duplicate(s), about @GalleryService.FormatBytes(VisibleDuplicateGroups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
-                <button type="button" class="text-button" disabled="@busy" @onclick='() => SwitchWorkflowAsync("duplicates")'>Find duplicates &rarr;</button>
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@busy" OnClick='() => SwitchWorkflowAsync("duplicates")'>Find duplicates <ArrowRightIcon aria-hidden="true" /></Button>
             </p>
-        </section>
+        </Card>
     }
     @if (workflow == "settings" && settingsTab == "gallery")
     {
-        <section class="panel settings">
+        <Card Class="mb-6 p-5 md:p-6 space-y-4">
             <h3>Manage gallery</h3>
-            <p><strong>@Gallery.VaultName</strong></p><p class="path">@Gallery.VaultRoot</p>
-            <label for="rename-gallery">Gallery name</label>
-            <input id="rename-gallery" @bind="galleryRename" maxlength="80" disabled="@busy" />
-            <button type="button" disabled="@busy" @onclick="RenameGalleryAsync">Rename</button>
+            <p><strong>@Gallery.VaultName</strong></p><p class="break-all text-muted-foreground">@Gallery.VaultRoot</p>
+            <Label For="rename-gallery" Class="mt-4 mb-2 block">Gallery name</Label>
+            <Input id="rename-gallery" @bind-Value="galleryRename" maxlength="80" Disabled="@busy" />
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="RenameGalleryAsync">Rename</Button>
             <DirectoryPathInput Label="Move gallery to a new or empty local / SMB folder" @bind-Value="moveGalleryDirectory" Disabled="@busy" />
-            <p class="muted">Moves the catalog and all encrypted media, including media stored outside the gallery. The destination is verified before source files are removed. Sign in again after moving.</p>
-            <button type="button" disabled="@(busy || libraryJob.IsRunning)" @onclick="MoveGalleryAsync">Move gallery</button>
-            <div class="notice error">Purge permanently destroys all media and gallery data, including encrypted media stored outside this folder. Original source files and backups are not deleted. This is not secure disk erasure.</div>
-            <label for="purge-gallery">Type PURGE to confirm</label>
-            <input id="purge-gallery" @bind="purgeConfirmation" autocomplete="off" disabled="@busy" />
-            <button type="button" class="danger" disabled="@(busy || libraryJob.IsRunning || purgeConfirmation != "PURGE")" @onclick="PurgeGalleryAsync">Purge gallery</button>
-        </section>
+            <p class="text-muted-foreground">Moves the catalog and all encrypted media, including media stored outside the gallery. The destination is verified before source files are removed. Sign in again after moving.</p>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || libraryJob.IsRunning)" OnClick="MoveGalleryAsync">Move gallery</Button>
+            <Alert Variant="AlertVariant.Destructive">Purge permanently destroys all media and gallery data, including encrypted media stored outside this folder. Original source files and backups are not deleted. This is not secure disk erasure.</Alert>
+            <Label For="purge-gallery" Class="mt-4 mb-2 block">Type PURGE to confirm</Label>
+            <Input id="purge-gallery" @bind-Value="purgeConfirmation" autocomplete="off" Disabled="@busy" />
+            <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@(busy || libraryJob.IsRunning || purgeConfirmation != "PURGE")" OnClick="PurgeGalleryAsync">Purge gallery</Button>
+        </Card>
     }
     @if (workflow == "duplicates")
     {
-        <section class="panel duplicates" aria-labelledby="duplicates-title">
-            <div class="panel-header">
+        <Card Class="mb-6 p-5 md:p-6 duplicates" aria-labelledby="duplicates-title">
+            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 id="duplicates-title">Duplicate finder</h3>
-                <button type="button" class="primary" disabled="@busy" @onclick="ScanDuplicatesAsync">@(duplicateScan is null ? "Scan for duplicates" : "Scan again")</button>
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ScanDuplicatesAsync">@(duplicateScan is null ? "Scan for duplicates" : "Scan again")</Button>
             </div>
-            <p class="muted">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Remove marked images</em>.</p>
-            @if (busy && progress.StartsWith("Scanning")) { <p class="progress" role="status"><span class="status-dot"></span> @progress</p> }
+            <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Remove marked images</em>.</p>
+            @if (busy && progress.StartsWith("Scanning")) { <p class="flex items-center gap-2 pb-4 text-primary" role="status"><span class="status-dot"></span> @progress</p> }
             @if (duplicateScan is not null)
             {
                 var groups = VisibleDuplicateGroups;
                 var pendingMarks = groups.Sum(group => group.ImageIds.Count(id => id != KeeperOf(group).Id && !ImageById(id)!.MarkedForDeletion));
-                <div class="duplicate-summary">
+                <div class="my-4 flex flex-col gap-2">
                     <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.ImageIds.Length - 1)</strong> extra copies &middot; <strong>@GalleryService.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
-                    <span class="muted">Scanned @duplicateScan.ScannedCount.ToString("N0") images <time datetime="@duplicateScan.ScannedAt.ToString("O")">@duplicateScan.ScannedAt.ToLocalTime().ToString("g")</time></span>
-                    <div class="actions">
-                        <button type="button" class="primary" disabled="@(busy || groups.Count == 0)" @onclick="() => OpenDuplicateReview(groups, 0)">Review in full screen</button>
-                        <button type="button" disabled="@(busy || pendingMarks == 0)" @onclick="() => MarkDuplicatesAsync(groups)">Mark all extra copies (@pendingMarks)</button>
-                        <button type="button" disabled="@busy" @onclick='() => SwitchWorkflowAsync("remove")'>Go to Remove marked images</button>
+                    <span class="text-muted-foreground">Scanned @duplicateScan.ScannedCount.ToString("N0") images <time datetime="@duplicateScan.ScannedAt.ToString("O")">@duplicateScan.ScannedAt.ToLocalTime().ToString("g")</time></span>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(busy || groups.Count == 0)" OnClick="() => OpenDuplicateReview(groups, 0)">Review in full screen</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || pendingMarks == 0)" OnClick="() => MarkDuplicatesAsync(groups)">Mark all extra copies (@pendingMarks)</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick='() => SwitchWorkflowAsync("remove")'>Go to Remove marked images</Button>
                     </div>
                 </div>
-                @if (groups.Count == 0) { <p class="muted">No likely duplicates found.</p> }
+                @if (groups.Count == 0) { <p class="text-muted-foreground">No likely duplicates found.</p> }
                 @foreach (var (group, groupNumber) in groups.Take(DuplicateGroupsShown).Select((group, index) => (group, index)))
                 {
                     var keeper = KeeperOf(group);
                     var groupMarks = group.ImageIds.Count(id => id != keeper.Id && !ImageById(id)!.MarkedForDeletion);
-                    <article class="duplicate-group" @key="group.ImageIds[0]">
+                    <article class="mt-4 rounded-xl border border-border p-4 [&>header]:mb-3 [&>header]:flex [&>header]:flex-wrap [&>header]:items-center [&>header]:justify-between [&>header]:gap-3 [&>header]:text-sm" @key="group.ImageIds[0]">
                         <header>
                             <span>@(group.Exact ? "Exact copies" : $"Similar images (difference {group.MaxDistance}/64)") &middot; @GalleryService.FormatBytes(group.ReclaimableBytes) reclaimable</span>
-                            <div class="actions">
-                                <button type="button" disabled="@busy" @onclick="() => OpenDuplicateReview(groups, groupNumber)">Review &amp; choose keepers</button>
-                                <button type="button" disabled="@(busy || groupMarks == 0)" @onclick="() => MarkDuplicatesAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</button>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => OpenDuplicateReview(groups, groupNumber)">Review &amp; choose keepers</Button>
+                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || groupMarks == 0)" OnClick="() => MarkDuplicatesAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</Button>
                             </div>
                         </header>
-                        <div class="duplicate-items">
+                        <div class="duplicate-items grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3 [&_figure]:min-w-0 [&_figure]:overflow-hidden [&_figure]:rounded-lg [&_figure]:border [&_figure]:border-border [&_figure]:bg-background [&_img]:aspect-square [&_img]:w-full [&_img]:object-contain [&_figcaption]:flex [&_figcaption]:flex-col [&_figcaption]:gap-1 [&_figcaption]:p-3 [&_figcaption]:text-xs [&_strong]:truncate [&_figcaption>span]:text-muted-foreground">
                             @foreach (var id in group.ImageIds.OrderByDescending(id => id == keeper.Id))
                             {
                                 var image = ImageById(id)!;
                                 <figure class="@(id == keeper.Id ? "keep" : "") @(image.MarkedForDeletion ? "marked" : "")">
                                     @if (duplicateThumbnails.TryGetValue(id, out var thumbnail)) { <img src="@thumbnail" alt="@image.Name" draggable="false" /> }
-                                    else { <div class="thumbnail-placeholder">Preview</div> }
+                                    else { <div class="grid h-full place-items-center text-xs text-muted-foreground">Preview</div> }
                                     <figcaption>
                                         <strong title="@image.Name">@image.Name</strong>
                                         <span>@image.Width &times; @image.Height &middot; @GalleryService.FormatBytes(image.OriginalBytes)@(image.Rating > 0 ? $" · {image.Rating}★" : "")@(image.Favorite ? " · Favorite" : "")</span>
-                                        @if (id == keeper.Id) { <span class="badge keep-badge">Keep</span> }
-                                        else if (image.MarkedForDeletion) { <span class="badge marked-badge">Marked</span> }
+                                        @if (id == keeper.Id) { <Badge Variant="BadgeVariant.Secondary" Class="self-start">Keep</Badge> }
+                                        else if (image.MarkedForDeletion) { <Badge Variant="BadgeVariant.Destructive" Class="self-start">Marked</Badge> }
                                     </figcaption>
                                 </figure>
                             }
@@ -332,10 +340,10 @@ else
                 }
                 @if (groups.Count > DuplicateGroupsShown)
                 {
-                    <button type="button" disabled="@busy" @onclick="ShowMoreDuplicatesAsync">Show more groups (@(groups.Count - DuplicateGroupsShown) remaining)</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ShowMoreDuplicatesAsync">Show more groups (@(groups.Count - DuplicateGroupsShown) remaining)</Button>
                 }
             }
-        </section>
+        </Card>
     }
     @if (workflow == "settings" && settingsTab == "endpoints")
     {
@@ -343,161 +351,163 @@ else
     }
     @if (workflow == "settings" && settingsTab == "backups")
     {
-        <section class="panel settings" aria-labelledby="backup-settings-title">
-            <div class="panel-header"><h3 id="backup-settings-title">Gallery backups</h3></div>
-            <p class="muted">Backups contain the gallery header, a consistent database snapshot, and encrypted media. Incremental backups include a fresh database snapshot and only changed media; keep the full backup and every later incremental archive in the chain.</p>
+        <Card Class="mb-6 p-5 md:p-6 space-y-4" aria-labelledby="backup-settings-title">
+            <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 id="backup-settings-title">Gallery backups</h3></div>
+            <p class="text-muted-foreground">Backups contain the gallery header, a consistent database snapshot, and encrypted media. Incremental backups include a fresh database snapshot and only changed media; keep the full backup and every later incremental archive in the chain.</p>
             <BackupLocation @bind-Type="backupDestinationType" @bind-LocalDirectory="backupLocalDirectory"
                 @bind-Container="backupAzureContainer" @bind-Prefix="backupAzurePrefix"
                 @bind-ConnectionString="backupAzureConnectionString" HasSavedCredentials="@(backupOptions?.HasAzureCredentials == true)" Disabled="@busy" />
-            <div class="actions">
-                <button type="button" disabled="@busy" @onclick="SaveBackupOptionsAsync">Save destination</button>
-                <button type="button" class="primary" disabled="@(busy || !BackupDestinationReady)" @onclick="CreateFullBackupAsync">Create full backup</button>
-                <button type="button" disabled="@(busy || !BackupDestinationReady || backupOptions?.LastBackupName is null)" @onclick="CreateIncrementalBackupAsync">Create incremental backup</button>
+            <div class="flex flex-wrap items-center gap-2">
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="SaveBackupOptionsAsync">Save destination</Button>
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(busy || !BackupDestinationReady)" OnClick="CreateFullBackupAsync">Create full backup</Button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || !BackupDestinationReady || backupOptions?.LastBackupName is null)" OnClick="CreateIncrementalBackupAsync">Create incremental backup</Button>
             </div>
             @if (backupOptions?.LastBackupName is { } lastBackup)
             {
-                <p class="muted">Last successful @backupOptions.LastBackupType backup: <code>@lastBackup</code></p>
+                <p class="text-muted-foreground">Last successful @backupOptions.LastBackupType backup: <code>@lastBackup</code></p>
             }
-            <p class="muted">A full backup starts a new chain. Incremental backups require the previous archive to remain in the same destination. No backup is deleted automatically.</p>
-        </section>
+            <p class="text-muted-foreground">A full backup starts a new chain. Incremental backups require the previous archive to remain in the same destination. No backup is deleted automatically.</p>
+        </Card>
     }
     @if (workflow == "settings" && settingsTab == "security")
     {
-        <section class="panel settings">
+        <Card Class="mb-6 p-5 md:p-6 space-y-4">
             <h3>Gallery security</h3>
-            <div class="security-section">
+            <div class="space-y-4 rounded-lg border border-border bg-background p-4">
                 <h4>Inactivity auto-lock</h4>
-                <p class="muted">Automatically drop encryption keys from memory and lock the gallery when no mouse, keyboard or touch activity is detected. Locking also releases the gallery checkout after active work finishes.</p>
-                <div class="setting-row">
-                    <label for="auto-lock">Auto-lock timer</label>
-                    <select id="auto-lock" value="@autoLockMinutes" @onchange="UpdateAutoLockMinutesAsync" disabled="@busy">
+                <p class="text-muted-foreground">Automatically drop encryption keys from memory and lock the gallery when no mouse, keyboard or touch activity is detected. Locking also releases the gallery checkout after active work finishes.</p>
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                    <Label For="auto-lock" Class="mt-4 mb-2 block">Auto-lock timer</Label>
+                    <Select id="auto-lock" Value="@autoLockMinutes.ToString()" ValueChanged="UpdateAutoLockMinutesAsync" Disabled="@busy" Class="min-w-0 flex-1">
                         <option value="0">Disabled (never lock automatically)</option>
                         <option value="5">5 minutes</option>
                         <option value="15">15 minutes (default)</option>
                         <option value="30">30 minutes</option>
                         <option value="60">60 minutes (1 hour)</option>
-                    </select>
+                    </Select>
                 </div>
-                <p class="muted">
+                <p class="text-muted-foreground">
                     @(autoLockMinutes == 0
                         ? "Auto-lock is currently disabled. The gallery remains unlocked until manually locked or closed."
                         : $"The gallery will automatically lock after {autoLockMinutes} minutes of inactivity.")
                 </p>
             </div>
 
-            <div class="security-section">
+            <div class="space-y-4 rounded-lg border border-border bg-background p-4">
                 <h4>Panic / Emergency quick-lock</h4>
-                <p class="muted">Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> (or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>, or <kbd>Shift</kbd>+<kbd>Esc</kbd>) anywhere in the application to instantly lock the gallery, release its checkout after active work finishes, zero-out keys in RAM, revoke media blob URLs, and clear browser caches.</p>
-                <button type="button" class="danger" disabled="@busy" @onclick="PanicAsync">Trigger panic lock now</button>
+                <p class="text-muted-foreground">Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> (or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>, or <kbd>Shift</kbd>+<kbd>Esc</kbd>) anywhere in the application to instantly lock the gallery, release its checkout after active work finishes, zero-out keys in RAM, revoke media blob URLs, and clear browser caches.</p>
+                <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="PanicAsync">Trigger panic lock now</Button>
             </div>
 
-            <div class="security-section">
+            <div class="space-y-4 rounded-lg border border-border bg-background p-4">
                 <h4>Passphrase</h4>
                 <form @onsubmit="ChangePassphraseAsync" @onsubmit:preventDefault>
-                    <label for="new-passphrase">New passphrase</label>
-                    <input id="new-passphrase" type="password" @bind="newPassphrase" minlength="14" autocomplete="off" required />
-                    <label for="new-confirm">Confirm new passphrase</label>
-                    <input id="new-confirm" type="password" @bind="newConfirm" minlength="14" autocomplete="off" required />
-                    <p class="muted">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the gallery header, database, and all encrypted media together.</p>
-                    <button disabled="@busy" type="submit">Change passphrase</button>
+                    <Label For="new-passphrase" Class="mt-4 mb-2 block">New passphrase</Label>
+                    <Input id="new-passphrase" Type="password" @bind-Value="newPassphrase" minlength="14" autocomplete="off" required />
+                    <Label For="new-confirm" Class="mt-4 mb-2 block">Confirm new passphrase</Label>
+                    <Input id="new-confirm" Type="password" @bind-Value="newConfirm" minlength="14" autocomplete="off" required />
+                    <p class="text-muted-foreground">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the gallery header, database, and all encrypted media together.</p>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" Type="submit">Change passphrase</Button>
                 </form>
             </div>
-        </section>
+        </Card>
     }
 
     @if (workflow == "library")
     {
-    <div class="library-overview">
-        <button disabled="@busy" @onclick='() => SetQueueAsync("all")'><strong>@images.Count</strong><span>In your library</span></button>
-        <button disabled="@busy" @onclick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.Reviewed && !image.MarkedForDeletion)</strong><span>Awaiting review</span></button>
-        <button disabled="@busy" @onclick='() => SetQueueAsync("favorites")'><strong>@images.Count(image => image.Favorite && !image.MarkedForDeletion)</strong><span>Favorites</span></button>
-        <button disabled="@busy" @onclick='() => SetQueueAsync("unorganized")'><strong>@images.Count(image => image.Collections.IsEmpty && !image.MarkedForDeletion)</strong><span>Without a collection</span></button>
+    <div class="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4 [&>button]:h-auto [&>button]:flex-col [&>button]:items-start [&>button]:p-5 [&_strong]:text-3xl [&_strong]:text-primary [&_span]:text-xs [&_span]:text-muted-foreground">
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("all")'><strong>@images.Count</strong><span>In your library</span></Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.Reviewed && !image.MarkedForDeletion)</strong><span>Awaiting review</span></Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("favorites")'><strong>@images.Count(image => image.Favorite && !image.MarkedForDeletion)</strong><span>Favorites</span></Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("unorganized")'><strong>@images.Count(image => image.Collections.IsEmpty && !image.MarkedForDeletion)</strong><span>Without a collection</span></Button>
     </div>
     }
     @if (workflow == "review")
     {
-        <section class="panel review-intro">
+        <Card Class="mb-6 p-5 md:p-6 review-intro">
             <h3>One image. One decision.</h3>
-            <p class="muted">Keep, favorite, rate or mark for deletion to finish reviewing an image. Skip leaves it pending. The session includes pending, unmarked images matching your filters across all pages.</p>
-            <button class="primary" disabled="@(busy || !Filtered.Any(image => !image.Reviewed && !image.MarkedForDeletion))" @onclick="StartReview">Start guided review (@Filtered.Count(image => !image.Reviewed && !image.MarkedForDeletion))</button>
-        </section>
+            <p class="text-muted-foreground">Keep, favorite, rate or mark for deletion to finish reviewing an image. Skip leaves it pending. The session includes pending, unmarked images matching your filters across all pages.</p>
+            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(busy || !Filtered.Any(image => !image.Reviewed && !image.MarkedForDeletion))" OnClick="StartReview">Start guided review (@Filtered.Count(image => !image.Reviewed && !image.MarkedForDeletion))</Button>
+        </Card>
     }
     <LibraryWorkbench @ref="workbench" Visible="@(workflow is "organize" or "explore" or "ai")" Workflow="@workflow" Images="images" SelectedIds="librarySelection" Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" JobChanged="LibraryJobChanged" />
     @if (ShowsGallery)
     {
-    <div class="gallery-layout">
+    <div class="gallery-layout grid min-w-0 grid-cols-1">
         <GalleryFilterPanel Filter="filter" Images="images" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
         <section>
-            <div class="quick-filters" role="group" aria-label="Quick filters">
+            <div class="mb-3 flex flex-wrap gap-2" role="group" aria-label="Quick filters">
                 @foreach (var chip in QuickFilters)
                 {
                     var active = chip.IsActive(filter);
-                    <button type="button" class="quick-chip @(active ? "active" : "")" aria-pressed="@(active ? "true" : "false")" disabled="@busy" @onclick="() => ToggleQuickFilterAsync(chip)">
-                        @chip.Label <span class="chip-count">@chip.Count(images)</span>
-                    </button>
+                    <Button Variant="@(active ? ButtonVariant.Secondary : ButtonVariant.Outline)" Type="button" Class="rounded-full!" aria-pressed="@(active ? "true" : "false")" Disabled="@busy" OnClick="() => ToggleQuickFilterAsync(chip)">
+                        @chip.Label <span class="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">@chip.Count(images)</span>
+                    </Button>
                 }
             </div>
             <ActiveFilters Filter="filter" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
-            <div class="results-bar"><span><strong>@Filtered.Count</strong> images <span class="muted">/ @images.Count in gallery</span></span>
-                <div class="results-controls">
-                    <div class="density-control" role="group" aria-label="Thumbnail size">
-                        @foreach (var option in UiPreferences.Densities)
-                        {
-                            <button type="button" class="@(density == option ? "active" : "")" aria-pressed="@(density == option ? "true" : "false")" disabled="@busy" @onclick="() => SetDensityAsync(option)">@(char.ToUpperInvariant(option[0]) + option[1..])</button>
-                        }
-                    </div>
-                    <select aria-label="Group images" @bind="grouping" @bind:after="FilterChangedAsync">
+            <div class="mb-5 flex flex-wrap items-center justify-between gap-4 text-sm"><span><strong>@Filtered.Count</strong> images <span class="text-muted-foreground">/ @images.Count in gallery</span></span>
+                <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto [&>select]:w-full sm:[&>select]:w-auto">
+                    <Tabs Value="@density" ValueChanged="SetDensityAsync">
+                        <TabsList aria-label="Thumbnail size">
+                            @foreach (var option in UiPreferences.Densities)
+                            {
+                                <TabsTrigger Value="@option" disabled="@busy">@(char.ToUpperInvariant(option[0]) + option[1..])</TabsTrigger>
+                            }
+                        </TabsList>
+                    </Tabs>
+                    <Select Disabled="@busy" Class="min-w-0 sm:w-44" aria-label="Group images" @bind-Value="grouping" @bind-Value:after="FilterChangedAsync">
                         <option value="none">No grouping</option><option value="prompt">Group by same prompt</option>
-                    </select>
-                    <select aria-label="Sort images" @bind:get="filter.Sort" @bind:set="SetSort">
+                    </Select>
+                    <Select Disabled="@busy" Class="min-w-0 sm:w-44" aria-label="Sort images" @bind-Value:get="filter.Sort" @bind-Value:set="SetSort">
                         <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
-                    </select>
+                    </Select>
                 </div>
             </div>
-            <div class="actions">
+            <div class="flex flex-wrap items-center gap-2">
                 @if (workflow != "remove")
                 {
-                    <button disabled="@busy" @onclick="SelectLibraryPage">Select page</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SelectLibraryPage">Select page</Button>
                 }
                 @if (workflow == "remove")
                 {
-                    <button disabled="@busy" @onclick="SelectFilteredMarked">Select filtered marked images</button>
-                    <button disabled="@(busy || removalSelection.Count == 0)" @onclick="PrepareBulkRemovalAsync">Remove selected (@removalSelection.Count)</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SelectFilteredMarked">Select filtered marked images</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || removalSelection.Count == 0)" OnClick="PrepareBulkRemovalAsync">Remove selected (@removalSelection.Count)</Button>
                 }
                 @if (librarySelection.Count > 0 || removalSelection.Count > 0)
                 {
-                    <button disabled="@busy" @onclick="ClearSelection">Clear selection (@(librarySelection.Count + removalSelection.Count))</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="ClearSelection">Clear selection (@(librarySelection.Count + removalSelection.Count))</Button>
                 }
             </div>
             @if (workflow != "remove" && librarySelection.Count > 0)
             {
-                <div class="bulk-bar" role="region" aria-label="Bulk actions for selected images">
+                <div class="bulk-bar fixed bottom-4 left-1/2 z-10 flex max-h-[45vh] w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2 flex-wrap items-center gap-3 overflow-auto rounded-xl border border-primary/30 bg-card/95 p-3 shadow-2xl backdrop-blur-sm [&>strong]:text-primary" role="region" aria-label="Bulk actions for selected images">
                     <strong>@librarySelection.Count selected</strong>
-                    <div class="bulk-group" role="group" aria-label="Rate selected images">
+                    <div class="flex flex-wrap items-center gap-2 [&>input]:w-44" role="group" aria-label="Rate selected images">
                         @for (var score = 1; score <= 5; score++)
                         {
                             var value = score;
-                            <button type="button" class="bulk-star" disabled="@busy" title="@($"Rate selected {value} stars")" aria-label="@($"Rate selected {value} out of 5 stars")" @onclick="() => BulkRateAsync(value)">@value&#9733;</button>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Class="text-primary" Disabled="@busy" title="@($"Rate selected {value} stars")" aria-label="@($"Rate selected {value} out of 5 stars")" OnClick="() => BulkRateAsync(value)">@value<StarIcon Size="16" aria-hidden="true" /></Button>
                         }
-                        <button type="button" disabled="@busy" @onclick="() => BulkRateAsync(0)">Clear rating</button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkRateAsync(0)">Clear rating</Button>
                     </div>
-                    <div class="bulk-group">
-                        <button type="button" disabled="@busy" @onclick="() => BulkFavoriteAsync(true)">&#9733; Favorite</button>
-                        <button type="button" disabled="@busy" @onclick="() => BulkFavoriteAsync(false)">Unfavorite</button>
-                        <button type="button" disabled="@busy" @onclick="() => BulkReviewedAsync(true)">Mark reviewed</button>
-                        <button type="button" class="danger" disabled="@busy" @onclick="() => BulkMarkAsync(true)">Mark for deletion</button>
-                        <button type="button" disabled="@busy" @onclick="() => BulkMarkAsync(false)">Unmark</button>
-                        <button type="button" disabled="@busy" title="Compare the selected images against the whole library and review matches in full screen" @onclick="FindSelectedDuplicatesAsync">Find duplicates</button>
-                        <button type="button" disabled="@busy" title="Download decrypted copies of the selected images and videos as a zip file" @onclick="ExportSelectedAsync">Save copies (zip)</button>
+                    <div class="flex flex-wrap items-center gap-2 [&>input]:w-44">
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkFavoriteAsync(true)"><HeartIcon Size="16" aria-hidden="true" />Favorite</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkFavoriteAsync(false)">Unfavorite</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkReviewedAsync(true)">Mark reviewed</Button>
+                        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkMarkAsync(true)">Mark for deletion</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkMarkAsync(false)">Unmark</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" title="Compare the selected images against the whole library and review matches in full screen" OnClick="FindSelectedDuplicatesAsync">Find duplicates</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" title="Download decrypted copies of the selected images and videos as a zip file" OnClick="ExportSelectedAsync">Save copies (zip)</Button>
                     </div>
-                    <form class="bulk-group" @onsubmit="BulkTagAsync" @onsubmit:preventDefault>
-                        <input aria-label="Tags to add to selected images" placeholder="Add tags, comma-separated" @bind="bulkTags" @bind:event="oninput" list="tags" disabled="@busy" />
-                        <button type="submit" disabled="@(busy || string.IsNullOrWhiteSpace(bulkTags))">Add tags</button>
+                    <form class="flex flex-wrap items-center gap-2 [&>input]:w-44" @onsubmit="BulkTagAsync" @onsubmit:preventDefault>
+                        <Input aria-label="Tags to add to selected images" Placeholder="Add tags, comma-separated" @bind-Value="bulkTags" list="tags" Disabled="@busy" />
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@(busy || string.IsNullOrWhiteSpace(bulkTags))">Add tags</Button>
                     </form>
-                    <form class="bulk-group" @onsubmit="BulkCollectAsync" @onsubmit:preventDefault>
-                        <input aria-label="Collection for selected images" placeholder="Collection name" @bind="bulkCollection" @bind:event="oninput" list="collections" maxlength="80" disabled="@busy" />
+                    <form class="flex flex-wrap items-center gap-2 [&>input]:w-44" @onsubmit="BulkCollectAsync" @onsubmit:preventDefault>
+                        <Input aria-label="Collection for selected images" Placeholder="Collection name" @bind-Value="bulkCollection" list="collections" maxlength="80" Disabled="@busy" />
                         <datalist id="collections">@foreach (var name in AllCollections) { <option value="@name"></option> }</datalist>
-                        <button type="submit" disabled="@(busy || string.IsNullOrWhiteSpace(bulkCollection))">Add to collection</button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@(busy || string.IsNullOrWhiteSpace(bulkCollection))">Add to collection</Button>
                     </form>
                 </div>
             }
@@ -506,18 +516,18 @@ else
                 <details open><summary>Removal results: @removalResults.Count(result => result.Removed) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
                     @foreach (var result in removalResults)
                     {
-                        <p class="path">@result.Id: @(result.Removed ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
+                        <p class="break-all text-muted-foreground">@result.Id: @(result.Removed ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
                     }
                 </details>
             }
-            @if (busy) { <div class="progress" role="status"><span class="status-dot"></span> @progress</div> }
+            @if (busy) { <div class="flex items-center gap-2 pb-4 text-primary" role="status"><span class="status-dot"></span> @progress</div> }
             @if (Filtered.Count == 0)
             {
-                <div class="empty-state"><span class="brand-mark">&#10035;</span><h3>@(images.Count == 0 ? "A little space for possibility." : "Nothing matches just yet.")</h3><p>@(images.Count == 0 ? "Ingest a folder of images to start your private collection." : "Try another search or reset your filters.")</p></div>
+                <div class="flex min-h-96 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-8 text-center [&_p]:max-w-sm [&_p]:text-muted-foreground"><ImagesIcon Size="42" ClassName="text-primary" aria-hidden="true" /><h3>@(images.Count == 0 ? "A little space for possibility." : "Nothing matches just yet.")</h3><p>@(images.Count == 0 ? "Ingest a folder of images to start your private collection." : "Try another search or reset your filters.")</p></div>
             }
             else
             {
-                <p class="shortcut-hint muted">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>D</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
+                <p class="mb-3 hidden text-xs md:block text-muted-foreground">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>D</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
                 <div class="image-grid density-@density">
                     @{ PromptGroup? previousGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
@@ -527,20 +537,20 @@ else
                         {
                             var continued = firstOnPage && group.Images[0].Id != image.Id;
                             previousGroup = group;
-                            <div class="prompt-group-header" @key="@("group-" + image.Id)">
+                            <div class="col-span-full rounded-md border-l-2 border-primary bg-primary/5 px-4 py-3" @key="@("group-" + image.Id)">
                                 @if (group.Kind == PromptGroup.Shared)
                                 {
                                     var sample = group.Images[0].Generation;
-                                    <div class="prompt-group-title">
+                                    <div class="flex flex-wrap items-center gap-3 text-sm">
                                         <strong>@group.Images.Length share this prompt@(continued ? " (continued)" : "")</strong>
-                                        @if (sample is not null) { <span class="muted">@GenerationSummary(sample)</span> }
-                                        <button type="button" class="text-button" disabled="@busy" @onclick="() => ShowPromptAsync(group.Prompt)">Show only these</button>
+                                        @if (sample is not null) { <span class="text-muted-foreground">@GenerationSummary(sample)</span> }
+                                        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@busy" OnClick="() => ShowPromptAsync(group.Prompt)">Show only these</Button>
                                     </div>
-                                    <p class="prompt-text" title="@group.Prompt">@group.Prompt</p>
+                                    <p class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words" title="@group.Prompt">@group.Prompt</p>
                                 }
                                 else
                                 {
-                                    <div class="prompt-group-title"><strong>@(group.Kind == PromptGroup.Unique ? "Unique prompts" : "No ComfyUI prompt found") (@group.Images.Length)@(continued ? " (continued)" : "")</strong></div>
+                                    <div class="flex flex-wrap items-center gap-3 text-sm"><strong>@(group.Kind == PromptGroup.Unique ? "Unique prompts" : "No ComfyUI prompt found") (@group.Images.Length)@(continued ? " (continued)" : "")</strong></div>
                                 }
                             </div>
                         }
@@ -554,10 +564,10 @@ else
                                           RemovalSelectionChanged="value => ToggleRemovalSelection(image.Id, value)" />
                     }
                 </div>
-                <div class="pagination">
-                    <button disabled="@(page == 0 || busy)" @onclick="PreviousAsync">&larr; Previous</button>
+                <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(page == 0 || busy)" OnClick="PreviousAsync"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
                     <span>Page @(page + 1) of @PageCount</span>
-                    <button disabled="@(page + 1 >= PageCount || busy)" @onclick="NextAsync">Next &rarr;</button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(page + 1 >= PageCount || busy)" OnClick="NextAsync">Next <ArrowRightIcon aria-hidden="true" /></Button>
                 </div>
             }
         </section>
@@ -568,111 +578,111 @@ else
 
     @if (selected is not null)
     {
-        <div class="modal-backdrop">
-            <section class="detail-modal panel" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
-                <div class="panel-header"><h2 id="detail-title">@selected.Name</h2><button class="icon-button" disabled="@busy" @onclick="CloseDetail" aria-label="Close image details">&times;</button></div>
-                <div class="detail-columns">
-                    <div class="preview">
+        <div class="fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
+            <Card Class="mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close image details"><XIcon aria-hidden="true" /></Button></div>
+                <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
+                    <div class="preview grid min-h-52 place-items-center self-start rounded-lg bg-black/40 lg:sticky lg:top-0">
                         @if (selected.IsVideo && videoUrl.Length > 0)
                         { <video src="@videoUrl" poster="@preview" controls loop playsinline aria-label="@selected.Name"></video> }
                         else { <img src="@preview" alt="@selected.Name" draggable="false" /> }
                     </div>
-                    <div class="detail-content">
+                    <div class="min-w-0 space-y-4 text-sm">
                         <div class="eyebrow">ENCRYPTED ORIGINAL@(selected.IsVideo ? " · MP4 VIDEO" : "")</div>
                         <p>@selected.Width &times; @selected.Height@(selected.IsVideo ? $" · {GalleryService.FormatDuration(selected)}" : "") &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
-                        <p class="muted">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
-                        <div class="actions">
-                            <button disabled="@busy" @onclick="() => OpenViewer(selected.Id)">Full screen view</button>
-                            <button disabled="@busy" @onclick="() => FavoriteAsync(selected)">@(selected.Favorite ? "Remove favorite" : "Favorite")</button>
-                            <button disabled="@busy" @onclick="() => MarkAsync(selected)">@(selected.MarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</button>
-                            <button disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted PNG copy, including embedded metadata")" @onclick="() => ExportAsync(selected)">Save a copy</button>
+                        <p class="text-muted-foreground">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => OpenViewer(selected.Id)">Full screen view</Button>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => FavoriteAsync(selected)">@(selected.Favorite ? "Remove favorite" : "Favorite")</Button>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => MarkAsync(selected)">@(selected.MarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</Button>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted PNG copy, including embedded metadata")" OnClick="() => ExportAsync(selected)">Save a copy</Button>
                             @if (selected.Generation?.HasWorkflow == true || selected.Generation?.HasApiPrompt == true)
                             {
-                                <button disabled="@busy" title="Download the embedded ComfyUI workflow as JSON" @onclick="() => ExportWorkflowAsync(selected)">Export workflow</button>
+                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="Download the embedded ComfyUI workflow as JSON" OnClick="() => ExportWorkflowAsync(selected)">Export workflow</Button>
                             }
                             @if (selected.MarkedForDeletion)
                             {
-                                <button disabled="@busy" @onclick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</button>
+                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</Button>
                             }
                         </div>
                         @if (selected.Generation is { } generation)
                         {
                             <h3>ComfyUI generation</h3>
-                            <dl class="generation-info">
-                                @if (generation.Prompt.Length > 0) { <dt>Prompt</dt><dd class="prompt-text">@generation.Prompt</dd> }
-                                @if (generation.NegativePrompt.Length > 0) { <dt>Negative prompt</dt><dd class="prompt-text">@generation.NegativePrompt</dd> }
+                            <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 [&_dt]:text-muted-foreground [&_dd]:min-w-0 [&_dd]:break-words">
+                                @if (generation.Prompt.Length > 0) { <dt>Prompt</dt><dd class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words">@generation.Prompt</dd> }
+                                @if (generation.NegativePrompt.Length > 0) { <dt>Negative prompt</dt><dd class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words">@generation.NegativePrompt</dd> }
                                 @if (generation.Model.Length > 0) { <dt>@(generation.ModelKind.Length > 0 ? generation.ModelKind : "Model")</dt><dd>@generation.Model</dd> }
                                 @if (generation.Steps is int steps) { <dt>Steps</dt><dd>@steps</dd> }
                                 @if (generation.Cfg is double cfg) { <dt>CFG</dt><dd>@cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)</dd> }
                             </dl>
-                            @if (!generation.HasApiPrompt) { <p class="muted">Only a UI workflow was embedded; export it to inspect the graph in ComfyUI.</p> }
+                            @if (!generation.HasApiPrompt) { <p class="text-muted-foreground">Only a UI workflow was embedded; export it to inspect the graph in ComfyUI.</p> }
                             @if (generation.Prompt.Length > 0)
                             {
                                 var count = images.Count(image => image.Prompt == generation.Prompt);
-                                <button class="text-button" disabled="@busy" @onclick="() => ShowPromptAsync(generation.Prompt)">Show all @count with this exact prompt</button>
+                                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Class="h-auto px-0" Disabled="@busy" OnClick="() => ShowPromptAsync(generation.Prompt)">Show all @count with this exact prompt</Button>
                             }
                         }
                         <h3>Vision notes</h3>
-                        <label for="description">Description</label><textarea id="description" rows="4" @bind="editDescription"></textarea>
-                        <label for="edit-tags">Tags, comma-separated</label><input id="edit-tags" @bind="editTags" placeholder="landscape, sunset, cinematic" />
-                        <div class="actions"><button disabled="@busy" @onclick="SaveNotesAsync">Save notes</button><button class="primary" disabled="@busy" @onclick="AnalyzeAsync">Analyze locally</button></div>
-                        @if (selected.AnalysisModel.Length > 0) { <small class="muted">Analyzed by @selected.AnalysisModel</small> }
+                        <Label For="description" Class="mt-4 mb-2 block">Description</Label><Textarea id="description" Rows="4" @bind-Value="editDescription"></Textarea>
+                        <Label For="edit-tags" Class="mt-4 mb-2 block">Tags, comma-separated</Label><Input id="edit-tags" @bind-Value="editTags" Placeholder="landscape, sunset, cinematic" />
+                        <div class="flex flex-wrap items-center gap-2"><Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SaveNotesAsync">Save notes</Button><Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="AnalyzeAsync">Analyze locally</Button></div>
+                        @if (selected.AnalysisModel.Length > 0) { <small class="text-muted-foreground">Analyzed by @selected.AnalysisModel</small> }
                         <h3>Move &amp; rename</h3>
                         <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
-                            <label for="destination">Existing destination folder</label><input id="destination" @bind="destination" required />
-                            <label for="rename">Filename</label><div class="filename-input"><input id="rename" @bind="rename" required /><span>@(selected.IsVideo ? ".dmp4" : ".dpng")</span></div>
-                            <button type="submit" disabled="@busy">Move encrypted image &rarr;</button>
+                            <Label For="destination" Class="mt-4 mb-2 block">Existing destination folder</Label><Input id="destination" @bind-Value="destination" required />
+                            <Label For="rename" Class="mt-4 mb-2 block">Filename</Label><div class="flex min-w-0 items-center gap-2 [&>span]:text-muted-foreground"><Input id="rename" @bind-Value="rename" required /><span>@(selected.IsVideo ? ".dmp4" : ".dpng")</span></div>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@busy">Move encrypted image <ArrowRightIcon aria-hidden="true" /></Button>
                         </form>
-                        <small class="muted">No overwrite. The file remains encrypted. Deletion marks are reversible; permanent removal requires a separate confirmation.</small>
+                        <small class="text-muted-foreground">No overwrite. The file remains encrypted. Deletion marks are reversible; permanent removal requires a separate confirmation.</small>
                         <details><summary>Embedded generation metadata</summary><pre>@selected.Metadata</pre></details>
-                        <details><summary>File locations</summary><p class="path">@selected.StoredPath</p><p class="path">Source: @selected.SourceFolder</p></details>
-                        @if (busy) { <p class="notice" role="status">@progress</p> }
-                        @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
+                        <details><summary>File locations</summary><p class="break-all text-muted-foreground">@selected.StoredPath</p><p class="break-all text-muted-foreground">Source: @selected.SourceFolder</p></details>
+                        @if (busy) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@progress</p> }
+                        @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                     </div>
                 </div>
-            </section>
+            </Card>
         </div>
     }
     @if (removalPlan.Count > 0)
     {
-        <div class="modal-backdrop">
-            <section class="panel unlock-panel" role="dialog" aria-modal="true" aria-labelledby="removal-title">
-                <div class="panel-header"><h2 id="removal-title">Remove @removalPlan.Count marked image(s)</h2><button class="icon-button" disabled="@busy" @onclick="CancelRemoval" aria-label="Cancel removal">&times;</button></div>
+        <div class="fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
+            <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4" role="dialog" aria-modal="true" aria-labelledby="removal-title">
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="removal-title" class="min-w-0 flex-1 break-words">Remove @removalPlan.Count marked image(s)</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CancelRemoval" aria-label="Cancel removal"><XIcon aria-hidden="true" /></Button></div>
                 <p>This removes gallery records, thumbnails and encrypted files. Each image is checked again before removal. Unmarked images cannot be removed.</p>
                 <details><summary>Review affected images</summary>
                     @foreach (var item in removalPlan)
                     {
-                        <p class="path">@item.Name: @(item.OriginalExists ? $"Original exists: {item.OriginalPath}" : "No accessible original (missing or browser upload)")</p>
+                        <p class="break-all text-muted-foreground">@item.Name: @(item.OriginalExists ? $"Original exists: {item.OriginalPath}" : "No accessible original (missing or browser upload)")</p>
                     }
                 </details>
                 @if (removalPlan.Any(item => item.OriginalExists))
                 {
-                    <label for="existing-action">Original exists (@removalPlan.Count(item => item.OriginalExists))</label>
-                    <select id="existing-action" @bind="existingOriginalAction" disabled="@busy">
+                    <Label For="existing-action" Class="mt-4 mb-2 block">Original exists (@removalPlan.Count(item => item.OriginalExists))</Label>
+                    <select id="existing-action" @bind="existingOriginalAction" disabled="@busy" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
                         <option value="@ExistingOriginalAction.Retain">Remove from gallery, retain original</option>
                         <option value="@ExistingOriginalAction.Delete">Remove from gallery AND delete original</option>
                     </select>
                 }
                 @if (removalPlan.Any(item => !item.OriginalExists))
                 {
-                    <label for="missing-action">No accessible original (@removalPlan.Count(item => !item.OriginalExists))</label>
-                    <select id="missing-action" @bind="missingOriginalAction" disabled="@busy">
+                    <Label For="missing-action" Class="mt-4 mb-2 block">No accessible original (@removalPlan.Count(item => !item.OriginalExists))</Label>
+                    <select id="missing-action" @bind="missingOriginalAction" disabled="@busy" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
                         <option value="@MissingOriginalAction.RestorePng">Restore a PNG copy, then remove from gallery</option>
                         <option value="@MissingOriginalAction.Discard">Remove from gallery without restoration (lost forever)</option>
                     </select>
                     @if (missingOriginalAction == MissingOriginalAction.RestorePng)
                     {
-                        <label for="restore-folder">Existing folder for restored PNG files</label>
-                        <input id="restore-folder" @bind="restoreFolder" disabled="@busy" />
-                        <p class="muted">Restores full-resolution PNGs or original-format MP4s named by image ID; never overwrites. Exact JPEG/WebP source bytes are not retained. Browser uploads may still have originals the app cannot access.</p>
+                        <Label For="restore-folder" Class="mt-4 mb-2 block">Existing folder for restored PNG files</Label>
+                        <Input id="restore-folder" @bind-Value="restoreFolder" Disabled="@busy" />
+                        <p class="text-muted-foreground">Restores full-resolution PNGs or original-format MP4s named by image ID; never overwrites. Exact JPEG/WebP source bytes are not retained. Browser uploads may still have originals the app cannot access.</p>
                     }
                 }
-                <div class="notice error">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this gallery. Backups may still contain them. This is not secure SSD/NVMe erasure.</div>
-                <label class="check"><input type="checkbox" @bind="confirmRemoval" disabled="@busy" /> I reviewed these images and actions and confirm permanent removal.</label>
-                <button class="primary full" disabled="@(busy || !confirmRemoval)" @onclick="ExecuteRemovalAsync">Confirm removal of @removalPlan.Count image(s)</button>
-                @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
+                <Alert Variant="AlertVariant.Destructive">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this gallery. Backups may still contain them. This is not secure SSD/NVMe erasure.</Alert>
+                <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmremoval" Class="mt-0.5" @bind-Checked="confirmRemoval" Disabled="@busy"  /><Label For="check-confirmremoval" Class="text-sm leading-relaxed">I reviewed these images and actions and confirm permanent removal.</Label></div>
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@(busy || !confirmRemoval)" OnClick="ExecuteRemovalAsync">Confirm removal of @removalPlan.Count image(s)</Button>
+                @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                 @if (busy) { <p role="status">@progress</p> }
-            </section>
+            </Card>
         </div>
     }
 }
@@ -821,6 +831,13 @@ else
         ("remove", "Remove marked images"), ("ingest", "Ingest images"),
         ("settings", "Settings")
     ];
+    private static string WorkflowIcon(string workflow) => workflow switch
+    {
+        "library" => "images", "review" => "circle-check", "organize" => "folder",
+        "explore" => "search", "ai" => "sparkles", "duplicates" => "copy",
+        "remove" => "trash", "ingest" => "image-plus", "settings" => "settings",
+        _ => throw new ArgumentOutOfRangeException(nameof(workflow))
+    };
     private static readonly (string Id, string Name)[] SettingsTabs =
     [
         ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Gallery security")
@@ -1622,9 +1639,9 @@ else
         if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or gallery settings.");
     }
 
-    private async Task UpdateAutoLockMinutesAsync(ChangeEventArgs e)
+    private async Task UpdateAutoLockMinutesAsync(string? value)
     {
-        if (int.TryParse(e.Value?.ToString(), out var minutes))
+        if (int.TryParse(value, out var minutes))
         {
             autoLockMinutes = Math.Clamp(minutes, 0, 1440);
             Gallery.ConfigureAutoLock(autoLockMinutes);

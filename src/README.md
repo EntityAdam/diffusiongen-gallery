@@ -8,6 +8,27 @@ Gallery models, domain rules, persistence, and the web host are built into the
 single `Gallery` production assembly. The domain behavior is exposed through
 the gallery service entry points.
 
+## UI
+
+The UI uses [ShadCn.Blazor](https://www.shadcn-blazor.dev/) components and
+Lucide icons, with the original charcoal/mint palette supplied through Shadcn
+theme tokens. Buttons, fields, cards, tabs, badges and alerts share the library's
+sizing, focus and disabled states. Typed number/date inputs and enum selectors
+retain Blazor's native binding with matching Tailwind utilities.
+
+Application layouts use Tailwind utilities. `wwwroot/utilities.css` is generated
+and checked in, so running the gallery requires only .NET. After editing Razor
+utility classes, rebuild it from `src`:
+
+```powershell
+npm ci
+npm run build:css
+```
+
+Use `npm run watch:css` while changing layouts. `wwwroot/app.css` contains the
+palette, branding, and gallery-specific media/density behavior; it does not
+reimplement the component library's control styling.
+
 ## Run
 
 Install the .NET 10 SDK, then from the repository root:

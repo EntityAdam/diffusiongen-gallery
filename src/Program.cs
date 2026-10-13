@@ -1,6 +1,7 @@
 using System.Net;
 using Gallery.Components;
 using Gallery.Services;
+using ShadCn.Blazor.Components;
 
 var webApplicationBuilder = WebApplication.CreateBuilder(args);
 webApplicationBuilder.WebHost.UseUrls(webApplicationBuilder.Configuration["urls"] ?? "http://127.0.0.1:5189");
@@ -15,6 +16,7 @@ webApplicationBuilder.Services.AddRazorComponents().AddInteractiveServerComponen
     options.DisconnectedCircuitRetentionPeriod = TimeSpan.Zero;
 });
 GalleryService.Register(webApplicationBuilder.Services, webApplicationBuilder.Configuration, normalizedVaultRoot);
+webApplicationBuilder.Services.AddShadCnBlazorComponents();
 
 var webApplication = webApplicationBuilder.Build();
 // Binding and Host validation both matter: reject DNS rebinding and accidental LAN exposure.

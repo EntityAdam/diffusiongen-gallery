@@ -1,12 +1,12 @@
 @inherits LayoutComponentBase
-<div class="app-shell">
-    <header class="topbar">
-        <a class="brand" href="/" aria-label="Diffusion Gen Gallery home">
-            <span class="brand-mark" aria-hidden="true">&#10035;</span>
+<div class="app-shell flex min-h-screen flex-col">
+    <header class="topbar flex flex-wrap items-center justify-between gap-4 border-b border-border">
+        <a class="brand inline-flex items-center gap-3" href="/" aria-label="Diffusion Gen Gallery home">
+            <AsteriskIcon Size="28" ClassName="brand-mark shrink-0" aria-hidden="true" />
             <span>diffusion<span class="brand-light">gen</span><span class="brand-product"> / gallery 02</span></span>
         </a>
-        <span class="local-badge"><span class="status-dot"></span> LOCAL &amp; PRIVATE</span>
+        <Badge Variant="BadgeVariant.Outline" Class="gap-2 text-[10px] tracking-wider text-muted-foreground"><span class="status-dot"></span> LOCAL &amp; PRIVATE</Badge>
     </header>
-    <main class="main-content">@Body</main>
-    <footer><span>Made for the art of what if.</span><span>DIFFUSION GEN <span class="brand-mark">&#10035;</span></span></footer>
+    <main class="main-content flex-1">@Body</main>
+    <footer class="flex flex-wrap items-center justify-between gap-4 border-t border-border px-5 py-6 text-xs text-muted-foreground md:px-16"><span>Made for the art of what if.</span><span class="inline-flex items-center gap-2">DIFFUSION GEN <AsteriskIcon Size="16" ClassName="brand-mark" aria-hidden="true" /></span></footer>
 </div>

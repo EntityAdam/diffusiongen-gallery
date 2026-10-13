@@ -1,24 +1,24 @@
-<label for="@id">@(Restoring ? "Backup source" : "Destination")</label>
-<select id="@id" value="@Type" @onchange='args => TypeChanged.InvokeAsync(args.Value?.ToString() ?? "local")' disabled="@Disabled">
+<Label For="@id" Class="mt-4 mb-2 block">@(Restoring ? "Backup source" : "Destination")</Label>
+<Select id="@id" Value="@Type" ValueChanged='value => TypeChanged.InvokeAsync(value ?? "local")' Disabled="@Disabled">
     <option value="local">Local folder / SMB network share</option>
     <option value="azure">Azure Blob Storage</option>
-</select>
+</Select>
 @if (Type == "local")
 {
     <DirectoryPathInput Label="Folder path" Value="@LocalDirectory" ValueChanged="@LocalDirectoryChanged" Disabled="@Disabled" />
 }
 else
 {
-    <label for="@(id + "-container")">Blob container</label>
-    <input id="@(id + "-container")" value="@Container" @onchange='args => ContainerChanged.InvokeAsync(args.Value?.ToString() ?? "")' disabled="@Disabled" />
-    <label for="@(id + "-prefix")">Optional blob prefix</label>
-    <input id="@(id + "-prefix")" value="@Prefix" @onchange='args => PrefixChanged.InvokeAsync(args.Value?.ToString() ?? "")' disabled="@Disabled" />
-    <label for="@(id + "-connection")">Storage account connection string</label>
-    <input id="@(id + "-connection")" type="password" value="@ConnectionString"
-           @onchange='args => ConnectionStringChanged.InvokeAsync(args.Value?.ToString() ?? "")'
-           placeholder="@(HasSavedCredentials ? "Saved securely; leave blank to keep it" : "Paste the Storage Account connection string")"
-           autocomplete="off" disabled="@Disabled" />
-    <p class="muted">Use a dedicated account/container with access limited to backups. SMB uses the application's OS account.</p>
+    <Label For="@(id + "-container")" Class="mt-4 mb-2 block">Blob container</Label>
+    <Input id="@(id + "-container")" Value="@Container" ValueChanged="ContainerChanged" Disabled="@Disabled" />
+    <Label For="@(id + "-prefix")" Class="mt-4 mb-2 block">Optional blob prefix</Label>
+    <Input id="@(id + "-prefix")" Value="@Prefix" ValueChanged="PrefixChanged" Disabled="@Disabled" />
+    <Label For="@(id + "-connection")" Class="mt-4 mb-2 block">Storage account connection string</Label>
+    <Input id="@(id + "-connection")" Type="password" Value="@ConnectionString"
+           ValueChanged="ConnectionStringChanged"
+           Placeholder="@(HasSavedCredentials ? "Saved securely; leave blank to keep it" : "Paste the Storage Account connection string")"
+           autocomplete="off" Disabled="@Disabled" />
+    <p class="text-muted-foreground">Use a dedicated account/container with access limited to backups. SMB uses the application's OS account.</p>
 }
 
 @code {

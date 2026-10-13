@@ -1,0 +1,12 @@
+{
+  "name": "diffusiongen-gallery-ui",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i Styles/utilities.css -o wwwroot/utilities.css --minify",
+    "watch:css": "tailwindcss -i Styles/utilities.css -o wwwroot/utilities.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.2.1",
+    "tailwindcss": "4.2.1"
+  }
+}

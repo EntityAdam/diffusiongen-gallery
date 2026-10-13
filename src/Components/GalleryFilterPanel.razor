@@ -1,55 +1,55 @@
-<aside class="panel filters">
+<Card Class="mb-6 p-5 md:p-6 space-y-4" role="complementary">
     <details class="filter-disclosure">
         <summary>Filter images</summary>
-        <div class="panel-header"><h3>Find your image</h3><button class="text-button" @onclick="Reset" disabled="@Disabled">Reset</button></div>
-        <label for="collection-filter">Collection</label>
-        <select id="collection-filter" @bind="draft.Collection" @bind:after="NotifyChangedAsync">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Find your image</h3><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Class="h-auto px-0" OnClick="Reset" Disabled="@Disabled">Reset</Button></div>
+        <Label For="collection-filter" Class="mt-4 mb-2 block">Collection</Label>
+        <Select Disabled="@Disabled" id="collection-filter" @bind-Value="draft.Collection" @bind-Value:after="NotifyChangedAsync">
             <option value="">All collections</option>
             @foreach (var name in Collections)
             { <option value="@name">@name</option> }
-        </select>
-        <label for="rating-filter">Minimum rating</label><select id="rating-filter" @bind="draft.MinRating" @bind:after="NotifyChangedAsync">
+        </Select>
+        <Label For="rating-filter" Class="mt-4 mb-2 block">Minimum rating</Label><select disabled="@Disabled" id="rating-filter" @bind="draft.MinRating" @bind:after="NotifyChangedAsync" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
             <option value="0">Any rating</option>@for (var score = 1; score <= 5; score++) { <option value="@score">@score / 5</option> }
         </select>
-        <label for="review-filter">Review queue</label><select id="review-filter" @bind="draft.Review" @bind:after="NotifyChangedAsync">
+        <Label For="review-filter" Class="mt-4 mb-2 block">Review queue</Label><Select Disabled="@Disabled" id="review-filter" @bind-Value="draft.Review" @bind-Value:after="NotifyChangedAsync">
             <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
-        </select>
-        <label class="check"><input type="checkbox" @bind="draft.UnorganizedOnly" @bind:after="NotifyChangedAsync" /> Without a collection only</label>
-        <label for="media-filter">Media type</label>
-        <select id="media-filter" @bind="draft.Media" @bind:after="NotifyChangedAsync">
+        </Select>
+        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.UnorganizedOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
+        <Label For="media-filter" Class="mt-4 mb-2 block">Media type</Label>
+        <Select Disabled="@Disabled" id="media-filter" @bind-Value="draft.Media" @bind-Value:after="NotifyChangedAsync">
             <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
-        </select>
-        <label for="search">Search everything</label>
-        <input id="search" @bind="draft.Search" @bind:event="oninput" @bind:after="NotifyChangedAsync" placeholder="Prompt, name, description..." />
-        <label for="tag">Tag</label>
-        <input id="tag" @bind="draft.Tag" @bind:after="NotifyChangedAsync" placeholder="Exact tag" list="tags" />
+        </Select>
+        <Label For="search" Class="mt-4 mb-2 block">Search everything</Label>
+        <Input Disabled="@Disabled" id="search" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
+        <Label For="tag" Class="mt-4 mb-2 block">Tag</Label>
+        <Input Disabled="@Disabled" id="tag" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" Placeholder="Exact tag" list="tags" />
         <datalist id="tags">@foreach (var tag in Tags) { <option value="@tag"></option> }</datalist>
-        <label for="folder">Folder</label>
-        <input id="folder" @bind="draft.Folder" @bind:after="NotifyChangedAsync" placeholder="Source or current folder" />
-        <label for="analysis-model">Vision model</label>
-        <input id="analysis-model" @bind="draft.Model" @bind:after="NotifyChangedAsync" placeholder="Model name" />
-        <label for="orientation">Orientation</label>
-        <select id="orientation" @bind="draft.Orientation" @bind:after="NotifyChangedAsync">
+        <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
+        <Input Disabled="@Disabled" id="folder" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
+        <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
+        <Input Disabled="@Disabled" id="analysis-model" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
+        <Label For="orientation" Class="mt-4 mb-2 block">Orientation</Label>
+        <Select Disabled="@Disabled" id="orientation" @bind-Value="draft.Orientation" @bind-Value:after="NotifyChangedAsync">
             <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
-        </select>
-        <div class="two-fields">
-            <div><label for="width">Min width</label><input id="width" type="number" min="0" @bind="draft.MinWidth" @bind:after="NotifyChangedAsync" /></div>
-            <div><label for="height">Min height</label><input id="height" type="number" min="0" @bind="draft.MinHeight" @bind:after="NotifyChangedAsync" /></div>
+        </Select>
+        <div class="grid grid-cols-2 gap-3">
+            <div><Label For="width" Class="mt-4 mb-2 block">Min width</Label><input disabled="@Disabled" id="width" type="number" min="0" @bind="draft.MinWidth" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/></div>
+            <div><Label For="height" Class="mt-4 mb-2 block">Min height</Label><input disabled="@Disabled" id="height" type="number" min="0" @bind="draft.MinHeight" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/></div>
         </div>
-        <label for="analysis">Vision analysis</label>
-        <select id="analysis" @bind="draft.Analysis" @bind:after="NotifyChangedAsync">
+        <Label For="analysis" Class="mt-4 mb-2 block">Vision analysis</Label>
+        <Select Disabled="@Disabled" id="analysis" @bind-Value="draft.Analysis" @bind-Value:after="NotifyChangedAsync">
             <option value="all">All images</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
-        </select>
-        <label for="deletion">Deletion status</label>
-        <select id="deletion" @bind="draft.Deletion" @bind:after="NotifyChangedAsync">
+        </Select>
+        <Label For="deletion" Class="mt-4 mb-2 block">Deletion status</Label>
+        <Select Disabled="@Disabled" id="deletion" @bind-Value="draft.Deletion" @bind-Value:after="NotifyChangedAsync">
             <option value="active">Active images</option><option value="marked">Marked for deletion</option><option value="all">All images</option>
-        </select>
-        <label for="from">Imported from</label><input id="from" type="date" @bind="draft.From" @bind:after="NotifyChangedAsync" />
-        <label for="to">Imported through</label><input id="to" type="date" @bind="draft.To" @bind:after="NotifyChangedAsync" />
-        <label class="check"><input type="checkbox" @bind="draft.FavoritesOnly" @bind:after="NotifyChangedAsync" /> Favorites only</label>
-        <div class="security-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked.</div>
+        </Select>
+        <Label For="from" Class="mt-4 mb-2 block">Imported from</Label><input disabled="@Disabled" id="from" type="date" @bind="draft.From" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
+        <Label For="to" Class="mt-4 mb-2 block">Imported through</Label><input disabled="@Disabled" id="to" type="date" @bind="draft.To" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
+        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-favoritesonly" Class="mt-0.5" @bind-Checked="draft.FavoritesOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-favoritesonly" Class="text-sm leading-relaxed">Favorites only</Label></div>
+        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked.</div>
     </details>
-</aside>
+</Card>
 
 @code {
     [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();

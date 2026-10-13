@@ -1,39 +1,39 @@
 @inject GalleryService Gallery
 @inject ILogger<LlmEndpointSettings> Logger
 
-<section class="panel settings">
-    <div class="panel-header"><h3>Connect your local LLM</h3><span class="pill">OPENAI-COMPATIBLE</span></div>
-    <p class="muted">Configure LM Studio, Ollama or another local server. Include /v1 when required. Use a literal loopback or private LAN IP: 10.x.x.x, 172.16.x.x through 172.31.x.x, or 192.168.x.x. Public addresses and hostnames are blocked.</p>
-    <p class="muted">LAN analysis sends decrypted previews and metadata to that server. Only connect to servers you trust; HTTP is not encrypted in transit. Use HTTPS when supported.</p>
+<Card Class="mb-6 p-5 md:p-6 space-y-4">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Connect your local LLM</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">OPENAI-COMPATIBLE</Badge></div>
+    <p class="text-muted-foreground">Configure LM Studio, Ollama or another local server. Include /v1 when required. Use a literal loopback or private LAN IP: 10.x.x.x, 172.16.x.x through 172.31.x.x, or 192.168.x.x. Public addresses and hostnames are blocked.</p>
+    <p class="text-muted-foreground">LAN analysis sends decrypted previews and metadata to that server. Only connect to servers you trust; HTTP is not encrypted in transit. Use HTTPS when supported.</p>
     <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
-        <label for="endpoint-url">Endpoint URL</label>
-        <input id="endpoint-url" type="url" @bind="draft.Endpoint" @bind:after="EndpointChanged" placeholder="http://127.0.0.1:1234/v1/" disabled="@working" required />
-        <label for="api-key">API key (optional)</label>
-        <input id="api-key" type="password" autocomplete="new-password" @bind="draft.ApiKey" disabled="@working" placeholder="Leave blank for unauthenticated local endpoints" />
-        <label for="request-timeout">Request timeout (seconds)</label>
-        <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds" @bind="draft.RequestTimeoutSeconds" disabled="@working" required />
-        <label for="model-select">Model</label>
+        <Label For="endpoint-url" Class="mt-4 mb-2 block">Endpoint URL</Label>
+        <Input id="endpoint-url" Type="url" @bind-Value="draft.Endpoint" @bind-Value:after="EndpointChanged" Placeholder="http://127.0.0.1:1234/v1/" Disabled="@working" required />
+        <Label For="api-key" Class="mt-4 mb-2 block">API key (optional)</Label>
+        <Input id="api-key" Type="password" autocomplete="new-password" @bind-Value="draft.ApiKey" Disabled="@working" Placeholder="Leave blank for unauthenticated local endpoints" />
+        <Label For="request-timeout" Class="mt-4 mb-2 block">Request timeout (seconds)</Label>
+        <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds" @bind="draft.RequestTimeoutSeconds" disabled="@working" required  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
+        <Label For="model-select" Class="mt-4 mb-2 block">Model</Label>
         @if (models.Count > 0)
         {
-            <select id="model-select" @bind="draft.Model" disabled="@working" required>
+            <Select id="model-select" @bind-Value="draft.Model" Disabled="@working" required>
                 <option value="">Choose a model</option>
                 @foreach (var model in models) { <option value="@model">@model</option> }
-            </select>
+            </Select>
         }
         else
         {
-            <input id="model-select" @bind="draft.Model" disabled="@working" placeholder="Fetch models or enter a model ID" required />
+            <Input id="model-select" @bind-Value="draft.Model" Disabled="@working" Placeholder="Fetch models or enter a model ID" required />
         }
-        <p class="muted">Choose a vision-capable model for image analysis. Model discovery does not verify vision support. Text search interpretation uses this model too.</p>
-        <div class="actions">
-            <button type="button" disabled="@working" @onclick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</button>
-            <button class="primary" type="submit" disabled="@working">Save LLM settings</button>
+        <p class="text-muted-foreground">Choose a vision-capable model for image analysis. Model discovery does not verify vision support. Text search interpretation uses this model too.</p>
+        <div class="flex flex-wrap items-center gap-2">
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@working" OnClick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</Button>
+            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="submit" Disabled="@working">Save LLM settings</Button>
         </div>
     </form>
-    @if (message.Length > 0) { <p class="notice" role="status">@message</p> }
-    @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
-    <div class="security-note">Settings, including the optional API key, are encrypted in your gallery. Fetch models tests the entered endpoint without saving it. Save to apply changes to subsequent requests.</div>
-</section>
+    @if (message.Length > 0) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@message</p> }
+    @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
+    <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground">Settings, including the optional API key, are encrypted in your gallery. Fetch models tests the entered endpoint without saving it. Save to apply changes to subsequent requests.</div>
+</Card>
 
 @code {
     [Parameter, EditorRequired] public VisionSettings SavedSettings { get; set; } = new();
