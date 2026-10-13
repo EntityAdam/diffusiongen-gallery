@@ -169,6 +169,37 @@ else
                 }
             </div>
         }
+        @if (driveQueue.HasWork || driveQueue.State == DriveQueueState.Paused)
+        {
+            <div class="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs break-words" role="status" aria-live="polite" data-testid="drive-queue">
+                <strong>Background file operations</strong>
+                @if (driveQueue.Pending > 0 && driveQueue.State is DriveQueueState.Running or DriveQueueState.Waiting)
+                {
+                    <Progress Value="@DriveQueuePercent" aria-label="Background file operation progress" />
+                }
+                <p>@DriveQueueSummary</p>
+                @if (driveQueue.Activity.Length > 0) { <p class="text-muted-foreground">@driveQueue.Activity</p> }
+                @if (driveQueue.Failed > 0) { <p class="text-destructive">@driveQueue.Failed operation(s) failed. Files were left unchanged.</p> }
+                <div class="flex flex-wrap gap-2">
+                    @if (driveQueue.State is DriveQueueState.Paused or DriveQueueState.Faulted)
+                    {
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="ResumeDriveOperations">Resume</Button>
+                    }
+                    else if (driveQueue.Pending > 0)
+                    {
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="PauseDriveOperationsAsync">Pause</Button>
+                    }
+                    @if (driveQueue.Failed > 0)
+                    {
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="RetryDriveOperationsAsync">Retry failed</Button>
+                    }
+                    @if (driveQueue.Pending > 0 || driveQueue.Failed > 0)
+                    {
+                        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" title="Discard queued work. Files it would have changed stay on disk." OnClick="CancelDriveOperationsAsync">Cancel</Button>
+                    }
+                </div>
+            </div>
+        }
         <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="w-full justify-between" Disabled="@busy" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
             <span class="inline-flex items-center gap-2"><ShieldAlertIcon Size="16" aria-hidden="true" /> Panic</span> <kbd>Ctrl+Shift+L</kbd>
         </Button>
@@ -271,8 +302,16 @@ else
                 {
                     <Alert Variant="AlertVariant.Destructive">@storageOverview.MissingImageFiles catalogued image file(s) were not found on disk and are not counted.</Alert>
                 }
+                @if (storageOverview.IndexPending)
+                {
+                    <p class="text-muted-foreground" data-testid="index-pending">The file index is still being built in the background; some sizes were measured directly. Refresh once background file operations finish.</p>
+                }
                 <p class="text-muted-foreground" data-testid="overview-updated">Last updated <time datetime="@storageOverview.UpdatedAt.ToString("O")">@storageOverview.UpdatedAt.ToLocalTime().ToString("g")</time>. Cached values are shown until you refresh.</p>
             }
+            <p class="text-muted-foreground flex flex-wrap items-center gap-2">
+                <span>Sizes come from a cached file index. Rebuild it if files were changed outside the gallery.</span>
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@busy" OnClick="RebuildStorageIndexAsync">Rebuild file index</Button>
+            </p>
             <p class="text-muted-foreground flex flex-wrap items-center gap-2">
                 @if (duplicateScan is null) { <span>Duplicates have not been scanned yet.</span> }
                 else { <span>Last duplicate scan found @VisibleDuplicateGroups.Sum(group => group.ImageIds.Length - 1).ToString("N0") likely duplicate(s), about @GalleryService.FormatBytes(VisibleDuplicateGroups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
@@ -856,6 +895,7 @@ else
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
+    private DriveQueueStatus driveQueue = DriveQueueStatus.Empty;
     private BackupOptions? backupOptions;
     private string backupDestinationType = "local", backupLocalDirectory = "", backupAzureContainer = "", backupAzurePrefix = "", backupAzureConnectionString = "";
     private bool BackupDestinationReady => backupOptions is not null
@@ -978,10 +1018,59 @@ else
     protected override void OnInitialized()
     {
         Gallery.OnAutoLocked += HandleAutoLocked;
+        Gallery.DriveQueueChanged += HandleDriveQueueChanged;
+        driveQueue = Gallery.DriveQueueStatus;
         newGalleryName = GalleryService.GenerateVaultName();
         newGalleryDirectory = GalleryService.DefaultVaultDirectory(newGalleryName);
         galleryRename = Gallery.VaultExists ? Gallery.VaultName : "";
     }
+
+    private void HandleDriveQueueChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            if (disposed) return;
+            driveQueue = Gallery.DriveQueueStatus;
+            StateHasChanged();
+        });
+    }
+
+    private int DriveQueuePercent => driveQueue.Completed + driveQueue.Pending == 0 ? 0
+        : Math.Clamp(100 * driveQueue.Completed / (driveQueue.Completed + driveQueue.Pending), 0, 100);
+
+    private string DriveQueueSummary => driveQueue.State switch
+    {
+        DriveQueueState.Paused => $"Paused with {driveQueue.Pending:N0} operation(s) queued. Queued work is kept.",
+        DriveQueueState.Waiting => $"{driveQueue.Pending:N0} operation(s) waiting to retry.",
+        DriveQueueState.Faulted => $"Stopped unexpectedly with {driveQueue.Pending:N0} operation(s) queued. Resume or retry to continue.",
+        DriveQueueState.Running => $"{driveQueue.Completed:N0} done, {driveQueue.Pending:N0} queued.",
+        _ => driveQueue.Pending > 0 ? $"{driveQueue.Pending:N0} operation(s) queued; they continue the next time the gallery is unlocked." : "No queued work."
+    };
+
+    private Task PauseDriveOperationsAsync() => RunDriveControlAsync(Gallery.PauseDriveOperationsAsync);
+
+    private void ResumeDriveOperations() => Gallery.ResumeDriveOperations();
+
+    private Task RetryDriveOperationsAsync() => RunDriveControlAsync(Gallery.RetryFailedDriveOperationsAsync);
+
+    private Task CancelDriveOperationsAsync() => RunDriveControlAsync(Gallery.CancelDriveOperationsAsync);
+
+    // Queue controls stay available while other workflows are busy, so they do not go through RunAsync.
+    private async Task RunDriveControlAsync(Func<Task> action)
+    {
+        try { await action(); }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException)
+        {
+            Logger.LogError(exception, "Background file operation control failed");
+            message = "The background file operation could not be changed. Try again.";
+        }
+    }
+
+    private Task RebuildStorageIndexAsync() => RunAsync("Scheduling file index rebuild...", async () =>
+    {
+        await Gallery.RebuildStorageIndexAsync();
+        message = "The file index is being rebuilt in the background. Refresh the overview when it finishes.";
+    });
 
     private void HandleAutoLocked()
     {
@@ -1848,6 +1937,7 @@ else
     {
         disposed = true;
         Gallery.OnAutoLocked -= HandleAutoLocked;
+        Gallery.DriveQueueChanged -= HandleDriveQueueChanged;
         Lock();
         gridReference?.Dispose();
         securityReference?.Dispose();

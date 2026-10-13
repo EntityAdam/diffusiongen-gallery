@@ -37,6 +37,18 @@ internal static class VaultCrypto
         finally { CryptographicOperations.ZeroMemory(fingerprintKey); }
     }
 
+    /// <summary>Keyed hash of a normalized full path, so drive lookups run in SQL without storing the path in plaintext.</summary>
+    public static byte[] PathFingerprint(ReadOnlySpan<byte> masterKey, string path)
+    {
+        var normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        if (OperatingSystem.IsWindows()) normalized = normalized.ToUpperInvariant();
+        Span<byte> fingerprintKey = stackalloc byte[32];
+        HKDF.DeriveKey(HashAlgorithmName.SHA256, masterKey, fingerprintKey,
+            salt: ReadOnlySpan<byte>.Empty, info: "DiffusionGenGallery/path-fingerprint/v1"u8);
+        try { return HMACSHA256.HashData(fingerprintKey, Encoding.UTF8.GetBytes(normalized)); }
+        finally { CryptographicOperations.ZeroMemory(fingerprintKey); }
+    }
+
     public static byte[] Encrypt(ReadOnlySpan<byte> plain, ReadOnlySpan<byte> key, string purpose)
     {
         var encryptedEnvelopeBytes = AllocateEncryptedEnvelope(plain.Length);

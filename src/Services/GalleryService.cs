@@ -100,6 +100,7 @@ public sealed partial class GalleryService
         this.videoTools = videoTools;
         this.visionService = visionService;
         this.vaultSession.AutoLocked += () => OnAutoLocked?.Invoke();
+        drivePlayer = CreateDrivePlayer();
     }
 
     public const long MaxFileBytes = 50 * 1024 * 1024;
@@ -263,120 +264,19 @@ public sealed partial class GalleryService
 
     private async Task<List<ImageRecord>> LoadGalleryWithKeyAsync(byte[] key)
     {
+        List<ImageRecord> records;
         await galleryStore.Gate.WaitAsync();
         try
         {
-            var records = await ListWithKeyAsync(key);
-            await RecoverInterruptedRemovalsAsync(records);
+            records = await ListWithKeyAsync(key);
             await BackfillFingerprintsAsync(key);
             await BackfillGenerationAsync(records, key);
-            return records;
         }
         finally { galleryStore.Gate.Release(); }
+        await ScheduleMediaIndexAsync(records, key);
+        drivePlayer.Start();
+        return records;
     }
-
-    private async Task RecoverInterruptedRemovalsAsync(List<ImageRecord> records)
-    {
-        var stagedPaths = FindRemovalStagingFiles(records);
-        await RestoreCataloguedRemovalsAsync(records, stagedPaths);
-        DeleteOrphanedRemovals(records, stagedPaths);
-    }
-
-    private string[] FindRemovalStagingFiles(List<ImageRecord> records)
-    {
-        var imageRoot = Path.Combine(vaultStore.Root, "images");
-        var stagedPaths = Directory.Exists(imageRoot)
-            ? Directory.EnumerateFiles(imageRoot, "*.removing-*", SearchOption.AllDirectories).ToList()
-            : [];
-        var externalDirectories = records.Select(record => Path.GetDirectoryName(record.StoredPath)!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(directory => !IsWithinImageRoot(directory, imageRoot));
-        foreach (var directory in externalDirectories)
-        {
-            if (Directory.Exists(directory))
-                stagedPaths.AddRange(Directory.EnumerateFiles(directory, "*.removing-*"));
-        }
-        return stagedPaths.Where(IsRemovalStagingFile).ToArray();
-    }
-
-    private static bool IsWithinImageRoot(string directory, string imageRoot)
-    {
-        var relative = Path.GetRelativePath(imageRoot, directory);
-        return relative == "." || (!Path.IsPathRooted(relative) && relative != ".."
-            && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal));
-    }
-
-    private static async Task RestoreCataloguedRemovalsAsync(List<ImageRecord> records, string[] stagedPaths)
-    {
-        var stagedPathsByStoredPath = stagedPaths.ToLookup(RemovalOriginalPath, StringComparer.OrdinalIgnoreCase);
-        foreach (var record in records)
-            await RecoverStagedRemovalAsync(record, stagedPathsByStoredPath[record.StoredPath].ToArray());
-    }
-
-    private void DeleteOrphanedRemovals(List<ImageRecord> records, string[] stagedPaths)
-    {
-        var imageRoot = Path.Combine(vaultStore.Root, "images");
-        var storedPaths = records.Select(record => record.StoredPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in stagedPaths)
-        {
-            if (IsWithinImageRoot(Path.GetDirectoryName(path)!, imageRoot)
-                && !storedPaths.Contains(RemovalOriginalPath(path)))
-                File.Delete(path);
-        }
-    }
-
-    private static Task RecoverRecordRemovalAsync(ImageRecord record)
-    {
-        var directory = Path.GetDirectoryName(record.StoredPath)!;
-        if (!Directory.Exists(directory)) return Task.CompletedTask;
-        var stagingPrefix = record.StoredPath + ".removing-";
-        var stagedPaths = Directory.EnumerateFiles(directory)
-            .Where(path => path.StartsWith(stagingPrefix, StringComparison.Ordinal) && IsRemovalStagingFile(path))
-            .ToArray();
-        return RecoverStagedRemovalAsync(record, stagedPaths);
-    }
-
-    private static async Task RecoverStagedRemovalAsync(ImageRecord record, string[] stagedPaths)
-    {
-        if (stagedPaths.Length == 0) return;
-
-        var storedImageExists = SourceExists(record.StoredPath);
-        var comparisonPath = storedImageExists ? record.StoredPath : stagedPaths[0];
-        foreach (var stagedPath in stagedPaths)
-        {
-            if (!SourceExists(stagedPath) || !await FilesMatchAsync(stagedPath, comparisonPath))
-                throw new IOException($"Interrupted removal left conflicting encrypted copies for image '{record.Id}'; all copies were preserved.");
-        }
-
-        if (!storedImageExists) File.Move(stagedPaths[0], record.StoredPath);
-        foreach (var stagedPath in stagedPaths)
-        {
-            if (storedImageExists || stagedPath != stagedPaths[0]) File.Delete(stagedPath);
-        }
-    }
-
-    private static bool IsRemovalStagingFile(string path)
-    {
-        var markerIndex = path.LastIndexOf(".removing-", StringComparison.Ordinal);
-        return markerIndex >= 0 && Guid.TryParseExact(path[(markerIndex + ".removing-".Length)..], "N", out _);
-    }
-
-    private static string RemovalOriginalPath(string path) =>
-        path[..path.LastIndexOf(".removing-", StringComparison.Ordinal)];
-
-    private static string RemovalStagingPath(ImageRecord record) =>
-        record.StoredPath + ".removing-" + record.Id;
-
-    private static async Task<bool> FilesMatchAsync(string leftPath, string rightPath)
-    {
-        await using var left = File.OpenRead(leftPath);
-        await using var right = File.OpenRead(rightPath);
-        if (left.Length != right.Length) return false;
-        var leftHash = await SHA256.HashDataAsync(left);
-        var rightHash = await SHA256.HashDataAsync(right);
-        return CryptographicOperations.FixedTimeEquals(leftHash, rightHash);
-    }
-
     /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
     private async Task BackfillGenerationAsync(List<ImageRecord> records, byte[] key)
     {
@@ -1024,6 +924,7 @@ public sealed partial class GalleryService
         StoredImageMoveValidator.ValidateDestination(destination);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         await MoveUnderGateAsync(id, destination, key.Bytes);
+        drivePlayer.Start();
     }
 
     private async Task MoveUnderGateAsync(string id, StoredImageMoveDestination destination, byte[] key)
@@ -1039,16 +940,32 @@ public sealed partial class GalleryService
         finally { galleryStore.Gate.Release(); }
     }
 
+    // The old copy is deleted by the drive queue after the catalog commits. Moving an image back onto a path
+    // still queued for deletion cancels that delete and keeps the file instead of copying it again.
     private async Task MoveStoredImageAsync(ImageRecord record, string target, string newName, byte[] key)
     {
+        var deleteOldCopy = CreateDriveOperation(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key);
+        var queuedDelete = await galleryStore.FindPendingDriveOperationAsync(
+            DriveOperationKind.DeleteFile, VaultCrypto.PathFingerprint(key, target));
+        if (queuedDelete is not null)
+        {
+            if (queuedDelete.ImageId == record.Id && File.Exists(target))
+            {
+                await galleryStore.UpdateImageAndEnqueueAsync(record with { StoredPath = target, Name = newName }, key,
+                    deleteOldCopy, queuedDelete.Sequence);
+                return;
+            }
+            if (await DeleteQueuedFileAsync(galleryStore, queuedDelete.ImageId, target, key))
+                await galleryStore.RemoveDriveOperationAsync(queuedDelete.Sequence);
+        }
+
         var movedRecord = StoredImageMover.CopyToDestination(record, target, newName);
-        try { await galleryStore.UpdateAsync(movedRecord, key); }
+        try { await galleryStore.UpdateImageAndEnqueueAsync(movedRecord, key, deleteOldCopy); }
         catch
         {
             StoredImageMover.RollBackCopiedDestination(target);
             throw;
         }
-        StoredImageMover.RemoveOldCopy(record.StoredPath, target);
     }
 
     public async Task<VisionSettings> SettingsAsync() =>

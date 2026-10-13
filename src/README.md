@@ -402,17 +402,33 @@ references original image files. Keep gallery01 on its own original gallery.
   paths, so their originals are considered inaccessible, even if they still exist.
   Legacy imports with absolute source folder paths are recognized.
   Removal deletes catalog metadata, thumbnails, fingerprint and encrypted image,
-  allowing subsequent reimport. Ciphertext is staged before catalog removal; database
-  errors attempt to put it back. Filesystem and SQLite changes are not a single atomic
-  transaction: interruptions can leave `.removing-*` ciphertext or a restored PNG.
-  Gallery loading explicitly composes a catalog read, interrupted-removal recovery,
-  fingerprint backfill, and generation-metadata migration. Recovery restores catalogued
-  ciphertext and cleans orphaned staging files before the view opens; it is not deferred
-  to the removal screen. One staging-file snapshot covers the image tree and catalogued
-  external directories. Filesystem failures still stop loading without discarding copies.
-  The separate `ListAsync` service query only reads catalog records and does not perform
-  recovery or data migration.
-  Cleanup failures report the residue path. Retained backups/copies are not removed.
+  allowing subsequent reimport. The catalog row is deleted and a file delete is queued
+  in the same SQLite transaction; the queued delete then runs in the background.
+  Interruptions can leave a restored PNG, or ciphertext that the queue deletes later.
+- **Background file operations.** Slow drive work (deleting removed or moved-away
+  ciphertext, indexing media folders, recovering removals interrupted by older
+  versions) is stored as rows in a `drive_operations` table and played in batches in
+  the background, so browsing stays available on large or network (SMB) galleries.
+  The sidebar shows progress with **Pause**, **Resume**, **Retry failed** and **Cancel**.
+  Pausing or closing the app loses no work. Cancelling discards queued work and leaves
+  the affected files on disk. Opposing operations are pruned; for example, moving an
+  image back to a folder whose delete is still queued reuses the existing file. Drive
+  errors retry with backoff and are then reported as failed without changing files.
+  Queue rows contain only keyed path hashes and encrypted payloads. Like ingestion,
+  queued work continues after the gallery locks.
+- **File index.** The first load after upgrading schedules one scan per directory,
+  instead of a full-tree walk, to build a `media_index` table of encrypted file
+  sizes. The storage overview then reads that index instead of the drive. A missing
+  directory counts as empty; a failing directory retries on its own. Because the
+  gallery owns its media folders, files changed outside it are only noticed after
+  **Rebuild file index** in **Settings > Gallery overview**. The same scans find
+  `.removing-*` residue from older versions. Recovery restores a staged copy only if it
+  authenticates as that image. It deletes identical or orphaned copies, and preserves
+  conflicting copies as failed operations.
+  Gallery loading composes a catalog read, fingerprint backfill, and generation-metadata
+  migration, then schedules this background work. `ListAsync` only reads catalog records.
+  Vault move and purge still enumerate the whole gallery folder.
+  Retained backups/copies are not removed.
   Permanent removal bypasses the Recycle Bin and is not secure SSD/NVMe erasure.
 - Configure a loaded vision-capable model and a literal loopback or private LAN,
   OpenAI-compatible endpoint under **Settings > LLM endpoints**. Examples:

@@ -10,7 +10,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Gallery.Services.DataManagers;
 
-internal sealed class GalleryStore(string databasePath)
+internal sealed partial class GalleryStore(string databasePath)
 {
 
     private readonly string databasePath = Path.GetFullPath(databasePath);

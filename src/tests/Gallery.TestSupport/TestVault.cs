@@ -39,6 +39,8 @@ internal sealed class TestVault : IDisposable
     public void Dispose()
     {
         Service.Dispose();
+        // Disposal cancels the background drive player; let its in-flight operation finish before deleting files.
+        Service.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
         if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
         if (Directory.Exists(Root + "-state")) Directory.Delete(Root + "-state", recursive: true);
     }

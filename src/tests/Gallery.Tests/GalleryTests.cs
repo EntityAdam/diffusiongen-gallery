@@ -482,6 +482,9 @@ public sealed class GalleryTests
             File.Delete(first.StoredPath);
             var cached = await fixture.Service.CachedStorageOverviewAsync();
             var blob = await fixture.RawStore.ReadSettingsAsync("storage-overview");
+            // The gallery owns its media folders, so out-of-band deletions surface only after an index rebuild.
+            await fixture.Service.RebuildStorageIndexAsync();
+            await fixture.Service.WaitForDriveOperationsAsync();
             // One second accommodates clock resolution without accepting an unbounded future stamp.
             var clockSkewAllowance = TimeSpan.FromSeconds(1);
             var refreshStartedAt = DateTimeOffset.UtcNow;

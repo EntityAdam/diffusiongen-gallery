@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Gallery.Core;
+using Gallery.Services.DataManagers.Models;
 using Gallery.Services.Processors;
 using System.Security.Cryptography;
 using Gallery.Models;
@@ -10,17 +11,6 @@ namespace Gallery.Services;
 public sealed partial class GalleryService
 {
     private const string OriginalDeletedMessage = "Original was deleted. ";
-
-    private sealed class GalleryRecordDeletedException : GalleryTechnicalException
-    {
-        public GalleryRecordDeletedException() { }
-        public GalleryRecordDeletedException(string message) : base(message) { }
-        public GalleryRecordDeletedException(string message, Exception innerException) : base(message, innerException) { }
-        public GalleryRecordDeletedException(string message, LogEventBase logEvent,
-            ContextualData? contextualDataByName = null, Exception? innerException = null)
-            : base(message, logEvent, contextualDataByName, innerException) { }
-        public override string Reason => "The catalog entry was removed but encrypted residue remains.";
-    }
 
     public async Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids)
     {
@@ -79,6 +69,7 @@ public sealed partial class GalleryService
                 await AttemptRemovalAsync(item, key, existingAction, missingAction, restoreFolder, reportRemoval, failures);
         }
         finally { galleryStore.Gate.Release(); }
+        drivePlayer.Start();
         if (failures.Count > 0)
             throw new AggregateException($"Failed to completely remove {failures.Count} image(s): " +
                 string.Join(", ", failures.Select(failure => failure.Message)), failures);
@@ -117,7 +108,6 @@ public sealed partial class GalleryService
                 throw new ImageNotMarkedForDeletionException($"Image '{record.Id}' is no longer marked for deletion.",
                     GalleryLogEvent.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
                         .Add("Image.Id", record.Id).Add("Image.MarkedForDeletion", false)));
-            await RecoverRecordRemovalAsync(record);
             var original = OriginalPath(record);
             if (RemovalPreviewHasChanged(record, removalItem, original))
                 throw new InvalidOperationException("Original file status changed. Review a new removal preview.");
@@ -138,14 +128,7 @@ public sealed partial class GalleryService
                 });
             }
 
-            await DeleteGalleryRecordAsync(record);
-
-        }
-        catch (GalleryRecordDeletedException exception)
-        {
-            var message = (originalDeleted ? OriginalDeletedMessage : "") + exception.Message;
-            throw CreateRemovalFailure($"Image '{removalItem.Id}' was removed with an issue: {message}",
-                removalItem.Id, true, restoredPath, originalDeleted, exception);
+            await DeleteGalleryRecordAsync(record, key);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or InvalidOperationException or GalleryException or CryptographicException or UnknownImageFormatException
@@ -206,27 +189,10 @@ public sealed partial class GalleryService
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
-    private async Task DeleteGalleryRecordAsync(ImageRecord record)
-    {
-        var hasEncryptedImage = SourceExists(record.StoredPath);
-        var stagedCiphertextPath = RemovalStagingPath(record);
-        if (hasEncryptedImage) File.Move(record.StoredPath, stagedCiphertextPath);
-        try { await galleryStore.DeleteAsync(record.Id); }
-        catch
-        {
-            if (hasEncryptedImage) File.Move(stagedCiphertextPath, record.StoredPath);
-            throw;
-        }
-        if (!hasEncryptedImage) return;
-
-        try { File.Delete(stagedCiphertextPath); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw new GalleryRecordDeletedException(
-                $"Gallery entry removed, but encrypted residue remains at '{stagedCiphertextPath}'. Delete this file manually.",
-                exception);
-        }
-    }
+    // The catalog row and the queued ciphertext delete commit together; the drive queue deletes the file.
+    private Task DeleteGalleryRecordAsync(ImageRecord record, byte[] key) =>
+        galleryStore.DeleteImageAndEnqueueAsync(record.Id,
+            CreateDriveOperation(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key));
 
     private static bool ShouldDeleteExistingOriginal(RemovalItem removalItem, ExistingOriginalAction existingAction) =>
         removalItem.OriginalExists && existingAction == ExistingOriginalAction.Delete;

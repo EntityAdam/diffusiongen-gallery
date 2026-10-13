@@ -45,6 +45,7 @@ public sealed partial class GalleryService
             if (PathEquals(root, VaultRoot) && checkout is not null)
             {
                 if (!existing) RequireEmptyDestination(root);
+                await StopDrivePlayerAsync();
                 await vaultSession.LockAndDrainAsync();
                 return;
             }
@@ -56,6 +57,7 @@ public sealed partial class GalleryService
             try
             {
                 if (!existing) RequireEmptyDestination(root);
+                await StopDrivePlayerAsync();
                 await vaultSession.LockAndDrainAsync();
                 EnsureActive();
                 checkout?.Dispose();
@@ -73,6 +75,7 @@ public sealed partial class GalleryService
         await lifecycleGate.WaitAsync();
         try
         {
+            await StopDrivePlayerAsync();
             await vaultSession.LockAndDrainAsync();
             checkout?.Dispose();
             checkout = null;
@@ -108,6 +111,7 @@ public sealed partial class GalleryService
             destinationCheckout = VaultCheckout.Acquire(destination);
             RequireEmptyDestination(destination);
             key = vaultSession.Key;
+            await StopDrivePlayerAsync();
             await vaultSession.LockAndDrainAsync();
             var sourceRoot = VaultRoot;
             var records = await galleryStore.ReadRecordsAsync(key);
@@ -170,6 +174,7 @@ public sealed partial class GalleryService
                 throw new InvalidOperationException("Type PURGE to confirm permanent destruction of this gallery.");
             EnsureCheckout();
             key = vaultSession.Key;
+            await StopDrivePlayerAsync();
             await vaultSession.LockAndDrainAsync();
             var records = await galleryStore.ReadRecordsAsync(key);
             foreach (var record in records) ValidateMediaPath(record);
@@ -281,9 +286,11 @@ public sealed partial class GalleryService
         }
     }
 
+    // Queued drive work and the file index describe paths at the old location, so they never travel with a copy.
     private static async Task ClearLocationSettingsAsync(GalleryStore store, byte[] key)
     {
-        await store.DeleteSettingsAsync(StorageOverviewId);
+        await store.DeleteSettingsAsync(StorageOverviewId, MediaIndexId);
+        await store.ClearDriveStateAsync();
         var settings = await store.ReadSettingsAsync<StoredBackupSettings>(BackupSettingsId, BackupSettingsPurpose, key);
         if (settings is not null)
             await store.SaveSettingsAsync(settings with { LastBackupName = null, LastBackupType = null },

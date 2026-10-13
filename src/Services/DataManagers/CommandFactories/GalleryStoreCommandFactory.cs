@@ -18,6 +18,26 @@ internal static class GalleryStoreCommandFactory
                 id TEXT PRIMARY KEY,
                 payload BLOB NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS drive_operations (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                target BLOB NOT NULL,
+                image_id TEXT,
+                payload BLOB NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                not_before INTEGER NOT NULL DEFAULT 0,
+                error TEXT,
+                revision INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS drive_operations_kind_target ON drive_operations(kind, target);
+            CREATE INDEX IF NOT EXISTS drive_operations_due ON drive_operations(state, not_before, sequence);
+            CREATE TABLE IF NOT EXISTS media_index (
+                target BLOB PRIMARY KEY,
+                directory BLOB NOT NULL,
+                length INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS media_index_directory ON media_index(directory);
             """;
         return sqliteCommand;
     }

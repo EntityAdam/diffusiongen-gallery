@@ -36,6 +36,7 @@ public sealed class StorageIndexTests
         Assert.False(File.Exists(legacy.StoredPath));
 
         var loaded = Assert.Single(await fixture.Service.LoadAsync());
+        await fixture.Service.WaitForDriveOperationsAsync();
 
         Assert.Equal(Gallery.Core.Extractors.ComfyMetadata.Version, loaded.MetadataVersion);
         Assert.True(await fixture.Store.ContainsFingerprintAsync(legacy.Sha256, fixture.Session.Key));
@@ -106,6 +107,7 @@ public sealed class StorageIndexTests
         var service = new GalleryService(store, fixture.Vault, fixture.Session);
         // Act
         var migratedRecords = await service.LoadAsync();
+        await service.WaitForDriveOperationsAsync();
         var migrated = TestAssertions.Single(migratedRecords, "legacy migration retains one image");
         var fingerprintPresent = await store.ContainsFingerprintAsync(migrated.Sha256, fixture.Session.Key);
         var duplicateError = await Record.ExceptionAsync(() => service.ImportAsync(new MemoryStream(bytes), "different-name.png", "another-folder"));
