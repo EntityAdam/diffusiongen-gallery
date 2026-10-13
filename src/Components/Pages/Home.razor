@@ -31,34 +31,94 @@
 @if (!Gallery.IsUnlocked)
 {
     <section class="panel unlock-panel">
-        <div class="panel-header"><span class="eyebrow">ENCRYPTED VAULT</span><span class="pill">AES-256-GCM</span></div>
-        <h2>@(Gallery.VaultExists ? "Welcome back." : "Your gallery starts here.")</h2>
-        <p class="muted">@(Gallery.VaultExists ? "Unlock your collection with your passphrase or recovery words." : "Choose a strong, unique passphrase. We will generate a separate recovery phrase for you to save offline.")</p>
-        <form @onsubmit="UnlockAsync" @onsubmit:preventDefault>
-            @if (Gallery.VaultExists)
+        <div class="panel-header"><span class="eyebrow">ENCRYPTED GALLERY</span><span class="pill">AES-256-GCM</span></div>
+        @if (galleryScreen == "switch")
+        {
+            <h2>Switch gallery</h2>
+            <nav class="settings-tabs" aria-label="Switch gallery actions">
+                @foreach (var tab in GalleryTabs)
+                {
+                    <button type="button" class="@(galleryTab == tab.Id ? "active" : "")" aria-current="@(galleryTab == tab.Id ? "page" : null)"
+                            disabled="@busy" @onclick="() => SetGalleryTab(tab.Id)">@tab.Name</button>
+                }
+            </nav>
+            @if (galleryTab == "create")
             {
-                <div class="segmented">
-                    <button type="button" class="@(!useRecovery ? "active" : "")" @onclick="() => SwitchCredential(false)">Passphrase</button>
-                    <button type="button" class="@(useRecovery ? "active" : "")" @onclick="() => SwitchCredential(true)">Recovery words</button>
-                </div>
+                <h3>Create a gallery</h3>
+                <label for="new-gallery-name">Gallery name</label>
+                <input id="new-gallery-name" @bind="newGalleryName" maxlength="80" disabled="@busy" />
+                <DirectoryPathInput Label="New gallery directory" @bind-Value="newGalleryDirectory" Disabled="@busy" />
+                <form @onsubmit="CreateGalleryAsync" @onsubmit:preventDefault>
+                    <label for="secret">Passphrase</label>
+                    <input id="secret" type="password" @bind="secret" autocomplete="off" minlength="14" required disabled="@busy" />
+                    <label for="confirm">Confirm passphrase</label>
+                    <input id="confirm" type="password" @bind="confirm" autocomplete="off" minlength="14" required disabled="@busy" />
+                    <button class="primary full" disabled="@busy" type="submit">@(busy ? "Deriving encryption key..." : "Create gallery") <span>&rarr;</span></button>
+                </form>
             }
-            <label for="secret">@(useRecovery ? "32 recovery words" : "Passphrase")</label>
-            @if (useRecovery)
+            else if (galleryTab == "open")
             {
-                <textarea id="secret" @bind="secret" rows="4" autocomplete="off" spellcheck="false" required></textarea>
+                <h3>Open an existing gallery</h3>
+                <DirectoryPathInput Label="Local folder or SMB path" @bind-Value="existingGalleryDirectory" Disabled="@busy" />
+                <button type="button" class="primary full" disabled="@busy" @onclick="UseExistingGalleryAsync">Use this gallery <span>&rarr;</span></button>
             }
             else
             {
-                <input id="secret" type="password" @bind="secret" autocomplete="off" minlength="14" required />
+                <h3>Restore gallery</h3>
+                <p class="muted">Restore a full backup or the last incremental backup in its chain. The destination must be a new or empty folder.</p>
+                <div class="segmented" role="tablist" aria-label="Backup location">
+                    <button type="button" role="tab" aria-selected="@(restoreSourceType == "local")" class="@(restoreSourceType == "local" ? "active" : "")"
+                            disabled="@busy" @onclick='() => SetRestoreSource("local")'>From local backup</button>
+                    <button type="button" role="tab" aria-selected="@(restoreSourceType == "sas")" class="@(restoreSourceType == "sas" ? "active" : "")"
+                            disabled="@busy" @onclick='() => SetRestoreSource("sas")'>From cloud backup</button>
+                </div>
+                @if (restoreSourceType == "local")
+                {
+                    <DirectoryPathInput Label="Local folder or SMB path" @bind-Value="restoreSourceDirectory" Disabled="@busy" />
+                }
+                else
+                {
+                    <label for="restore-sas">Container-level Azure Blob SAS URL</label>
+                    <input id="restore-sas" type="password" @bind="restoreSasUrl" autocomplete="off"
+                           placeholder="https://account.blob.core.windows.net/container?sv=...&amp;sr=c&amp;sp=rl&amp;sig=..."
+                           pattern="https://[^/?#]+/[^/?#]+\?[^#]+" required disabled="@busy" />
+                    <p class="muted">Use an HTTPS container SAS with read and list permissions. The SAS URL is used only for this restore and is not saved.</p>
+                }
+                <div class="actions">
+                    <button type="button" disabled="@busy" @onclick="ListRestoreBackupsAsync">Find backups</button>
+                </div>
+                <label for="restore-archive">Backup archive</label>
+                <select id="restore-archive" @bind="restoreArchive" disabled="@(busy || restoreArchives.Count == 0)">
+                    <option value="">Select a full or final incremental backup</option>
+                    @foreach (var archive in restoreArchives) { <option value="@archive">@archive</option> }
+                </select>
+                <label for="restored-gallery-name">Gallery name</label>
+                <input id="restored-gallery-name" @bind="newGalleryName" maxlength="80" disabled="@busy" />
+                <DirectoryPathInput Label="New gallery directory" @bind-Value="newGalleryDirectory" Disabled="@busy" />
+                <GalleryCredentialInput @bind-Value="restoreCredential" @bind-UseRecovery="restoreUseRecovery" Disabled="@busy" />
+                <button type="button" class="primary full" disabled="@(busy || string.IsNullOrWhiteSpace(restoreArchive))" @onclick="RestoreGalleryAsync">Restore gallery <span>&rarr;</span></button>
             }
-            @if (!Gallery.VaultExists)
-            {
-                <label for="confirm">Confirm passphrase</label>
-                <input id="confirm" type="password" @bind="confirm" autocomplete="off" minlength="14" required />
-            }
-            <button class="primary full" disabled="@busy" type="submit">@(busy ? "Deriving encryption key..." : Gallery.VaultExists ? "Unlock gallery" : "Create encrypted gallery") <span>&rarr;</span></button>
-        </form>
-        <div class="security-note"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted images cannot be recovered. Originals are retained unless you explicitly enable source deletion for a local folder import.</div>
+            <button type="button" disabled="@busy" @onclick="ReturnToWelcome">Back to welcome</button>
+        }
+        else
+        {
+        <h2>@(Gallery.VaultExists ? "Welcome back." : "Choose a gallery.")</h2>
+        @if (Gallery.VaultExists)
+        {
+            <p><strong>@Gallery.VaultName</strong></p>
+            <p class="muted">Unlock your gallery with your passphrase or recovery words.</p>
+            <form @onsubmit="UnlockAsync" @onsubmit:preventDefault>
+                <GalleryCredentialInput @bind-Value="secret" @bind-UseRecovery="useRecovery" Disabled="@busy" />
+                <button class="primary full" disabled="@busy" type="submit">@(busy ? "Unlocking gallery..." : "Unlock gallery") <span>&rarr;</span></button>
+            </form>
+        }
+        else
+        {
+            <p class="muted">Open, create, or restore a gallery to continue.</p>
+        }
+        <button type="button" class="primary full" disabled="@busy" @onclick="OpenGallerySwitcher">Switch gallery <span>&rarr;</span></button>
+        <div class="security-note"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted images cannot be recovered.</div>
+        }
     </section>
 }
 else if (recoveryPhrase.Length > 0)
@@ -104,7 +164,7 @@ else
                 }
             </div>
         }
-        <button type="button" class="danger panic-button" disabled="@busy" title="Panic: immediately lock vault, purge memory and wipe media (Ctrl+Shift+L)" @onclick="PanicAsync">
+        <button type="button" class="danger panic-button" disabled="@busy" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" @onclick="PanicAsync">
             <span>&#9888; Panic</span> <kbd>Ctrl+Shift+L</kbd>
         </button>
     </nav>
@@ -184,7 +244,7 @@ else
             {
                 <dl class="overview-stats">
                     <div><dt>Database size</dt><dd data-testid="database-size">@GalleryService.FormatBytes(storageOverview.DatabaseBytes)</dd><span class="muted">gallery.db with WAL files, including thumbnails</span></div>
-                    <div><dt>Total file count</dt><dd data-testid="file-count">@storageOverview.TotalFileCount.ToString("N0")</dd><span class="muted">@storageOverview.ImageFileCount.ToString("N0") encrypted images + @storageOverview.VaultFileCount vault files</span></div>
+                    <div><dt>Total file count</dt><dd data-testid="file-count">@storageOverview.TotalFileCount.ToString("N0")</dd><span class="muted">@storageOverview.ImageFileCount.ToString("N0") encrypted images + @storageOverview.VaultFileCount gallery files</span></div>
                     <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryService.FormatBytes(storageOverview.TotalBytes)</dd><span class="muted">@GalleryService.FormatBytes(storageOverview.ImageBytes) of encrypted images</span></div>
                 </dl>
                 @if (storageOverview.MissingImageFiles > 0)
@@ -200,6 +260,23 @@ else
             </p>
         </section>
     }
+    @if (workflow == "settings" && settingsTab == "gallery")
+    {
+        <section class="panel settings">
+            <h3>Manage gallery</h3>
+            <p><strong>@Gallery.VaultName</strong></p><p class="path">@Gallery.VaultRoot</p>
+            <label for="rename-gallery">Gallery name</label>
+            <input id="rename-gallery" @bind="galleryRename" maxlength="80" disabled="@busy" />
+            <button type="button" disabled="@busy" @onclick="RenameGalleryAsync">Rename</button>
+            <DirectoryPathInput Label="Move gallery to a new or empty local / SMB folder" @bind-Value="moveGalleryDirectory" Disabled="@busy" />
+            <p class="muted">Moves the catalog and all encrypted media, including media stored outside the gallery. The destination is verified before source files are removed. Sign in again after moving.</p>
+            <button type="button" disabled="@(busy || libraryJob.IsRunning)" @onclick="MoveGalleryAsync">Move gallery</button>
+            <div class="notice error">Purge permanently destroys all media and gallery data, including encrypted media stored outside this folder. Original source files and backups are not deleted. This is not secure disk erasure.</div>
+            <label for="purge-gallery">Type PURGE to confirm</label>
+            <input id="purge-gallery" @bind="purgeConfirmation" autocomplete="off" disabled="@busy" />
+            <button type="button" class="danger" disabled="@(busy || libraryJob.IsRunning || purgeConfirmation != "PURGE")" @onclick="PurgeGalleryAsync">Purge gallery</button>
+        </section>
+    }
     @if (workflow == "duplicates")
     {
         <section class="panel duplicates" aria-labelledby="duplicates-title">
@@ -207,7 +284,7 @@ else
                 <h3 id="duplicates-title">Duplicate finder</h3>
                 <button type="button" class="primary" disabled="@busy" @onclick="ScanDuplicatesAsync">@(duplicateScan is null ? "Scan for duplicates" : "Scan again")</button>
             </div>
-            <p class="muted">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the vault and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Remove marked images</em>.</p>
+            <p class="muted">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Remove marked images</em>.</p>
             @if (busy && progress.StartsWith("Scanning")) { <p class="progress" role="status"><span class="status-dot"></span> @progress</p> }
             @if (duplicateScan is not null)
             {
@@ -267,31 +344,11 @@ else
     @if (workflow == "settings" && settingsTab == "backups")
     {
         <section class="panel settings" aria-labelledby="backup-settings-title">
-            <div class="panel-header"><h3 id="backup-settings-title">Vault backups</h3></div>
-            <p class="muted">Backups contain the vault header, a consistent database snapshot, and encrypted media. Incremental backups include a fresh database snapshot and only changed media; keep the full backup and every later incremental archive in the chain.</p>
-            <label for="backup-destination">Destination</label>
-            <select id="backup-destination" @bind="backupDestinationType" disabled="@busy">
-                <option value="local">Local folder or NAS (SMB)</option>
-                <option value="azure">Azure Storage Account</option>
-            </select>
-            @if (backupDestinationType == "local")
-            {
-                <label for="backup-local-directory">Folder path</label>
-                <input id="backup-local-directory" @bind="backupLocalDirectory" placeholder="\\NAS\Backups\DiffusionGen" disabled="@busy" />
-                <p class="muted">The app uses its Windows account to access the folder. Ensure that account can create and write files on the share.</p>
-            }
-            else
-            {
-                <label for="backup-azure-container">Blob container</label>
-                <input id="backup-azure-container" @bind="backupAzureContainer" placeholder="gallery-backups" disabled="@busy" />
-                <label for="backup-azure-prefix">Optional blob prefix</label>
-                <input id="backup-azure-prefix" @bind="backupAzurePrefix" placeholder="diffusiongen" disabled="@busy" />
-                <label for="backup-azure-connection">Storage connection string</label>
-                <input id="backup-azure-connection" type="password" @bind="backupAzureConnectionString"
-                       placeholder="@(backupOptions?.HasAzureCredentials == true ? "Saved securely; leave blank to keep it" : "Paste the Storage Account connection string")"
-                       autocomplete="new-password" disabled="@busy" />
-                <p class="muted">The connection string is encrypted inside the vault and is never displayed after saving. Use a dedicated account/container with access limited to backups.</p>
-            }
+            <div class="panel-header"><h3 id="backup-settings-title">Gallery backups</h3></div>
+            <p class="muted">Backups contain the gallery header, a consistent database snapshot, and encrypted media. Incremental backups include a fresh database snapshot and only changed media; keep the full backup and every later incremental archive in the chain.</p>
+            <BackupLocation @bind-Type="backupDestinationType" @bind-LocalDirectory="backupLocalDirectory"
+                @bind-Container="backupAzureContainer" @bind-Prefix="backupAzurePrefix"
+                @bind-ConnectionString="backupAzureConnectionString" HasSavedCredentials="@(backupOptions?.HasAzureCredentials == true)" Disabled="@busy" />
             <div class="actions">
                 <button type="button" disabled="@busy" @onclick="SaveBackupOptionsAsync">Save destination</button>
                 <button type="button" class="primary" disabled="@(busy || !BackupDestinationReady)" @onclick="CreateFullBackupAsync">Create full backup</button>
@@ -307,10 +364,10 @@ else
     @if (workflow == "settings" && settingsTab == "security")
     {
         <section class="panel settings">
-            <h3>Vault security</h3>
+            <h3>Gallery security</h3>
             <div class="security-section">
                 <h4>Inactivity auto-lock</h4>
-                <p class="muted">Automatically drop encryption keys from memory and lock the vault when no mouse, keyboard or touch activity is detected.</p>
+                <p class="muted">Automatically drop encryption keys from memory and lock the gallery when no mouse, keyboard or touch activity is detected. Locking also releases the gallery checkout after active work finishes.</p>
                 <div class="setting-row">
                     <label for="auto-lock">Auto-lock timer</label>
                     <select id="auto-lock" value="@autoLockMinutes" @onchange="UpdateAutoLockMinutesAsync" disabled="@busy">
@@ -323,14 +380,14 @@ else
                 </div>
                 <p class="muted">
                     @(autoLockMinutes == 0
-                        ? "Auto-lock is currently disabled. The vault remains unlocked until manually locked or closed."
-                        : $"The vault will automatically lock after {autoLockMinutes} minutes of inactivity.")
+                        ? "Auto-lock is currently disabled. The gallery remains unlocked until manually locked or closed."
+                        : $"The gallery will automatically lock after {autoLockMinutes} minutes of inactivity.")
                 </p>
             </div>
 
             <div class="security-section">
                 <h4>Panic / Emergency quick-lock</h4>
-                <p class="muted">Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> (or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>, or <kbd>Shift</kbd>+<kbd>Esc</kbd>) anywhere in the application to instantly lock the vault, zero-out keys in RAM, revoke media blob URLs, and clear browser caches.</p>
+                <p class="muted">Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> (or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>, or <kbd>Shift</kbd>+<kbd>Esc</kbd>) anywhere in the application to instantly lock the gallery, release its checkout after active work finishes, zero-out keys in RAM, revoke media blob URLs, and clear browser caches.</p>
                 <button type="button" class="danger" disabled="@busy" @onclick="PanicAsync">Trigger panic lock now</button>
             </div>
 
@@ -341,11 +398,10 @@ else
                     <input id="new-passphrase" type="password" @bind="newPassphrase" minlength="14" autocomplete="off" required />
                     <label for="new-confirm">Confirm new passphrase</label>
                     <input id="new-confirm" type="password" @bind="newConfirm" minlength="14" autocomplete="off" required />
-                    <p class="muted">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the vault header, database, and all .dpng files together.</p>
+                    <p class="muted">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the gallery header, database, and all encrypted media together.</p>
                     <button disabled="@busy" type="submit">Change passphrase</button>
                 </form>
             </div>
-            <p class="muted vault-location">Vault location: <code>@Gallery.VaultRoot</code></p>
         </section>
     }
 
@@ -382,7 +438,7 @@ else
                 }
             </div>
             <ActiveFilters Filter="filter" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
-            <div class="results-bar"><span><strong>@Filtered.Count</strong> images <span class="muted">/ @images.Count in vault</span></span>
+            <div class="results-bar"><span><strong>@Filtered.Count</strong> images <span class="muted">/ @images.Count in gallery</span></span>
                 <div class="results-controls">
                     <div class="density-control" role="group" aria-label="Thumbnail size">
                         @foreach (var option in UiPreferences.Densities)
@@ -611,7 +667,7 @@ else
                         <p class="muted">Restores full-resolution PNGs or original-format MP4s named by image ID; never overwrites. Exact JPEG/WebP source bytes are not retained. Browser uploads may still have originals the app cannot access.</p>
                     }
                 }
-                <div class="notice error">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this vault. Backups may still contain them. This is not secure SSD/NVMe erasure.</div>
+                <div class="notice error">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this gallery. Backups may still contain them. This is not secure SSD/NVMe erasure.</div>
                 <label class="check"><input type="checkbox" @bind="confirmRemoval" disabled="@busy" /> I reviewed these images and actions and confirm permanent removal.</label>
                 <button class="primary full" disabled="@(busy || !confirmRemoval)" @onclick="ExecuteRemovalAsync">Confirm removal of @removalPlan.Count image(s)</button>
                 @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
@@ -631,6 +687,121 @@ else
 }
 
 @code {
+    private string galleryScreen = "welcome", galleryTab = "create";
+    private string existingGalleryDirectory = "", newGalleryName = "", newGalleryDirectory = "";
+    private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
+    private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
+    private string restoreArchive = "", restoreCredential = "";
+    private bool restoreUseRecovery;
+    private IReadOnlyList<string> restoreArchives = [];
+    private static readonly (string Id, string Name)[] GalleryTabs =
+    [
+        ("create", "Create"), ("open", "Open"), ("restore", "Restore")
+    ];
+
+    private void OpenGallerySwitcher()
+    {
+        galleryScreen = "switch";
+        error = message = "";
+    }
+
+    private void ReturnToWelcome()
+    {
+        galleryScreen = "welcome";
+        error = message = "";
+        secret = confirm = restoreCredential = restoreSasUrl = "";
+        useRecovery = restoreUseRecovery = false;
+    }
+
+    private void SetGalleryTab(string tab)
+    {
+        galleryTab = tab;
+        error = message = "";
+        secret = confirm = restoreCredential = restoreSasUrl = "";
+        restoreArchive = "";
+        restoreArchives = [];
+        useRecovery = restoreUseRecovery = false;
+    }
+
+    private void SetRestoreSource(string source)
+    {
+        restoreSourceType = source;
+        restoreArchives = [];
+        restoreArchive = restoreSasUrl = "";
+        restoreCredential = "";
+        restoreUseRecovery = false;
+    }
+
+    private Task UseExistingGalleryAsync() => RunAsync("Selecting gallery...", async () =>
+    {
+        await Gallery.OpenExistingVaultAsync(existingGalleryDirectory);
+        await Gallery.CloseVaultAsync();
+        galleryRename = Gallery.VaultName;
+        ReturnToWelcome();
+        message = "Gallery selected. Enter its passphrase or recovery words to unlock it.";
+    });
+
+    private Task CreateGalleryAsync() => RunAsync("Creating gallery...", async () =>
+    {
+        if (secret != confirm) throw new InvalidOperationException("Passphrases do not match.");
+        await Gallery.SelectNewVaultAsync(newGalleryDirectory);
+        recoveryPhrase = await Gallery.CreateVaultAsync(secret, confirm, newGalleryName);
+        secret = confirm = "";
+    });
+
+    private Task RenameGalleryAsync() => RunAsync("Renaming gallery...", async () =>
+    {
+        await Gallery.RenameVaultAsync(galleryRename);
+        message = "Gallery renamed.";
+    });
+
+    private Task MoveGalleryAsync() => RunAsync("Moving gallery...", async () =>
+    {
+        EnsureNoLibraryJob();
+        try { await Gallery.MoveVaultAsync(moveGalleryDirectory); }
+        finally { if (!Gallery.IsUnlocked) Lock(); }
+        galleryScreen = "welcome";
+        message = "Gallery moved. Sign in at the new location.";
+    });
+
+    private Task PurgeGalleryAsync() => RunAsync("Purging gallery...", async () =>
+    {
+        EnsureNoLibraryJob();
+        try { await Gallery.PurgeVaultAsync(purgeConfirmation); }
+        finally { if (!Gallery.IsUnlocked) Lock(); }
+        newGalleryName = GalleryService.GenerateVaultName();
+        newGalleryDirectory = GalleryService.DefaultVaultDirectory(newGalleryName);
+        galleryScreen = "switch";
+        galleryTab = "create";
+        message = "All gallery media and data were permanently destroyed. Backups and original sources were retained.";
+    });
+
+    private Task ListRestoreBackupsAsync() => RunAsync("Finding backups...", async () =>
+    {
+        restoreArchives = restoreSourceType == "sas"
+            ? await Gallery.ListRestoreBackupsFromSasAsync(restoreSasUrl)
+            : await Gallery.ListRestoreBackupsAsync("local", restoreSourceDirectory, "", "", "");
+        message = $"Found {restoreArchives.Count} backup archive(s). Select the full or final incremental backup.";
+    });
+
+    private Task RestoreGalleryAsync() => RunAsync("Restoring gallery...", async () =>
+    {
+        try
+        {
+            if (restoreSourceType == "sas")
+                await Gallery.RestoreGalleryFromSasAsync(restoreSasUrl, restoreArchive, newGalleryDirectory,
+                    restoreCredential, restoreUseRecovery, newGalleryName);
+            else
+                await Gallery.RestoreVaultAsync("local", restoreSourceDirectory, "", "", "",
+                    restoreArchive, newGalleryDirectory, restoreCredential, restoreUseRecovery, newGalleryName);
+            Lock();
+            galleryRename = Gallery.VaultName;
+            galleryScreen = "welcome";
+            message = "Backup restored. Sign in to the restored gallery.";
+        }
+        finally { restoreCredential = restoreSasUrl = ""; }
+    });
+
     private string secret = "", confirm = "", recoveryPhrase = "", error = "", message = "", progress = "";
     private string importPath = "", newPassphrase = "", newConfirm = "";
     private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
@@ -652,7 +823,7 @@ else
     ];
     private static readonly (string Id, string Name)[] SettingsTabs =
     [
-        ("overview", "Overview"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Vault security")
+        ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Gallery security")
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
@@ -741,7 +912,7 @@ else
         try { await action(); }
         catch (System.Security.Cryptography.CryptographicException exception)
         {
-            Logger.LogWarning(exception, "Vault authentication or integrity check failed");
+            Logger.LogWarning(exception, "Gallery authentication or integrity check failed");
             error = "Incorrect credentials, or encrypted data failed its integrity check. The operation was stopped.";
         }
         catch (Exception exception)
@@ -764,22 +935,23 @@ else
     protected override void OnInitialized()
     {
         Gallery.OnAutoLocked += HandleAutoLocked;
+        newGalleryName = GalleryService.GenerateVaultName();
+        newGalleryDirectory = GalleryService.DefaultVaultDirectory(newGalleryName);
+        galleryRename = Gallery.VaultExists ? Gallery.VaultName : "";
     }
 
     private void HandleAutoLocked()
     {
         _ = InvokeAsync(() =>
         {
-            if (disposed || !Gallery.IsUnlocked) return;
+            if (disposed) return;
             Lock();
-            message = "Vault locked due to inactivity.";
+            message = "Gallery locked after inactivity. Its checkout was released.";
             StateHasChanged();
         });
     }
 
-    private void SwitchCredential(bool recovery) { useRecovery = recovery; secret = ""; }
-
-    private Task UnlockAsync() => RunAsync("Unlocking vault...", async () =>
+    private Task UnlockAsync() => RunAsync("Unlocking gallery...", async () =>
     {
         try
         {
@@ -787,8 +959,8 @@ else
             {
                 if (useRecovery) await Gallery.UnlockWithRecoveryPhraseAsync(secret);
                 else await Gallery.UnlockWithPassphraseAsync(secret);
-                workflow = useRecovery ? "settings" : "library";
-                settingsTab = useRecovery ? "security" : "overview";
+                workflow = "library";
+                settingsTab = "overview";
                 var preferences = await Gallery.LoadPreferencesAsync();
                 density = preferences.GridDensity;
                 autoLockMinutes = preferences.AutoLockMinutes;
@@ -797,10 +969,7 @@ else
                 catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
                 await ReloadAsync();
             }
-            else
-            {
-                recoveryPhrase = await Gallery.CreateVaultAsync(secret, confirm);
-            }
+            else throw new InvalidOperationException("No gallery is selected. Choose Switch gallery to open or create one.");
         }
         catch
         {
@@ -930,7 +1099,7 @@ else
         backupLocalDirectory = backupOptions.LocalDirectory;
         backupAzureContainer = backupOptions.AzureContainer;
         backupAzurePrefix = backupOptions.AzurePrefix;
-        message = "Backup destination saved in the encrypted vault.";
+        message = "Backup destination saved in the encrypted gallery.";
     });
 
     private Task CreateFullBackupAsync() => RunAsync("Creating full backup...", async () =>
@@ -1361,7 +1530,7 @@ else
         var file = await Gallery.ExportAsync(image.Id);
         try { await DownloadAsync(file); }
         finally { GalleryService.ClearExportContent(file); }
-        message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the vault.";
+        message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the gallery.";
     });
 
     private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
@@ -1377,7 +1546,7 @@ else
         var file = await Gallery.ExportZipAsync(librarySelection.ToList());
         try { await DownloadAsync(file); }
         finally { GalleryService.ClearExportContent(file); }
-        message = $"Saved {librarySelection.Count} decrypted copies as {file.FileName}. They are no longer protected by the vault.";
+        message = $"Saved {librarySelection.Count} decrypted copies as {file.FileName}. They are no longer protected by the gallery.";
     });
 
     private void OpenViewer(string? initialId = null)
@@ -1450,7 +1619,7 @@ else
 
     private void EnsureNoLibraryJob()
     {
-        if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or vault settings.");
+        if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or gallery settings.");
     }
 
     private async Task UpdateAutoLockMinutesAsync(ChangeEventArgs e)
@@ -1478,7 +1647,7 @@ else
         {
             if (!Gallery.IsUnlocked) return;
             Lock();
-            message = "Vault locked due to inactivity.";
+            message = "Gallery locked after inactivity. Its checkout was released.";
             StateHasChanged();
         });
     }
@@ -1489,7 +1658,7 @@ else
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         Gallery.Panic();
         Lock();
-        message = "Vault locked and memory purged.";
+        message = "Gallery locked and memory purged. Its checkout was released.";
         StateHasChanged();
     }
 
@@ -1514,6 +1683,7 @@ else
         backupOptions = null;
         backupDestinationType = "local";
         backupLocalDirectory = backupAzureContainer = backupAzurePrefix = backupAzureConnectionString = "";
+        restoreCredential = restoreSasUrl = purgeConfirmation = "";
         browsingFilter = null;
         libraryJob = new(false, "", "", 0, false);
         deleteSources = confirmSourceDeletion = false;

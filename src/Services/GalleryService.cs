@@ -31,8 +31,8 @@ public sealed partial class GalleryService
     private const string EmptyDuplicateCandidatesMessage =
         "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
 
-    private readonly GalleryStore galleryStore;
-    private readonly VaultStore vaultStore;
+    private GalleryStore galleryStore;
+    private VaultStore vaultStore;
     private readonly VaultSession vaultSession;
     private readonly VideoTools? videoTools;
     private readonly VisionService? visionService;

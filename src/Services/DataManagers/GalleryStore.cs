@@ -18,6 +18,23 @@ internal sealed class GalleryStore(string databasePath)
     public SemaphoreSlim BackupGate { get; } = new(1);
     private readonly SemaphoreSlim schemaGate = new(1);
 
+    public async Task InitializeAsync()
+    {
+        await using var connection = await OpenAsync();
+    }
+
+    public async Task DeleteSettingsAsync(params string[] ids)
+    {
+        await using var connection = await OpenAsync();
+        foreach (var id in ids)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM settings WHERE id = $id";
+            command.Parameters.AddWithValue("$id", id);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
     private async Task<SqliteConnection> OpenAsync()
     {
         var sqliteConnection = new SqliteConnection(new SqliteConnectionStringBuilder

@@ -25,7 +25,7 @@ public sealed class DomainCompositionTests
     }
 
     [Fact]
-    public async Task DomainScope_WhenDisposed_ThenLocksItsSessionWithoutLockingAnotherScope()
+    public async Task DomainScope_WhenCheckedOut_ThenAnotherScopeMustWaitUntilItIsClosed()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -37,10 +37,11 @@ public sealed class DomainCompositionTests
         var first = firstScope.ServiceProvider.GetRequiredService<GalleryService>();
         var second = secondScope.ServiceProvider.GetRequiredService<GalleryService>();
         await first.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        await second.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        await Assert.ThrowsAsync<IOException>(() => second.UnlockWithPassphraseAsync(TestVault.Passphrase));
 
         // Act
         firstScope.Dispose();
+        await second.UnlockWithPassphraseAsync(TestVault.Passphrase);
         var firstIsUnlocked = first.IsUnlocked;
         var secondIsUnlocked = second.IsUnlocked;
 

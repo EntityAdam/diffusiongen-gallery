@@ -32,7 +32,7 @@
     </form>
     @if (message.Length > 0) { <p class="notice" role="status">@message</p> }
     @if (error.Length > 0) { <p class="notice error" role="alert">@error</p> }
-    <div class="security-note">Settings, including the optional API key, are encrypted in your vault. Fetch models tests the entered endpoint without saving it. Save to apply changes to subsequent requests.</div>
+    <div class="security-note">Settings, including the optional API key, are encrypted in your gallery. Fetch models tests the entered endpoint without saving it. Save to apply changes to subsequent requests.</div>
 </section>
 
 @code {
@@ -62,7 +62,7 @@
         var settings = draft.ToSettings();
         await Gallery.SaveSettingsAsync(settings);
         await Saved.InvokeAsync(settings);
-        message = "LLM settings saved encrypted in this vault.";
+        message = "LLM settings saved encrypted in this gallery.";
     });
 
     private async Task RunAsync(Func<Task> action)

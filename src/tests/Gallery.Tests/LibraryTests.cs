@@ -138,9 +138,9 @@ public sealed class LibraryTests
         Assert.Equal(4, TestAssertions.Single(initialViews, "the saved view is returned").Filter.MinRating);
         TestAssertions.DoesNotContain("Private view", Encoding.UTF8.GetString(payload!), "saved views are encrypted");
         TestAssertions.Single(replacedViews, "case-insensitive names replace rather than duplicate saved views");
-        TestAssertions.Exception<VaultLockedException>(new ExpectedException("the error explains how to unlock the vault", "unlock", "vault", "first")
+        TestAssertions.Exception<VaultLockedException>(new ExpectedException("the error explains how to unlock the gallery", "unlock", "gallery", "first")
         { HttpStatusCode = System.Net.HttpStatusCode.BadRequest, Severity = Severity.Error,
-          Reason = "Unlock the vault first.", LogEventValue = "Vault.AcquireKey",
+          Reason = "Unlock the gallery first.", LogEventValue = "Vault.AcquireKey",
           ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Vault.State", "locked") }, lockedError);
         Assert.Equal(1, TestAssertions.Single(restartedViews, "the replaced view survives unlocking").Filter.MinRating);
         TestAssertions.Empty(remainingViews, "deleting the saved view leaves no entries");

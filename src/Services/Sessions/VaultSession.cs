@@ -14,6 +14,19 @@ internal sealed class VaultSession : IDisposable
     private UnlockedVaultSession? unlockedSession;
     private DateTimeOffset lastAccessUtc = DateTimeOffset.UtcNow;
     private TimeSpan? inactivityTimeout;
+    private int activeLeases;
+    private TaskCompletionSource? drained;
+    private bool disposed;
+
+    internal Task LockAndDrainAsync()
+    {
+        lock (syncRoot)
+        {
+            ClearKey();
+            if (activeLeases == 0) return Task.CompletedTask;
+            return (drained ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+        }
+    }
 
     public event Action? AutoLocked;
 
@@ -94,7 +107,7 @@ internal sealed class VaultSession : IDisposable
                     return key.ToArray();
                 }
             }
-            throw new InvalidOperationException("Unlock the vault first.");
+            throw new InvalidOperationException("Unlock the gallery first.");
         }
     }
 
@@ -107,12 +120,12 @@ internal sealed class VaultSession : IDisposable
             if (!locked)
             {
                 lastAccessUtc = DateTimeOffset.UtcNow;
-                return unlockedSession ?? throw new VaultLockedException("Unlock the vault first.", GalleryLogEvent.AcquireVaultKey,
+                return unlockedSession ?? throw new VaultLockedException("Unlock the gallery first.", GalleryLogEvent.AcquireVaultKey,
                     new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "locked")));
             }
         }
         AutoLocked?.Invoke();
-        throw new VaultLockedException("The vault locked automatically due to inactivity.", GalleryLogEvent.AcquireVaultKey,
+        throw new VaultLockedException("The gallery locked automatically due to inactivity.", GalleryLogEvent.AcquireVaultKey,
             new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "timed_out")));
     }
 
@@ -126,15 +139,29 @@ internal sealed class VaultSession : IDisposable
             {
                 lastAccessUtc = DateTimeOffset.UtcNow;
                 if (!ReferenceEquals(key, unlockedKey))
-                    throw new VaultLockedException("Unlock the vault first. This unlocked session has been revoked.",
+                    throw new VaultLockedException("Unlock the gallery first. This unlocked session has been revoked.",
                         GalleryLogEvent.AcquireVaultKey,
                         new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "revoked")));
                 var leasedKeyBytes = unlockedKey.ToArray();
-                return new KeyLease(() => leasedKeyBytes, () => CryptographicOperations.ZeroMemory(leasedKeyBytes));
+                activeLeases++;
+                var released = 0;
+                return new KeyLease(() => leasedKeyBytes, () =>
+                {
+                    if (Interlocked.Exchange(ref released, 1) != 0) return;
+                    CryptographicOperations.ZeroMemory(leasedKeyBytes);
+                    lock (syncRoot)
+                    {
+                        if (--activeLeases == 0)
+                        {
+                            drained?.TrySetResult();
+                            drained = null;
+                        }
+                    }
+                });
             }
         }
         AutoLocked?.Invoke();
-        throw new VaultLockedException("The vault locked automatically due to inactivity.", GalleryLogEvent.AcquireVaultKey,
+        throw new VaultLockedException("The gallery locked automatically due to inactivity.", GalleryLogEvent.AcquireVaultKey,
             new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", "timed_out")));
     }
 
@@ -144,6 +171,11 @@ internal sealed class VaultSession : IDisposable
         var replacementKey = value.ToArray();
         lock (syncRoot)
         {
+            if (disposed)
+            {
+                CryptographicOperations.ZeroMemory(replacementKey);
+                throw new ObjectDisposedException(nameof(VaultSession));
+            }
             ClearKey();
             key = replacementKey;
             lastAccessUtc = DateTimeOffset.UtcNow;
@@ -160,7 +192,11 @@ internal sealed class VaultSession : IDisposable
     public void Dispose()
     {
         autoLockTimer?.Dispose();
-        Lock();
+        lock (syncRoot)
+        {
+            disposed = true;
+            ClearKey();
+        }
     }
 
     private void OnAutoLockTimerTick(object? state)

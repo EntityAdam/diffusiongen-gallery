@@ -21,7 +21,8 @@ internal sealed class TestVault : IDisposable
     {
         Configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Gallery:DataDirectory"] = Root
+            ["Gallery:DataDirectory"] = Root,
+            ["Gallery:StateDirectory"] = Root + "-state"
         }).Build();
         Vault = new(Root);
         Store = new(Path.Combine(Root, "gallery.db"));
@@ -37,7 +38,8 @@ internal sealed class TestVault : IDisposable
 
     public void Dispose()
     {
-        Session.Dispose();
+        Service.Dispose();
         if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+        if (Directory.Exists(Root + "-state")) Directory.Delete(Root + "-state", recursive: true);
     }
 }

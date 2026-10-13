@@ -21,7 +21,7 @@
   </ItemGroup>
   <Target Name="CopyProcessMediator" AfterTargets="Build">
     <ItemGroup>
-      <ProcessMediatorFiles Include="../Gallery.ProcessMediator/bin/$(Configuration)/net10.0/*" />
+      <ProcessMediatorFiles Include="..\Gallery.ProcessMediator\$(BaseOutputPath)$(Configuration)\net10.0\*" />
     </ItemGroup>
     <Copy SourceFiles="@(ProcessMediatorFiles)" DestinationFolder="$(OutDir)ProcessMediator" />
   </Target>

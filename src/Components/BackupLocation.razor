@@ -1,0 +1,39 @@
+<label for="@id">@(Restoring ? "Backup source" : "Destination")</label>
+<select id="@id" value="@Type" @onchange='args => TypeChanged.InvokeAsync(args.Value?.ToString() ?? "local")' disabled="@Disabled">
+    <option value="local">Local folder / SMB network share</option>
+    <option value="azure">Azure Blob Storage</option>
+</select>
+@if (Type == "local")
+{
+    <DirectoryPathInput Label="Folder path" Value="@LocalDirectory" ValueChanged="@LocalDirectoryChanged" Disabled="@Disabled" />
+}
+else
+{
+    <label for="@(id + "-container")">Blob container</label>
+    <input id="@(id + "-container")" value="@Container" @onchange='args => ContainerChanged.InvokeAsync(args.Value?.ToString() ?? "")' disabled="@Disabled" />
+    <label for="@(id + "-prefix")">Optional blob prefix</label>
+    <input id="@(id + "-prefix")" value="@Prefix" @onchange='args => PrefixChanged.InvokeAsync(args.Value?.ToString() ?? "")' disabled="@Disabled" />
+    <label for="@(id + "-connection")">Storage account connection string</label>
+    <input id="@(id + "-connection")" type="password" value="@ConnectionString"
+           @onchange='args => ConnectionStringChanged.InvokeAsync(args.Value?.ToString() ?? "")'
+           placeholder="@(HasSavedCredentials ? "Saved securely; leave blank to keep it" : "Paste the Storage Account connection string")"
+           autocomplete="off" disabled="@Disabled" />
+    <p class="muted">Use a dedicated account/container with access limited to backups. SMB uses the application's OS account.</p>
+}
+
+@code {
+    [Parameter] public string Type { get; set; } = "local";
+    [Parameter] public EventCallback<string> TypeChanged { get; set; }
+    [Parameter] public string LocalDirectory { get; set; } = "";
+    [Parameter] public EventCallback<string> LocalDirectoryChanged { get; set; }
+    [Parameter] public string Container { get; set; } = "";
+    [Parameter] public EventCallback<string> ContainerChanged { get; set; }
+    [Parameter] public string Prefix { get; set; } = "";
+    [Parameter] public EventCallback<string> PrefixChanged { get; set; }
+    [Parameter] public string ConnectionString { get; set; } = "";
+    [Parameter] public EventCallback<string> ConnectionStringChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool Restoring { get; set; }
+    [Parameter] public bool HasSavedCredentials { get; set; }
+    private readonly string id = "backup-location-" + Guid.NewGuid().ToString("N");
+}

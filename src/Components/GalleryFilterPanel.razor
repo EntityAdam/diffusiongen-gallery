@@ -47,7 +47,7 @@
         <label for="from">Imported from</label><input id="from" type="date" @bind="draft.From" @bind:after="NotifyChangedAsync" />
         <label for="to">Imported through</label><input id="to" type="date" @bind="draft.To" @bind:after="NotifyChangedAsync" />
         <label class="check"><input type="checkbox" @bind="draft.FavoritesOnly" @bind:after="NotifyChangedAsync" /> Favorites only</label>
-        <div class="security-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the vault is unlocked.</div>
+        <div class="security-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked.</div>
     </details>
 </aside>
 

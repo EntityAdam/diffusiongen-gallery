@@ -13,7 +13,8 @@ internal sealed record VaultHeader(
     int Version,
     KeySlot Passphrase,
     KeySlot Recovery,
-    ImmutableArray<byte> KeyCheck);
+    ImmutableArray<byte> KeyCheck,
+    string Name = "unnamed-gallery");
 
 /// <summary>Persists and unlocks the encrypted vault header and root key.</summary>
 internal sealed class VaultStore
@@ -31,6 +32,26 @@ internal sealed class VaultStore
     public string Root { get; }
     private string HeaderPath => Path.Combine(Root, "vault.json");
     public bool Exists => File.Exists(HeaderPath);
+    public string Name => Exists
+        ? JsonSerializer.Deserialize<VaultHeader>(File.ReadAllText(HeaderPath), vaultJsonOptions)?.Name
+            ?? throw new InvalidOperationException("Gallery header is empty.")
+        : "";
+
+    public async Task RenameAsync(string name)
+    {
+        name = ValidateName(name);
+        await gate.WaitAsync();
+        try { await ReplaceHeaderAsync((await ReadHeaderAsync()) with { Name = name }); }
+        finally { gate.Release(); }
+    }
+
+    public static string ValidateName(string name)
+    {
+        name = name.Trim();
+        if (name.Length is < 1 or > 80 || name.Any(char.IsControl))
+            throw new InvalidOperationException("Gallery names must have 1 to 80 characters and no control characters.");
+        return name;
+    }
 
     public VaultStore(string root)
     {
@@ -43,7 +64,7 @@ internal sealed class VaultStore
         await gate.WaitAsync();
         try
         {
-            if (!Exists) throw new InvalidOperationException("The vault header is missing.");
+            if (!Exists) throw new InvalidOperationException("The gallery header is missing.");
             File.Copy(HeaderPath, destinationPath, overwrite: false);
         }
         finally { gate.Release(); }
@@ -58,30 +79,26 @@ internal sealed class VaultStore
             throw new InvalidOperationException("Use a passphrase of at least 14 characters; a long unique phrase is recommended.");
     }
 
-    public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase)
+    public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase, string name = "unnamed-gallery")
     {
         ValidatePassphrase(passphrase);
-        return await CreateUnderGateAsync(passphrase);
-    }
-
-    private async Task<(byte[] Key, string Recovery)> CreateUnderGateAsync(string passphrase)
-    {
+        name = ValidateName(name);
         await gate.WaitAsync();
-        try { return await CreateWithOwnedKeyAsync(passphrase); }
+        try { return await CreateWithOwnedKeyAsync(passphrase, name); }
         finally { gate.Release(); }
     }
 
-    private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase)
+    private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase, string name = "unnamed-gallery")
     {
         var key = RandomNumberGenerator.GetBytes(VaultKeySizeBytes);
         try
         {
-            if (Exists) throw new InvalidOperationException("A vault already exists. Unlock it instead.");
+            if (Exists) throw new InvalidOperationException("A gallery already exists. Unlock it instead.");
             Directory.CreateDirectory(Root);
             VaultHeader vaultHeader;
             string recoveryPhrase;
             (vaultHeader, recoveryPhrase) = CreateInitialVaultHeader(key, passphrase);
-            await CreateHeaderAsync(vaultHeader);
+            await CreateHeaderAsync(vaultHeader with { Name = name });
             return (key, recoveryPhrase);
         }
         catch
@@ -165,7 +182,7 @@ internal sealed class VaultStore
             if (vaultKey.Length != VaultKeySizeBytes)
             {
                 CryptographicOperations.ZeroMemory(vaultKey);
-                throw new CryptographicException("Invalid vault key.");
+                throw new CryptographicException("Invalid gallery key.");
             }
             return vaultKey;
         }
@@ -178,9 +195,9 @@ internal sealed class VaultStore
             await File.ReadAllTextAsync(HeaderPath),
             vaultJsonOptions);
         if (vaultHeader is null)
-            throw new InvalidOperationException("Vault header is empty.");
+            throw new InvalidOperationException("Gallery header is empty.");
         if (!IsValidVaultHeader(vaultHeader))
-            throw new InvalidOperationException("Unsupported or corrupt vault header.");
+            throw new InvalidOperationException("Unsupported or corrupt gallery header.");
         return vaultHeader;
     }
 

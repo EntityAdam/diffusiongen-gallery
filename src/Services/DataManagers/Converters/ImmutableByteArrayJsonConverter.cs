@@ -12,7 +12,7 @@ internal sealed class ImmutableByteArrayJsonConverter : JsonConverter<ImmutableA
         JsonSerializerOptions options)
     {
         if (reader.TokenType != JsonTokenType.String)
-            throw new JsonException("Vault byte data must be base64-encoded.");
+            throw new JsonException("Gallery byte data must be base64-encoded.");
         return ImmutableArray.CreateRange(reader.GetBytesFromBase64());
     }
 
@@ -22,7 +22,7 @@ internal sealed class ImmutableByteArrayJsonConverter : JsonConverter<ImmutableA
         JsonSerializerOptions options)
     {
         if (immutableBytes.IsDefault)
-            throw new JsonException("Vault byte data cannot be uninitialized.");
+            throw new JsonException("Gallery byte data cannot be uninitialized.");
         writer.WriteBase64StringValue(immutableBytes.AsSpan());
     }
 }
