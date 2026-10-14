@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.RegularExpressions;
-using Gallery.Components;
-using Gallery.Models;
+using Gallery.Web.Components;
+using Gallery.Web.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;

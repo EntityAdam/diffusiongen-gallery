@@ -1,9 +1,9 @@
 using Gallery.Core;
-using Gallery.Services.Processors;
-using Gallery.Services.DataManagers;
-using Gallery.Services.Sessions;
+using Gallery.Web.Services.Processors;
+using Gallery.Web.Services.DataManagers;
+using Gallery.Web.Services.Sessions;
 using System.Security.Cryptography;
-using Gallery.Services;
+using Gallery.Web.Services;
 using Microsoft.Extensions.Configuration;
 
 namespace Gallery.Tests;

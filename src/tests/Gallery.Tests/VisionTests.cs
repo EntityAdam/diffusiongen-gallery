@@ -1,7 +1,7 @@
-using Gallery.Managers.Gateways;
+using Gallery.Web.Managers.Gateways;
 using System.Net;
-using Gallery.Models;
-using Gallery.Services;
+using Gallery.Web.Models;
+using Gallery.Web.Services;
 
 namespace Gallery.Tests;
 

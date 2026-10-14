@@ -1,6 +1,6 @@
-using Gallery.Managers.Gateways;
-using Gallery.Models;
-using Gallery.Services.ConfigurationProviders;
+using Gallery.Web.Managers.Gateways;
+using Gallery.Web.Models;
+using Gallery.Web.Services.ConfigurationProviders;
 using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
@@ -19,7 +19,7 @@ internal sealed class RealVideoArrangement : IDisposable
     public static VideoTools InstalledTools()
     {
         var configuration = new ConfigurationBuilder().AddEnvironmentVariables().Build();
-        var options = new Gallery.Services.ConfigurationProviders.ConfigurationProvider(configuration).GetVideoToolsOptions();
+        var options = new Gallery.Web.Services.ConfigurationProviders.ConfigurationProvider(configuration).GetVideoToolsOptions();
         return new VideoTools(options);
     }
 

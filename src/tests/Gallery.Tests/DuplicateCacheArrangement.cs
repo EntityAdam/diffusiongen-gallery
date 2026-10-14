@@ -1,5 +1,5 @@
-using Gallery.Models;
-using Gallery.Services.Processors;
+using Gallery.Web.Models;
+using Gallery.Web.Services.Processors;
 using Microsoft.Data.Sqlite;
 using System.Text.Json;
 

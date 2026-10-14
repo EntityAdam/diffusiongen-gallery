@@ -1,4 +1,4 @@
-using Gallery.Models;
+using Gallery.Web.Models;
 
 namespace Gallery.Core.Queries;
 

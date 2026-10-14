@@ -1,8 +1,8 @@
 using Gallery.Core.Processors;
 using System.Text;
 using Gallery.Core;
-using Gallery.Models;
-using Gallery.Services;
+using Gallery.Web.Models;
+using Gallery.Web.Services;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 

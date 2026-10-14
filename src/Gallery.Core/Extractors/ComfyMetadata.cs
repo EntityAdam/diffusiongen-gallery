@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Collections.Immutable;
 using System.Text.RegularExpressions;
-using Gallery.Models;
+using Gallery.Web.Models;
 
 namespace Gallery.Core.Extractors;
 

@@ -1,7 +1,7 @@
-using Gallery.Managers.Gateways;
-using Gallery.Services.DataManagers;
-using Gallery.Services.Sessions;
-using Gallery.Services;
+using Gallery.Web.Managers.Gateways;
+using Gallery.Web.Services.DataManagers;
+using Gallery.Web.Services.Sessions;
+using Gallery.Web.Services;
 using Microsoft.Extensions.Configuration;
 
 namespace Gallery.Tests;

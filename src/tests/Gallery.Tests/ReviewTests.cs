@@ -1,7 +1,7 @@
 using Gallery.Core.Processors;
 using Gallery.Core;
-using Gallery.Models;
-using Gallery.Services;
+using Gallery.Web.Models;
+using Gallery.Web.Services;
 
 namespace Gallery.Tests;
 

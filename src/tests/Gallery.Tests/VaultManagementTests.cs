@@ -3,9 +3,9 @@ using System.Security.Cryptography;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Gallery.Services;
-using Gallery.Services.DataManagers;
-using Gallery.Services.Sessions;
+using Gallery.Web.Services;
+using Gallery.Web.Services.DataManagers;
+using Gallery.Web.Services.Sessions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Gallery.Tests;

@@ -13,7 +13,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <Using Include="Xunit" />
-    <ProjectReference Include="..\..\Gallery.csproj" />
+    <ProjectReference Include="../../Gallery.Web/Gallery.Web.csproj" />
     <ProjectReference Include="../Gallery.TestSupport/Gallery.TestSupport.csproj" />
   </ItemGroup>
   <ItemGroup>

@@ -1,12 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
-using Gallery.Managers.Gateways;
-using Gallery.Services.DataManagers;
+using Gallery.Web.Managers.Gateways;
+using Gallery.Web.Services.DataManagers;
 using System.Net;
 using System.Text;
 using Gallery.Core;
 using Gallery.Core.Queries;
-using Gallery.Models;
-using Gallery.Services;
+using Gallery.Web.Models;
+using Gallery.Web.Services;
 
 namespace Gallery.Tests;
 
