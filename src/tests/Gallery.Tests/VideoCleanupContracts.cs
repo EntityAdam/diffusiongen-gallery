@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
-using Gallery.Managers.Gateways;
+using Gallery.Web.Managers.Gateways;
 
 namespace Gallery.Tests;
 

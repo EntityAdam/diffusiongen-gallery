@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Gallery.Web/Gallery.Web.csproj" />
+  <Project Path="tests/Gallery.ProcessMediator/Gallery.ProcessMediator.csproj" />
+  <Project Path="tests/Gallery.TestSupport/Gallery.TestSupport.csproj" />
+  <Project Path="tests/Gallery.Tests/Gallery.Tests.csproj" />
+</Solution>

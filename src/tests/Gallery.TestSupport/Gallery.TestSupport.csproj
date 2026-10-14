@@ -7,7 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="xunit.assert" Version="2.9.3" />
-    <ProjectReference Include="../../Gallery.csproj" />
+    <ProjectReference Include="../../Gallery.Web/Gallery.Web.csproj" />
     <InternalsVisibleTo Include="Gallery.Tests" />
   </ItemGroup>
 </Project>

@@ -1,10 +1,10 @@
-using Gallery.Services.Processors;
+using Gallery.Web.Services.Processors;
 using System.Security.Cryptography;
 using System.Text;
 using Gallery.Core;
 using Gallery.Core.Queries;
-using Gallery.Models;
-using Gallery.Services;
+using Gallery.Web.Models;
+using Gallery.Web.Services;
 using Microsoft.Data.Sqlite;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;

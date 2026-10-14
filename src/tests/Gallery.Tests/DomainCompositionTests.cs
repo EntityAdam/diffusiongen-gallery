@@ -1,4 +1,4 @@
-using Gallery.Services;
+using Gallery.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Gallery.Tests;

@@ -1,7 +1,7 @@
 using Gallery.Core;
-using Gallery.Models;
-using Gallery.Services;
-using Gallery.Services.Sessions;
+using Gallery.Web.Models;
+using Gallery.Web.Services;
+using Gallery.Web.Services.Sessions;
 using System.Collections.Immutable;
 
 namespace Gallery.Tests;

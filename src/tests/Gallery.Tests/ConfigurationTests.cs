@@ -1,4 +1,4 @@
-using Gallery.Services.ConfigurationProviders;
+using Gallery.Web.Services.ConfigurationProviders;
 using Microsoft.Extensions.Configuration;
 
 namespace Gallery.Tests;
@@ -19,7 +19,7 @@ public sealed class ConfigurationTests
             ["Gallery:FFmpegPath"] = configuredPath,
             ["PATH"] = ""
         }).Build();
-        var configurationProvider = new Gallery.Services.ConfigurationProviders.ConfigurationProvider(configuration);
+        var configurationProvider = new Gallery.Web.Services.ConfigurationProviders.ConfigurationProvider(configuration);
 
         // Act
         var videoToolsOptions = configurationProvider.GetVideoToolsOptions();
@@ -37,7 +37,7 @@ public sealed class ConfigurationTests
         {
             ["PATH"] = string.Join(Path.PathSeparator, expectedPaths)
         }).Build();
-        var configurationProvider = new Gallery.Services.ConfigurationProviders.ConfigurationProvider(configuration);
+        var configurationProvider = new Gallery.Web.Services.ConfigurationProviders.ConfigurationProvider(configuration);
 
         // Act
         var videoToolsOptions = configurationProvider.GetVideoToolsOptions();
@@ -54,7 +54,7 @@ public sealed class ConfigurationTests
         string[] expectedPaths = (Environment.GetEnvironmentVariable("PATH") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToArray();
-        var configurationProvider = new Gallery.Services.ConfigurationProviders.ConfigurationProvider(configuration);
+        var configurationProvider = new Gallery.Web.Services.ConfigurationProviders.ConfigurationProvider(configuration);
 
         // Act
         var videoToolsOptions = configurationProvider.GetVideoToolsOptions();

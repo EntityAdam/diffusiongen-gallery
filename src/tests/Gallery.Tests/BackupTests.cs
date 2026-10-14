@@ -2,7 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Gallery.Services.Processors;
+using Gallery.Web.Services.Processors;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;

@@ -1,11 +1,11 @@
 using Gallery.Core.Extractors;
 using Gallery.Core.Processors;
-using Gallery.Managers.Gateways;
-using Gallery.Services.DataManagers;
-using Gallery.Services.Sessions;
+using Gallery.Web.Managers.Gateways;
+using Gallery.Web.Services.DataManagers;
+using Gallery.Web.Services.Sessions;
 using Gallery.Core;
-using Gallery.Models;
-using Gallery.Services;
+using Gallery.Web.Models;
+using Gallery.Web.Services;
 using System.Runtime.CompilerServices;
 
 namespace Gallery.Tests;
@@ -24,11 +24,11 @@ public sealed class DomainArchitectureTests
             .SingleOrDefault(reference => reference.Name == "Gallery.Core");
         var metadataType = galleryAssembly.GetType("Gallery.Core.Extractors.ComfyMetadata");
         var duplicateRulesType = galleryAssembly.GetType("Gallery.Core.Processors.DuplicateRules");
-        var visionServiceType = galleryAssembly.GetType("Gallery.Managers.Gateways.VisionService");
-        var videoToolsType = galleryAssembly.GetType("Gallery.Managers.Gateways.VideoTools");
-        var galleryStoreType = galleryAssembly.GetType("Gallery.Services.DataManagers.GalleryStore");
-        var vaultStoreType = galleryAssembly.GetType("Gallery.Services.DataManagers.VaultStore");
-        var vaultSessionType = galleryAssembly.GetType("Gallery.Services.Sessions.VaultSession");
+        var visionServiceType = galleryAssembly.GetType("Gallery.Web.Managers.Gateways.VisionService");
+        var videoToolsType = galleryAssembly.GetType("Gallery.Web.Managers.Gateways.VideoTools");
+        var galleryStoreType = galleryAssembly.GetType("Gallery.Web.Services.DataManagers.GalleryStore");
+        var vaultStoreType = galleryAssembly.GetType("Gallery.Web.Services.DataManagers.VaultStore");
+        var vaultSessionType = galleryAssembly.GetType("Gallery.Web.Services.Sessions.VaultSession");
 
         // Assert
         Assert.Null(coreReference);
@@ -56,8 +56,8 @@ public sealed class DomainArchitectureTests
         // Arrange
         var testDirectory = Path.GetDirectoryName(SourceFilePath())!;
         var sourceRoot = Directory.GetParent(testDirectory)!.Parent!.FullName;
-        var gatewayPath = Path.Combine(sourceRoot, "Managers", "Gateways", "VisionService.cs");
-        var oldPath = Path.Combine(sourceRoot, "Services", "VisionService.cs");
+        var gatewayPath = Path.Combine(sourceRoot, "Gallery.Web", "Managers", "Gateways", "VisionService.cs");
+        var oldPath = Path.Combine(sourceRoot, "Gallery.Web", "Services", "VisionService.cs");
 
         // Act
         var gatewayExists = File.Exists(gatewayPath);
@@ -74,7 +74,7 @@ public sealed class DomainArchitectureTests
         // Arrange
         var testDirectory = Path.GetDirectoryName(SourceFilePath())!;
         var sourceRoot = Directory.GetParent(testDirectory)!.Parent!.FullName;
-        var modelsPath = Path.Combine(sourceRoot, "Managers", "Models");
+        var modelsPath = Path.Combine(sourceRoot, "Gallery.Web", "Managers", "Models");
         var oldModelsPath = Path.Combine(sourceRoot, "Gallery.Core", "Models");
 
         // Act
