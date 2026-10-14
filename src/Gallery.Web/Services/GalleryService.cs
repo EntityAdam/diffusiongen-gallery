@@ -68,7 +68,7 @@ public sealed partial class GalleryService
             try
             {
                 if (resolution == ImageResolution.Original)
-                    return PngDataUrlPrefix + Convert.ToBase64String(plainImage);
+                    return ImageContentFormats.DataUrlPrefix(record.ContentType) + Convert.ToBase64String(plainImage);
 
                 using var image = Image.Load(plainImage);
                 image.Mutate(context => context.Resize(new ResizeOptions
@@ -453,6 +453,7 @@ public sealed partial class GalleryService
         original.Position = 0;
         var info = await Image.IdentifyAsync(original);
         ImportMediaValidator.ValidateImageDimensions(info.Width, info.Height);
+        var contentType = ImageContentFormats.RequireSupportedContentType(info.Metadata.DecodedImageFormat);
         original.Position = 0;
         using var image = await Image.LoadAsync(original);
         ImportMediaValidator.ValidateImageFrames(image.Frames.Count);
@@ -462,11 +463,6 @@ public sealed partial class GalleryService
             exif = image.Metadata.ExifProfile?.Values.Select(value => $"{value.Tag}: {value.GetValue()}")
         });
         timings?.Record(IngestionStage.Decode, stageStart);
-        stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        using var png = new MemoryStream();
-        await image.SaveAsPngAsync(png, new PngEncoder { CompressionLevel = PngCompressionLevel.Level1 });
-        var pngSha256 = Convert.ToHexString(SHA256.HashData(png.GetBuffer().AsSpan(0, (int)png.Length)));
-        timings?.Record(IngestionStage.EncodePng, stageStart);
         stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var thumbnailBytes = await CreateThumbnailAsync(image);
         timings?.Record(IngestionStage.Thumbnail, stageStart);
@@ -479,7 +475,8 @@ public sealed partial class GalleryService
             Width = image.Width, Height = image.Height,
             OriginalBytes = original.Length,
             Sha256 = sourceHash,
-            PngSha256 = pngSha256,
+            PngSha256 = sourceHash,
+            ContentType = contentType,
             Metadata = metadata,
             Generation = ComfyMetadata.Extract(metadata),
             MetadataVersion = ComfyMetadata.Version
@@ -492,16 +489,12 @@ public sealed partial class GalleryService
         {
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
             var encrypted = (record,
-                VaultCrypto.Encrypt(png.GetBuffer().AsSpan(0, (int)png.Length), key, $"image:{record.Id}"),
+                VaultCrypto.Encrypt(original.GetBuffer().AsSpan(0, (int)original.Length), key, $"image:{record.Id}"),
                 VaultCrypto.Encrypt(thumbnailBytes, key, $"thumbnail:{record.Id}"));
             timings?.Record(IngestionStage.Encrypt, stageStart);
             return encrypted;
         }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(png.GetBuffer());
-            CryptographicOperations.ZeroMemory(thumbnailBytes);
-        }
+        finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
     }
 
     /// <summary>

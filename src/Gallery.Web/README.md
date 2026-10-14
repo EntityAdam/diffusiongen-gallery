@@ -315,10 +315,13 @@ references original image files. Keep gallery01 on its own original gallery.
   synced copies are not deleted. Use full-volume encryption before plaintext
   is written. Whole-drive vendor-supported sanitize/cryptographic erase is a
   separate drive-retirement operation, not a gallery feature or per-file guarantee.
-- Images are converted losslessly from their decoded pixels to PNG and stored
-  as authenticated encrypted `.dpng` files. PNG text and EXIF metadata are
-  extracted into the encrypted catalog; original JPEG/WebP byte streams are
-  not preserved. Thumbnails omit embedded metadata.
+- Images (PNG, JPEG and WebP) are stored as their **original bytes**, unchanged
+  and never re-encoded or converted, in authenticated encrypted `.dpng` files.
+  `.dpng` is the encrypted-image container for every image format; the actual
+  format is recorded in the encrypted catalog. Other formats are rejected even
+  with a supported extension. PNG text and EXIF metadata are extracted into the
+  encrypted catalog. Thumbnails omit embedded metadata. Images imported by
+  earlier versions remain the PNGs they were converted to.
 - **MP4 videos** (MP4/MOV containers up to 256 MiB; browser playback needs a codec such as H.264) are imported
   when ffmpeg is installed. The gallery finds `ffmpeg`/`ffprobe` via the
   `Gallery:FFmpegPath` setting (folder or executable), then PATH, then WinGet links.
@@ -338,8 +341,16 @@ references original image files. Keep gallery01 on its own original gallery.
   matches, largest groups first, followed by unique and no-prompt images.
   **Show only these** or **Show all N with this exact prompt** filters to one prompt.
   The **Media type** filter and **Videos** quick filter limit the grid to videos.
-- **Save a copy** downloads a decrypted copy: videos as the original MP4, images
-  as PNG with prompt/workflow kept in uncompressed `tEXt` chunks. **Export
+- **Save a copy** downloads a decrypted, cleaned copy in the stored format, without
+  decoding pixels or transcoding video. Images keep standard image data plus EXIF,
+  ICC, XMP and PNG text (compressed PNG text is written uncompressed as `tEXt`, so
+  ComfyUI can read prompt/workflow); unknown or private chunks/segments and any bytes
+  after the image end are dropped. MP4s keep all standard top-level boxes, including
+  `moov` metadata such as the ComfyUI workflow; unknown top-level boxes (for example
+  `uuid` vendor data) and `free`/`skip` padding are zero-filled in place, keeping
+  sample offsets valid, and bytes after the last box are dropped. Boxes nested
+  inside `moov` are not cleaned. Playback and in-app viewing use the stored bytes.
+  **Export
   workflow** downloads the embedded ComfyUI workflow (or API prompt) as JSON.
   **Save copies (zip)** exports a selection (up to 1 GiB). Exports are plaintext
   once saved; protect them accordingly.
@@ -382,9 +393,9 @@ references original image files. Keep gallery01 on its own original gallery.
   The viewer progressively preloads the current page into browser-memory Blob URLs,
   nearest neighbors first. Fit mode uses metadata-free JPEG previews (quality 85,
   maximum 1600 pixels per dimension, transparency composited on black). These are
-  viewing copies only; the encrypted PNG is unchanged. Revisiting a cached image
+  viewing copies only; the encrypted original is unchanged. Revisiting a cached image
   avoids decrypting, encoding, and transferring it again. Original-size mode loads
-  the saved full-resolution PNG on demand without re-encoding, caching at most two
+  the saved full-resolution image in its stored format on demand without re-encoding, caching at most two
   originals. Each cache has a 64 MiB encoded-image budget; the current image may
   exceed that budget. Decoded browser pixels consume additional memory.
   URLs are revoked on eviction/close; no plaintext disk cache is created by the app.

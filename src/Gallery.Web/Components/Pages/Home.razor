@@ -219,7 +219,7 @@ else
     {
         <Card Class="mb-6 p-5 md:p-6">
             <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Bring your images home.</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">PNG / JPEG / WEBP / MP4</Badge></div>
-            <p class="text-muted-foreground">Images are converted to PNG and encrypted as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
+            <p class="text-muted-foreground">Images (PNG, JPEG, WebP) are encrypted unchanged as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
                 <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
                     <Label For="source" Class="mt-4 mb-2 block">Local folder path</Label>
                     <Input id="source" @bind-Value="importPath" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
@@ -646,7 +646,7 @@ else
                             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => OpenViewer(selected.Id)">Full screen view</Button>
                             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => FavoriteAsync(selected)">@(selected.Favorite ? "Remove favorite" : "Favorite")</Button>
                             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => MarkAsync(selected)">@(selected.MarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted PNG copy, including embedded metadata")" OnClick="() => ExportAsync(selected)">Save a copy</Button>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted copy in its original format, including embedded metadata")" OnClick="() => ExportAsync(selected)">Save a copy</Button>
                             @if (selected.Generation?.HasWorkflow == true || selected.Generation?.HasApiPrompt == true)
                             {
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="Download the embedded ComfyUI workflow as JSON" OnClick="() => ExportWorkflowAsync(selected)">Export workflow</Button>
@@ -718,14 +718,14 @@ else
                 {
                     <Label For="missing-action" Class="mt-4 mb-2 block">No accessible original (@removalPlan.Count(item => !item.OriginalExists))</Label>
                     <select id="missing-action" @bind="missingOriginalAction" disabled="@busy" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-                        <option value="@MissingOriginalAction.RestorePng">Restore a PNG copy, then remove from gallery</option>
+                        <option value="@MissingOriginalAction.RestorePng">Restore the stored copy, then remove from gallery</option>
                         <option value="@MissingOriginalAction.Discard">Remove from gallery without restoration (lost forever)</option>
                     </select>
                     @if (missingOriginalAction == MissingOriginalAction.RestorePng)
                     {
-                        <Label For="restore-folder" Class="mt-4 mb-2 block">Existing folder for restored PNG files</Label>
+                        <Label For="restore-folder" Class="mt-4 mb-2 block">Existing folder for restored files</Label>
                         <Input id="restore-folder" @bind-Value="restoreFolder" Disabled="@busy" />
-                        <p class="text-muted-foreground">Restores full-resolution PNGs or original-format MP4s named by image ID; never overwrites. Exact JPEG/WebP source bytes are not retained. Browser uploads may still have originals the app cannot access.</p>
+                        <p class="text-muted-foreground">Restores the stored file in its stored format, named by image ID; never overwrites. Images imported by this version restore as their exact original bytes; images imported by earlier versions restore as the PNG they were converted to. Browser uploads may still have originals the app cannot access.</p>
                     }
                 }
                 <Alert Variant="AlertVariant.Destructive">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this gallery. Backups may still contain them. This is not secure SSD/NVMe erasure.</Alert>
@@ -1744,7 +1744,7 @@ else
         await JS.InvokeVoidAsync("galleryMedia.download", reference, fileName, contentType);
     }
 
-    private Task ExportAsync(ImageRecord image) => RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing PNG copy...", async () =>
+    private Task ExportAsync(ImageRecord image) => RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing image copy...", async () =>
     {
         var file = await Gallery.ExportAsync(image.Id);
         try { await DownloadAsync(file); }

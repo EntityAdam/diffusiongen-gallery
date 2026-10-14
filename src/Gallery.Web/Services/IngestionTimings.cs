@@ -13,7 +13,6 @@ public enum IngestionStage
     HashSource,
     DuplicateCheck,
     Decode,
-    EncodePng,
     VideoProbe,
     Thumbnail,
     Encrypt,
