@@ -57,7 +57,10 @@ local application data directory (`%LOCALAPPDATA%\DiffusionGenGallery02\gallerie
 on Windows). You can edit the name and directory before creation. The welcome
 screen remembers the last successfully opened gallery and offers **Switch gallery**
 to create, open, or restore another gallery. Enter a fully qualified local directory
-or UNC/SMB path in each directory field (or an absolute mounted SMB path on Linux/macOS).
+for catalogs, and local or UNC/SMB paths for media and backups (or absolute mounted
+SMB paths on Linux/macOS). Local-drive enforcement detects UNC and mapped network
+drives on Windows; on Linux/macOS, keep catalog directories on local filesystems
+rather than network mounts.
 All directory locations use manual path entry; there are no folder-picker controls.
 To override the initial directory, set `Gallery__DataDirectory`:
 
@@ -81,8 +84,26 @@ does not indicate an active checkout. SMB servers must honor exclusive file shar
 Multiple processes can use different galleries; give each a different loopback port,
 for example `dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj -- --urls http://127.0.0.1:5190`.
 
-**Settings > Manage gallery** renames a gallery without changing its directory, moves
-the gallery to a new/empty local or SMB folder, or purges it after typing **PURGE**.
+**Create gallery** separates the **local catalog directory** (`gallery.db` and
+`vault.json`) from an optional **encrypted media directory** (local or NAS/SMB).
+Leave the media directory blank to store media beside the catalog. Media paths and
+storage settings are encrypted in the catalog. New catalogs, whole-gallery moves
+and restores require local storage, including rejection of mapped network drives.
+Local catalogs use SQLite WAL with `synchronous=FULL`. Existing network catalogs
+remain openable in rollback-journal mode for migration; this is not a guarantee
+against unreliable SMB locking. Keep only one checked-out process per gallery.
+
+**Settings > Manage gallery** can **Relocate catalog only** to a new/empty local
+directory, preserving every existing encrypted media path (including NAS media),
+without copying large media files. The database snapshot is checked before publication;
+the old header and database are removed only after publication. Sign in at the new
+catalog location afterward. The current media directory is preserved for future
+imports. **Save media location** changes where future imports go, not existing files.
+Backups still include all catalogued media, regardless of its location. Restore and
+whole-gallery moves reset the media directory to the new local gallery.
+
+The same screen renames a gallery without changing its directory, moves
+the entire gallery to a new/empty local folder, or purges it after typing **PURGE**.
 Moving consolidates all catalogued encrypted media (including media previously
 moved outside the gallery) into the new directory and updates the encrypted catalog.
 The source is removed only after verified copies and a database snapshot are
@@ -297,15 +318,33 @@ references original image files. Keep gallery01 on its own original gallery.
   Use **Ingest images** with a local folder path instead.
 - Ingestion shows a scanning indicator, then a progress bar with processed/total
   files, imported images and per-file issues (including duplicates). The final
-  counts remain visible after completion. At most two images are processed in
-  parallel; catalog insertion and duplicate checks remain serialized. Fingerprint
-  migration runs once per folder job. Fast lossless PNG compression reduces
-  encoding time without changing decoded pixels or retained metadata, at the cost
-  of potentially larger encrypted files. Existing encrypted images are unchanged.
+  counts remain visible after completion. Workers (1-32) and catalog batch size
+  (1-64) are configurable and saved encrypted per gallery. Suggested **HDD / NAS**
+  profile: 4 workers and 16 files per commit; **SSD / NVMe**:
+  half the logical CPU count, bounded to 2-16 workers, and 16 files per commit.
+  On a 32-CPU host this suggests 16 workers. These are starting points, not
+  measured guarantees; lower workers for large images/videos or limited memory.
+  A batch size below the worker count also limits effective concurrency.
+  Files are read, decoded once, encrypted and written durably outside the catalog
+  gate. Each decode has bounded allocations (256 MiB per allocation, 512 MiB
+  cumulative); dimensions and animation limits remain enforced. Catalog duplicate
+  checks and inserts remain serialized, with one durable transaction per bounded
+  batch. A failed batch rolls back its rows, removes uncommitted ciphertext and
+  retains its sources; earlier committed batches remain. Fingerprint migration runs
+  once per folder job. Thumbnails are encrypted once and inserted as ciphertext.
+  Progress callbacks are awaited and serialized but throttled to 100 ms, with
+  errors and the final counts always reported.
 - Local folder-path ingestion supports **Delete originals after verified import**,
   off by default, with an explicit acknowledgement. The saved encrypted image,
-  catalog and thumbnail are reread and authenticated; the saved PNG hash and
-  dimensions are checked before deletion. The source hash is checked again.
+  catalog and thumbnail are reread and authenticated after the batch commits,
+  using one catalog query on the existing import connection. The saved plaintext
+  hash and image header dimensions are checked without a second pixel decode.
+  On Windows, sources are opened with read/delete access while denying writes,
+  renames and replacement. After verification, the exact held handle is marked
+  for deletion and closed; there is no second source read or pathname deletion
+  race. SMB servers must honor Windows sharing and handle-deletion semantics;
+  access or deletion failures are reported, never bypassed. Other operating systems
+  retain the conservative rename-and-rehash deletion path.
   Failed imports, duplicates and verification failures retain their sources.
   Deletion failures are reported even if the encrypted import succeeded.
   Do not edit, rename or replace source files during ingestion.
@@ -315,6 +354,12 @@ references original image files. Keep gallery01 on its own original gallery.
   synced copies are not deleted. Use full-volume encryption before plaintext
   is written. Whole-drive vendor-supported sanitize/cryptographic erase is a
   separate drive-retirement operation, not a gallery feature or per-file guarantee.
+- Optional privacy-safe timings include the source, media and catalog drive kinds
+  (never their paths), separate `DuplicateWait` and `DuplicateCheck`, `OpenSource`,
+  `CloseSource`, `ReportProgress`, and `CatalogCommit`. `PersistWait` and
+  `CatalogCommit` are measured per batch; other stages run on parallel workers.
+  `File` includes time awaiting its batch and progress accounting, so overlapping
+  stage totals are not wall-clock proportions.
 - Images (PNG, JPEG and WebP) are stored as their **original bytes**, unchanged
   and never re-encoded or converted, in authenticated encrypted `.dpng` files.
   `.dpng` is the encrypted-image container for every image format; the actual

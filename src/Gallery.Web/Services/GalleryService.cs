@@ -16,6 +16,9 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Memory;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace Gallery.Web.Services;
 
@@ -362,6 +365,16 @@ public sealed partial class GalleryService
     private async Task<ImageRecord> ImportWithKeyAsync(Stream input, string name, string sourceFolder,
         string sourcePath, byte[] key, GalleryStore.ImportCatalog catalog, IngestionTimings? timings)
     {
+        var mediaRoot = await MediaDirectoryWithKeyAsync(key);
+        var prepared = await PrepareImportAsync(input, name, sourceFolder, sourcePath, key, catalog, timings, mediaRoot);
+        return await PersistImportAsync(prepared.Record, prepared.Encrypted, prepared.EncryptedThumb,
+            prepared.Record.Sha256, name, key, catalog, timings);
+    }
+
+    private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImportAsync(
+        Stream input, string name, string sourceFolder, string sourcePath, byte[] key,
+        GalleryStore.ImportCatalog catalog, IngestionTimings? timings, string mediaRoot)
+    {
         var isVideo = IsVideoName(name);
         var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
         using var original = await ImportContentReader.ReadAsync(input,
@@ -375,23 +388,27 @@ public sealed partial class GalleryService
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
             var sourceHash = Convert.ToHexString(SHA256.HashData(bytes.Span));
             timings?.Record(IngestionStage.HashSource, stageStart);
-            stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            await RejectDuplicateImportAsync(sourceHash, name, key, catalog);
-            timings?.Record(IngestionStage.DuplicateCheck, stageStart);
-            var prepared = isVideo
-                ? await PrepareVideoAsync(bytes, name, sourceFolder, sourcePath, sourceHash, key, timings)
-                : await PrepareImageAsync(original, name, sourceFolder, sourcePath, sourceHash, key, timings);
-            return await PersistImportAsync(prepared.Record, prepared.Encrypted, prepared.EncryptedThumb, sourceHash, name, key,
-                catalog, timings);
+            await RejectDuplicateImportAsync(sourceHash, name, key, catalog, timings);
+            return isVideo
+                ? await PrepareVideoAsync(bytes, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot)
+                : await PrepareImageAsync(original, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot);
         }
         finally { CryptographicOperations.ZeroMemory(original.GetBuffer()); }
     }
 
-    private async Task RejectDuplicateImportAsync(string sourceHash, string name, byte[] key, GalleryStore.ImportCatalog catalog)
+    private async Task RejectDuplicateImportAsync(string sourceHash, string name, byte[] key,
+        GalleryStore.ImportCatalog catalog, IngestionTimings? timings)
     {
+        var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
         await galleryStore.Gate.WaitAsync();
+        timings?.Record(IngestionStage.DuplicateWait, stageStart);
+        stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try { await RejectKnownFingerprintAsync(sourceHash, name, key, catalog); }
-        finally { galleryStore.Gate.Release(); }
+        finally
+        {
+            timings?.Record(IngestionStage.DuplicateCheck, stageStart);
+            galleryStore.Gate.Release();
+        }
     }
 
     private static async Task RejectKnownFingerprintAsync(string sourceHash, string name, byte[] key, GalleryStore.ImportCatalog catalog)
@@ -405,38 +422,22 @@ public sealed partial class GalleryService
         GalleryStore.ImportCatalog catalog, IngestionTimings? timings)
     {
         var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        await galleryStore.Gate.WaitAsync();
-        timings?.Record(IngestionStage.PersistWait, stageStart);
+        await WriteImportedCiphertextAsync(record.StoredPath, encrypted);
+        timings?.Record(IngestionStage.WriteMedia, stageStart);
         try
         {
-            await RejectKnownFingerprintAsync(sourceHash, name, key, catalog);
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            await WriteImportedCiphertextAsync(record.StoredPath, encrypted);
-            timings?.Record(IngestionStage.WriteMedia, stageStart);
-            stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            await InsertImportedCatalogAsync(record, encryptedThumbnail, key, catalog);
-            timings?.Record(IngestionStage.CatalogInsert, stageStart);
+            await galleryStore.Gate.WaitAsync();
+            timings?.Record(IngestionStage.PersistWait, stageStart);
+            try
+            {
+                await RejectKnownFingerprintAsync(sourceHash, name, key, catalog);
+                stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                await catalog.InsertEncryptedAsync(record, encryptedThumbnail, key);
+                timings?.Record(IngestionStage.CatalogInsert, stageStart);
+            }
+            finally { galleryStore.Gate.Release(); }
             return record;
-        }
-        finally { galleryStore.Gate.Release(); }
-    }
-
-    private static async Task WriteImportedCiphertextAsync(string storedPath, byte[] encrypted)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(storedPath)!);
-        await using var output = new FileStream(storedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        await output.WriteAsync(encrypted);
-        output.Flush(flushToDisk: true);
-    }
-
-    private async Task InsertImportedCatalogAsync(ImageRecord record, byte[] encryptedThumbnail, byte[] key,
-        GalleryStore.ImportCatalog catalog)
-    {
-        try
-        {
-            var thumbnailBytes = VaultCrypto.Decrypt(encryptedThumbnail, key, $"thumbnail:{record.Id}");
-            try { await catalog.InsertAsync(record, new ImageThumbnail(thumbnailBytes), key); }
-            finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
         }
         catch
         {
@@ -445,17 +446,32 @@ public sealed partial class GalleryService
         }
     }
 
+    private static async Task WriteImportedCiphertextAsync(string storedPath, byte[] encrypted)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(storedPath)!);
+        await using var output = new FileStream(storedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        try
+        {
+            await output.WriteAsync(encrypted);
+            output.Flush(flushToDisk: true);
+        }
+        catch
+        {
+            output.Close();
+            File.Delete(storedPath);
+            throw;
+        }
+    }
+
     private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImageAsync(
         MemoryStream original, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key,
-        IngestionTimings? timings)
+        IngestionTimings? timings, string mediaRoot)
     {
         var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
         original.Position = 0;
-        var info = await Image.IdentifyAsync(original);
-        ImportMediaValidator.ValidateImageDimensions(info.Width, info.Height);
-        var contentType = ImageContentFormats.RequireSupportedContentType(info.Metadata.DecodedImageFormat);
-        original.Position = 0;
-        using var image = await Image.LoadAsync(original);
+        using var image = await DecodeImportImageAsync(original);
+        ImportMediaValidator.ValidateImageDimensions(image.Width, image.Height);
+        var contentType = ImageContentFormats.RequireSupportedContentType(image.Metadata.DecodedImageFormat);
         ImportMediaValidator.ValidateImageFrames(image.Frames.Count);
         var metadata = JsonSerializer.Serialize(new
         {
@@ -483,7 +499,7 @@ public sealed partial class GalleryService
         };
         record = record with
         {
-            StoredPath = Path.Combine(vaultStore.Root, "images", record.Id[..2], record.Id[2..4], record.Id + EncryptedPngExtension)
+            StoredPath = Path.Combine(mediaRoot, "images", record.Id[..2], record.Id[2..4], record.Id + EncryptedPngExtension)
         };
         try
         {
@@ -494,7 +510,32 @@ public sealed partial class GalleryService
             timings?.Record(IngestionStage.Encrypt, stageStart);
             return encrypted;
         }
+
         finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
+    }
+
+    private static async Task<Image<Rgba32>> DecodeImportImageAsync(Stream original)
+    {
+        var configuration = Configuration.Default.Clone();
+        configuration.MaxDegreeOfParallelism = 1;
+        configuration.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions
+        {
+            AllocationLimitMegabytes = 256,
+            AccumulativeAllocationLimitMegabytes = 512,
+            MaximumPoolSizeMegabytes = 0
+        });
+        try
+        {
+            return await Image.LoadAsync<Rgba32>(new DecoderOptions
+            {
+                Configuration = configuration,
+                MaxFrames = 2
+            }, original);
+        }
+        catch (InvalidMemoryOperationException exception)
+        {
+            throw new InvalidOperationException("Image exceeds the bounded decode memory limit.", exception);
+        }
     }
 
     /// <summary>
@@ -503,7 +544,7 @@ public sealed partial class GalleryService
     /// </summary>
     private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareVideoAsync(
         ReadOnlyMemory<byte> bytes, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key,
-        IngestionTimings? timings)
+        IngestionTimings? timings, string mediaRoot)
     {
         var tools = RequiredVideoTools();
         var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -514,7 +555,7 @@ public sealed partial class GalleryService
         timings?.Record(IngestionStage.Thumbnail, stageStart);
         try
         {
-            var record = CreateVideoRecord(video.Probe, bytes.Length, name, sourceFolder, sourcePath, sourceHash);
+            var record = CreateVideoRecord(video.Probe, bytes.Length, name, sourceFolder, sourcePath, sourceHash, mediaRoot);
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
             var encrypted = EncryptPreparedVideo(record, bytes, thumbnailBytes, key);
             timings?.Record(IngestionStage.Encrypt, stageStart);
@@ -578,7 +619,7 @@ public sealed partial class GalleryService
     }
 
     private ImageRecord CreateVideoRecord(VideoTools.ProbeResult probe, int contentLength,
-        string name, string sourceFolder, string sourcePath, string sourceHash)
+        string name, string sourceFolder, string sourcePath, string sourceHash, string mediaRoot)
     {
         var metadata = JsonSerializer.Serialize(new
         {
@@ -603,7 +644,7 @@ public sealed partial class GalleryService
         };
         record = record with
         {
-            StoredPath = Path.Combine(vaultStore.Root, "images", record.Id[..2], record.Id[2..4], record.Id + EncryptedMp4Extension)
+            StoredPath = Path.Combine(mediaRoot, "images", record.Id[..2], record.Id[2..4], record.Id + EncryptedMp4Extension)
         };
         return record;
     }
@@ -665,139 +706,237 @@ public sealed partial class GalleryService
 
         public async Task ImportAsync(string folder, string[] imagePaths, byte[] key, SourceRetention sourceRetention,
             Action<string>? progress, Func<ImportProgress, Task>? reportProgress, GalleryStore.ImportCatalog catalog,
-            IngestionTimings? timings)
+            IngestionTimings? timings, IngestionOptions options, string mediaRoot)
         {
-            var progressGate = new SemaphoreSlim(1);
+            using var progressGate = new SemaphoreSlim(1);
             int completedCount = 0;
             int importedCount = 0;
             int failedCount = 0;
             var failuresByPathIndex = new Exception?[imagePaths.Length];
-            var workers = Math.Min(2, Environment.ProcessorCount);
+            var workers = options.Workers;
+            var lastReport = System.Diagnostics.Stopwatch.StartNew();
             timings?.SetFiles(imagePaths.Length, workers);
-            try
+            await ReportAsync("Importing images...", force: true);
+            foreach (var indices in Enumerable.Range(0, imagePaths.Length).Chunk(options.CatalogBatchSize))
             {
-                await ReportAsync(new ImportProgress(imagePaths.Length, 0, 0, 0, "Importing images..."));
-                await ExecuteImportsAsync();
-                timings?.SetOutcome(importedCount, failedCount);
-                await ReportCompletionAsync();
-                ThrowImportFailures(folder, failuresByPathIndex);
-            }
-            finally { progressGate.Dispose(); }
-
-            Task ExecuteImportsAsync() => Parallel.ForEachAsync(Enumerable.Range(0, imagePaths.Length),
-                new ParallelOptions { MaxDegreeOfParallelism = workers },
-                async (pathIndex, _) => await ImportOneAsync(pathIndex));
-
-            Task ReportCompletionAsync() => ReportAsync(new ImportProgress(imagePaths.Length,
-                completedCount, importedCount, failedCount,
-                imagePaths.Length == 0 ? "No supported images found." : "Ingestion complete."));
-
-            async Task ImportOneAsync(int pathIndex)
-            {
-                var path = imagePaths[pathIndex];
-                var name = Path.GetFileName(path);
-                await AnnounceImportAsync(name);
-
-                var imageWasImportedSuccessfully = false;
-                await ExecuteFileImportAsync();
-                await AccountImportAsync(pathIndex, name, imageWasImportedSuccessfully);
-
-                async Task ExecuteFileImportAsync()
-                {
-                var fileStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                var pending = indices.Select(index => new PendingImport(index, imagePaths[index])).ToArray();
+                Exception? interruption = null;
                 try
                 {
-                    ImageRecord imported;
-                    ValidateImportName(name);
-                    await using (var input = File.OpenRead(path))
-                    {
-                        imported = await galleryService.ImportWithKeyAsync(input, name, Path.GetDirectoryName(path)!, path,
-                            key, catalog, timings);
-                        imageWasImportedSuccessfully = true;
-                        if (sourceRetention == SourceRetention.DeleteAfterVerification)
+                    await Parallel.ForEachAsync(pending, new ParallelOptions { MaxDegreeOfParallelism = workers },
+                        async (item, _) =>
                         {
-                            await ReportAsync(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount,
-                                $"Verifying {name} before source deletion..."));
-                            var verifyStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                            await galleryService.VerifyImportedWithKeyAsync(imported.Id, key);
-                            timings?.Record(IngestionStage.Verify, verifyStart);
-                        }
-                    }
-                    if (sourceRetention == SourceRetention.DeleteAfterVerification)
-                    {
-                        var deleteStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                        await DeleteVerifiedSourceAsync(path, imported.Sha256);
-                        timings?.Record(IngestionStage.DeleteSource, deleteStart);
-                    }
-                }
-                catch (Exception exception) when (exception is IOException or InvalidOperationException
-                    or UnauthorizedAccessException or GalleryException or CryptographicException or UnknownImageFormatException
-                    or InvalidImageContentException)
-                {
-                    failuresByPathIndex[pathIndex] = new IOException($"Failed to import '{path}'.", exception);
-                }
-                finally { timings?.Record(IngestionStage.File, fileStart); }
+                            try
+                            {
+                                await ReportAsync($"Importing {item.Name}...", name: item.Name);
+                                var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                                item.Source = new ImportSource(item.Path, sourceRetention == SourceRetention.DeleteAfterVerification);
+                                timings?.Record(IngestionStage.OpenSource, start);
+                                ValidateImportName(item.Name);
+                                var prepared = await galleryService.PrepareImportAsync(item.Source.Stream, item.Name,
+                                    Path.GetDirectoryName(item.Path)!, item.Path, key, catalog, timings, mediaRoot);
+                                start = System.Diagnostics.Stopwatch.GetTimestamp();
+                                await WriteImportedCiphertextAsync(prepared.Record.StoredPath, prepared.Encrypted);
+                                timings?.Record(IngestionStage.WriteMedia, start);
+                                item.Record = prepared.Record;
+                                item.EncryptedThumbnail = prepared.EncryptedThumb;
+                            }
+                            catch (Exception exception) when (IsImportFailure(exception)) { item.Failure = exception; }
+                        });
 
-                }
-            }
-
-            async Task AnnounceImportAsync(string name)
-            {
-                await progressGate.WaitAsync();
-                try { progress?.Invoke(name); }
-                finally { progressGate.Release(); }
-                await ReportAsync(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount,
-                    $"Importing {name}..."));
-
-            }
-
-            async Task AccountImportAsync(int pathIndex, string name, bool imageWasImportedSuccessfully)
-            {
-                await progressGate.WaitAsync();
-                try
-                {
-                    completedCount++;
-                    if (imageWasImportedSuccessfully) importedCount++;
-                    if (failuresByPathIndex[pathIndex] is not null) failedCount++;
-                    if (reportProgress is not null)
-                        await reportProgress(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount,
-                            $"Processed {name}"));
-                }
-                finally { progressGate.Release(); }
-            }
-
-            async Task ReportAsync(ImportProgress update)
-            {
-                await progressGate.WaitAsync();
-                try
-                {
-                    if (reportProgress is not null)
-                        await reportProgress(update with
+                    await CommitBatchAsync(pending);
+                    await Parallel.ForEachAsync(pending, new ParallelOptions { MaxDegreeOfParallelism = workers },
+                        async (item, _) =>
                         {
-                            Completed = completedCount,
-                            Imported = importedCount,
-                            Failed = failedCount
+                            try
+                            {
+                                if (item.Committed && sourceRetention == SourceRetention.DeleteAfterVerification)
+                                {
+                                    var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                                    await galleryService.VerifyImportedWithKeyAsync(item.Record!.Id, key, catalog);
+                                    timings?.Record(IngestionStage.Verify, start);
+                                    start = System.Diagnostics.Stopwatch.GetTimestamp();
+                                    if (item.Source!.CanDeleteByHandle) item.Source.DeleteVerified();
+                                    else
+                                    {
+                                        await CloseSourceAsync(item);
+                                        await DeleteVerifiedSourceAsync(item.Path, item.Record.Sha256);
+                                    }
+                                    timings?.Record(IngestionStage.DeleteSource, start);
+                                }
+                            }
+                            catch (Exception exception) when (IsImportFailure(exception)) { item.Failure = exception; }
+                            finally
+                            {
+                                try { await CloseSourceAsync(item); }
+                                catch (IOException exception) { item.Failure = exception; }
+                            }
+                            if (!item.Committed && item.Record is not null)
+                            {
+                                try { File.Delete(item.Record.StoredPath); }
+                                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                                {
+                                    item.Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
+                                        item.Failure ?? new IOException("Catalog commit failed."), exception);
+                                }
+                                item.MediaCleanupAttempted = true;
+                            }
+                            await progressGate.WaitAsync();
+                            try
+                            {
+                                completedCount++;
+                                if (item.Committed) importedCount++;
+                                if (item.Failure is not null)
+                                {
+                                    failedCount++;
+                                    failuresByPathIndex[item.Index] = new IOException($"Failed to import '{item.Path}'.", item.Failure);
+                                }
+                            }
+                            finally { progressGate.Release(); }
+                            await ReportAsync($"Processed {item.Name}", force: item.Failure is not null);
+                            timings?.Record(IngestionStage.File, item.Started);
                         });
                 }
-                finally { progressGate.Release(); }
+                catch (Exception exception)
+                {
+                    interruption = exception;
+                    throw;
+                }
+                finally
+                {
+                    var cleanupFailures = new List<Exception>();
+                    foreach (var item in pending)
+                    {
+                        try { await CloseSourceAsync(item); }
+                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                        {
+                            cleanupFailures.Add(exception);
+                        }
+                        if (!item.Committed && item.Record is not null && !item.MediaCleanupAttempted)
+                        {
+                            try { File.Delete(item.Record.StoredPath); }
+                            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                            {
+                                cleanupFailures.Add(exception);
+                            }
+                        }
+                    }
+                    if (cleanupFailures.Count > 0)
+                    {
+                        if (interruption is not null) cleanupFailures.Insert(0, interruption);
+                        throw new AggregateException("Import cleanup failed; inspect any remaining uncommitted ciphertext.", cleanupFailures);
+                    }
+                }
             }
+            timings?.SetOutcome(importedCount, failedCount);
+            await ReportAsync(imagePaths.Length == 0 ? "No supported images found." : "Ingestion complete.", force: true);
+            ThrowImportFailures(folder, failuresByPathIndex);
+
+            async Task CommitBatchAsync(PendingImport[] pending)
+            {
+                var ready = pending.Where(item => item.Record is not null && item.Failure is null).ToArray();
+                if (ready.Length == 0) return;
+                var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                await galleryService.galleryStore.Gate.WaitAsync();
+                timings?.Record(IngestionStage.PersistWait, start);
+                try
+                {
+                    using var transaction = catalog.BeginBatch();
+                    foreach (var item in ready)
+                    {
+                        if (await catalog.ContainsFingerprintAsync(item.Record!.Sha256, key, transaction))
+                        {
+                            item.Failure = new InvalidOperationException($"'{item.Name}' is already in the gallery.");
+                            continue;
+                        }
+                        start = System.Diagnostics.Stopwatch.GetTimestamp();
+                        await catalog.InsertEncryptedAsync(item.Record, item.EncryptedThumbnail!, key, transaction);
+                        timings?.Record(IngestionStage.CatalogInsert, start);
+                    }
+                    start = System.Diagnostics.Stopwatch.GetTimestamp();
+                    transaction.Commit();
+                    timings?.Record(IngestionStage.CatalogCommit, start);
+                    foreach (var item in ready.Where(item => item.Failure is null)) item.Committed = true;
+                }
+                catch (Exception exception) when (IsImportFailure(exception))
+                {
+                    foreach (var item in ready) item.Failure ??= exception;
+                }
+                finally { galleryService.galleryStore.Gate.Release(); }
+            }
+
+            async Task CloseSourceAsync(PendingImport item)
+            {
+                if (item.Source is null) return;
+                var source = item.Source;
+                item.Source = null;
+                var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                try { await source.DisposeAsync(); }
+                finally { timings?.Record(IngestionStage.CloseSource, start); }
+            }
+
+            async Task ReportAsync(string status, bool force = false, string? name = null)
+            {
+                var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                await progressGate.WaitAsync();
+                try
+                {
+                    if (name is not null) progress?.Invoke(name);
+                    if (reportProgress is not null && (force || lastReport.ElapsedMilliseconds >= 100))
+                    {
+                        await reportProgress(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount, status));
+                        lastReport.Restart();
+                    }
+                }
+                finally
+                {
+                    progressGate.Release();
+                    timings?.Record(IngestionStage.ReportProgress, start);
+                }
+            }
+        }
+
+        private static bool IsImportFailure(Exception exception) => exception is IOException or InvalidOperationException
+            or UnauthorizedAccessException or GalleryException or CryptographicException or UnknownImageFormatException
+            or InvalidImageContentException or Microsoft.Data.Sqlite.SqliteException;
+
+        private sealed class PendingImport(int index, string path)
+        {
+            public int Index { get; } = index;
+            public string Path { get; } = path;
+            public string Name { get; } = System.IO.Path.GetFileName(path);
+            public long Started { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
+            public ImportSource? Source { get; set; }
+            public ImageRecord? Record { get; set; }
+            public byte[]? EncryptedThumbnail { get; set; }
+            public Exception? Failure { get; set; }
+            public bool Committed { get; set; }
+            public bool MediaCleanupAttempted { get; set; }
         }
     }
 
     public async Task ImportFolderAsync(string folder, FolderSearchScope searchScope, Action<string>? progress = null,
         SourceRetention sourceRetention = SourceRetention.Retain, Func<ImportProgress, Task>? reportProgress = null,
-        IngestionTimings? timings = null)
+        IngestionTimings? timings = null, IngestionOptions? options = null)
     {
         ValidateOperationChoice(searchScope);
         ValidateOperationChoice(sourceRetention);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        options ??= await galleryStore.ReadSettingsAsync<IngestionOptions>("ingestion-options", "ingestion-options:v1", key.Bytes)
+            ?? new IngestionOptions();
+        options.Validate();
+        var mediaRoot = await MediaDirectoryWithKeyAsync(key.Bytes);
         folder = Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing local folder.");
-        timings?.Begin(folder, vaultStore.Root);
+        timings?.Begin(folder, mediaRoot, VaultRoot);
         try
         {
             if (reportProgress is not null)
-                await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder..."));
+            {
+                var reportStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                try { await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder...")); }
+                finally { timings?.Record(IngestionStage.ReportProgress, reportStart); }
+            }
             var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
             var imagePaths = await Task.Run(() => FolderImportProcessor.DiscoverImagePaths(folder, searchScope));
             timings?.Record(IngestionStage.Discover, stageStart);
@@ -808,7 +947,7 @@ public sealed partial class GalleryService
             timings?.Record(IngestionStage.Backfill, stageStart);
             await using var catalog = await galleryStore.OpenImportCatalogAsync();
             await new FolderImportProcessor(this).ImportAsync(
-                folder, imagePaths, key.Bytes, sourceRetention, progress, reportProgress, catalog, timings);
+                folder, imagePaths, key.Bytes, sourceRetention, progress, reportProgress, catalog, timings, options, mediaRoot);
         }
         finally { timings?.Complete(); }
     }
@@ -863,24 +1002,36 @@ public sealed partial class GalleryService
         await VerifyImportedWithKeyAsync(id, key.Bytes);
     }
 
-    private async Task VerifyImportedWithKeyAsync(string id, byte[] key)
+    private async Task VerifyImportedWithKeyAsync(string id, byte[] key, GalleryStore.ImportCatalog? catalog = null)
     {
-        var record = await FindAsync(id, key);
-        var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{id}");
+        if (catalog is null)
+        {
+            await using var verificationCatalog = await galleryStore.OpenImportCatalogAsync();
+            await VerifyImportedWithKeyAsync(id, key, verificationCatalog);
+            return;
+        }
+        ImageRecord record;
+        byte[] thumbnail;
+        await galleryStore.Gate.WaitAsync();
+        try { (record, thumbnail) = await catalog.ReadVerificationAsync(id, key); }
+        finally { galleryStore.Gate.Release(); }
         try
         {
-            if (record.PngSha256.Length == 0 || Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
-                throw new CryptographicException("Saved file did not match the imported content.");
-            if (!record.IsVideo)
+            var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{id}");
+            try
             {
-                using var image = Image.Load(plain);
-                if (image.Width != record.Width || image.Height != record.Height)
-                    throw new CryptographicException("Saved image dimensions did not match the catalog.");
+                if (record.PngSha256.Length == 0 || Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
+                    throw new CryptographicException("Saved file did not match the imported content.");
+                if (!record.IsVideo)
+                {
+                    var image = Image.Identify(plain);
+                    if (image.Width != record.Width || image.Height != record.Height)
+                        throw new CryptographicException("Saved image dimensions did not match the catalog.");
+                }
             }
+            finally { CryptographicOperations.ZeroMemory(plain); }
+            Image.Identify(thumbnail);
         }
-        finally { CryptographicOperations.ZeroMemory(plain); }
-        var thumbnail = (await galleryStore.ReadThumbnailAsync(id, key)).PngBytes;
-        try { using var image = Image.Load(thumbnail); }
         finally { CryptographicOperations.ZeroMemory(thumbnail); }
     }
 

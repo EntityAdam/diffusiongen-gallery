@@ -105,6 +105,23 @@ public sealed class UiComponentTests
         Assert.Contains("autocomplete=\"off\"", html);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DirectoryInput_ExplainsWhetherNetworkStorageIsAllowed(bool localOnly)
+    {
+        var html = await RenderAsync<DirectoryPathInput>(new()
+        {
+            [nameof(DirectoryPathInput.Label)] = "Catalog location",
+            [nameof(DirectoryPathInput.LocalOnly)] = localOnly
+        });
+
+        Assert.Contains("Catalog location", html);
+        Assert.Contains("aria-describedby", html);
+        Assert.Contains(localOnly ? "not a NAS/SMB share" : "local directory or UNC path", html);
+        Assert.Contains(localOnly ? @"C:\Gallery\catalog" : @"\\server\share\gallery", html);
+    }
+
     private static async Task<string> RenderAsync<TComponent>(Dictionary<string, object?> parameters)
         where TComponent : IComponent
     {

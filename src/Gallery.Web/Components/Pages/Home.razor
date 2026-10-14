@@ -48,7 +48,10 @@
                 <h3>Create a gallery</h3>
                 <Label For="new-gallery-name" Class="mt-4 mb-2 block">Gallery name</Label>
                 <Input id="new-gallery-name" @bind-Value="newGalleryName" maxlength="80" Disabled="@busy" />
-                <DirectoryPathInput Label="New gallery directory" @bind-Value="newGalleryDirectory" Disabled="@busy" />
+                <DirectoryPathInput Label="Local catalog directory (database and encryption header)" LocalOnly="true" @bind-Value="newGalleryDirectory" Disabled="@busy" />
+                <p class="text-muted-foreground">Choose a new or empty folder on this host's SSD/NVMe. SQLite's database must not use NAS/SMB storage.</p>
+                <DirectoryPathInput Label="Encrypted media directory (optional, local or NAS/SMB)" @bind-Value="newMediaDirectory" Disabled="@busy" />
+                <p class="text-muted-foreground">Leave blank to store media beside the catalog. Otherwise choose an existing folder; original media stays encrypted.</p>
                 <form @onsubmit="CreateGalleryAsync" @onsubmit:preventDefault>
                     <Label For="secret" Class="mt-4 mb-2 block">Passphrase</Label>
                     <Input id="secret" Type="password" @bind-Value="secret" autocomplete="off" minlength="14" required Disabled="@busy" />
@@ -95,7 +98,7 @@
                 </Select>
                 <Label For="restored-gallery-name" Class="mt-4 mb-2 block">Gallery name</Label>
                 <Input id="restored-gallery-name" @bind-Value="newGalleryName" maxlength="80" Disabled="@busy" />
-                <DirectoryPathInput Label="New gallery directory" @bind-Value="newGalleryDirectory" Disabled="@busy" />
+                <DirectoryPathInput Label="New local catalog directory" LocalOnly="true" @bind-Value="newGalleryDirectory" Disabled="@busy" />
                 <GalleryCredentialInput @bind-Value="restoreCredential" @bind-UseRecovery="restoreUseRecovery" Disabled="@busy" />
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreArchive))" OnClick="RestoreGalleryAsync">Restore gallery <ArrowRightIcon aria-hidden="true" /></Button>
             }
@@ -220,6 +223,19 @@ else
         <Card Class="mb-6 p-5 md:p-6">
             <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Bring your images home.</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">PNG / JPEG / WEBP / MP4</Badge></div>
             <p class="text-muted-foreground">Images (PNG, JPEG, WebP) are encrypted unchanged as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
+            <div class="mt-4 space-y-3">
+                <Label Class="block">Ingestion performance</Label>
+                <div class="flex flex-wrap gap-2">
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Hdd)">HDD / NAS: 4 workers</Button>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Ssd)">SSD / NVMe: @IngestionOptions.Ssd.Workers workers</Button>
+                </div>
+                <Label For="ingestion-workers">Parallel workers (1-32)</Label>
+                <input id="ingestion-workers" type="number" min="1" max="32" @bind="ingestionWorkers" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                <Label For="ingestion-batch">Files per catalog commit (1-64)</Label>
+                <input id="ingestion-batch" type="number" min="1" max="64" @bind="ingestionBatchSize" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                <p class="text-muted-foreground">Both suggested profiles commit 16 files at a time. Increase workers cautiously for large images or videos: decoding uses memory per worker. Sources are never deleted until their batch is committed and verified. Use a batch size at least as large as the worker count.</p>
+                <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="SaveIngestionOptionsAsync">Save performance settings</Button>
+            </div>
                 <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
                     <Label For="source" Class="mt-4 mb-2 block">Local folder path</Label>
                     <Input id="source" @bind-Value="importPath" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
@@ -324,10 +340,20 @@ else
         <Card Class="mb-6 p-5 md:p-6 space-y-4">
             <h3>Manage gallery</h3>
             <p><strong>@Gallery.VaultName</strong></p><p class="break-all text-muted-foreground">@Gallery.VaultRoot</p>
+            @if (Gallery.CatalogIsOnNetworkDrive)
+            {
+                <Alert Variant="AlertVariant.Destructive">This legacy catalog is on network storage and uses rollback journaling, not WAL. Relocate it to a local directory below; media can stay on the NAS.</Alert>
+            }
+            <DirectoryPathInput Label="Local catalog directory (new or empty)" LocalOnly="true" @bind-Value="catalogDirectory" Disabled="@busy" />
+            <p class="text-muted-foreground">Relocates only gallery.db and vault.json. Existing encrypted media stays at its current paths. Sign in again after relocating; new imports keep using the current media directory.</p>
+            <Button Variant="ButtonVariant.Outline" Disabled="@(busy || libraryJob.IsRunning || string.IsNullOrWhiteSpace(catalogDirectory))" OnClick="RelocateCatalogAsync">Relocate catalog only</Button>
+            <DirectoryPathInput Label="Encrypted media directory for future imports (optional, local or NAS/SMB)" @bind-Value="mediaDirectory" Disabled="@busy" />
+            <p class="text-muted-foreground">Leave blank to use the local catalog directory. Choose an existing folder otherwise. Changing this does not move existing files; backups still include them.</p>
+            <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="SaveMediaStorageAsync">Save media location</Button>
             <Label For="rename-gallery" Class="mt-4 mb-2 block">Gallery name</Label>
             <Input id="rename-gallery" @bind-Value="galleryRename" maxlength="80" Disabled="@busy" />
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="RenameGalleryAsync">Rename</Button>
-            <DirectoryPathInput Label="Move gallery to a new or empty local / SMB folder" @bind-Value="moveGalleryDirectory" Disabled="@busy" />
+            <DirectoryPathInput Label="Move whole gallery to a new or empty local folder" LocalOnly="true" @bind-Value="moveGalleryDirectory" Disabled="@busy" />
             <p class="text-muted-foreground">Moves the catalog and all encrypted media, including media stored outside the gallery. The destination is verified before source files are removed. Sign in again after moving.</p>
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || libraryJob.IsRunning)" OnClick="MoveGalleryAsync">Move gallery</Button>
             <Alert Variant="AlertVariant.Destructive">Purge permanently destroys all media and gallery data, including encrypted media stored outside this folder. Original source files and backups are not deleted. This is not secure disk erasure.</Alert>
@@ -750,6 +776,8 @@ else
 @code {
     private string galleryScreen = "welcome", galleryTab = "create";
     private string existingGalleryDirectory = "", newGalleryName = "", newGalleryDirectory = "";
+    private string newMediaDirectory = "", mediaDirectory = "", catalogDirectory = "";
+    private int ingestionWorkers = IngestionOptions.Hdd.Workers, ingestionBatchSize = IngestionOptions.Hdd.CatalogBatchSize;
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
     private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
     private string restoreArchive = "", restoreCredential = "";
@@ -806,7 +834,8 @@ else
     {
         if (secret != confirm) throw new InvalidOperationException("Passphrases do not match.");
         await Gallery.SelectNewVaultAsync(newGalleryDirectory);
-        recoveryPhrase = await Gallery.CreateVaultAsync(secret, confirm, newGalleryName);
+        recoveryPhrase = await Gallery.CreateVaultAsync(secret, confirm, newGalleryName,
+            new MediaStorageOptions { MediaDirectory = newMediaDirectory });
         secret = confirm = "";
     });
 
@@ -814,6 +843,33 @@ else
     {
         await Gallery.RenameVaultAsync(galleryRename);
         message = "Gallery renamed.";
+    });
+
+    private void ApplyIngestionProfile(IngestionOptions options)
+    {
+        ingestionWorkers = options.Workers;
+        ingestionBatchSize = options.CatalogBatchSize;
+    }
+
+    private Task SaveIngestionOptionsAsync() => RunAsync("Saving ingestion settings...", async () =>
+    {
+        await Gallery.SaveIngestionOptionsAsync(new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
+        message = "Performance settings saved for this gallery.";
+    });
+
+    private Task SaveMediaStorageAsync() => RunAsync("Saving media location...", async () =>
+    {
+        await Gallery.SaveMediaStorageOptionsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory });
+        message = "Media location saved for future imports. Existing files were not moved.";
+    });
+
+    private Task RelocateCatalogAsync() => RunAsync("Relocating catalog...", async () =>
+    {
+        EnsureNoLibraryJob();
+        try { await Gallery.RelocateCatalogAsync(catalogDirectory); }
+        finally { if (!Gallery.IsUnlocked) Lock(); }
+        galleryScreen = "welcome";
+        message = "Catalog relocated to local storage. Media was not moved. Sign in at the new catalog location.";
     });
 
     private Task MoveGalleryAsync() => RunAsync("Moving gallery...", async () =>
@@ -1127,6 +1183,9 @@ else
     private async Task ReloadAsync()
     {
         images = await Gallery.LoadAsync();
+        mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
+        catalogDirectory = "";
+        ApplyIngestionProfile(await Gallery.LoadIngestionOptionsAsync());
         imagesById = images.ToDictionary(image => image.Id);
         UpdateDuplicateGroups();
         if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
@@ -1583,7 +1642,7 @@ else
                             StateHasChanged();
                             lastProgressRender.Restart();
                         }
-                    }), timings: timings);
+                    }), timings: timings, options: new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
             }
             catch (ImportFolderException exception)
             {

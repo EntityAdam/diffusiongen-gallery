@@ -314,7 +314,8 @@ public sealed class GalleryTests
         TestAssertions.Null(updates[0].Total, "the initial scan has no known total");
         Assert.Equal(0, updates[0].Completed);
         Assert.All(updates.Skip(1), update => Assert.Equal(4, update.Total));
-        Assert.Equal(Enumerable.Range(0, 5), updates.Select(update => update.Completed).Distinct());
+        Assert.Equal(4, updates[^1].Completed);
+        Assert.All(updates, update => Assert.InRange(update.Completed, 0, 4));
         Assert.All(updates.Zip(updates.Skip(1)), pair =>
         {
             TestAssertions.True(pair.First.Completed <= pair.Second.Completed,

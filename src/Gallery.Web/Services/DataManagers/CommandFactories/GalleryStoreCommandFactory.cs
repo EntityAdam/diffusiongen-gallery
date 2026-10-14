@@ -4,11 +4,10 @@ namespace Gallery.Web.Services.DataManagers.CommandFactories;
 
 internal static class GalleryStoreCommandFactory
 {
-    public static SqliteCommand CreateInitializeSchema(SqliteConnection sqliteConnection)
+    public static SqliteCommand CreateInitializeSchema(SqliteConnection sqliteConnection, bool useWal = true)
     {
         var sqliteCommand = sqliteConnection.CreateCommand();
-        sqliteCommand.CommandText = """
-            PRAGMA journal_mode=WAL;
+        sqliteCommand.CommandText = $"PRAGMA journal_mode={(useWal ? "WAL" : "DELETE")};" + """
             CREATE TABLE IF NOT EXISTS images (
                 id TEXT PRIMARY KEY,
                 record BLOB NOT NULL,

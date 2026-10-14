@@ -62,17 +62,21 @@ public sealed partial class GalleryService : IDisposable
         }
     }
 
-    public async Task<string> CreateVaultAsync(string passphrase, string confirmation, string? name = null)
+    public async Task<string> CreateVaultAsync(string passphrase, string confirmation, string? name = null,
+        Gallery.Web.Models.MediaStorageOptions? storageOptions = null)
     {
         await lifecycleGate.WaitAsync();
         try
         {
             ValidateCredentialConfirmation(passphrase, confirmation);
+            RequireLocalCatalogDirectory(VaultRoot);
+            if (storageOptions is not null) storageOptions = NormalizeMediaStorageOptions(storageOptions);
             EnsureCheckout();
             var created = await vaultStore.CreateAsync(passphrase, name ?? GenerateVaultName());
             try { vaultSession.Unlock(created.Key); }
             finally { CryptographicOperations.ZeroMemory(created.Key); }
             await galleryStore.InitializeAsync();
+            if (storageOptions is not null) await SaveMediaStorageOptionsAsync(storageOptions);
             history?.Save(VaultRoot);
             return created.Recovery;
         }
