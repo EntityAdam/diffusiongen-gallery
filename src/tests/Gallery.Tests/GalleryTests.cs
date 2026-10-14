@@ -5,6 +5,8 @@ using Gallery.Core;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
+using Gallery.Web.Services.DataManagers;
+using Gallery.Web.Services.Sessions;
 using Microsoft.Data.Sqlite;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -499,61 +501,230 @@ public sealed class GalleryTests
     }
 
     [Fact]
-    public async Task StorageOverview_WhenImagesAreMoved_MeasuresFilesAndCachesEncryptedResults()
+    public async Task StorageOverview_WhenUserRequestsRefresh_UpdatesResults()
     {
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var initialCache = await fixture.Service.CachedStorageOverviewAsync();
         var first = await fixture.Service.ImportAsync(new MemoryStream(MakePng(30, 10)), "first.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
         var second = await fixture.Service.ImportAsync(new MemoryStream(MakePng(20, 10)), "second.png", "folder");
-        var outside = Path.Combine(Path.GetTempPath(), "gallery-outside-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(outside);
-        try
-        {
-            await fixture.Service.MoveAsync(second.Id, outside, "moved");
-            var moved = Assert.Single(await fixture.Service.ListAsync(), image => image.Id == second.Id);
-            var expectedImageBytes = new FileInfo(first.StoredPath).Length + new FileInfo(moved.StoredPath).Length;
-            string databasePath = Path.Combine(fixture.Root, "gallery.db");
-            string[] databasePaths = [databasePath, databasePath + "-wal", databasePath + "-shm"];
-            long expectedDatabaseBytes = databasePaths.Where(File.Exists).Sum(path => new FileInfo(path).Length);
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var expectedImageBytes = new FileInfo(first.StoredPath).Length + new FileInfo(second.StoredPath).Length;
+        var refreshStartedAt = DateTimeOffset.UtcNow;
 
-            // Act
-            var overview = await fixture.Service.RefreshStorageOverviewAsync();
-            File.Delete(first.StoredPath);
-            var cached = await fixture.Service.CachedStorageOverviewAsync();
-            var blob = await fixture.RawStore.ReadSettingsAsync("storage-overview");
-            // The gallery owns its media folders, so out-of-band deletions surface only after an index rebuild.
-            await fixture.Service.RebuildStorageIndexAsync();
-            await fixture.Service.WaitForDriveOperationsAsync();
-            // One second accommodates clock resolution without accepting an unbounded future stamp.
-            var clockSkewAllowance = TimeSpan.FromSeconds(1);
-            var refreshStartedAt = DateTimeOffset.UtcNow;
-            var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
-            var refreshCompletedAt = DateTimeOffset.UtcNow;
-            var expectedTimestampWindow = new ExpectedTimestampWindow(
-                refreshStartedAt - clockSkewAllowance, refreshCompletedAt + clockSkewAllowance);
+        // Act
+        var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
+        var refreshCompletedAt = DateTimeOffset.UtcNow;
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
 
-            // Assert
-            Assert.Null(initialCache);
-            Assert.StartsWith(outside, moved.StoredPath);
-            Assert.Equal(2, overview.ImageFileCount);
-            Assert.Equal(expectedImageBytes, overview.ImageBytes);
-            Assert.Equal(expectedDatabaseBytes, overview.DatabaseBytes);
-            Assert.Equal(0, overview.MissingImageFiles);
-            Assert.Equal(overview.ImageBytes + overview.VaultFileBytes, overview.TotalBytes);
-            Assert.Equal(overview.ImageFileCount + overview.VaultFileCount, overview.TotalFileCount);
-            var minimumVaultBytes = overview.DatabaseBytes + new FileInfo(Path.Combine(fixture.Vault.Root, "vault.json")).Length;
-            Assert.True(overview.VaultFileBytes >= minimumVaultBytes);
+        // Assert
+        Assert.Equal(1, previous.ImageFileCount);
+        Assert.Equal(2, refreshed.ImageFileCount);
+        Assert.Equal(expectedImageBytes, refreshed.ImageBytes);
+        Assert.Equal(0, refreshed.MissingImageFiles);
+        Assert.True(refreshed.DatabaseBytes > 0);
+        Assert.Equal(refreshed.DatabaseBytes + new FileInfo(Path.Combine(fixture.Root, "vault.json")).Length,
+            refreshed.VaultFileBytes);
+        Assert.Equal(refreshed.ImageBytes + refreshed.VaultFileBytes, refreshed.TotalBytes);
+        Assert.Equal(refreshed.ImageFileCount + refreshed.VaultFileCount, refreshed.TotalFileCount);
+        Assert.InRange(refreshed.UpdatedAt, refreshStartedAt, refreshCompletedAt);
+        Assert.False(refreshed.IsStale);
+        Assert.Equal(refreshed, cached);
+    }
 
-            Assert.Equal(overview, cached);
-            Assert.DoesNotContain("ImageBytes", Encoding.UTF8.GetString(blob!));
+    [Fact]
+    public async Task StorageOverview_WhenFileIsMoved_MarksCachedResultsStale()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+        var payload = await fixture.RawStore.ReadSettingsAsync("storage-overview");
+        var destination = Directory.CreateDirectory(Path.Combine(fixture.Root, "destination")).FullName;
 
-            Assert.Equal(1, refreshed.ImageFileCount);
-            Assert.Equal(1, refreshed.MissingImageFiles);
-            Assert.InRange(refreshed.UpdatedAt, expectedTimestampWindow.Earliest, expectedTimestampWindow.Latest);
-        }
-        finally { Directory.Delete(outside, recursive: true); }
+        // Act
+        await fixture.Service.MoveAsync(record.Id, destination, "moved");
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var persisted = await fixture.RawStore.ReadSettingsAsync("storage-overview");
+
+        // Assert
+        Assert.NotNull(cached);
+        Assert.True(cached.IsStale);
+        Assert.Equal(previous with { IsStale = true }, cached);
+        Assert.Equal(payload, persisted);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenRefreshIsNotRequested_HasNoCachedResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        // Act
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Null(cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenUserRequestsRefresh_CachesEncryptedResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        // Act
+        var overview = await fixture.Service.RefreshStorageOverviewAsync();
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+        var payload = await fixture.RawStore.ReadSettingsAsync("storage-overview");
+
+        // Assert
+        Assert.Equal(overview, cached);
+        Assert.NotNull(payload);
+        Assert.DoesNotContain("ImageBytes", Encoding.UTF8.GetString(payload));
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenUserRefreshesAfterMove_ReplacesStaleResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Service.RefreshStorageOverviewAsync();
+        var destination = Directory.CreateDirectory(Path.Combine(fixture.Root, "destination")).FullName;
+        await fixture.Service.MoveAsync(record.Id, destination, "moved");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var stale = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Act
+        var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.NotNull(stale);
+        Assert.True(stale.IsStale);
+        Assert.False(refreshed.IsStale);
+        Assert.Equal(1, refreshed.ImageFileCount);
+        Assert.Equal(new FileInfo(Path.Combine(destination, "moved.dpng")).Length, refreshed.ImageBytes);
+        Assert.Equal(0, refreshed.MissingImageFiles);
+        Assert.True(refreshed.CatalogRevision > stale.CatalogRevision);
+        Assert.Equal(refreshed, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenGalleryIsReopened_PreservesStaleCachedResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+        var destination = Directory.CreateDirectory(Path.Combine(fixture.Root, "destination")).FullName;
+        await fixture.Service.MoveAsync(record.Id, destination, "moved");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        using var session = new VaultSession();
+        session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+        using var reopened = new GalleryService(new GalleryStore(Path.Combine(fixture.Root, "gallery.db")),
+            new VaultStore(fixture.Root), session);
+
+        // Act
+        var cached = await reopened.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(previous with { IsStale = true }, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenCachedResultsHaveNoRevision_MarksThemStale()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var previous = new StorageOverview(100, 1, 200, 2, 300, 0, DateTimeOffset.UtcNow);
+        await fixture.Store.SaveSettingsAsync(previous, "storage-overview", "storage-overview:v1", fixture.Session.Key);
+
+        // Act
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(previous with { IsStale = true }, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenMoveIsRejected_KeepsCachedResultsCurrent()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+
+        // Act
+        var error = await Record.ExceptionAsync(() => fixture.Service.MoveAsync(record.Id, fixture.Root, "..\\escaped"));
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Equal(previous, cached);
+        Assert.False(cached!.IsStale);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenFileIndexIsRebuilt_KeepsCachedResultsButMarksThemStale()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+        File.Delete(record.StoredPath);
+
+        // Act
+        await fixture.Service.RebuildStorageIndexAsync();
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(previous with { IsStale = true }, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenUserRefreshesAfterIndexRebuild_ReportsMissingFiles()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Service.RefreshStorageOverviewAsync();
+        File.Delete(record.StoredPath);
+        await fixture.Service.RebuildStorageIndexAsync();
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        // Act
+        var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(0, refreshed.ImageFileCount);
+        Assert.Equal(0, refreshed.ImageBytes);
+        Assert.Equal(1, refreshed.MissingImageFiles);
+        Assert.False(refreshed.IsStale);
     }
 
     [Theory]

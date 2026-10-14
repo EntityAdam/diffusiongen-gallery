@@ -36,6 +36,14 @@ internal sealed partial class GalleryStore(string databasePath)
         }
     }
 
+    public async Task<long> ReadStorageRevisionAsync()
+    {
+        await using var connection = await OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT revision FROM storage_overview_state WHERE id = 1";
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
     private async Task<SqliteConnection> OpenAsync()
     {
         // Purge deletes the database while this store may be reused for a new gallery in the same folder.

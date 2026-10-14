@@ -139,8 +139,10 @@ views, Local intelligence, Duplicate finder, Remove marked images, Ingest images
 files, which include encrypted thumbnails), total file count (catalogued encrypted
 image files plus gallery header/database files) and total size on disk, auto-scaled
 from B through PB. Measurements are cached encrypted in the gallery with a "Last
-updated" time and are only recalculated when you select **Refresh** (or the first
-time no cached overview exists). Catalogued images missing from disk are reported
+updated" time and are only recalculated when you select **Refresh**, including the
+first measurement. Imports, moves, removals, catalog edits and file-index rebuilds
+mark existing measurements as **Stale data** beside that timestamp; cached totals
+remain visible until you refresh. Catalogued images missing from disk are reported
 and excluded from the totals. The overview also summarizes the last duplicate scan.
 
 **Settings > Backups** writes ZIP snapshot archives to one configured destination:

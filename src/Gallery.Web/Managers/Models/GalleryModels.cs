@@ -127,6 +127,8 @@ public sealed record StorageOverview(
     public long TotalBytes => ImageBytes + VaultFileBytes;
     /// <summary>True while the background file index is still being built; unindexed files were measured directly.</summary>
     public bool IndexPending { get; init; }
+    public bool IsStale { get; init; }
+    public long? CatalogRevision { get; init; }
 }
 
 public enum DriveQueueState { Idle, Running, Waiting, Paused, Faulted }

@@ -322,7 +322,7 @@ else
                 {
                     <p class="text-muted-foreground" data-testid="index-pending">The file index is still being built in the background; some sizes were measured directly. Refresh once background file operations finish.</p>
                 }
-                <p class="text-muted-foreground" data-testid="overview-updated">Last updated <time datetime="@storageOverview.UpdatedAt.ToString("O")">@storageOverview.UpdatedAt.ToLocalTime().ToString("g")</time>. Cached values are shown until you refresh.</p>
+                <StorageOverviewStatus Overview="@storageOverview" />
             }
             <p class="text-muted-foreground flex flex-wrap items-center gap-2">
                 <span>Sizes come from a cached file index. Rebuild it if files were changed outside the gallery.</span>
@@ -1125,6 +1125,7 @@ else
     private Task RebuildStorageIndexAsync() => RunAsync("Scheduling file index rebuild...", async () =>
     {
         await Gallery.RebuildStorageIndexAsync();
+        storageOverview = await Gallery.CachedStorageOverviewAsync();
         message = "The file index is being rebuilt in the background. Refresh the overview when it finishes.";
     });
 
@@ -1190,6 +1191,7 @@ else
         UpdateDuplicateGroups();
         if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
         settings = await Gallery.SettingsAsync();
+        storageOverview = await Gallery.CachedStorageOverviewAsync();
         selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
         if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }
         removalSelection.IntersectWith(images.Where(image => image.MarkedForDeletion).Select(image => image.Id));
@@ -1332,7 +1334,7 @@ else
             {
                 page = 0;
                 await LoadThumbnailsAsync();
-                storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync();
+                storageOverview = await Gallery.CachedStorageOverviewAsync();
                 await LoadCachedDuplicatesAsync();
             });
         }
@@ -1341,8 +1343,8 @@ else
     private Task SwitchSettingsTabAsync(string value)
     {
         settingsTab = value;
-        return value == "overview" && storageOverview is null
-            ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync() ?? await Gallery.RefreshStorageOverviewAsync())
+        return value == "overview"
+            ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync())
             : value == "backups" && backupOptions is null
                 ? RunAsync("Loading backup settings...", async () =>
                 {

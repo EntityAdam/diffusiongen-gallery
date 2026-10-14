@@ -37,6 +37,17 @@ internal static class GalleryStoreCommandFactory
                 length INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS media_index_directory ON media_index(directory);
+            CREATE TABLE IF NOT EXISTS storage_overview_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                revision INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO storage_overview_state (id, revision) VALUES (1, 0);
+            CREATE TRIGGER IF NOT EXISTS storage_overview_image_insert AFTER INSERT ON images
+            BEGIN UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1; END;
+            CREATE TRIGGER IF NOT EXISTS storage_overview_image_update AFTER UPDATE OF record, thumbnail ON images
+            BEGIN UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1; END;
+            CREATE TRIGGER IF NOT EXISTS storage_overview_image_delete AFTER DELETE ON images
+            BEGIN UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1; END;
             """;
         return sqliteCommand;
     }

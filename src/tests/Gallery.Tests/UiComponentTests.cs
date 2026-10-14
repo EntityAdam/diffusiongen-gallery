@@ -122,6 +122,30 @@ public sealed class UiComponentTests
         Assert.Contains(localOnly ? @"C:\Gallery\catalog" : @"\\server\share\gallery", html);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StorageOverviewStatus_ShowsLastUpdatedAndIndicatesStaleData(bool stale)
+    {
+        var overview = new StorageOverview(1, 1, 1, 1, 1, 0, DateTimeOffset.UtcNow) { IsStale = stale };
+
+        var html = await RenderAsync<StorageOverviewStatus>(new()
+        {
+            [nameof(StorageOverviewStatus.Overview)] = overview
+        });
+
+        Assert.Contains("Last updated", html);
+        Assert.Contains($"datetime=\"{overview.UpdatedAt:O}\"", html);
+        if (stale)
+        {
+            Assert.Contains("data-testid=\"overview-stale\"", html);
+            Assert.Contains("role=\"status\"", html);
+            Assert.Contains("Select Refresh", html);
+        }
+        else
+            Assert.DoesNotContain("overview-stale", html);
+    }
+
     private static async Task<string> RenderAsync<TComponent>(Dictionary<string, object?> parameters)
         where TComponent : IComponent
     {
