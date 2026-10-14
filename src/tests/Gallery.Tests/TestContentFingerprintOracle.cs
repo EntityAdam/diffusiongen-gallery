@@ -44,7 +44,10 @@ public sealed class TestContentFingerprintOracle
             VaultCrypto.ContentFingerprint(key, malformedHash));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("invalid source fingerprints identify the offending value and expected hash format", malformedHash, "SHA-256", "64"), exception);
+        Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains(malformedHash, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("SHA-256", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("64", exception.Message, StringComparison.Ordinal);
     }
 
 

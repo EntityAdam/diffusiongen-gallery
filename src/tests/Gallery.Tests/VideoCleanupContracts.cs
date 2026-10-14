@@ -25,8 +25,9 @@ public static class VideoCleanupContracts
         catch (AggregateException exception) { failure = exception; }
 
         // Assert
-        var aggregate = TestAssertions.Exception<AggregateException>(new ExpectedException(
-            "both the primary execution failure and cleanup failure are observable", "test-tool", "failed"), failure);
+        var aggregate = Assert.IsType<AggregateException>(failure);
+        Assert.Contains("test-tool", aggregate.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("failed", aggregate.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Collection(aggregate.InnerExceptions,
             primary => Assert.IsType<InvalidOperationException>(primary),
             cleanup => Assert.IsType<InvalidOperationException>(cleanup));

@@ -32,7 +32,9 @@ public static class LifecycleContracts
         catch (VaultLockedException exception) { failure = exception; }
 
         // Assert
-        TestAssertions.Exception<VaultLockedException>(new ExpectedException("the old unlocked generation is explicitly revoked", "revoked", "unlock"), failure);
+        Assert.IsType<VaultLockedException>(failure);
+        Assert.Contains("revoked", failure!.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unlock", failure.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(originalKey, leasedKey);
     }
 

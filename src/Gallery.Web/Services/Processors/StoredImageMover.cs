@@ -11,13 +11,7 @@ internal static class StoredImageMover
         new(Path.GetFullPath(folder), NormalizeName(name));
 
     private static string NormalizeName(string name)
-    {
-        var normalizedName = name.Trim();
-        if (normalizedName.EndsWith(EncryptedPngExtension, StringComparison.OrdinalIgnoreCase)
-            || normalizedName.EndsWith(EncryptedMp4Extension, StringComparison.OrdinalIgnoreCase))
-            normalizedName = normalizedName[..^5];
-        return normalizedName;
-    }
+        => Path.GetFileNameWithoutExtension(name.Trim());
 
     public static string TargetPath(ImageRecord record, StoredImageMoveDestination destination) =>
         Path.Combine(destination.Folder, destination.Name + (record.IsVideo ? EncryptedMp4Extension : EncryptedPngExtension));

@@ -117,9 +117,9 @@ public sealed class CryptoTests
         Assert.IsAssignableFrom<CryptographicException>(previousPassphrase);
         Assert.Equal(key, rotatedKey);
         Assert.Equal(key, rotatedRecoveryKey);
-        TestAssertions.DoesNotContain(TestVault.Passphrase, header, "the passphrase is absent from the vault header");
-        TestAssertions.DoesNotContain(recovery, header, "the recovery phrase is absent from the vault header");
-        TestAssertions.DoesNotContain(Convert.ToBase64String(key), header, "the session key is absent from the vault header");
+        Assert.DoesNotContain(TestVault.Passphrase, header);
+        Assert.DoesNotContain(recovery, header);
+        Assert.DoesNotContain(Convert.ToBase64String(key), header);
         Assert.IsType<InvalidOperationException>(repeatedCreation);
     }
 
@@ -134,7 +134,7 @@ public sealed class CryptoTests
 
         // Assert
         Assert.IsType<InvalidOperationException>(error);
-        TestAssertions.False(fixture.Vault.Exists, "the vault does not exist after rejecting a short passphrase");
+        Assert.False(fixture.Vault.Exists);
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public sealed class CryptoTests
         var lockedBorrowError = Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession().Borrow());
 
         // Assert
-        TestAssertions.False(session.IsUnlocked, "the session is locked");
+        Assert.False(session.IsUnlocked);
         Assert.Equal(originalKey, key);
         Assert.All(borrowedKey, value => Assert.Equal(0, value));
         Assert.IsType<VaultLockedException>(lockedBorrowError);

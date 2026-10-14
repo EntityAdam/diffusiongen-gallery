@@ -64,7 +64,7 @@ public sealed class StorageIndexTests
         foreach (var record in new[] { first, second })
         {
             Assert.Equal(Path.Combine(fixture.Root, "images", record.Id[..2], record.Id[2..4], record.Id + ".dpng"), record.StoredPath);
-            TestAssertions.True(File.Exists(record.StoredPath), $"the imported file exists at {record.StoredPath}");
+            Assert.True(File.Exists(record.StoredPath));
         }
     }
 
@@ -83,7 +83,7 @@ public sealed class StorageIndexTests
         var reimported = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
 
         // Assert
-        TestAssertions.Empty(records, "a recreated database starts empty");
+        Assert.Empty(records);
         Assert.True(await fixture.Store.ContainsFingerprintAsync(reimported.Sha256, fixture.Session.Key));
     }
 
@@ -108,7 +108,7 @@ public sealed class StorageIndexTests
         // Act
         var migratedRecords = await service.LoadAsync();
         await service.WaitForDriveOperationsAsync();
-        var migrated = TestAssertions.Single(migratedRecords, "legacy migration retains one image");
+        var migrated = Assert.Single(migratedRecords);
         var fingerprintPresent = await store.ContainsFingerprintAsync(migrated.Sha256, fixture.Session.Key);
         var duplicateError = await Record.ExceptionAsync(() => service.ImportAsync(new MemoryStream(bytes), "different-name.png", "another-folder"));
         await fixture.Vault.ChangePassphraseAsync(fixture.Session.Key, "a different strong passphrase");
@@ -125,12 +125,14 @@ public sealed class StorageIndexTests
         while (await reader.ReadAsync()) plan.Add(reader.GetString(3));
 
         // Assert
-        TestAssertions.Single(migratedRecords, "legacy migration retains one image");
+        Assert.Single(migratedRecords);
         Assert.Equal(Path.Combine(fixture.Root, "legacy-flat.dpng"), migrated.StoredPath);
-        TestAssertions.True(File.Exists(migrated.StoredPath), $"the legacy image remains at {migrated.StoredPath}");
-        TestAssertions.True(fingerprintPresent, "the legacy image's fingerprint is backfilled");
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the duplicate is rejected as already imported", "already in the gallery"), duplicateError);
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the duplicate remains rejected after rotation", "already in the gallery"), rotatedDuplicateError);
+        Assert.True(File.Exists(migrated.StoredPath));
+        Assert.True(fingerprintPresent);
+        Assert.IsType<InvalidOperationException>(duplicateError);
+        Assert.IsType<InvalidOperationException>(rotatedDuplicateError);
+        Assert.Contains("already in the gallery", duplicateError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("already in the gallery", rotatedDuplicateError.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(plan, detail => detail.Contains("images_fingerprint", StringComparison.Ordinal));
     }
 
@@ -162,7 +164,7 @@ public sealed class StorageIndexTests
         // Assert
         Assert.IsAssignableFrom<CryptographicException>(authenticationError);
         Assert.Equal(0L, backfilledCount);
-        TestAssertions.True(File.Exists(first.StoredPath), $"the unaffected image remains at {first.StoredPath}");
+        Assert.True(File.Exists(first.StoredPath));
     }
 
     [Fact]
@@ -210,7 +212,11 @@ public sealed class StorageIndexTests
         var results = await Task.WhenAll(ImportAsync(), ImportAsync(), ImportAsync());
 
         // Assert
-        Assert.All(failures, exception => TestAssertions.Exception<InvalidOperationException>(new ExpectedException("competing imports reject only duplicate content", "already in the gallery"), exception));
+        Assert.All(failures, exception =>
+        {
+            Assert.IsType<InvalidOperationException>(exception);
+            Assert.Contains("already in the gallery", exception.Message, StringComparison.OrdinalIgnoreCase);
+        });
         Assert.Single(results, success => success);
         Assert.Single(await fixture.Service.ListAsync());
         Assert.Single(Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories));

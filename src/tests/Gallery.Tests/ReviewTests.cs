@@ -21,8 +21,8 @@ public sealed class ReviewTests
         await fixture.Service.UpdateAsync(marked.Id, image => image with { MarkedForDeletion = true });
 
         var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
-        TestAssertions.True(stored[rated.Id].Reviewed, "assigning a rating marks the persisted record reviewed");
-        TestAssertions.True(stored[marked.Id].Reviewed, "marking for deletion marks the persisted record reviewed");
+        Assert.True(stored[rated.Id].Reviewed);
+        Assert.True(stored[marked.Id].Reviewed);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class ReviewTests
         Assert.Equal(before, fixture.Service.CaptureReviewState(restored));
         Assert.Equal("original", restored.Tags);
         Assert.Equal("New note", restored.Description);
-        TestAssertions.True(File.Exists(restored.StoredPath), $"the original image remains at {restored.StoredPath}");
+        Assert.True(File.Exists(restored.StoredPath));
     }
 
     [Theory]
@@ -63,11 +63,11 @@ public sealed class ReviewTests
 
         // Assert
         var stored = Assert.Single(await fixture.Service.ListAsync());
-        TestAssertions.True(stored.Reviewed, "the chosen review action marks the record reviewed");
+        Assert.True(stored.Reviewed);
         Assert.Equal(action == ReviewAction.MarkDeletion, stored.MarkedForDeletion);
         Assert.Equal(action == ReviewAction.Favorite, stored.Favorite);
         Assert.Equal(action == ReviewAction.Rate ? 4 : 0, stored.Rating);
-        TestAssertions.True(File.Exists(stored.StoredPath), $"the original image remains at {stored.StoredPath}");
+        Assert.True(File.Exists(stored.StoredPath));
     }
 
     [Fact]
@@ -81,9 +81,9 @@ public sealed class ReviewTests
         record = fixture.Service.ApplyReviewDecision(record, ReviewAction.Keep);
 
         // Assert
-        TestAssertions.True(record.Reviewed, "the keep decision marks the record reviewed");
-        TestAssertions.False(record.MarkedForDeletion, "keeping the record clears its deletion mark");
-        TestAssertions.True(record.Favorite, "keeping the record preserves its favorite mark");
+        Assert.True(record.Reviewed);
+        Assert.False(record.MarkedForDeletion);
+        Assert.True(record.Favorite);
         Assert.Equal(5, record.Rating);
     }
 
@@ -100,9 +100,16 @@ public sealed class ReviewTests
         var actionError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, (ReviewAction)99));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the validation message identifies the invalid rating and both allowed bounds", "Rating 0", "between", "1", "5"), ratingError);
-        TestAssertions.False(reviewedAfterInvalidRating, "invalid rating leaves the review state unchanged");
-        TestAssertions.False(record.Reviewed, "invalid rating leaves the review state unchanged");
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the validation message identifies the invalid action and choices", "99", "Keep", "Favorite", "MarkDeletion", "Rate"), actionError);
+        Assert.IsType<InvalidOperationException>(ratingError);
+        Assert.Contains("Rating 0", ratingError!.Message, StringComparison.Ordinal);
+        Assert.Contains("between 1 and 5", ratingError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(reviewedAfterInvalidRating);
+        Assert.False(record.Reviewed);
+        Assert.IsType<InvalidOperationException>(actionError);
+        Assert.Contains("99", actionError!.Message, StringComparison.Ordinal);
+        Assert.Contains("Keep", actionError.Message, StringComparison.Ordinal);
+        Assert.Contains("Favorite", actionError.Message, StringComparison.Ordinal);
+        Assert.Contains("MarkDeletion", actionError.Message, StringComparison.Ordinal);
+        Assert.Contains("Rate", actionError.Message, StringComparison.Ordinal);
     }
 }

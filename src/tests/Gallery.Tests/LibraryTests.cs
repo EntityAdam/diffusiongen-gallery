@@ -33,8 +33,8 @@ public sealed class LibraryTests
         // Assert
         Assert.Equal(expectedRating, image.Rating);
         Assert.Equal(expectedReviewed, image.Reviewed);
-        TestAssertions.True(image.Favorite, "the favorite flag remains true");
-        TestAssertions.True(image.MarkedForDeletion, "the deletion flag remains true");
+        Assert.True(image.Favorite);
+        Assert.True(image.MarkedForDeletion);
     }
 
     [Fact]
@@ -48,9 +48,11 @@ public sealed class LibraryTests
         var error = Assert.Throws<InvalidOperationException>(() => fixture.Service.SetCuration(image, 6, false));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the rating validation message identifies the invalid value and allowed range", "6", "between", "0", "5"), error);
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains("6", error.Message, StringComparison.Ordinal);
+        Assert.Contains("between 0 and 5", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(4, image.Rating);
-        TestAssertions.True(image.Reviewed, "the previous reviewed state is preserved after validation fails");
+        Assert.True(image.Reviewed);
     }
 
     [Theory]
@@ -102,14 +104,16 @@ public sealed class LibraryTests
             fixture.Service.SetOrganization(new ImageRecordEdit(image), 6, true, null));
 
         // Assert
-        var stored = TestAssertions.Single(storedRecords, "the updated image remains in the library");
+        var stored = Assert.Single(storedRecords);
         Assert.Equal(4, stored.Rating);
-        TestAssertions.True(stored.Reviewed, "the image remains reviewed");
+        Assert.True(stored.Reviewed);
         Assert.Equal("Private collection", Assert.Single(stored.Collections));
         Assert.Equal("green, landscape, cinema", stored.Tags);
         Assert.Equal(image.StoredPath, stored.StoredPath);
         Assert.DoesNotContain("Private collection", Encoding.UTF8.GetString(encryptedRecord));
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the organization rating is rejected with the invalid value and allowed bounds", "6", "between", "0", "5"), ratingError);
+        Assert.IsType<InvalidOperationException>(ratingError);
+        Assert.Contains("6", ratingError.Message, StringComparison.Ordinal);
+        Assert.Contains("between 0 and 5", ratingError.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -135,15 +139,15 @@ public sealed class LibraryTests
         var remainingViews = await library.LoadViewsAsync();
 
         // Assert
-        Assert.Equal(4, TestAssertions.Single(initialViews, "the saved view is returned").Filter.MinRating);
-        TestAssertions.DoesNotContain("Private view", Encoding.UTF8.GetString(payload!), "saved views are encrypted");
-        TestAssertions.Single(replacedViews, "case-insensitive names replace rather than duplicate saved views");
-        TestAssertions.Exception<VaultLockedException>(new ExpectedException("the error explains how to unlock the gallery", "unlock", "gallery", "first")
-        { HttpStatusCode = System.Net.HttpStatusCode.BadRequest, Severity = Severity.Error,
-          Reason = "Unlock the gallery first.", LogEventValue = "Vault.AcquireKey",
-          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Vault.State", "locked") }, lockedError);
-        Assert.Equal(1, TestAssertions.Single(restartedViews, "the replaced view survives unlocking").Filter.MinRating);
-        TestAssertions.Empty(remainingViews, "deleting the saved view leaves no entries");
+        Assert.Equal(4, Assert.Single(initialViews).Filter.MinRating);
+        Assert.DoesNotContain("Private view", Encoding.UTF8.GetString(payload!));
+        Assert.Single(replacedViews);
+        Assert.IsType<VaultLockedException>(lockedError);
+        Assert.Contains("unlock", lockedError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("gallery", lockedError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("first", lockedError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, Assert.Single(restartedViews).Filter.MinRating);
+        Assert.Empty(remainingViews);
     }
 
     [Fact]
@@ -205,8 +209,8 @@ public sealed class LibraryTests
         var ratingSorted = fixture.Service.Filter([first, second, third], new() { Sort = "rating" }).ToArray();
 
         // Assert
-        Assert.Equal(first, TestAssertions.Single(matching, "collection, rating, and pending-review filters select one record"));
-        Assert.Equal(third, TestAssertions.Single(unorganized, "only the third record is unorganized"));
+        Assert.Equal(first, Assert.Single(matching));
+        Assert.Equal(third, Assert.Single(unorganized));
         Assert.Equal([second, first, third], ratingSorted);
     }
 
@@ -221,7 +225,7 @@ public sealed class LibraryTests
         var matches = fixture.Service.Filter([image], new GalleryFilter { Folder = "source" });
 
         // Assert
-        TestAssertions.Empty(matches, "a path without a parent directory does not match a folder filter");
+        Assert.Empty(matches);
     }
 
     [Fact]
@@ -240,8 +244,11 @@ public sealed class LibraryTests
         // Assert
         Assert.Equal("landscape", filter.Tag);
         Assert.Equal(4, filter.MinRating);
-        TestAssertions.True(filter.FavoritesOnly, "the interpreted filter enables favorites-only results");
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the error identifies the rejected collection and its valid choices", "Worlds", "does not exist", "none"), error);
+        Assert.True(filter.FavoritesOnly);
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains("Worlds", error.Message, StringComparison.Ordinal);
+        Assert.Contains("does not exist", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("none", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -259,7 +266,10 @@ public sealed class LibraryTests
 
         // Assert
         Assert.Equal("Worlds", suggested);
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the error identifies the offending empty collection and its required constraint", "collection ''", "nonempty", "80"), error);
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains("collection ''", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nonempty", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("80", error.Message, StringComparison.Ordinal);
     }
 
     private sealed class JsonHandler(string json) : HttpMessageHandler

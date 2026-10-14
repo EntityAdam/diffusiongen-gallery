@@ -1064,6 +1064,7 @@ public sealed partial class GalleryService
 
     public async Task MoveAsync(string id, string folder, string name)
     {
+        StoredImageMoveValidator.ValidateName(name);
         var destination = StoredImageMover.NormalizeDestination(folder, name);
         StoredImageMoveValidator.ValidateDestination(destination);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
