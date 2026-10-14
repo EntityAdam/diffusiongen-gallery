@@ -11,7 +11,7 @@ internal static class StoredImageMoveValidator
             throw new DirectoryNotFoundException("Choose an existing destination folder.");
     }
 
-    private static void ValidateName(string name)
+    public static void ValidateName(string name)
     {
         if (name.Length == 0 || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
             || name.EndsWith('.') || name.EndsWith(' ') || name.Contains('/') || name.Contains('\\'))

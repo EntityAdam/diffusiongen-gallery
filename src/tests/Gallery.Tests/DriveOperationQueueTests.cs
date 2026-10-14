@@ -25,8 +25,8 @@ public sealed class DriveOperationQueueTests
         // Assert
         Assert.Equal(DriveQueueState.Paused, pausedStatus.State);
         Assert.Equal(1, pausedStatus.Pending);
-        TestAssertions.True(fileKeptWhilePaused, "a paused queue does not touch the drive");
-        TestAssertions.False(File.Exists(record.StoredPath), "resuming plays the queued delete");
+        Assert.True(fileKeptWhilePaused);
+        Assert.False(File.Exists(record.StoredPath));
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Pending);
         Assert.Empty(await fixture.Service.ListAsync());
     }
@@ -48,7 +48,7 @@ public sealed class DriveOperationQueueTests
         // Assert
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Pending);
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
-        TestAssertions.True(File.Exists(record.StoredPath), "cancelled work is not played");
+        Assert.True(File.Exists(record.StoredPath));
         Assert.Empty(await fixture.Service.ListAsync());
     }
 
@@ -75,8 +75,8 @@ public sealed class DriveOperationQueueTests
         // Assert
         Assert.Equal(1, failedStatus.Failed);
         Assert.Equal(0, failedStatus.Pending);
-        TestAssertions.True(fileKeptAfterFailure, "a failed delete leaves the file");
-        TestAssertions.False(File.Exists(record.StoredPath), "retrying plays the delete again");
+        Assert.True(fileKeptAfterFailure);
+        Assert.False(File.Exists(record.StoredPath));
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
     }
 
@@ -103,9 +103,9 @@ public sealed class DriveOperationQueueTests
             await fixture.Service.WaitForDriveOperationsAsync();
 
             // Assert
-            TestAssertions.True(interimCopied, "the first move copies to the interim folder");
-            TestAssertions.True(File.Exists(record.StoredPath), "moving back adopts the original file instead of deleting it");
-            TestAssertions.False(File.Exists(interimPath), "the interim copy is deleted by the queue");
+            Assert.True(interimCopied);
+            Assert.True(File.Exists(record.StoredPath));
+            Assert.False(File.Exists(interimPath));
             Assert.Equal(record.StoredPath, Assert.Single(await fixture.Service.ListAsync()).StoredPath);
             await fixture.Service.VerifyImportedAsync(record.Id);
             Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
@@ -133,7 +133,7 @@ public sealed class DriveOperationQueueTests
         // Assert
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
         Assert.Equal(1, overview.MissingImageFiles);
-        TestAssertions.False(overview.IndexPending, "the rebuilt index is complete");
+        Assert.False(overview.IndexPending);
     }
 
     [Fact]
@@ -153,8 +153,8 @@ public sealed class DriveOperationQueueTests
         var complete = await fixture.Service.RefreshStorageOverviewAsync();
 
         // Assert
-        TestAssertions.True(pending.IndexPending, "the overview flags an unfinished index scan");
-        TestAssertions.False(complete.IndexPending, "the overview clears the flag once the scan has played");
+        Assert.True(pending.IndexPending);
+        Assert.False(complete.IndexPending);
         Assert.Equal(1, complete.ImageFileCount);
         Assert.Equal(0, complete.MissingImageFiles);
     }
@@ -174,6 +174,6 @@ public sealed class DriveOperationQueueTests
         var plan = await fixture.Service.PrepareRemovalAsync([id]);
         var results = new List<RemovalResult>();
         await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", results.Add);
-        TestAssertions.True(Assert.Single(results).Removed, $"the removal of {id} succeeds");
+        Assert.True(Assert.Single(results).Removed);
     }
 }

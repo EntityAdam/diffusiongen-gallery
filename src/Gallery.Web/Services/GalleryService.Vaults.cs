@@ -38,6 +38,7 @@ public sealed partial class GalleryService
     private async Task SelectVaultAsync(string directory, bool existing)
     {
         var root = NormalizeVaultDirectory(directory);
+        if (!existing) RequireLocalCatalogDirectory(root);
         await lifecycleGate.WaitAsync();
         try
         {
@@ -98,6 +99,7 @@ public sealed partial class GalleryService
     public async Task MoveVaultAsync(string directory)
     {
         var destination = NormalizeVaultDirectory(directory);
+        RequireLocalCatalogDirectory(destination);
         await lifecycleGate.WaitAsync();
         byte[]? key = null;
         VaultCheckout? destinationCheckout = null;
@@ -289,7 +291,7 @@ public sealed partial class GalleryService
     // Queued drive work and the file index describe paths at the old location, so they never travel with a copy.
     private static async Task ClearLocationSettingsAsync(GalleryStore store, byte[] key)
     {
-        await store.DeleteSettingsAsync(StorageOverviewId, MediaIndexId);
+        await store.DeleteSettingsAsync(StorageOverviewId, MediaIndexId, "media-storage");
         await store.ClearDriveStateAsync();
         var settings = await store.ReadSettingsAsync<StoredBackupSettings>(BackupSettingsId, BackupSettingsPurpose, key);
         if (settings is not null)

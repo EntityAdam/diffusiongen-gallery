@@ -4,11 +4,10 @@ namespace Gallery.Web.Services.DataManagers.CommandFactories;
 
 internal static class GalleryStoreCommandFactory
 {
-    public static SqliteCommand CreateInitializeSchema(SqliteConnection sqliteConnection)
+    public static SqliteCommand CreateInitializeSchema(SqliteConnection sqliteConnection, bool useWal = true)
     {
         var sqliteCommand = sqliteConnection.CreateCommand();
-        sqliteCommand.CommandText = """
-            PRAGMA journal_mode=WAL;
+        sqliteCommand.CommandText = $"PRAGMA journal_mode={(useWal ? "WAL" : "DELETE")};" + """
             CREATE TABLE IF NOT EXISTS images (
                 id TEXT PRIMARY KEY,
                 record BLOB NOT NULL,
@@ -38,6 +37,17 @@ internal static class GalleryStoreCommandFactory
                 length INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS media_index_directory ON media_index(directory);
+            CREATE TABLE IF NOT EXISTS storage_overview_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                revision INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO storage_overview_state (id, revision) VALUES (1, 0);
+            CREATE TRIGGER IF NOT EXISTS storage_overview_image_insert AFTER INSERT ON images
+            BEGIN UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1; END;
+            CREATE TRIGGER IF NOT EXISTS storage_overview_image_update AFTER UPDATE OF record, thumbnail ON images
+            BEGIN UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1; END;
+            CREATE TRIGGER IF NOT EXISTS storage_overview_image_delete AFTER DELETE ON images
+            BEGIN UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1; END;
             """;
         return sqliteCommand;
     }

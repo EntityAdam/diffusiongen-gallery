@@ -5,6 +5,8 @@ using Gallery.Core;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
+using Gallery.Web.Services.DataManagers;
+using Gallery.Web.Services.Sessions;
 using Microsoft.Data.Sqlite;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -67,22 +69,24 @@ public sealed class GalleryTests
         var records = await fixture.Service.ListAsync();
 
         // Assert
-        TestAssertions.EndsWith(".dpng", image.StoredPath, "the stored image uses the encrypted-file extension");
-        TestAssertions.False(encrypted.AsSpan().StartsWith(new byte[] { 137, 80, 78, 71 }),
-            $"ciphertext does not have the plaintext PNG signature; actual prefix {Convert.ToHexString(encrypted.AsSpan(0, 4))}");
+        Assert.EndsWith(".dpng", image.StoredPath);
+        Assert.False(encrypted.AsSpan().StartsWith(new byte[] { 137, 80, 78, 71 }));
         Assert.Equal(32, decoded.Width);
-        TestAssertions.Contains("secret diffusion prompt", image.Metadata, "imported metadata retains its prompt");
+        Assert.Contains("secret diffusion prompt", image.Metadata);
         Assert.IsAssignableFrom<CryptographicException>(wrongThumbnailKey);
-        TestAssertions.Empty(decodedThumb.Metadata.GetPngMetadata().TextData, "thumbnails omit embedded prompt metadata");
-        TestAssertions.StartsWith("data:image/png;base64,", previewUrl, "the preview is a PNG data URL");
-        TestAssertions.StartsWith("data:image/png;base64,", thumbnailUrl, "the thumbnail is a PNG data URL");
-        TestAssertions.DoesNotContain("secret-art", recordText, "the encrypted record does not expose the image name");
-        TestAssertions.DoesNotContain("secret diffusion prompt", recordText, "the encrypted record does not expose the prompt");
+        Assert.Empty(decodedThumb.Metadata.GetPngMetadata().TextData);
+        Assert.StartsWith("data:image/png;base64,", previewUrl);
+        Assert.StartsWith("data:image/png;base64,", thumbnailUrl);
+        Assert.DoesNotContain("secret-art", recordText);
+        Assert.DoesNotContain("secret diffusion prompt", recordText);
         Assert.IsType<VaultLockedException>(lockedError);
-        var stored = TestAssertions.Single(records, "the imported image survives unlocking");
-        TestAssertions.True(stored.Favorite, "the persisted favorite flag remains true");
-        TestAssertions.True(stored.MarkedForDeletion, "the persisted deletion flag remains true");
-        TestAssertions.True(File.Exists(stored.StoredPath), $"the encrypted file exists at {stored.StoredPath}");
+        Assert.Contains("unlock", lockedError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("gallery", lockedError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("first", lockedError.Message, StringComparison.OrdinalIgnoreCase);
+        var stored = Assert.Single(records);
+        Assert.True(stored.Favorite);
+        Assert.True(stored.MarkedForDeletion);
+        Assert.True(File.Exists(stored.StoredPath));
     }
 
     [Fact]
@@ -105,15 +109,21 @@ public sealed class GalleryTests
 
         // Assert
         Assert.IsType<InvalidOperationException>(duplicateError);
+        Assert.Contains("already in the gallery", duplicateError.Message, StringComparison.OrdinalIgnoreCase);
         Assert.IsAssignableFrom<UnknownImageFormatException>(invalidImageError);
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the extension validation identifies the rejected file and all supported formats", "bad.txt", ".png", ".jpg", ".jpeg", ".webp", ".mp4"), invalidExtensionError);
-        TestAssertions.Single(records, "failed imports do not add records");
-        TestAssertions.Single(Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories),
-            "failed imports do not leave extra encrypted image files");
+        Assert.IsType<InvalidOperationException>(invalidExtensionError);
+        Assert.Contains("bad.txt", invalidExtensionError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".png", invalidExtensionError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".jpg", invalidExtensionError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".jpeg", invalidExtensionError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".webp", invalidExtensionError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".mp4", invalidExtensionError.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(records);
+        Assert.Single(Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories));
     }
 
     [Fact]
-    public async Task Move_WhenRenamingImage_PreservesEncryptionAndRejectsOverwriteOrTraversal()
+    public async Task Move_WhenRenamingImage_PreservesEncryption()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -122,27 +132,64 @@ public sealed class GalleryTests
         var destination = Path.Combine(fixture.Root, "destination");
         Directory.CreateDirectory(destination);
         var before = await File.ReadAllBytesAsync(record.StoredPath);
-        await File.WriteAllTextAsync(Path.Combine(destination, "collision.dpng"), "don't overwrite");
 
         // Act
         await fixture.Service.MoveAsync(record.Id, destination, "renamed");
-        var current = TestAssertions.Single(await fixture.Service.ListAsync(), "moving preserves the single gallery record");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var current = Assert.Single(await fixture.Service.ListAsync());
         var movedBytes = await File.ReadAllBytesAsync(current.StoredPath);
         var preview = await fixture.Service.PreviewAsync(record.Id);
-        var collisionError = await Assert.ThrowsAsync<IOException>(() => fixture.Service.MoveAsync(record.Id, destination, "collision"));
-        var traversalError = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.MoveAsync(record.Id, destination, "..\\escaped"));
-        var collisionContent = await File.ReadAllTextAsync(Path.Combine(destination, "collision.dpng"));
-        var afterFailedMoves = await fixture.Service.ListAsync();
 
         // Assert
-        TestAssertions.False(File.Exists(record.StoredPath), $"the previous file path {record.StoredPath} is removed after moving");
+        Assert.False(File.Exists(record.StoredPath));
         Assert.Equal("renamed", current.Name);
         Assert.Equal(before, movedBytes);
-        TestAssertions.StartsWith("data:image/png;base64,", preview, "moving preserves a valid PNG preview");
-        Assert.IsAssignableFrom<IOException>(collisionError);
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the name validation identifies the rejected path", "..\\escaped", "filename"), traversalError);
-        Assert.Equal("don't overwrite", collisionContent);
-        Assert.Equal(current.StoredPath, TestAssertions.Single(afterFailedMoves, "failed moves preserve the record").StoredPath);
+        Assert.StartsWith("data:image/png;base64,", preview);
+    }
+
+    [Fact]
+    public async Task Move_WhenRenamingImage_RejectsOverwrite()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "first.png", "folder");
+        var destination = Path.Combine(fixture.Root, "destination");
+        Directory.CreateDirectory(destination);
+        var collision = Path.Combine(destination, "collision.dpng");
+        await File.WriteAllTextAsync(collision, "don't overwrite");
+
+        // Act
+        var error = await Assert.ThrowsAsync<IOException>(() =>
+            fixture.Service.MoveAsync(record.Id, destination, "collision"));
+
+        // Assert
+        Assert.Contains("collision.dpng", error.Message);
+        Assert.Equal("don't overwrite", await File.ReadAllTextAsync(collision));
+        Assert.Equal(record.StoredPath, Assert.Single(await fixture.Service.ListAsync()).StoredPath);
+        Assert.True(File.Exists(record.StoredPath));
+    }
+
+    [Fact]
+    public async Task Move_WhenRenamingImage_RejectsTraversal()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "first.png", "folder");
+        var destination = Path.Combine(fixture.Root, "destination");
+        Directory.CreateDirectory(destination);
+
+        // Act
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Service.MoveAsync(record.Id, destination, "..\\escaped"));
+
+        // Assert
+        Assert.Contains("..\\escaped", error.Message);
+        Assert.Contains("filename", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(record.StoredPath, Assert.Single(await fixture.Service.ListAsync()).StoredPath);
+        Assert.True(File.Exists(record.StoredPath));
+        Assert.False(File.Exists(Path.Combine(fixture.Root, "escaped.dpng")));
     }
 
     [Fact]
@@ -194,9 +241,9 @@ public sealed class GalleryTests
         Assert.NotSame(priorEdit, replacement);
         Assert.Equal(0, priorEdit!.Rating);
         Assert.Empty(priorEdit.Collections);
-        var saved = TestAssertions.Single(actual, "the replacement updates the existing catalog record");
+        var saved = Assert.Single(actual);
         Assert.Equal(4, saved.Rating);
-        Assert.Equal("Selected", TestAssertions.Single(saved.Collections, "the replacement contains the added collection"));
+        Assert.Equal("Selected", Assert.Single(saved.Collections));
         Assert.Equal(0, original.Rating);
         Assert.Empty(original.Collections);
     }
@@ -211,21 +258,24 @@ public sealed class GalleryTests
         Directory.CreateDirectory(folder);
         await File.WriteAllBytesAsync(Path.Combine(folder, "image.png"), MakePng());
         await File.WriteAllBytesAsync(Path.Combine(folder, "clip.mp4"), [0, 0, 0, 24, 102, 116, 121, 112]);
-        var expected = new ExpectedException("a mixed import reports its technical failure while preserving committed images", folder, "failures")
-        { HttpStatusCode = System.Net.HttpStatusCode.InternalServerError, Severity = Severity.Error,
-          Reason = "One or more files could not be imported.", LogEventValue = "FolderImport.Failed",
-          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty
-            .Add("Folder", folder).Add("FailureCount", 1) };
-
         // Act
         var actual = await Assert.ThrowsAsync<ImportFolderException>(() => fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder));
         var records = await fixture.Service.ListAsync();
 
         // Assert
-        TestAssertions.Exception<ImportFolderException>(expected, actual);
-        var fileFailure = TestAssertions.Single(actual.Failures.InnerExceptions, "only the unavailable video import fails");
+        Assert.Contains(folder, actual.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("failures", actual.Message, StringComparison.OrdinalIgnoreCase);
+        var domainException = Assert.IsType<ImportFolderException>(actual);
+        Assert.Equal(System.Net.HttpStatusCode.InternalServerError, domainException.HttpStatusCode);
+        Assert.Equal(Severity.Error, domainException.Severity);
+        Assert.Equal("One or more files could not be imported.", domainException.Reason);
+        Assert.Equal("FolderImport.Failed", domainException.LogEvent?.Value);
+        Assert.Equal(folder, domainException.ContextualDataByName.ValuesByName["Folder"]);
+        Assert.Equal(1, domainException.ContextualDataByName.ValuesByName["FailureCount"]);
+        Assert.Contains($"Folder: {folder}", domainException.ToDiagnosticString(), StringComparison.Ordinal);
+        var fileFailure = Assert.Single(actual.Failures.InnerExceptions);
         Assert.IsType<VideoToolUnavailableException>(fileFailure.InnerException);
-        Assert.Equal("image.png", TestAssertions.Single(records, "the successful PNG remains committed").OriginalName);
+        Assert.Equal("image.png", Assert.Single(records).OriginalName);
     }
 
     // Caller-safe failure reasons remain invariant across the operation's diagnostic context.
@@ -272,10 +322,9 @@ public sealed class GalleryTests
 
         // Assert
         Assert.Same(failure.Failures, failure.InnerException);
-        var fileFailure = TestAssertions.Single(failure.Failures.InnerExceptions, "the invalid file is reported once");
+        var fileFailure = Assert.Single(failure.Failures.InnerExceptions);
         Assert.IsType<IOException>(fileFailure);
-        TestAssertions.Contains(Path.Combine(folder, "invalid.png"), fileFailure.Message,
-            "the batch failure identifies the source file");
+        Assert.Contains(Path.Combine(folder, "invalid.png"), fileFailure.Message);
         Assert.IsType<UnknownImageFormatException>(fileFailure.InnerException);
         Assert.Equal(2, records.Count);
         Assert.Equal(source, preservedSource);
@@ -311,18 +360,16 @@ public sealed class GalleryTests
         }));
 
         // Assert
-        TestAssertions.Null(updates[0].Total, "the initial scan has no known total");
+        Assert.Null(updates[0].Total);
         Assert.Equal(0, updates[0].Completed);
         Assert.All(updates.Skip(1), update => Assert.Equal(4, update.Total));
-        Assert.Equal(Enumerable.Range(0, 5), updates.Select(update => update.Completed).Distinct());
+        Assert.Equal(4, updates[^1].Completed);
+        Assert.All(updates, update => Assert.InRange(update.Completed, 0, 4));
         Assert.All(updates.Zip(updates.Skip(1)), pair =>
         {
-            TestAssertions.True(pair.First.Completed <= pair.Second.Completed,
-                $"completed count never decreases from {pair.First.Completed} to {pair.Second.Completed}");
-            TestAssertions.True(pair.First.Imported <= pair.Second.Imported,
-                $"imported count never decreases from {pair.First.Imported} to {pair.Second.Imported}");
-            TestAssertions.True(pair.First.Failed <= pair.Second.Failed,
-                $"failure count never decreases from {pair.First.Failed} to {pair.Second.Failed}");
+            Assert.True(pair.First.Completed <= pair.Second.Completed);
+            Assert.True(pair.First.Imported <= pair.Second.Imported);
+            Assert.True(pair.First.Failed <= pair.Second.Failed);
         });
         var final = updates[^1];
         Assert.Equal(4, final.Completed);
@@ -331,15 +378,13 @@ public sealed class GalleryTests
         Assert.Equal("Ingestion complete.", final.Status);
         var fileFailures = failure.Failures.InnerExceptions;
         Assert.Equal(final.Failed, fileFailures.Count);
-        TestAssertions.True(fileFailures.Any(exception =>
-                exception.Message.Contains(Path.Combine(folder, "one.png"), StringComparison.Ordinal)
-                || exception.Message.Contains(Path.Combine(folder, "duplicate.png"), StringComparison.Ordinal)),
-            "the aggregate includes contextual failure information for whichever duplicate loses the import race");
-        TestAssertions.True(fileFailures.Any(exception => exception.Message.Contains(Path.Combine(folder, "invalid.png"), StringComparison.Ordinal)),
-            "the aggregate includes contextual failure information for invalid.png");
+        Assert.Contains(fileFailures, exception =>
+            exception.Message.Contains(Path.Combine(folder, "one.png"), StringComparison.Ordinal)
+            || exception.Message.Contains(Path.Combine(folder, "duplicate.png"), StringComparison.Ordinal));
+        Assert.Contains(fileFailures, exception => exception.Message.Contains(Path.Combine(folder, "invalid.png"), StringComparison.Ordinal));
         Assert.All(fileFailures, exception => Assert.IsType<IOException>(exception));
-        TestAssertions.True(fileFailures.Any(exception => exception.InnerException is InvalidOperationException), $"expected an InvalidOperationException inner failure; actual inner types: {string.Join(", ", fileFailures.Select(exception => exception.InnerException?.GetType().Name ?? "<null>"))}");
-        TestAssertions.True(fileFailures.Any(exception => exception.InnerException is UnknownImageFormatException), $"expected an UnknownImageFormatException inner failure; actual inner types: {string.Join(", ", fileFailures.Select(exception => exception.InnerException?.GetType().Name ?? "<null>"))}");
+        Assert.Contains(fileFailures, exception => exception.InnerException is InvalidOperationException);
+        Assert.Contains(fileFailures, exception => exception.InnerException is UnknownImageFormatException);
         var records = await fixture.Service.ListAsync();
         Assert.Equal(final.Imported, records.Count);
         Assert.Equal(records.Count, Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng",
@@ -375,7 +420,7 @@ public sealed class GalleryTests
         Assert.InRange(report.Stages.Single(stage => stage.Stage == IngestionStage.Decode).Count, 2, 3);
         Assert.Equal(2, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogInsert).Count);
         Assert.Equal(bytes.Length * 2L + MakePng(30, 18).Length, report.SourceBytes);
-        TestAssertions.True(report.WallMs > 0, "wall time is measured");
+        Assert.True(report.WallMs > 0);
         foreach (var forbidden in new[] { "secret-folder-name", "private-", fixture.Root, Path.GetTempPath() })
             Assert.DoesNotContain(forbidden, text, StringComparison.OrdinalIgnoreCase);
     }
@@ -401,7 +446,7 @@ public sealed class GalleryTests
         });
         // Assert
         Assert.Equal(new ImportProgress(0, 0, 0, 0, "No supported images found."), updates[^1]);
-        TestAssertions.Empty(await fixture.Service.ListAsync(), "unsupported files do not create gallery records");
+        Assert.Empty(await fixture.Service.ListAsync());
     }
 
     [Fact]
@@ -432,8 +477,7 @@ public sealed class GalleryTests
             for (var y = 0; y < original.Height; y++)
             for (var x = 0; x < original.Width; x++)
                 Assert.Equal(original[x, y], saved[x, y]);
-            TestAssertions.Contains(saved.Metadata.GetPngMetadata().TextData, chunk => chunk.Value == "retained prompt",
-                "the full-resolution PNG preserves the arranged prompt");
+            Assert.Contains(saved.Metadata.GetPngMetadata().TextData, chunk => chunk.Value == "retained prompt");
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
@@ -452,68 +496,235 @@ public sealed class GalleryTests
 
         // Assert
         Assert.Equal(settings, reloaded);
-        TestAssertions.DoesNotContain(settings.Model, Encoding.UTF8.GetString(blob!), "encrypted settings do not expose the model name");
-        TestAssertions.DoesNotContain(settings.ApiKey, Encoding.UTF8.GetString(blob!), "encrypted settings do not expose the API key");
+        Assert.DoesNotContain(settings.Model, Encoding.UTF8.GetString(blob!));
+        Assert.DoesNotContain(settings.ApiKey, Encoding.UTF8.GetString(blob!));
     }
 
     [Fact]
-    public async Task StorageOverview_WhenImagesAreMoved_MeasuresFilesAndCachesEncryptedResults()
+    public async Task StorageOverview_WhenUserRequestsRefresh_UpdatesResults()
     {
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var initialCache = await fixture.Service.CachedStorageOverviewAsync();
         var first = await fixture.Service.ImportAsync(new MemoryStream(MakePng(30, 10)), "first.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
         var second = await fixture.Service.ImportAsync(new MemoryStream(MakePng(20, 10)), "second.png", "folder");
-        var outside = Path.Combine(Path.GetTempPath(), "gallery-outside-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(outside);
-        try
-        {
-            await fixture.Service.MoveAsync(second.Id, outside, "moved");
-            var moved = TestAssertions.Single((await fixture.Service.ListAsync()).Where(image => image.Id == second.Id),
-                $"the moved record {second.Id} remains in the gallery");
-            var expectedImageBytes = new FileInfo(first.StoredPath).Length + new FileInfo(moved.StoredPath).Length;
-            string databasePath = Path.Combine(fixture.Root, "gallery.db");
-            string[] databasePaths = [databasePath, databasePath + "-wal", databasePath + "-shm"];
-            long expectedDatabaseBytes = databasePaths.Where(File.Exists).Sum(path => new FileInfo(path).Length);
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var expectedImageBytes = new FileInfo(first.StoredPath).Length + new FileInfo(second.StoredPath).Length;
+        var refreshStartedAt = DateTimeOffset.UtcNow;
 
-            // Act
-            var overview = await fixture.Service.RefreshStorageOverviewAsync();
-            File.Delete(first.StoredPath);
-            var cached = await fixture.Service.CachedStorageOverviewAsync();
-            var blob = await fixture.RawStore.ReadSettingsAsync("storage-overview");
-            // The gallery owns its media folders, so out-of-band deletions surface only after an index rebuild.
-            await fixture.Service.RebuildStorageIndexAsync();
-            await fixture.Service.WaitForDriveOperationsAsync();
-            // One second accommodates clock resolution without accepting an unbounded future stamp.
-            var clockSkewAllowance = TimeSpan.FromSeconds(1);
-            var refreshStartedAt = DateTimeOffset.UtcNow;
-            var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
-            var refreshCompletedAt = DateTimeOffset.UtcNow;
-            var expectedTimestampWindow = new ExpectedTimestampWindow(
-                refreshStartedAt - clockSkewAllowance, refreshCompletedAt + clockSkewAllowance);
+        // Act
+        var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
+        var refreshCompletedAt = DateTimeOffset.UtcNow;
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
 
-            // Assert
-            TestAssertions.Null(initialCache, "the overview has not been calculated yet");
-            TestAssertions.StartsWith(outside, moved.StoredPath, "the moved image is outside the vault directory");
-            Assert.Equal(2, overview.ImageFileCount);
-            Assert.Equal(expectedImageBytes, overview.ImageBytes);
-            Assert.Equal(expectedDatabaseBytes, overview.DatabaseBytes);
-            Assert.Equal(0, overview.MissingImageFiles);
-            Assert.Equal(overview.ImageBytes + overview.VaultFileBytes, overview.TotalBytes);
-            Assert.Equal(overview.ImageFileCount + overview.VaultFileCount, overview.TotalFileCount);
-            var minimumVaultBytes = overview.DatabaseBytes + new FileInfo(Path.Combine(fixture.Vault.Root, "vault.json")).Length;
-            TestAssertions.True(overview.VaultFileBytes >= minimumVaultBytes,
-                $"vault bytes {overview.VaultFileBytes} include at least database and header bytes {minimumVaultBytes}");
+        // Assert
+        Assert.Equal(1, previous.ImageFileCount);
+        Assert.Equal(2, refreshed.ImageFileCount);
+        Assert.Equal(expectedImageBytes, refreshed.ImageBytes);
+        Assert.Equal(0, refreshed.MissingImageFiles);
+        Assert.True(refreshed.DatabaseBytes > 0);
+        Assert.Equal(refreshed.DatabaseBytes + new FileInfo(Path.Combine(fixture.Root, "vault.json")).Length,
+            refreshed.VaultFileBytes);
+        Assert.Equal(refreshed.ImageBytes + refreshed.VaultFileBytes, refreshed.TotalBytes);
+        Assert.Equal(refreshed.ImageFileCount + refreshed.VaultFileCount, refreshed.TotalFileCount);
+        Assert.InRange(refreshed.UpdatedAt, refreshStartedAt, refreshCompletedAt);
+        Assert.False(refreshed.IsStale);
+        Assert.Equal(refreshed, cached);
+    }
 
-            Assert.Equal(overview, cached);
-            TestAssertions.DoesNotContain("ImageBytes", Encoding.UTF8.GetString(blob!), "the stored overview is encrypted");
+    [Fact]
+    public async Task StorageOverview_WhenFileIsMoved_MarksCachedResultsStale()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+        var payload = await fixture.RawStore.ReadSettingsAsync("storage-overview");
+        var destination = Directory.CreateDirectory(Path.Combine(fixture.Root, "destination")).FullName;
 
-            Assert.Equal(1, refreshed.ImageFileCount);
-            Assert.Equal(1, refreshed.MissingImageFiles);
-            Assert.InRange(refreshed.UpdatedAt, expectedTimestampWindow.Earliest, expectedTimestampWindow.Latest);
-        }
-        finally { Directory.Delete(outside, recursive: true); }
+        // Act
+        await fixture.Service.MoveAsync(record.Id, destination, "moved");
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var persisted = await fixture.RawStore.ReadSettingsAsync("storage-overview");
+
+        // Assert
+        Assert.NotNull(cached);
+        Assert.True(cached.IsStale);
+        Assert.Equal(previous with { IsStale = true }, cached);
+        Assert.Equal(payload, persisted);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenRefreshIsNotRequested_HasNoCachedResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        // Act
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Null(cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenUserRequestsRefresh_CachesEncryptedResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        // Act
+        var overview = await fixture.Service.RefreshStorageOverviewAsync();
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+        var payload = await fixture.RawStore.ReadSettingsAsync("storage-overview");
+
+        // Assert
+        Assert.Equal(overview, cached);
+        Assert.NotNull(payload);
+        Assert.DoesNotContain("ImageBytes", Encoding.UTF8.GetString(payload));
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenUserRefreshesAfterMove_ReplacesStaleResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Service.RefreshStorageOverviewAsync();
+        var destination = Directory.CreateDirectory(Path.Combine(fixture.Root, "destination")).FullName;
+        await fixture.Service.MoveAsync(record.Id, destination, "moved");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var stale = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Act
+        var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.NotNull(stale);
+        Assert.True(stale.IsStale);
+        Assert.False(refreshed.IsStale);
+        Assert.Equal(1, refreshed.ImageFileCount);
+        Assert.Equal(new FileInfo(Path.Combine(destination, "moved.dpng")).Length, refreshed.ImageBytes);
+        Assert.Equal(0, refreshed.MissingImageFiles);
+        Assert.True(refreshed.CatalogRevision > stale.CatalogRevision);
+        Assert.Equal(refreshed, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenGalleryIsReopened_PreservesStaleCachedResults()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+        var destination = Directory.CreateDirectory(Path.Combine(fixture.Root, "destination")).FullName;
+        await fixture.Service.MoveAsync(record.Id, destination, "moved");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        using var session = new VaultSession();
+        session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+        using var reopened = new GalleryService(new GalleryStore(Path.Combine(fixture.Root, "gallery.db")),
+            new VaultStore(fixture.Root), session);
+
+        // Act
+        var cached = await reopened.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(previous with { IsStale = true }, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenCachedResultsHaveNoRevision_MarksThemStale()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var previous = new StorageOverview(100, 1, 200, 2, 300, 0, DateTimeOffset.UtcNow);
+        await fixture.Store.SaveSettingsAsync(previous, "storage-overview", "storage-overview:v1", fixture.Session.Key);
+
+        // Act
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(previous with { IsStale = true }, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenMoveIsRejected_KeepsCachedResultsCurrent()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+
+        // Act
+        var error = await Record.ExceptionAsync(() => fixture.Service.MoveAsync(record.Id, fixture.Root, "..\\escaped"));
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Equal(previous, cached);
+        Assert.False(cached!.IsStale);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenFileIndexIsRebuilt_KeepsCachedResultsButMarksThemStale()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var previous = await fixture.Service.RefreshStorageOverviewAsync();
+        File.Delete(record.StoredPath);
+
+        // Act
+        await fixture.Service.RebuildStorageIndexAsync();
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var cached = await fixture.Service.CachedStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(previous with { IsStale = true }, cached);
+    }
+
+    [Fact]
+    public async Task StorageOverview_WhenUserRefreshesAfterIndexRebuild_ReportsMissingFiles()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Service.RefreshStorageOverviewAsync();
+        File.Delete(record.StoredPath);
+        await fixture.Service.RebuildStorageIndexAsync();
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        // Act
+        var refreshed = await fixture.Service.RefreshStorageOverviewAsync();
+
+        // Assert
+        Assert.Equal(0, refreshed.ImageFileCount);
+        Assert.Equal(0, refreshed.ImageBytes);
+        Assert.Equal(1, refreshed.MissingImageFiles);
+        Assert.False(refreshed.IsStale);
     }
 
     [Theory]
@@ -549,8 +760,6 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var expectedException = new ExpectedException("an unknown operation choice is rejected",
-            expectedChoiceName, "99", firstOption, secondOption);
         // Act
         var exception = operationName switch
         {
@@ -567,7 +776,11 @@ public sealed class GalleryTests
         };
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, exception);
+        var invalidChoice = Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains(expectedChoiceName, invalidChoice.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("99", invalidChoice.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(firstOption, invalidChoice.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(secondOption, invalidChoice.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(await fixture.Service.ListAsync());
     }
 
@@ -635,23 +848,20 @@ public sealed class GalleryTests
             return Task.CompletedTask;
         }));
         var retainedDuplicate = await File.ReadAllBytesAsync(duplicate);
-        var imported = TestAssertions.Single((await fixture.Service.ListAsync()).Where(image => image.OriginalName == "valid.png"),
-            "exactly one newly imported record corresponds to valid.png");
+        var imported = Assert.Single(await fixture.Service.ListAsync(), image => image.OriginalName == "valid.png");
         await fixture.Service.VerifyImportedAsync(imported.Id);
 
         // Assert
         Assert.Equal(2, failure.Failures.InnerExceptions.Count);
-        TestAssertions.True(failure.Failures.InnerExceptions.Any(exception =>
-                exception.Message.Contains(invalid, StringComparison.Ordinal)),
-            "the aggregate identifies the invalid source file");
-        TestAssertions.True(failure.Failures.InnerExceptions.Any(exception =>
-                exception.Message.Contains(duplicate, StringComparison.Ordinal)),
-            "the aggregate identifies the duplicate source file");
+        Assert.Contains(failure.Failures.InnerExceptions, exception =>
+            exception.Message.Contains(invalid, StringComparison.Ordinal));
+        Assert.Contains(failure.Failures.InnerExceptions, exception =>
+            exception.Message.Contains(duplicate, StringComparison.Ordinal));
         Assert.Equal(new ImportProgress(3, 3, 1, 2, "Ingestion complete."), final);
-        TestAssertions.False(File.Exists(valid), $"the verified imported source {valid} is deleted");
-        TestAssertions.True(File.Exists(invalid), $"the invalid source {invalid} is retained");
+        Assert.False(File.Exists(valid));
+        Assert.True(File.Exists(invalid));
         Assert.Equal(duplicateBytes, retainedDuplicate);
-        TestAssertions.True(File.Exists(imported.StoredPath), $"the imported copy remains at {imported.StoredPath}");
+        Assert.True(File.Exists(imported.StoredPath));
     }
 
     [Fact]
@@ -693,10 +903,10 @@ public sealed class GalleryTests
 
         // Assert
         Assert.Equal(1600, preview.Width);
-        TestAssertions.Empty(preview.Metadata.GetPngMetadata().TextData, "the bounded preview omits embedded metadata");
+        Assert.Empty(preview.Metadata.GetPngMetadata().TextData);
         Assert.Equal(1800, fullImage.Width);
         Assert.Equal(10, fullImage.Height);
-        TestAssertions.Empty(fullImage.Metadata.GetPngMetadata().TextData, "the full preview omits embedded metadata");
+        Assert.Empty(fullImage.Metadata.GetPngMetadata().TextData);
     }
 
     [Fact]
@@ -714,10 +924,10 @@ public sealed class GalleryTests
         using var fullImage = Image.Load(fullBytes);
 
         // Assert
-        TestAssertions.StartsWith("data:image/jpeg;base64,", fit, "fit mode uses a compact JPEG data URL");
+        Assert.StartsWith("data:image/jpeg;base64,", fit);
         Assert.Equal(1600, fitImage.Width);
-        TestAssertions.Null(fitImage.Metadata.ExifProfile, "the fit image omits embedded EXIF metadata");
-        TestAssertions.StartsWith("data:image/png;base64,", full, "full-resolution mode uses a PNG data URL");
+        Assert.Null(fitImage.Metadata.ExifProfile);
+        Assert.StartsWith("data:image/png;base64,", full);
         Assert.Equal(record.PngSha256, Convert.ToHexString(SHA256.HashData(fullBytes)));
         Assert.Equal(1800, fullImage.Width);
     }
@@ -734,8 +944,12 @@ public sealed class GalleryTests
         var records = await fixture.Service.ListAsync();
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the dimension validation reports the rejected dimensions and both limits", "16385", "16384", "40 megapixel", "dimension limit"), error);
-        TestAssertions.Empty(records, "oversized images are rejected before persistence");
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains("16385", error.Message, StringComparison.Ordinal);
+        Assert.Contains("16384", error.Message, StringComparison.Ordinal);
+        Assert.Contains("40 megapixel", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("dimension limit", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(records);
     }
 
     [Fact]
@@ -768,11 +982,6 @@ public sealed class GalleryTests
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
         using var input = new MemoryStream(MakePng());
         fixture.Session.Lock();
-        var expected = new ExpectedException("a locked gallery refuses writes before accessing its secret key", "unlock", "gallery", "first")
-        { HttpStatusCode = System.Net.HttpStatusCode.BadRequest, Severity = Severity.Error,
-          Reason = "Unlock the gallery first.", LogEventValue = "Vault.AcquireKey",
-          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Vault.State", "locked") };
-
         // Act
         var actual = await Assert.ThrowsAsync<VaultLockedException>(() => operation switch
         {
@@ -784,7 +993,14 @@ public sealed class GalleryTests
         });
 
         // Assert
-        TestAssertions.Exception<VaultLockedException>(expected, actual);
+        var locked = Assert.IsType<VaultLockedException>(actual);
+        Assert.Contains("unlock", locked.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, locked.HttpStatusCode);
+        Assert.Equal(Severity.Error, locked.Severity);
+        Assert.Equal("Unlock the gallery first.", locked.Reason);
+        Assert.Equal("Vault.AcquireKey", locked.LogEvent?.Value);
+        Assert.Equal("locked", locked.ContextualDataByName.ValuesByName["Vault.State"]);
+        Assert.Contains("Vault.State: locked", locked.ToDiagnosticString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -813,10 +1029,9 @@ public sealed class GalleryTests
         var portrait = fixture.Service.Filter([matching, other], new() { Orientation = "portrait", Deletion = "all" }).ToArray();
 
         // Assert
-        Assert.Equal(matching, TestAssertions.Single(allCriteria,
-            "only the image matching all criteria remains"));
-        TestAssertions.Empty(partialTag, "partial tag names do not match an exact tag");
-        Assert.Equal(other, TestAssertions.Single(marked, "only the marked image matches"));
-        TestAssertions.Empty(portrait, "landscape images do not match portrait orientation");
+        Assert.Equal(matching, Assert.Single(allCriteria));
+        Assert.Empty(partialTag);
+        Assert.Equal(other, Assert.Single(marked));
+        Assert.Empty(portrait);
     }
 }

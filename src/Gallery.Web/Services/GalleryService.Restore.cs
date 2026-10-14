@@ -74,6 +74,7 @@ public sealed partial class GalleryService
     {
         ValidateArchiveName(latestBackupName);
         var destination = NormalizeVaultDirectory(destinationDirectory);
+        RequireLocalCatalogDirectory(destination);
         await lifecycleGate.WaitAsync();
         VaultCheckout? destinationCheckout = null;
         byte[]? key = null;

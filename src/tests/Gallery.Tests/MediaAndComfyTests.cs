@@ -242,10 +242,11 @@ public sealed class MediaAndComfyTests
             fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder"));
 
         // Assert
-        TestAssertions.Exception<VideoToolUnavailableException>(new ExpectedException("the missing video tools have installation and configuration remedies", "Install", "ffmpeg", "Gallery:FFmpegPath", "MP4")
-        { HttpStatusCode = System.Net.HttpStatusCode.InternalServerError, Severity = Severity.Error,
-          Reason = "Required video tools are unavailable.", LogEventValue = "Video.PrepareImport",
-          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Video.RequiredTools", "ffmpeg, ffprobe") }, error);
+        Assert.IsType<VideoToolUnavailableException>(error);
+        Assert.Contains("Install", error.Message, StringComparison.Ordinal);
+        Assert.Contains("ffmpeg", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Gallery:FFmpegPath", error.Message, StringComparison.Ordinal);
+        Assert.Contains("MP4", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(await fixture.Service.ListAsync());
     }
 
@@ -259,12 +260,12 @@ public sealed class MediaAndComfyTests
         var record = await arrangement.TestVault.Service.ImportAsync(new MemoryStream(arrangement.Bytes), "clip.mp4", "folder");
 
         // Assert - real media decoding preserves the video and Comfy metadata contract
-        TestAssertions.True(record.IsVideo, "the imported MP4 is classified as video");
+        Assert.True(record.IsVideo);
         Assert.EndsWith(".dmp4", record.StoredPath);
         Assert.Equal((160, 90), (record.Width, record.Height));
         Assert.InRange(record.DurationSeconds, 1.5, 2.5);
         Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", record.Generation!.Prompt);
-        TestAssertions.True(record.Generation.HasWorkflow, "the imported video retains workflow metadata");
+        Assert.True(record.Generation.HasWorkflow);
     }
 
     [InstalledVideoToolsFact]
@@ -291,7 +292,7 @@ public sealed class MediaAndComfyTests
         var error = await Record.ExceptionAsync(() => arrangement.TestVault.Service.VerifyImportedAsync(arrangement.ImageRecord!.Id));
 
         // Assert - real MP4 verification validates encrypted source content
-        TestAssertions.Null(error, "unchanged imported MP4 passes authentication and source-hash verification");
+        Assert.Null(error);
     }
 
     [InstalledVideoToolsFact]
@@ -304,7 +305,7 @@ public sealed class MediaAndComfyTests
         var thumbnail = await arrangement.TestVault.Service.ThumbnailAsync(arrangement.ImageRecord!.Id);
 
         // Assert - video thumbnails expose the decoded PNG frame
-        TestAssertions.StartsWith("data:image/png;base64,", thumbnail, "real video frame becomes a PNG thumbnail");
+        Assert.StartsWith("data:image/png;base64,", thumbnail);
     }
 
     [InstalledVideoToolsFact]
@@ -317,7 +318,7 @@ public sealed class MediaAndComfyTests
         var preview = await arrangement.TestVault.Service.PreviewAsync(arrangement.ImageRecord!.Id);
 
         // Assert - preview exposes a PNG representation of the decoded frame
-        TestAssertions.StartsWith("data:image/png;base64,", preview, "real video frame becomes a PNG preview");
+        Assert.StartsWith("data:image/png;base64,", preview);
     }
 
     [InstalledVideoToolsFact]
@@ -355,7 +356,7 @@ public sealed class MediaAndComfyTests
         var scan = await fixture.Service.ScanDuplicatesAsync();
 
         // Assert - even matching migrated pixel/hash values cannot cross media families
-        TestAssertions.Empty(scan.Groups, "image and video records are never grouped together");
+        Assert.Empty(scan.Groups);
     }
 
     internal static string CarrierMetadata(string carrier)

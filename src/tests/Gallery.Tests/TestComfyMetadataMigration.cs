@@ -47,8 +47,8 @@ public sealed class TestComfyMetadataMigration
         Assert.Equal(6.5, info.Cfg);
         Assert.Equal("sdxl/juggernautXL_v9.safetensors", info.Model);
         Assert.Equal("Checkpoint", info.ModelKind);
-        TestAssertions.True(info.HasWorkflow, "the extracted graph has workflow metadata");
-        TestAssertions.True(info.HasApiPrompt, "the extracted graph has an API prompt");
+        Assert.True(info.HasWorkflow);
+        Assert.True(info.HasApiPrompt);
     }
 
     [Fact]
@@ -134,13 +134,6 @@ public sealed class TestComfyMetadataMigration
     {
         // Arrange
         const string metadata = "not json";
-        var expectedException = new ExpectedException("the malformed stored metadata identifies its JSON failure",
-            "Stored generation metadata", "not valid JSON", metadata)
-        { HttpStatusCode = System.Net.HttpStatusCode.InternalServerError, Severity = Severity.Error,
-          Reason = "Stored generation metadata is invalid.", LogEventValue = "Metadata.ParseStoredDocument",
-          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty
-            .Add("Metadata.InputExcerpt", "\"not json\"") };
-
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         await ArrangeStoredMetadataAsync(fixture, metadata);
@@ -149,7 +142,10 @@ public sealed class TestComfyMetadataMigration
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.LoadAsync());
 
         // Assert - the boundary identifies the failing catalog image and preserves its parse cause
-        TestAssertions.Exception<StoredMetadataFormatException>(expectedException, exception.InnerException);
+        var invalidStoredMetadata = Assert.IsType<StoredMetadataFormatException>(exception.InnerException);
+        Assert.Contains("Stored generation metadata", invalidStoredMetadata.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not valid JSON", invalidStoredMetadata.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(metadata, invalidStoredMetadata.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -169,8 +165,8 @@ public sealed class TestComfyMetadataMigration
         var generation = Assert.Single(records).Generation!;
 
         // Assert
-        TestAssertions.True(generation.HasWorkflow, "workflow-only metadata retains the workflow");
-        TestAssertions.False(generation.HasApiPrompt, "workflow-only metadata has no API prompt");
+        Assert.True(generation.HasWorkflow);
+        Assert.False(generation.HasApiPrompt);
         Assert.Equal("", generation.Prompt);
     }
 

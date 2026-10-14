@@ -53,8 +53,8 @@ public sealed class RemovalTests
         await fixture.Service.WaitForDriveOperationsAsync();
 
         Assert.True(File.Exists(record.StoredPath));
-        TestAssertions.False(File.Exists(stagedPath), "the identical staged copy is reconciled");
-        TestAssertions.True(File.Exists(conflictingPath), "the conflicting staged copy is preserved");
+        Assert.False(File.Exists(stagedPath));
+        Assert.True(File.Exists(conflictingPath));
         Assert.Equal(1, fixture.Service.DriveQueueStatus.Failed);
     }
 
@@ -87,7 +87,7 @@ public sealed class RemovalTests
         Assert.Equal(imageRecord.Id, Assert.Single(imageRecords).Id);
         Assert.Equal(imageRecord.StoredPath, imageRecords[0].StoredPath);
         Assert.Equal(expectedCiphertext, actualCiphertext);
-        TestAssertions.False(stagedFileExists, $"recovery consumes staged ciphertext at {stagedPath}");
+        Assert.False(stagedFileExists);
     }
 
     // Background recovery restores interrupted staging; a later removal then deletes catalog and ciphertext together.
@@ -124,10 +124,10 @@ public sealed class RemovalTests
         Assert.Null(removalError);
         var removalResult = Assert.Single(removalResults);
         Assert.Equal(imageRecord.Id, removalResult.Id);
-        TestAssertions.True(removalResult.Removed, "the removal deletes the selected image");
+        Assert.True(removalResult.Removed);
         Assert.Null(removalResult.Error);
-        TestAssertions.False(storedFileExists, "the queued delete removes the stored ciphertext");
-        TestAssertions.False(stagedFileExists, "recovery leaves no staging residue");
+        Assert.False(storedFileExists);
+        Assert.False(stagedFileExists);
         Assert.Empty(imageRecords);
     }
 
@@ -157,8 +157,8 @@ public sealed class RemovalTests
         // Assert
         Assert.Equal(imageRecord.Id, Assert.Single(imageRecords).Id);
         Assert.Equal(expectedCiphertext, actualCiphertext);
-        TestAssertions.False(currentStageExists, "the current staging copy was recovered");
-        TestAssertions.False(legacyStageExists, "the identical legacy staging copy was removed");
+        Assert.False(currentStageExists);
+        Assert.False(legacyStageExists);
     }
 
     // Only an authentic ciphertext is restored; a conflicting copy is preserved and reported as a failed operation.
@@ -188,7 +188,7 @@ public sealed class RemovalTests
 
         // Assert
         Assert.Equal(expectedCiphertext, storedCiphertext);
-        TestAssertions.False(File.Exists(currentStagedPath), "the authentic staged copy was restored");
+        Assert.False(File.Exists(currentStagedPath));
         Assert.Equal(conflictingCiphertext, legacyCiphertext);
         Assert.Equal(expectedCatalogPayload, catalogPayload);
         Assert.Equal(1, testVault.Service.DriveQueueStatus.Failed);
@@ -248,7 +248,7 @@ public sealed class RemovalTests
         var record = await fixture.Service.ImportAsync(new MemoryStream(bytes), "source.png", fixture.Root, source);
         await fixture.Service.UpdateAsync(record.Id, image => image with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
-        TestAssertions.True(Assert.Single(plan).OriginalExists, "the removal plan detects the existing original");
+        Assert.True(Assert.Single(plan).OriginalExists);
 
         // Act
         var results = new List<RemovalResult>();
@@ -258,13 +258,13 @@ public sealed class RemovalTests
 
         // Assert
         Assert.Null(removalError);
-        TestAssertions.True(Assert.Single(results).Removed, "the selected image is removed");
+        Assert.True(Assert.Single(results).Removed);
         Assert.Null(results[0].Error);
         Assert.Equal(!deleteOriginal, File.Exists(source));
-        TestAssertions.False(File.Exists(record.StoredPath), $"the encrypted gallery file at {record.StoredPath} is removed");
+        Assert.False(File.Exists(record.StoredPath));
         Assert.Empty(await fixture.Service.ListAsync());
         var fingerprint = VaultCrypto.ContentFingerprint(fixture.Session.Key, record.Sha256);
-        TestAssertions.False(await fixture.Store.ContainsFingerprintAsync(record.Sha256, fixture.Session.Key), "the removed image fingerprint is absent");
+        Assert.False(await fixture.Store.ContainsFingerprintAsync(record.Sha256, fixture.Session.Key));
     }
 
     [Fact]
@@ -278,16 +278,20 @@ public sealed class RemovalTests
         await fixture.Service.UpdateAsync(record.Id, image => image with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
         await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "");
-        var expectedException = new ExpectedException("a removed image has no thumbnail", "thumbnail", record.Id, "found 0")
-        { HttpStatusCode = System.Net.HttpStatusCode.NotFound, Severity = Severity.Error,
-          Reason = "Image thumbnail does not exist.", LogEventValue = "Gallery.ReadThumbnail",
-          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Image.Id", record.Id) };
-
         // Act
         var exception = await Assert.ThrowsAsync<ThumbnailNotFoundException>(() => fixture.Store.ReadThumbnailAsync(record.Id, fixture.Session.Key));
 
         // Assert
-        TestAssertions.Exception<ThumbnailNotFoundException>(expectedException, exception);
+        var missingThumbnail = Assert.IsType<ThumbnailNotFoundException>(exception);
+        Assert.Contains("thumbnail", missingThumbnail.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(record.Id, missingThumbnail.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("found 0", missingThumbnail.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, missingThumbnail.HttpStatusCode);
+        Assert.Equal(Severity.Error, missingThumbnail.Severity);
+        Assert.Equal("Image thumbnail does not exist.", missingThumbnail.Reason);
+        Assert.Equal("Gallery.ReadThumbnail", missingThumbnail.LogEvent?.Value);
+        Assert.Equal(record.Id, missingThumbnail.ContextualDataByName.ValuesByName["Image.Id"]);
+        Assert.Contains($"Image.Id: {record.Id}", missingThumbnail.ToDiagnosticString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -323,7 +327,7 @@ public sealed class RemovalTests
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.jpg", "browser-folder");
         await fixture.Service.UpdateAsync(record.Id, image => image with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
-        TestAssertions.False(Assert.Single(plan).OriginalExists, "the removal plan reports the original missing");
+        Assert.False(Assert.Single(plan).OriginalExists);
 
         // Act
         var results = new List<RemovalResult>();
@@ -333,7 +337,7 @@ public sealed class RemovalTests
 
         // Assert
         Assert.Null(removalError);
-        TestAssertions.True(Assert.Single(results).Removed, "the image is removed after applying the missing-original policy");
+        Assert.True(Assert.Single(results).Removed);
         Assert.Null(results[0].Error);
         if (restore)
         {
@@ -342,7 +346,7 @@ public sealed class RemovalTests
             Assert.Equal(record.Width, image.Width);
         }
         else Assert.Null(results[0].RestoredPath);
-        TestAssertions.False(File.Exists(record.StoredPath), $"the encrypted gallery file at {record.StoredPath} is removed");
+        Assert.False(File.Exists(record.StoredPath));
         Assert.Empty(await fixture.Service.ListAsync());
     }
 
@@ -353,18 +357,20 @@ public sealed class RemovalTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
-        var expectedException = new ExpectedException("the removal refusal identifies the unmarked image",
-            record.Id, "marked for deletion")
-        { HttpStatusCode = System.Net.HttpStatusCode.BadRequest, Severity = Severity.Error,
-          Reason = "Image must be marked for deletion.", LogEventValue = "Gallery.PrepareRemoval",
-          ContextualDataByName = System.Collections.Immutable.ImmutableDictionary<string, object>.Empty
-            .Add("Image.Id", record.Id).Add("Image.MarkedForDeletion", false) };
-
         // Act
         var exception = await Assert.ThrowsAsync<ImageNotMarkedForDeletionException>(() => fixture.Service.PrepareRemovalAsync([record.Id]));
 
         // Assert
-        TestAssertions.Exception<ImageNotMarkedForDeletionException>(expectedException, exception);
+        var unmarkedImage = Assert.IsType<ImageNotMarkedForDeletionException>(exception);
+        Assert.Contains(record.Id, unmarkedImage.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("marked for deletion", unmarkedImage.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, unmarkedImage.HttpStatusCode);
+        Assert.Equal(Severity.Error, unmarkedImage.Severity);
+        Assert.Equal("Image must be marked for deletion.", unmarkedImage.Reason);
+        Assert.Equal("Gallery.PrepareRemoval", unmarkedImage.LogEvent?.Value);
+        Assert.Equal(record.Id, unmarkedImage.ContextualDataByName.ValuesByName["Image.Id"]);
+        Assert.Equal(false, unmarkedImage.ContextualDataByName.ValuesByName["Image.MarkedForDeletion"]);
+        Assert.Contains($"Image.MarkedForDeletion: False", unmarkedImage.ToDiagnosticString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -385,9 +391,9 @@ public sealed class RemovalTests
         // Assert
         Assert.IsType<AggregateException>(removalError);
         var result = Assert.Single(results);
-        TestAssertions.False(result.Removed, "an image unmarked after preview is not removed");
+        Assert.False(result.Removed);
         Assert.Contains("no longer marked", result.Error);
-        TestAssertions.True(File.Exists(record.StoredPath), $"the rejected removal retains {record.StoredPath}");
+        Assert.True(File.Exists(record.StoredPath));
     }
 
     [Fact]
@@ -409,8 +415,8 @@ public sealed class RemovalTests
 
         // Assert
         Assert.IsType<AggregateException>(removalError);
-        TestAssertions.False(result.Removed, "a restore collision retains the gallery entry");
-        TestAssertions.Contains("already exists", result.Error!, "the restoration collision is reported");
+        Assert.False(result.Removed);
+        Assert.Contains("already exists", result.Error!);
         Assert.Equal("existing", await File.ReadAllTextAsync(target));
     }
 
@@ -435,9 +441,9 @@ public sealed class RemovalTests
 
         // Assert
         Assert.IsType<AggregateException>(removalError);
-        TestAssertions.False(result.Removed, "tampered ciphertext retains the gallery entry");
+        Assert.False(result.Removed);
         Assert.IsType<System.Security.Cryptography.AuthenticationTagMismatchException>(result.Failure!.Cause.InnerException);
-        TestAssertions.False(File.Exists(target), $"tampered ciphertext does not create {target}");
+        Assert.False(File.Exists(target));
         Assert.Single(await fixture.Service.ListAsync());
     }
 
@@ -462,7 +468,7 @@ public sealed class RemovalTests
 
         // Assert
         Assert.IsType<AggregateException>(removalError);
-        TestAssertions.False(result.Removed, "a changed original prevents removal");
+        Assert.False(result.Removed);
         Assert.Contains("changed since import", result.Error);
         Assert.Equal("replacement", await File.ReadAllTextAsync(source));
     }
@@ -488,7 +494,7 @@ public sealed class RemovalTests
 
         // Assert
         Assert.IsType<AggregateException>(removalError);
-        TestAssertions.False(result.Removed, "a changed original status requires a new preview");
+        Assert.False(result.Removed);
         Assert.Contains("status changed", result.Error);
         Assert.Single(await fixture.Service.ListAsync());
     }
@@ -542,9 +548,9 @@ public sealed class RemovalTests
 
         // Assert
         Assert.IsType<AggregateException>(removalError);
-        TestAssertions.False(result.Removed, "a database failure prevents removal");
+        Assert.False(result.Removed);
         Assert.Contains("test failure", result.Error);
-        TestAssertions.True(File.Exists(record.StoredPath), $"database rollback retains {record.StoredPath}");
+        Assert.True(File.Exists(record.StoredPath));
         Assert.Single(await fixture.Service.ListAsync());
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(record.StoredPath)!, "*.removing-*"));
     }
@@ -565,8 +571,8 @@ public sealed class RemovalTests
 
         // Assert
         Assert.Equal(record.Id, Assert.Single(records).Id);
-        TestAssertions.True(File.Exists(record.StoredPath), $"recovery restores the staged file to {record.StoredPath}");
-        TestAssertions.False(File.Exists(stagedPath), $"recovery clears the staged file at {stagedPath}");
+        Assert.True(File.Exists(record.StoredPath));
+        Assert.False(File.Exists(stagedPath));
         await fixture.Service.VerifyImportedAsync(record.Id);
     }
 
@@ -587,7 +593,7 @@ public sealed class RemovalTests
 
         // Assert
         Assert.Empty(records);
-        TestAssertions.False(File.Exists(stagedPath), $"recovery deletes orphaned staged ciphertext at {stagedPath}");
+        Assert.False(File.Exists(stagedPath));
     }
 
     [Fact]
@@ -611,10 +617,10 @@ public sealed class RemovalTests
         // Assert
         Assert.Null(removalError);
         Assert.Equal([existing.Id, missing.Id], results.Select(result => result.Id));
-        Assert.All(results, result => { TestAssertions.True(result.Removed, $"result {result.Id} is removed"); Assert.Null(result.Error); });
-        TestAssertions.False(File.Exists(source), $"the existing original at {source} is deleted");
+        Assert.All(results, result => { Assert.True(result.Removed); Assert.Null(result.Error); });
+        Assert.False(File.Exists(source));
         var restoredPath = Path.Combine(fixture.Root, missing.Id + ".png");
-        TestAssertions.True(File.Exists(restoredPath), $"the missing original is restored to {restoredPath}");
+        Assert.True(File.Exists(restoredPath));
         Assert.Empty(await fixture.Service.ListAsync());
     }
 }

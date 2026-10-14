@@ -1,0 +1,15 @@
+<p class="text-muted-foreground" data-testid="overview-updated">
+    Last updated <time datetime="@Overview.UpdatedAt.ToString("O")">@Overview.UpdatedAt.ToLocalTime().ToString("g")</time>.
+    @if (Overview.IsStale)
+    {
+        <span role="status" data-testid="overview-stale">Stale data - gallery storage has changed. Select Refresh to update these values.</span>
+    }
+    else
+    {
+        <span>Cached values are shown until you refresh.</span>
+    }
+</p>
+
+@code {
+    [Parameter, EditorRequired] public StorageOverview Overview { get; set; } = default!;
+}

@@ -9,19 +9,23 @@ public enum IngestionStage
     Discover,
     Backfill,
     File,
+    OpenSource,
     ReadSource,
     HashSource,
+    DuplicateWait,
     DuplicateCheck,
     Decode,
-    EncodePng,
     VideoProbe,
     Thumbnail,
     Encrypt,
     PersistWait,
     WriteMedia,
     CatalogInsert,
+    CatalogCommit,
     Verify,
-    DeleteSource
+    DeleteSource,
+    CloseSource,
+    ReportProgress
 }
 
 public sealed record IngestionStageTiming(IngestionStage Stage, int Count, double TotalMs, double MeanMs,
@@ -36,6 +40,8 @@ public sealed record IngestionTimingReport(
     int FilesFound, int Imported, int Failed, long SourceBytes, double WallMs,
     IReadOnlyList<IngestionStageTiming> Stages)
 {
+    public string CatalogDrive { get; init; } = "Unknown";
+
     public override string ToString()
     {
         var invariant = CultureInfo.InvariantCulture;
@@ -44,6 +50,7 @@ public sealed record IngestionTimingReport(
         var builder = new StringBuilder();
         builder.AppendLine("Ingestion timings (no file or folder names recorded)");
         builder.AppendLine(invariant, $"Source drive: {SourceDrive} | Gallery drive: {GalleryDrive} | Workers: {Workers} | CPUs: {ProcessorCount}");
+        builder.AppendLine($"Catalog drive: {CatalogDrive}");
         builder.AppendLine(invariant, $"Files: {FilesFound} found, {Imported} imported, {Failed} reported issues | Source data read: {mib:F1} MiB");
         builder.AppendLine(invariant, $"Wall time: {seconds:F2} s | {(seconds > 0 ? FilesFound / seconds : 0):F2} files/s | {(seconds > 0 ? mib / seconds : 0):F2} MiB/s");
         builder.AppendLine("Per-file stages run on parallel workers, so stage totals can exceed wall time.");
@@ -64,15 +71,16 @@ public sealed class IngestionTimings
     private double? wallMs;
     private long sourceBytes;
     private int filesFound, imported, failed, workers;
-    private string sourceDrive = "Unknown", galleryDrive = "Unknown";
+    private string sourceDrive = "Unknown", galleryDrive = "Unknown", catalogDrive = "Unknown";
 
-    internal void Begin(string sourceFolder, string galleryRoot)
+    internal void Begin(string sourceFolder, string galleryRoot, string? catalogRoot = null)
     {
         lock (syncRoot)
         {
             startTimestamp = Stopwatch.GetTimestamp();
             sourceDrive = DescribeDrive(sourceFolder);
             galleryDrive = DescribeDrive(galleryRoot);
+            catalogDrive = DescribeDrive(catalogRoot ?? galleryRoot);
         }
     }
 
@@ -117,7 +125,7 @@ public sealed class IngestionTimings
             }).ToList();
             return new IngestionTimingReport(sourceDrive, galleryDrive, workers, Environment.ProcessorCount,
                 filesFound, imported, failed, Interlocked.Read(ref sourceBytes),
-                wallMs ?? Elapsed(), stages);
+                wallMs ?? Elapsed(), stages) { CatalogDrive = catalogDrive };
         }
     }
 

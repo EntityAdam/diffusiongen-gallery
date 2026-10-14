@@ -105,6 +105,47 @@ public sealed class UiComponentTests
         Assert.Contains("autocomplete=\"off\"", html);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DirectoryInput_ExplainsWhetherNetworkStorageIsAllowed(bool localOnly)
+    {
+        var html = await RenderAsync<DirectoryPathInput>(new()
+        {
+            [nameof(DirectoryPathInput.Label)] = "Catalog location",
+            [nameof(DirectoryPathInput.LocalOnly)] = localOnly
+        });
+
+        Assert.Contains("Catalog location", html);
+        Assert.Contains("aria-describedby", html);
+        Assert.Contains(localOnly ? "not a NAS/SMB share" : "local directory or UNC path", html);
+        Assert.Contains(localOnly ? @"C:\Gallery\catalog" : @"\\server\share\gallery", html);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StorageOverviewStatus_ShowsLastUpdatedAndIndicatesStaleData(bool stale)
+    {
+        var overview = new StorageOverview(1, 1, 1, 1, 1, 0, DateTimeOffset.UtcNow) { IsStale = stale };
+
+        var html = await RenderAsync<StorageOverviewStatus>(new()
+        {
+            [nameof(StorageOverviewStatus.Overview)] = overview
+        });
+
+        Assert.Contains("Last updated", html);
+        Assert.Contains($"datetime=\"{overview.UpdatedAt:O}\"", html);
+        if (stale)
+        {
+            Assert.Contains("data-testid=\"overview-stale\"", html);
+            Assert.Contains("role=\"status\"", html);
+            Assert.Contains("Select Refresh", html);
+        }
+        else
+            Assert.DoesNotContain("overview-stale", html);
+    }
+
     private static async Task<string> RenderAsync<TComponent>(Dictionary<string, object?> parameters)
         where TComponent : IComponent
     {

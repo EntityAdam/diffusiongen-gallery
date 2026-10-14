@@ -12,15 +12,17 @@ public sealed class ImportMoveBoundaryTests
         // Arrange
         using var fixture = new TestVault();
         using var input = new MemoryStream([1, 2, 3]);
-        var expectedException = new ExpectedException("unsupported import name is rejected before key or content access", "Unsupported", "photo.txt", ".png", ".mp4");
-
         // Act
         var exception = await Record.ExceptionAsync(() => fixture.Service.ImportAsync(input, "photo.txt", "folder"));
         var inputPosition = input.Position;
         var vaultDirectoryExists = Directory.Exists(fixture.Root);
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, exception);
+        var unsupportedName = Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains("Unsupported", unsupportedName.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("photo.txt", unsupportedName.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".png", unsupportedName.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(".mp4", unsupportedName.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0L, inputPosition);
         Assert.False(vaultDirectoryExists);
     }
@@ -65,15 +67,16 @@ public sealed class ImportMoveBoundaryTests
         var expectedCatalog = await fixture.RawStore.ReadRecordAsync(record.Id);
         var folder = Path.GetDirectoryName(record.StoredPath)!;
         var name = Path.GetFileNameWithoutExtension(record.StoredPath);
-        var expectedException = new ExpectedException("same-path move is rejected", "different", "name", "destination");
-
         // Act
         var exception = await Record.ExceptionAsync(() => fixture.Service.MoveAsync(record.Id, folder, name));
         var sourceCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var catalog = await fixture.RawStore.ReadRecordAsync(record.Id);
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, exception);
+        var samePath = Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains("different", samePath.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("name", samePath.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("destination", samePath.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(expectedCiphertext, sourceCiphertext);
         Assert.Equal(expectedCatalog, catalog);
     }

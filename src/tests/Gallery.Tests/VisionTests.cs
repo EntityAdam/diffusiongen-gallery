@@ -54,14 +54,13 @@ public static class VisionTests
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) }))));
-        var expectedException = new ExpectedException("the failure message describes the malformed vision response", expected);
-
         // Act
         var error = await Record.ExceptionAsync(() =>
             service.AnalyzeImageWithCollectionAsync(new() { Model = "vision" }, "image", []));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, error);
+        var malformedResponse = Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains(expected, malformedResponse.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -110,14 +109,13 @@ public static class VisionTests
         var envelope = System.Text.Json.JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } });
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(envelope) }))));
-        var expectedException = new ExpectedException("the error identifies the invalid analysis field", expected);
-
         // Act
         var error = await Record.ExceptionAsync(() =>
             service.AnalyzeImageWithCollectionAsync(new() { Model = "vision" }, "image", []));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, error);
+        var invalidAnalysis = Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains(expected, invalidAnalysis.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -160,7 +158,7 @@ public static class VisionTests
         var validated = VisionService.Validate(settings);
 
         // Assert - loopback validation normalizes the accepted endpoint
-        TestAssertions.Contains("http://127.0.0.1:1234/v1/", validated.AbsoluteUri, "loopback endpoint has its trailing slash");
+        Assert.Contains("http://127.0.0.1:1234/v1/", validated.AbsoluteUri);
 
     }
 
@@ -169,11 +167,14 @@ public static class VisionTests
     {
         // Arrange
         var settings = new VisionSettings();
-        var expected = new ExpectedException("settings validation reports the empty model and its requirement", "Model ''", "empty", "loaded", "vision-capable model");
         // Act
         var error = Record.Exception(() => VisionService.Validate(settings));
         // Assert - missing models explain how to satisfy the requirement
-        TestAssertions.Exception<InvalidOperationException>(expected, error);
+        var missingModel = Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains("Model ''", missingModel.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("empty", missingModel.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded", missingModel.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("vision-capable model", missingModel.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -283,13 +284,12 @@ public static class VisionTests
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.BadRequest)))));
-        var expectedException = new ExpectedException("the failure identifies the HTTP status", "HTTP 400");
-
         // Act
         var error = await Record.ExceptionAsync(() => service.AnalyzeAsync(new() { Model = "local" }, "image"));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, error);
+        var httpFailure = Assert.IsType<InvalidOperationException>(error);
+        Assert.Contains("HTTP 400", httpFailure.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -337,7 +337,6 @@ public static class VisionTests
         var expectedParts = json.Contains("\"models\"", StringComparison.Ordinal)
             ? new[] { "{\"models\":[]}", "OpenAI-compatible object", "data array" }
             : new[] { "model element", "nonempty string id", json.Contains("\"id\":\"\"") ? "\"\"" : "{}" };
-        var expectedException = new ExpectedException("malformed model responses explain the expected shape", expectedParts);
         var expectedEmpty = ExpectedVisionScenario.Create("valid empty model lists succeed without an error", new ExpectedVisionObligation("error", null), new ExpectedVisionObligation("models", Array.Empty<string>()));
 
         // Act
@@ -345,7 +344,11 @@ public static class VisionTests
 
         // Assert
         if (invalid)
-            TestAssertions.Exception<InvalidOperationException>(expectedException, error);
+        {
+            var malformedResponse = Assert.IsType<InvalidOperationException>(error);
+            Assert.All(expectedParts, part =>
+                Assert.Contains(part, malformedResponse.Message, StringComparison.OrdinalIgnoreCase));
+        }
         else
             AsserterVisionScenario.AssertAllObligationsAreMet(expectedEmpty, new Dictionary<string, object?> { ["error"] = error?.GetType().FullName, ["models"] = models });
     }

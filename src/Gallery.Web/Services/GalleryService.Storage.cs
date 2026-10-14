@@ -10,20 +10,28 @@ public sealed partial class GalleryService
     private const string StorageOverviewPurpose = "storage-overview:v1";
 
     public async Task<StorageOverview?> CachedStorageOverviewAsync()
-        => await ReadEncryptedSettingAsync<StorageOverview>(StorageOverviewId, StorageOverviewPurpose);
+    {
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        var overview = await galleryStore.ReadSettingsAsync<StorageOverview>(StorageOverviewId, StorageOverviewPurpose, key.Bytes);
+        return overview is null ? null : overview with
+        {
+            IsStale = overview.CatalogRevision != await galleryStore.ReadStorageRevisionAsync()
+        };
+    }
 
     public async Task<StorageOverview> RefreshStorageOverviewAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        var revision = await galleryStore.ReadStorageRevisionAsync();
         var records = await ListWithKeyAsync(key.Bytes);
         var indexedLengths = await galleryStore.ReadMediaIndexAsync();
         var indexPending = await IsMediaIndexPendingAsync(key.Bytes);
         var (overview, measured) = await Task.Run(() =>
             StorageOverviewCalculator.Measure(vaultStore.Root, records, indexedLengths, key.Bytes));
         await galleryStore.IndexFilesAsync(measured);
-        var storageOverview = overview with { IndexPending = indexPending };
-        await WriteEncryptedSettingAsync(storageOverview, StorageOverviewId, StorageOverviewPurpose);
-        return storageOverview;
+        var storageOverview = overview with { IndexPending = indexPending, CatalogRevision = revision };
+        await galleryStore.SaveSettingsAsync(storageOverview, StorageOverviewId, StorageOverviewPurpose, key.Bytes);
+        return storageOverview with { IsStale = revision != await galleryStore.ReadStorageRevisionAsync() };
     }
 
     private static class StorageOverviewCalculator

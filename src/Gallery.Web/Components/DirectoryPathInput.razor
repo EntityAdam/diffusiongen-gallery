@@ -1,12 +1,13 @@
 <Label For="@id" Class="mt-4 mb-2 block">@Label</Label>
-<Input id="@id" Value="@Value" ValueChanged="ValueChanged" Placeholder="@Placeholder" Disabled="@Disabled" aria-describedby="@(id + "-hint")" />
-<p id="@(id + "-hint")" class="text-muted-foreground">Enter a fully qualified local directory or UNC path.</p>
+<Input id="@id" Value="@Value" ValueChanged="ValueChanged" Placeholder="@(Placeholder ?? (LocalOnly ? @"C:\Gallery\catalog" : @"C:\Pictures\Gallery or \\server\share\gallery"))" Disabled="@Disabled" aria-describedby="@(id + "-hint")" />
+<p id="@(id + "-hint")" class="text-muted-foreground">@(LocalOnly ? "Enter a fully qualified directory on this host's local drive, not a NAS/SMB share." : "Enter a fully qualified local directory or UNC path.")</p>
 
 @code {
     [Parameter] public string Label { get; set; } = "Gallery directory";
     [Parameter] public string Value { get; set; } = "";
     [Parameter] public EventCallback<string> ValueChanged { get; set; }
     [Parameter] public bool Disabled { get; set; }
-    [Parameter] public string Placeholder { get; set; } = @"C:\Pictures\Gallery or \\server\share\gallery";
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public bool LocalOnly { get; set; }
     private readonly string id = "folder-" + Guid.NewGuid().ToString("N");
 }

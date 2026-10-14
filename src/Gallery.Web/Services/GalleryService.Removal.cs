@@ -162,11 +162,11 @@ public sealed partial class GalleryService
             {
                 using var image = Image.Load(plain);
                 if (image.Width != record.Width || image.Height != record.Height)
-                    throw new CryptographicException("Saved PNG dimensions do not match.");
+                    throw new CryptographicException("Saved image dimensions do not match.");
             }
             if (!Guid.TryParseExact(record.Id, "N", out _))
                 throw new InvalidOperationException("Invalid image identity for restoration.");
-            var restoredPath = Path.Combine(restoreFolder, record.Id + (record.IsVideo ? Mp4Extension : ".png"));
+            var restoredPath = Path.Combine(restoreFolder, record.Id + ImageContentFormats.FileExtension(record.ContentType));
             await using (var output = new FileStream(restoredPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 try

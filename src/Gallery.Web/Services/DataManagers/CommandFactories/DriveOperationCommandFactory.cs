@@ -99,8 +99,11 @@ internal static class DriveOperationCommandFactory
     public static SqliteCommand CreateClear(SqliteConnection connection) =>
         Create(connection, null, "DELETE FROM drive_operations; DELETE FROM media_index;");
 
-    public static SqliteCommand CreateClearIndex(SqliteConnection connection) =>
-        Create(connection, null, "DELETE FROM media_index");
+    public static SqliteCommand CreateClearIndex(SqliteConnection connection, SqliteTransaction transaction) =>
+        Create(connection, transaction, """
+            DELETE FROM media_index;
+            UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1;
+            """);
 
     public static SqliteCommand CreateDeleteDirectoryIndex(SqliteConnection connection, SqliteTransaction transaction, byte[] directory)
     {

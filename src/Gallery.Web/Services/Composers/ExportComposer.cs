@@ -3,8 +3,6 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using Gallery.Core;
 using Gallery.Web.Models;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
 
 namespace Gallery.Web.Services.Composers;
 
@@ -78,23 +76,18 @@ internal static class ExportComposer
     public static async Task<ExportFile> ExportAsync(ImageRecord record, byte[] key)
     {
         var plain = await ReadMediaAsync(record, key);
-        try
-        {
-            if (record.IsVideo) return new(SafeFileName(record.Name) + ".mp4", record.ContentType, plain);
-            return await ComposePngAsync(record, plain);
-        }
+        try { return ComposeCleanedMedia(record, plain); }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
-    private static async Task<ExportFile> ComposePngAsync(ImageRecord record, byte[] plain)
+    private static ExportFile ComposeCleanedMedia(ImageRecord record, byte[] plain)
     {
-        using var image = Image.Load(plain);
-        using var output = new MemoryStream();
-        // Uncompressed tEXt chunks keep the prompt/workflow readable by ComfyUI when the PNG is dropped back in.
-        await image.SaveAsPngAsync(output, new PngEncoder { TextCompressionThreshold = int.MaxValue });
-        var content = output.ToArray();
-        CryptographicOperations.ZeroMemory(output.GetBuffer());
-        try { return new(SafeFileName(record.Name) + ".png", "image/png", content); }
+        var content = ExportMediaCleaner.Clean(record.ContentType, plain);
+        try
+        {
+            return new(SafeFileName(record.Name) + ImageContentFormats.FileExtension(record.ContentType),
+                record.ContentType, content);
+        }
         finally { CryptographicOperations.ZeroMemory(content); }
     }
 

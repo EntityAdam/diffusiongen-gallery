@@ -74,7 +74,7 @@ public sealed partial class GalleryService
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var records = await ListWithKeyAsync(key.Bytes);
         await galleryStore.ClearMediaIndexAsync();
-        await galleryStore.DeleteSettingsAsync(MediaIndexId, StorageOverviewId);
+        await galleryStore.DeleteSettingsAsync(MediaIndexId);
         await ScheduleMediaIndexAsync(records, key.Bytes);
         drivePlayer.Start();
     }

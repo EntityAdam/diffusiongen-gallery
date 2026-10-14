@@ -14,7 +14,7 @@ public static class VisionScenarioAssertionTests
         // Act
         var error = Record.Exception(() => AsserterVisionScenario.AssertAllObligationsAreMet(expected, actual));
         // Assert - the oracle accepts all independently supplied matching obligations
-        TestAssertions.Null(error, "all comparison forms accept matching evidence");
+        Assert.Null(error);
     }
 
     [Fact]
@@ -25,11 +25,15 @@ public static class VisionScenarioAssertionTests
             new ExpectedVisionObligation("models", new[] { "first" }), new ExpectedVisionObligation("policy", "private", VisionComparison.Contains),
             new ExpectedVisionObligation("redaction", "secret", VisionComparison.Excludes), new ExpectedVisionObligation("missing", 1));
         var actual = new Dictionary<string, object?> { ["models"] = new[] { "wrong" }, ["policy"] = "public", ["redaction"] = "secret" };
-        var expectedError = new ExpectedException("the oracle reports every mismatch and the promised rule",
-            "models: Expected", "policy: Expected", "redaction: Expected", "missing: Expected", "Actual:", "all observations must match");
         // Act
         var error = Record.Exception(() => AsserterVisionScenario.AssertAllObligationsAreMet(expected, actual));
         // Assert - one failure carries every independently introduced discrepancy
-        TestAssertions.Exception<Xunit.Sdk.TrueException>(expectedError, error);
+        var assertionFailure = Assert.IsType<Xunit.Sdk.TrueException>(error);
+        Assert.Contains("models: Expected", assertionFailure.Message, StringComparison.Ordinal);
+        Assert.Contains("policy: Expected", assertionFailure.Message, StringComparison.Ordinal);
+        Assert.Contains("redaction: Expected", assertionFailure.Message, StringComparison.Ordinal);
+        Assert.Contains("missing: Expected", assertionFailure.Message, StringComparison.Ordinal);
+        Assert.Contains("Actual:", assertionFailure.Message, StringComparison.Ordinal);
+        Assert.Contains("all observations must match", assertionFailure.Message, StringComparison.Ordinal);
     }
 }

@@ -36,6 +36,14 @@ internal sealed partial class GalleryStore(string databasePath)
         }
     }
 
+    public async Task<long> ReadStorageRevisionAsync()
+    {
+        await using var connection = await OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT revision FROM storage_overview_state WHERE id = 1";
+        return Convert.ToInt64(await command.ExecuteScalarAsync());
+    }
+
     private async Task<SqliteConnection> OpenAsync()
     {
         // Purge deletes the database while this store may be reused for a new gallery in the same folder.
@@ -48,6 +56,11 @@ internal sealed partial class GalleryStore(string databasePath)
         try
         {
             await sqliteConnection.OpenAsync();
+            using (var durability = sqliteConnection.CreateCommand())
+            {
+                durability.CommandText = "PRAGMA synchronous=FULL";
+                await durability.ExecuteNonQueryAsync();
+            }
             await InitializeSchemaAsync(sqliteConnection);
             return sqliteConnection;
         }
@@ -154,10 +167,18 @@ internal sealed partial class GalleryStore(string databasePath)
         }
     }
 
-    private static async Task CreateBaseSchemaAsync(SqliteConnection sqliteConnection)
+    private async Task CreateBaseSchemaAsync(SqliteConnection sqliteConnection)
     {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateInitializeSchema(sqliteConnection);
+        using var sqliteCommand = GalleryStoreCommandFactory.CreateInitializeSchema(sqliteConnection,
+            useWal: !IsNetworkDirectory(Path.GetDirectoryName(databasePath)!));
         await sqliteCommand.ExecuteNonQueryAsync();
+    }
+
+    internal static bool IsNetworkDirectory(string directory)
+    {
+        var root = Path.GetPathRoot(Path.GetFullPath(directory))!;
+        return root.StartsWith(@"\\", StringComparison.Ordinal)
+            || OperatingSystem.IsWindows() && new DriveInfo(root).DriveType == DriveType.Network;
     }
 
     private static async Task<bool> HasFingerprintColumnAsync(SqliteConnection sqliteConnection)
@@ -230,11 +251,31 @@ internal sealed partial class GalleryStore(string databasePath)
     // Not thread-safe: callers serialize use through Gate, as ingestion already does.
     internal sealed class ImportCatalog(SqliteConnection sqliteConnection) : IAsyncDisposable
     {
-        public Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key) =>
-            GalleryStore.ContainsFingerprintAsync(sqliteConnection, contentSha256, key);
+        public Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key, SqliteTransaction? transaction = null) =>
+            GalleryStore.ContainsFingerprintAsync(sqliteConnection, contentSha256, key, transaction);
 
-        public Task InsertAsync(ImageRecord record, ImageThumbnail thumbnail, byte[] key) =>
-            GalleryStore.InsertAsync(sqliteConnection, record, thumbnail, key);
+        public SqliteTransaction BeginBatch() => sqliteConnection.BeginTransaction();
+
+        public async Task InsertEncryptedAsync(ImageRecord record, byte[] encryptedThumbnail, byte[] key,
+            SqliteTransaction? transaction = null)
+        {
+            using var command = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, record.Id,
+                EncodeRecord(record, key), encryptedThumbnail, VaultCrypto.ContentFingerprint(key, record.Sha256));
+            command.Transaction = transaction;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        public async Task<(ImageRecord Record, byte[] Thumbnail)> ReadVerificationAsync(string id, byte[] key)
+        {
+            using var command = sqliteConnection.CreateCommand();
+            command.CommandText = "SELECT record, thumbnail FROM images WHERE id = $id";
+            command.Parameters.AddWithValue("$id", id);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                throw new InvalidOperationException($"Expected one image for verification '{id}', but found 0.");
+            return (DecodeRecord(id, reader.GetFieldValue<byte[]>(0), key),
+                VaultCrypto.Decrypt(reader.GetFieldValue<byte[]>(1), key, $"thumbnail:{id}"));
+        }
 
         public ValueTask DisposeAsync() => sqliteConnection.DisposeAsync();
     }
@@ -288,9 +329,11 @@ internal sealed partial class GalleryStore(string databasePath)
         return await ContainsFingerprintAsync(sqliteConnection, contentSha256, key);
     }
 
-    private static async Task<bool> ContainsFingerprintAsync(SqliteConnection sqliteConnection, string contentSha256, byte[] key)
+    private static async Task<bool> ContainsFingerprintAsync(SqliteConnection sqliteConnection, string contentSha256, byte[] key,
+        SqliteTransaction? transaction = null)
     {
         using var sqliteCommand = GalleryStoreCommandFactory.CreateContainsFingerprint(sqliteConnection, VaultCrypto.ContentFingerprint(key, contentSha256));
+        sqliteCommand.Transaction = transaction;
         return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync()) != 0;
     }
 

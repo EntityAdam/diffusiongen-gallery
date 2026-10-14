@@ -17,6 +17,8 @@ public sealed record ImageRecord
     public int Height { get; init; }
     public long OriginalBytes { get; init; }
     public string Sha256 { get; init; } = "";
+    /// <summary>SHA-256 of the stored plaintext bytes. Equals <see cref="Sha256"/> for originals stored unchanged;
+    /// older image records hold the hash of the PNG they were converted to.</summary>
     public string PngSha256 { get; init; } = "";
     public string Metadata { get; init; } = "";
     public string Description { get; init; } = "";
@@ -27,8 +29,9 @@ public sealed record ImageRecord
     public ImmutableArray<string> Collections { get; init; } = [];
     public int Rating { get; init; }
     public bool Reviewed { get; init; }
-    /// <summary>"image" (stored as encrypted PNG) or "video" (original MP4 stored encrypted).</summary>
+    /// <summary>"image" (original PNG/JPEG/WebP bytes stored encrypted as .dpng) or "video" (original MP4 stored encrypted).</summary>
     public string MediaType { get; init; } = "image";
+    /// <summary>Format of the stored plaintext; defaults to PNG for older records, which were converted on import.</summary>
     public string ContentType { get; init; } = "image/png";
     public double DurationSeconds { get; init; }
     public GenerationInfo? Generation { get; init; }
@@ -124,6 +127,8 @@ public sealed record StorageOverview(
     public long TotalBytes => ImageBytes + VaultFileBytes;
     /// <summary>True while the background file index is still being built; unindexed files were measured directly.</summary>
     public bool IndexPending { get; init; }
+    public bool IsStale { get; init; }
+    public long? CatalogRevision { get; init; }
 }
 
 public enum DriveQueueState { Idle, Running, Waiting, Paused, Faulted }

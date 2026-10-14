@@ -151,8 +151,10 @@ internal sealed partial class GalleryStore
     public async Task ClearMediaIndexAsync()
     {
         await using var connection = await OpenAsync();
-        using var command = DriveOperationCommandFactory.CreateClearIndex(connection);
+        using var transaction = connection.BeginTransaction();
+        using var command = DriveOperationCommandFactory.CreateClearIndex(connection, transaction);
         await command.ExecuteNonQueryAsync();
+        transaction.Commit();
     }
 
     /// <summary>Replaces one directory's cached listing and enqueues the work it discovered, atomically.</summary>

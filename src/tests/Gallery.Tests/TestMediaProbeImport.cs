@@ -86,14 +86,14 @@ public sealed class TestMediaProbeImport
         using var transport = new MediaProcessTransport(metadata.ToJsonString());
         using var fixture = new TestVault(transport.VideoTools);
         await fixture.InitializeAsync();
-        var expectedException = new ExpectedException("malformed provider metadata identifies its field", "ffprobe", expectedField);
-
         // Act
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "invalid-probe.mp4", "folder"));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, exception);
+        var invalidMetadata = Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains("ffprobe", invalidMetadata.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expectedField, invalidMetadata.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // Required structural fields cannot disappear silently.
@@ -117,14 +117,14 @@ public sealed class TestMediaProbeImport
         using var transport = new MediaProcessTransport(metadata.ToJsonString());
         using var fixture = new TestVault(transport.VideoTools);
         await fixture.InitializeAsync();
-        var expectedException = new ExpectedException("malformed provider metadata identifies its field", "ffprobe", expectedField);
-
         // Act
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "invalid-probe.mp4", "folder"));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, exception);
+        var missingField = Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains("ffprobe", missingField.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expectedField, missingField.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // Unknown duration is valid provider output; available stream duration supplies the fallback.

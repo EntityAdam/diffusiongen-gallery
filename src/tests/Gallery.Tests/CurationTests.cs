@@ -45,7 +45,7 @@ public sealed class CurationTests
 
         // Assert - the actual perceptual threshold groups the resized copy and excludes the different image
         Assert.Equal(expectedIds, Assert.Single(scan.Groups).ImageIds.Order(StringComparer.Ordinal).ToArray());
-        TestAssertions.DoesNotContain(different.Id, scan.Groups.SelectMany(group => group.ImageIds), "different pixels do not join the resized-copy group");
+        Assert.DoesNotContain(different.Id, scan.Groups.SelectMany(group => group.ImageIds));
     }
 
     [Fact]
@@ -72,26 +72,27 @@ public sealed class CurationTests
         var rescan = await fixture.Service.ScanDuplicatesAsync(new SyncProgress(progress.Add));
 
         // Assert
-        TestAssertions.Null(initialCache, "no scan has run yet");
+        Assert.Null(initialCache);
         Assert.Equal(3, scan.ScannedCount);
-        var group = TestAssertions.Single(scan.Groups, "the resized copies form one duplicate group");
+        var group = Assert.Single(scan.Groups);
         Assert.Equal(large.Id, group.KeepId);
         Assert.Equal([large.Id, small.Id], group.ImageIds.ToArray());
-        TestAssertions.DoesNotContain(other.Id, group.ImageIds, "the visually different image is not in the duplicate group");
-        TestAssertions.False(group.Exact, "the resized copies are perceptual rather than byte-identical duplicates");
+        Assert.DoesNotContain(other.Id, group.ImageIds);
+        Assert.False(group.Exact);
         Assert.Equal(new FileInfo(small.StoredPath).Length, group.ReclaimableBytes);
         Assert.Equal((3, 3), initialProgress[^1]);
 
-        var cached = TestAssertions.NotNull(cachedResult, "the completed scan is cached");
+        Assert.NotNull(cachedResult);
+        var cached = cachedResult!;
         Assert.Equal(scan.ScannedAt, cached.ScannedAt);
         Assert.Equal(group.ImageIds.ToArray(),
-            TestAssertions.Single(cached.Groups, "cached scan retains one duplicate group").ImageIds.ToArray());
+            Assert.Single(cached.Groups).ImageIds.ToArray());
         foreach (var (id, setting) in encryptedSettings)
-            TestAssertions.DoesNotContain(small.Id, setting, $"encrypted setting {id} does not expose the image id");
+            Assert.DoesNotContain(small.Id, setting);
 
         // A rescan reuses cached fingerprints and reflects curation changes in the keeper.
         Assert.Equal((3, 3), progress[0]);
-        Assert.Equal(small.Id, TestAssertions.Single(rescan.Groups, "rescan retains the duplicate group").KeepId);
+        Assert.Equal(small.Id, Assert.Single(rescan.Groups).KeepId);
     }
 
     [Fact]
@@ -141,11 +142,11 @@ public sealed class CurationTests
         // Assert - migrated catalog/cached hashes still enforce the shape and exact-pixel rule
         if (identicalPixels)
         {
-            var group = TestAssertions.Single(scan.Groups, "exact pixels form one group despite different shape and perceptual hashes");
-            TestAssertions.True(group.Exact, "equal normalized pixel hashes produce an exact group");
+            var group = Assert.Single(scan.Groups);
+            Assert.True(group.Exact);
         }
         else
-            TestAssertions.Empty(scan.Groups, "equal perceptual hashes do not group different-shaped non-identical images");
+            Assert.Empty(scan.Groups);
     }
 
     [Fact]
@@ -174,8 +175,7 @@ public sealed class CurationTests
         Assert.Equal(15, defaultAutoLock);
         Assert.Equal("compact", savedPreferences.GridDensity);
         Assert.Equal(30, savedPreferences.AutoLockMinutes);
-        TestAssertions.DoesNotContain("compact", Encoding.UTF8.GetString(storedPreferences!),
-            "encrypted preference settings do not expose the grid density");
+        Assert.DoesNotContain("compact", Encoding.UTF8.GetString(storedPreferences!));
         Assert.Equal("comfortable", invalidFallback.GridDensity);
         Assert.Equal(15, invalidFallback.AutoLockMinutes);
         Assert.Equal(0, disabledAutoLock.AutoLockMinutes);
@@ -199,15 +199,15 @@ public sealed class CurationTests
         }));
 
         // Assert
-        var recordFailure = TestAssertions.Single(failure.InnerExceptions, "only the missing record fails to update");
-        TestAssertions.Contains("missing", recordFailure.Message, "the aggregate reports the failed record id");
+        var recordFailure = Assert.Single(failure.InnerExceptions);
+        Assert.Contains("missing", recordFailure.Message);
         Assert.IsType<InvalidOperationException>(recordFailure.InnerException);
         var images = await fixture.Service.ListAsync();
         Assert.Equal(new[] { first.Id, second.Id }.Order(StringComparer.Ordinal),
             images.Select(image => image.Id).Order(StringComparer.Ordinal));
         Assert.All(images, image =>
         {
-            TestAssertions.True(image.Favorite, $"record {image.Id} receives the favorite update");
+            Assert.True(image.Favorite);
             Assert.Equal("batch", image.Tags);
         });
     }
@@ -256,16 +256,16 @@ public sealed class CurationTests
         var afterRejectedDecisions = await fixture.Service.ListAsync();
 
         // Assert
-        TestAssertions.False(marks[a.Id], "the chosen first copy is not marked for deletion");
-        TestAssertions.True(marks[b.Id], "the unchosen copy is marked for deletion");
-        TestAssertions.False(marks[c.Id], "the chosen third copy is not marked for deletion");
+        Assert.False(marks[a.Id]);
+        Assert.True(marks[b.Id]);
+        Assert.False(marks[c.Id]);
 
         Assert.IsType<InvalidOperationException>(emptyKeepersError);
-        TestAssertions.Exception<InvalidOperationException>(new ExpectedException("the keeper validation identifies the invalid ID and all available choices", ["elsewhere", .. group]), outsideKeeperError);
-        var unchanged = TestAssertions.Single(afterRejectedDecisions.Where(image => image.Id == b.Id),
-            $"the original duplicate record {b.Id} remains after rejected decisions");
-        TestAssertions.True(unchanged.MarkedForDeletion,
-            "the earlier valid duplicate decision remains applied");
+        Assert.IsType<InvalidOperationException>(outsideKeeperError);
+        Assert.Contains("elsewhere", outsideKeeperError.Message, StringComparison.Ordinal);
+        Assert.All(group, id => Assert.Contains(id, outsideKeeperError.Message, StringComparison.Ordinal));
+        var unchanged = Assert.Single(afterRejectedDecisions, image => image.Id == b.Id);
+        Assert.True(unchanged.MarkedForDeletion);
     }
 
     private sealed class SyncProgress(Action<(int, int)> report) : IProgress<(int Completed, int Total)>

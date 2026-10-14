@@ -58,12 +58,13 @@ public sealed class DomainCompositionTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var expectedException = new ExpectedException("invalid saved view name is rejected at the manager boundary", "Saved view name", "1", "80");
-
         // Act
         var exception = await Record.ExceptionAsync(() => fixture.Service.SaveViewAsync(name, new()));
 
         // Assert
-        TestAssertions.Exception<InvalidOperationException>(expectedException, exception);
+        var invalidName = Assert.IsType<InvalidOperationException>(exception);
+        Assert.Contains("Saved view name", invalidName.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1", invalidName.Message, StringComparison.Ordinal);
+        Assert.Contains("80", invalidName.Message, StringComparison.Ordinal);
     }
 }
