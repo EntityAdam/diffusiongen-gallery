@@ -8,6 +8,24 @@ namespace Gallery.Tests;
 public sealed class CoreRulesTests
 {
     [Fact]
+    public void ReviewRestoration_PreservesExplicitStateAndUnrelatedRecordFields()
+    {
+        var image = new ImageRecord
+        {
+            Rating = 4, Reviewed = true, Description = "latest", Tags = "unchanged", Width = 1024
+        };
+        var state = new ReviewState(false, true, true, 3);
+
+        var restored = ReviewDecision.Restore(image, state);
+
+        Assert.Equal(state, ReviewState.Capture(restored));
+        Assert.Equal(image.Description, restored.Description);
+        Assert.Equal(image.Tags, restored.Tags);
+        Assert.Equal(image.Width, restored.Width);
+        Assert.Equal(4, image.Rating);
+    }
+
+    [Fact]
     public void ReviewAndCuration_ApplyDomainRulesWithoutInfrastructure()
     {
         var original = new ImageRecord { Id = "image", Tags = "first" };

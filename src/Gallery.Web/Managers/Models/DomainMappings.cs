@@ -93,8 +93,6 @@ internal static class DomainMappings
         new(new ImageRecord
         {
             Id = edit.Id,
-            Name = edit.Name,
-            StoredPath = edit.StoredPath,
             Description = edit.Description,
             Tags = edit.Tags,
             AnalysisModel = edit.AnalysisModel,
@@ -102,17 +100,13 @@ internal static class DomainMappings
             MarkedForDeletion = edit.MarkedForDeletion,
             Collections = edit.Collections,
             Rating = edit.Rating,
-            Reviewed = edit.Reviewed,
-            Generation = edit.Generation?.ToDomain(),
-            MetadataVersion = edit.MetadataVersion
+            Reviewed = edit.Reviewed
         });
 
     public static WebImageRecordEdit ToWeb(this ImageRecordEdit edit) =>
         new(new WebImageRecord
         {
             Id = edit.Id,
-            Name = edit.Name,
-            StoredPath = edit.StoredPath,
             Description = edit.Description,
             Tags = edit.Tags,
             AnalysisModel = edit.AnalysisModel,
@@ -120,9 +114,7 @@ internal static class DomainMappings
             MarkedForDeletion = edit.MarkedForDeletion,
             Collections = edit.Collections,
             Rating = edit.Rating,
-            Reviewed = edit.Reviewed,
-            Generation = edit.Generation?.ToWeb(),
-            MetadataVersion = edit.MetadataVersion
+            Reviewed = edit.Reviewed
         });
 
     public static GalleryFilter ToDomain(this WebGalleryFilter filter) => new()

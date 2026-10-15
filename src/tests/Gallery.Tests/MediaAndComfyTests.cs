@@ -216,7 +216,9 @@ public sealed class MediaAndComfyTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
-        await fixture.Service.UpdateAsync(record.Id, current => current with { Generation = null, MetadataVersion = 0 });
+        var legacy = record with { Generation = null, MetadataVersion = 0 };
+        await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(legacy), fixture.Session.Key, $"record:{record.Id}"));
 
         // Act
         var records = await fixture.Service.LoadAsync();

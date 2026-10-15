@@ -281,10 +281,9 @@
 
     private Task RateOneAsync(WebImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
+        var updated = await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
         var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);
-        if (comparisonIndex >= 0) compareImages[comparisonIndex] = Gallery.ApplyEdit(image,
-            current => Gallery.SetOrganization(current, value, true, null));
+        if (comparisonIndex >= 0) compareImages[comparisonIndex] = updated;
         await Changed.InvokeAsync();
     });
 

@@ -2,6 +2,7 @@ using Gallery.Web.Exceptions;
 using System.Security.Cryptography;
 using Gallery.Web.Models;
 using Gallery.Core.Processors;
+using Gallery.Web.Services.Validators;
 
 namespace Gallery.Web.Services.Processors;
 
@@ -10,27 +11,25 @@ internal static class GalleryRecordUpdater
     public static WebImageRecord Apply(WebImageRecord original, Func<WebImageRecordEdit, WebImageRecordEdit> update)
     {
         var edit = update(new WebImageRecordEdit(original));
+        ImageRecordEditValidator.Validate(edit, original.Id);
         return LibraryRules.ApplyEdit(original.ToDomain(), edit.ToDomain()).ToWeb();
     }
 
-    public static async Task UpdateBatchAsync(IReadOnlyList<string> ids, Func<string, Task> update)
+    public static async Task<List<WebImageRecord>> UpdateBatchAsync(
+        IReadOnlyList<string> ids, Func<string, Task<WebImageRecord>> update)
     {
-        var failures = await AttemptEveryUpdateAsync(ids, update);
-        ThrowFailures(failures);
-    }
-
-    private static async Task<List<Exception>> AttemptEveryUpdateAsync(IReadOnlyList<string> ids, Func<string, Task> update)
-    {
+        var records = new List<WebImageRecord>(ids.Count);
         var failures = new List<Exception>();
         foreach (var id in ids)
         {
-            try { await update(id); }
+            try { records.Add(await update(id)); }
             catch (Exception exception) when (exception is GalleryException or InvalidOperationException or CryptographicException or IOException)
             {
                 failures.Add(new InvalidOperationException($"Could not update gallery record '{id}'.", exception));
             }
         }
-        return failures;
+        ThrowFailures(failures);
+        return records;
     }
 
     private static void ThrowFailures(List<Exception> failures)

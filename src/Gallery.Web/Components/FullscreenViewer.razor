@@ -216,10 +216,15 @@
     {
         if (reviewComplete) return;
         var id = Current.Id;
-        var previous = (index, Gallery.CaptureReviewState(Current), decisions.Contains(id), skipped.Contains(id));
-        await Gallery.UpdateAsync(id, image => Gallery.ApplyReviewDecision(image, action, rating));
-        undo.Push(previous);
-        latestImagesById[Current.Id] = ApplyEdit(Current, image => Gallery.ApplyReviewDecision(image, action, rating));
+        WebReviewState? previousState = null;
+        var updated = await Gallery.UpdateAsync(id, image =>
+        {
+            previousState = Gallery.CaptureReviewState(image);
+            return Gallery.ApplyReviewDecision(image, action, rating);
+        });
+        undo.Push((index, previousState ?? throw new InvalidOperationException("The review decision did not capture its previous state."),
+            decisions.Contains(id), skipped.Contains(id)));
+        latestImagesById[id] = updated;
         decisions.Add(id);
         skipped.Remove(id);
         await OnImageChanged.InvokeAsync(Current);
@@ -234,8 +239,7 @@
         if (!undo.TryPeek(out var previous)) return;
         var image = LatestSnapshot(Images[previous.Index]);
         var data = await LoadImageAsync(image.Id, originalSize);
-        await Gallery.UpdateAsync(image.Id, edit => Gallery.RestoreReviewState(edit, previous.State));
-        latestImagesById[image.Id] = ApplyEdit(image, edit => Gallery.RestoreReviewState(edit, previous.State));
+        latestImagesById[image.Id] = await Gallery.RestoreReviewStateAsync(image.Id, previous.State);
         undo.Pop();
         if (previous.Decided) decisions.Add(image.Id); else decisions.Remove(image.Id);
         if (previous.Skipped) skipped.Add(image.Id); else skipped.Remove(image.Id);
@@ -269,20 +273,18 @@
 
     private Task MarkAsync() => RunAsync(async () =>
     {
-        await Gallery.UpdateAsync(Current.Id, image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
-        latestImagesById[Current.Id] = ApplyEdit(Current, image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
+        var id = Current.Id;
+        latestImagesById[id] = await Gallery.UpdateAsync(id,
+            image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
         await OnImageChanged.InvokeAsync(Current);
     });
 
     private Task FavoriteAsync() => RunAsync(async () =>
     {
-        await Gallery.UpdateAsync(Current.Id, image => image with { Favorite = !image.Favorite });
-        latestImagesById[Current.Id] = ApplyEdit(Current, image => image with { Favorite = !image.Favorite });
+        var id = Current.Id;
+        latestImagesById[id] = await Gallery.UpdateAsync(id, image => image with { Favorite = !image.Favorite });
         await OnImageChanged.InvokeAsync(Current);
     });
-
-    private WebImageRecord ApplyEdit(WebImageRecord record, Func<WebImageRecordEdit, WebImageRecordEdit> update) =>
-        Gallery.ApplyEdit(record, update);
 
     private async Task CloseAsync()
     {

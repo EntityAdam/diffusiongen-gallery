@@ -194,8 +194,8 @@ public sealed partial class GalleryService
             hashedImageRecords.Count, DateTimeOffset.UtcNow);
     }
 
-    /// <summary>Unmarks the kept copies and marks every other copy in the group for deletion. Returns the failure count.</summary>
-    public async Task ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupIds, IReadOnlySet<string> keep)
+    /// <summary>Unmarks the kept copies, marks the other copies for deletion, and returns the committed records.</summary>
+    public async Task<List<WebImageRecord>> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupIds, IReadOnlySet<string> keep)
     {
         ArgumentNullException.ThrowIfNull(groupIds);
         ArgumentNullException.ThrowIfNull(keep);
@@ -205,7 +205,7 @@ public sealed partial class GalleryService
             throw new InvalidOperationException(
                 $"Kept images [{string.Join(", ", invalidKeeperIds)}] must belong to the group. Valid image IDs: [{string.Join(", ", groupIds)}].");
         var retainedIds = keep.ToHashSet(StringComparer.Ordinal);
-        await UpdateManyAsync(groupIds,
+        return await UpdateManyAsync(groupIds,
             record => SetDeletionMark(record, !retainedIds.Contains(record.Id)));
     }
 

@@ -29,7 +29,6 @@ public sealed partial class GalleryService
     private const string EncryptedPngExtension = ".dpng";
     private const string VisionSettingsId = "vision-settings";
 
-    private const string RatingRangeMessageFormat = "Rating {0} must be between 0 and 5.";
     private const string EmptyDuplicateCandidatesMessage =
         "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
 
@@ -164,17 +163,32 @@ public sealed partial class GalleryService
         return Gallery.Core.Models.ReviewState.Capture(image.ToDomain()).ToWeb();
     }
 
-    public WebImageRecordEdit RestoreReviewState(WebImageRecordEdit image, WebReviewState state)
+    public WebReviewState CaptureReviewState(WebImageRecordEdit image)
     {
         ArgumentNullException.ThrowIfNull(image);
+        return Gallery.Core.Models.ReviewState.Capture(image.ToDomain()).ToWeb();
+    }
+
+    public async Task<WebImageRecord> RestoreReviewStateAsync(string id, WebReviewState state)
+    {
         ArgumentNullException.ThrowIfNull(state);
-        return ReviewDecision.Restore(image.ToDomain(), state.ToDomain()).ToWeb();
+        ImageRecordEditValidator.ValidateRating(state.Rating);
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        await galleryStore.Gate.WaitAsync();
+        try
+        {
+            var image = await FindAsync(id, key.Bytes);
+            var restored = ReviewDecision.Restore(image.ToDomain(), state.ToDomain()).ToWeb();
+            await galleryStore.UpdateAsync(restored, key.Bytes);
+            return restored;
+        }
+        finally { galleryStore.Gate.Release(); }
     }
 
     public WebImageRecordEdit SetCuration(WebImageRecordEdit image, int? rating, bool? reviewed)
     {
         ArgumentNullException.ThrowIfNull(image);
-        ValidateCurationRating(rating);
+        ImageRecordEditValidator.ValidateRating(rating);
         return LibraryRules.SetCuration(image.ToDomain(), rating, reviewed).ToWeb();
     }
 
@@ -187,8 +201,8 @@ public sealed partial class GalleryService
     public WebImageRecordEdit SetOrganization(WebImageRecordEdit image, int rating, bool reviewed, string? collection)
     {
         ArgumentNullException.ThrowIfNull(image);
-        ValidateCurationRating(rating);
-        if (IsInvalidCollectionName(collection))
+        ImageRecordEditValidator.ValidateRating(rating);
+        if (collection is not null && ImageRecordEditValidator.IsInvalidCollectionName(collection))
             throw new InvalidOperationException("Collection names must have 1 to 80 characters.");
         return LibraryRules.SetOrganization(image.ToDomain(), rating, reviewed, collection).ToWeb();
     }
@@ -210,7 +224,7 @@ public sealed partial class GalleryService
     private static void ValidateCollectionName(string collection)
     {
         ArgumentNullException.ThrowIfNull(collection);
-        if (IsInvalidCollectionName(collection))
+        if (ImageRecordEditValidator.IsInvalidCollectionName(collection))
             throw new InvalidOperationException("Collection names must have 1 to 80 characters.");
     }
 
@@ -221,22 +235,12 @@ public sealed partial class GalleryService
         return GalleryRecordUpdater.Apply(image, update);
     }
 
-    private static void ValidateCurationRating(int? rating)
-    {
-        if (rating is < 0 or > 5)
-            throw new InvalidOperationException(string.Format(
-                System.Globalization.CultureInfo.InvariantCulture, RatingRangeMessageFormat, rating));
-    }
-
     private static void ValidateOperationChoice<TChoice>(TChoice choice) where TChoice : struct, Enum
     {
         if (!Enum.IsDefined(choice))
             throw new InvalidOperationException(
                 $"{typeof(TChoice).Name} value {Convert.ToInt32(choice)} is invalid. Choose {string.Join(", ", Enum.GetNames<TChoice>())}.");
     }
-
-    private static bool IsInvalidCollectionName(string? collection) =>
-        collection is not null && (string.IsNullOrWhiteSpace(collection) || collection.Trim().Length > 80);
 
     public string MergeTags(string existing, string additions) => LibraryRules.MergeTags(existing, additions);
 
@@ -321,12 +325,11 @@ public sealed partial class GalleryService
             (record, index) = staleRecordIndex;
             try
             {
-                var edit = new WebImageRecordEdit(record)
+                var refreshedImageRecord = record with
                 {
                     Generation = ComfyMetadata.Extract(record.Metadata),
                     MetadataVersion = ComfyMetadata.Version
                 };
-                var refreshedImageRecord = edit.ToRecord(record);
                 await galleryStore.UpdateAsync(refreshedImageRecord, key);
                 records[index] = refreshedImageRecord;
             }
@@ -1064,16 +1067,16 @@ public sealed partial class GalleryService
         finally { CryptographicOperations.ZeroMemory(thumbnail); }
     }
 
-    public async Task UpdateAsync(string id, Func<WebImageRecordEdit, WebImageRecordEdit> update)
+    public async Task<WebImageRecord> UpdateAsync(string id, Func<WebImageRecordEdit, WebImageRecordEdit> update)
     {
         ArgumentNullException.ThrowIfNull(update);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         await galleryStore.Gate.WaitAsync();
-        try { await UpdateRecordAsync(id, update, key.Bytes); }
+        try { return await UpdateRecordAsync(id, update, key.Bytes); }
         finally { galleryStore.Gate.Release(); }
     }
 
-    public async Task UpdateManyAsync(IEnumerable<string> ids, Func<WebImageRecordEdit, WebImageRecordEdit> update)
+    public async Task<List<WebImageRecord>> UpdateManyAsync(IEnumerable<string> ids, Func<WebImageRecordEdit, WebImageRecordEdit> update)
     {
         ArgumentNullException.ThrowIfNull(ids);
         ArgumentNullException.ThrowIfNull(update);
@@ -1081,14 +1084,16 @@ public sealed partial class GalleryService
         var uniqueImageIds = ids.Distinct(StringComparer.Ordinal).ToList();
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         await galleryStore.Gate.WaitAsync();
-        try { await GalleryRecordUpdater.UpdateBatchAsync(uniqueImageIds, id => UpdateRecordAsync(id, update, key.Bytes)); }
+        try { return await GalleryRecordUpdater.UpdateBatchAsync(uniqueImageIds, id => UpdateRecordAsync(id, update, key.Bytes)); }
         finally { galleryStore.Gate.Release(); }
     }
 
-    private async Task UpdateRecordAsync(string imageId, Func<WebImageRecordEdit, WebImageRecordEdit> update, byte[] key)
+    private async Task<WebImageRecord> UpdateRecordAsync(string imageId, Func<WebImageRecordEdit, WebImageRecordEdit> update, byte[] key)
     {
         var record = await FindAsync(imageId, key);
-        await galleryStore.UpdateAsync(GalleryRecordUpdater.Apply(record, update), key);
+        var updated = GalleryRecordUpdater.Apply(record, update);
+        await galleryStore.UpdateAsync(updated, key);
+        return updated;
     }
 
     public async Task MoveAsync(string id, string folder, string name)

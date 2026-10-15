@@ -924,7 +924,8 @@ else
     private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
     private string videoUrl = "";
     private string grouping = "none";
-    private Dictionary<string, WebPromptGroup> promptGroupOf = [];
+    private readonly GalleryBrowsingProjection browsingProjection = new();
+    private IReadOnlyDictionary<string, WebPromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
     private bool useRecovery, recoverySaved, busy, recursive;
     private string workflow = "library";
     private LibraryWorkbench? workbench;
@@ -1022,17 +1023,15 @@ else
     private Task? thumbnailTask;
     private WebImageRecord? selected;
     private bool disposed;
-    private List<WebImageRecord> Filtered
+    private GalleryBrowsingProjection Browsing
     {
         get
         {
-            var filtered = Gallery.Filter(images, filter);
-            if (grouping != "prompt") { promptGroupOf = []; return filtered.ToList(); }
-            var groups = Gallery.GroupByPrompt(filtered);
-            promptGroupOf = groups.SelectMany(group => group.Images.Select(image => (image.Id, group))).ToDictionary(item => item.Id, item => item.group);
-            return groups.SelectMany(group => group.Images).ToList();
+            browsingProjection.Update(Gallery, images, filter, grouping == "prompt");
+            return browsingProjection;
         }
     }
+    private IReadOnlyList<WebImageRecord> Filtered => Browsing.Images;
     private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
     private IEnumerable<WebImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
     private async Task RunAsync(string status, Func<Task> action, bool allowDuringImport = false)
@@ -1184,6 +1183,7 @@ else
     private async Task ReloadAsync()
     {
         images = await Gallery.LoadAsync();
+        browsingProjection.Invalidate();
         mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
         catalogDirectory = "";
         ApplyIngestionProfile(await Gallery.LoadIngestionOptionsAsync());
@@ -1484,6 +1484,7 @@ else
         var imageIndex = images.FindIndex(image => image.Id == updated.Id);
         if (imageIndex >= 0) images[imageIndex] = updated;
         if (selected?.Id == updated.Id) selected = updated;
+        browsingProjection.Invalidate();
     }
     private void SelectLibraryPage() { librarySelection.UnionWith(PageImages.Select(image => image.Id)); }
     private void ToggleLibrarySelection(string id, bool value)
@@ -1523,21 +1524,14 @@ else
     private async Task CurateAsync(IReadOnlyCollection<string> ids, Func<WebImageRecordEdit, WebImageRecordEdit> update, string done)
     {
         if (ids.Count == 0) return;
-        try { await Gallery.UpdateManyAsync(ids, update); }
+        List<WebImageRecord> updated;
+        try { updated = await Gallery.UpdateManyAsync(ids, update); }
         catch (AggregateException)
         {
             await ReloadAsync();
             throw;
         }
-        foreach (var id in ids)
-        {
-            if (!imagesById.TryGetValue(id, out var image)) continue;
-            var updatedImage = Gallery.ApplyEdit(image, update);
-            imagesById[id] = updatedImage;
-            var imageIndex = images.FindIndex(candidate => candidate.Id == id);
-            if (imageIndex >= 0) images[imageIndex] = updatedImage;
-            if (selected?.Id == id) selected = updatedImage;
-        }
+        foreach (var image in updated) ViewerImageChanged(image);
         page = Math.Min(page, PageCount - 1);
         await LoadMissingThumbnailsAsync();
         message = done;
@@ -1942,6 +1936,7 @@ else
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         Gallery.LockVault();
         images.Clear();
+        browsingProjection.Clear();
         StopThumbnailLoad();
         thumbnailTask = null;
         thumbnails.Clear();

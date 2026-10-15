@@ -4,6 +4,9 @@ namespace Gallery.Core.Processors;
 
 public static class ReviewDecision
 {
+    public static ImageRecord Restore(ImageRecord image, ReviewState state) =>
+        Restore(new ImageRecordEdit(image), state).ToRecord(image);
+
     public static ImageRecordEdit Restore(ImageRecordEdit image, ReviewState state) =>
         image with { Reviewed = state.Reviewed, Favorite = state.Favorite,
             MarkedForDeletion = state.MarkedForDeletion, Rating = state.Rating };

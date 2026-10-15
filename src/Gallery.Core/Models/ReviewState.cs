@@ -6,4 +6,7 @@ public sealed record ReviewState(bool Reviewed, bool Favorite, bool MarkedForDel
 {
     public static ReviewState Capture(ImageRecord image) =>
         new(image.Reviewed, image.Favorite, image.MarkedForDeletion, image.Rating);
+
+    public static ReviewState Capture(ImageRecordEdit image) =>
+        new(image.Reviewed, image.Favorite, image.MarkedForDeletion, image.Rating);
 }

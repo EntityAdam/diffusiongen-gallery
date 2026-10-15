@@ -18,7 +18,8 @@ duplicate grouping and keeper selection, prompt grouping, gallery filtering,
 and removal eligibility/decisions. Its operations work on in-memory domain
 values; they do not access files, databases, HTTP, configuration, or UI services.
 Collection membership changes and the implicit review state of record edits
-also live here; UI projections and persisted updates use the same rules.
+also live here. Review undo restores an explicit snapshot without reapplying
+the implicit rules for a new curation decision.
 
 `Gallery.Web` is the outer application/adapter layer. It owns Blazor and HTTP
 boundaries, application orchestration (`GalleryService`), SQLite and encryption,
@@ -40,6 +41,19 @@ Core applies business rules to those accepted values. Format parsing errors,
 HTTP status codes, logging context, size limits, paths, credentials, and external
 service settings remain outside Core. Domain rules should be added to Core,
 not reimplemented in components or storage adapters.
+
+Image edit callbacks expose only curation and annotation fields. Web validates
+the returned edit (including identity, ratings, initialized collections, and
+collection names) before mapping or persistence. Names/paths change through the
+move workflow; parsed generation metadata changes through import/backfill,
+not user edits. Single and batch updates return the committed records, which
+the UI uses directly rather than replaying callbacks against stale snapshots.
+Batch updates still attempt every selected image and report aggregate failures.
+
+The gallery caches its browsing projection across renders, pagination, density
+changes, and thumbnail updates. Record changes invalidate it; filter/sort and
+prompt-grouping changes rebuild it on demand. Locking clears the cached records
+and prompt groups along with the rest of the unlocked gallery state.
 
 ## UI
 
