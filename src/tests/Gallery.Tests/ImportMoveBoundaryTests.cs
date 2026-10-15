@@ -1,4 +1,4 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;

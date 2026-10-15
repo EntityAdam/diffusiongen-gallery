@@ -1,5 +1,5 @@
 using Gallery.Web.Services.Sessions.Leases;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using System.Collections.Immutable;
 using System.Security.Cryptography;
 

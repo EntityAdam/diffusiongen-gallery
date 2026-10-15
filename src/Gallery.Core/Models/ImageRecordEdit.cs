@@ -1,10 +1,10 @@
 using System.Collections.Immutable;
 
-namespace Gallery.Web.Models;
+namespace Gallery.Core.Models;
 
 public sealed record ImageRecordEdit
 {
-    internal ImageRecordEdit(ImageRecord imageRecord)
+    public ImageRecordEdit(ImageRecord imageRecord)
     {
         Id = imageRecord.Id;
         Name = imageRecord.Name;
@@ -35,7 +35,7 @@ public sealed record ImageRecordEdit
     public GenerationInfo? Generation { get; init; }
     public int MetadataVersion { get; init; }
 
-    internal ImageRecord ToRecord(ImageRecord imageRecord) => imageRecord with
+    public ImageRecord ToRecord(ImageRecord imageRecord) => imageRecord with
     {
         Name = Name,
         StoredPath = StoredPath,

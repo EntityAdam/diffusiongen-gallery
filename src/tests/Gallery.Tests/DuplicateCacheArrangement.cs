@@ -7,7 +7,7 @@ namespace Gallery.Tests;
 
 internal static class DuplicateCacheArrangement
 {
-    public static async Task ArrangeAsync(TestVault fixture, IReadOnlyList<(ImageRecord ImageRecord, ulong Hash)> records)
+    public static async Task ArrangeAsync(TestVault fixture, IReadOnlyList<(WebImageRecord ImageRecord, ulong Hash)> records)
     {
         foreach (var (record, _) in records)
             await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(JsonSerializer.SerializeToUtf8Bytes(record), fixture.Session.Key, $"record:{record.Id}"));

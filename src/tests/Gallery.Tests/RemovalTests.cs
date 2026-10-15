@@ -1,4 +1,4 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Services.Processors;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
@@ -112,9 +112,9 @@ public sealed class RemovalTests
         var removalItems = await testVault.Service.PrepareRemovalAsync([imageRecord.Id]);
 
         // Act
-        var removalResults = new List<RemovalResult>();
+        var removalResults = new List<WebRemovalResult>();
         var removalError = await Record.ExceptionAsync(() => testVault.Service.RemoveAsync(
-            removalItems, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", removalResults.Add));
+            removalItems, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "", removalResults.Add));
         await testVault.Service.WaitForDriveOperationsAsync();
         var storedFileExists = File.Exists(imageRecord.StoredPath);
         var stagedFileExists = File.Exists(stagedPath);
@@ -205,10 +205,10 @@ public sealed class RemovalTests
         await fixture.Service.UpdateManyAsync([first.Id, second.Id], image => image with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([first.Id, second.Id, first.Id]);
         string[] expectedIds = [first.Id, second.Id];
-        var receipts = new List<RemovalResult>();
+        var receipts = new List<WebRemovalResult>();
 
         // Act
-        await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", receipt =>
+        await fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "", receipt =>
         {
             receipts.Add(receipt);
             plan.Clear();
@@ -221,7 +221,7 @@ public sealed class RemovalTests
         Assert.Empty(remaining);
     }
 
-    private static async Task<ImageRecord> ImportRecoveryImageAsync(TestVault testVault, bool imageWasMoved)
+    private static async Task<WebImageRecord> ImportRecoveryImageAsync(TestVault testVault, bool imageWasMoved)
     {
         var imageRecord = await testVault.Service.ImportAsync(
             new MemoryStream(GalleryTests.MakePng()), "image.png", "browser-folder");
@@ -251,9 +251,9 @@ public sealed class RemovalTests
         Assert.True(Assert.Single(plan).OriginalExists);
 
         // Act
-        var results = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, deleteOriginal ? ExistingOriginalAction.Delete : ExistingOriginalAction.Retain,
-            MissingOriginalAction.RestorePng, "", results.Add));
+        var results = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, deleteOriginal ? WebExistingOriginalAction.Delete : WebExistingOriginalAction.Retain,
+            WebMissingOriginalAction.RestorePng, "", results.Add));
         await fixture.Service.WaitForDriveOperationsAsync();
 
         // Assert
@@ -277,7 +277,7 @@ public sealed class RemovalTests
         var record = await fixture.Service.ImportAsync(new MemoryStream(bytes), "image.png", "folder");
         await fixture.Service.UpdateAsync(record.Id, image => image with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
-        await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "");
+        await fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "");
         // Act
         var exception = await Assert.ThrowsAsync<ThumbnailNotFoundException>(() => fixture.Store.ReadThumbnailAsync(record.Id, fixture.Session.Key));
 
@@ -304,7 +304,7 @@ public sealed class RemovalTests
         var record = await fixture.Service.ImportAsync(new MemoryStream(bytes), "image.png", "folder");
         await fixture.Service.UpdateAsync(record.Id, image => image with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
-        await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "");
+        await fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "");
 
         // Act
         var importedRecord = await fixture.Service.ImportAsync(new MemoryStream(bytes), "reimport.png", "folder");
@@ -330,9 +330,9 @@ public sealed class RemovalTests
         Assert.False(Assert.Single(plan).OriginalExists);
 
         // Act
-        var results = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain,
-            restore ? MissingOriginalAction.RestorePng : MissingOriginalAction.Discard, fixture.Root, results.Add));
+        var results = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain,
+            restore ? WebMissingOriginalAction.RestorePng : WebMissingOriginalAction.Discard, fixture.Root, results.Add));
         await fixture.Service.WaitForDriveOperationsAsync();
 
         // Assert
@@ -385,8 +385,8 @@ public sealed class RemovalTests
         await fixture.Service.UpdateAsync(record.Id, image => image with { MarkedForDeletion = false });
 
         // Act
-        var results = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", results.Add));
+        var results = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "", results.Add));
 
         // Assert
         Assert.IsType<AggregateException>(removalError);
@@ -409,8 +409,8 @@ public sealed class RemovalTests
         await File.WriteAllTextAsync(target, "existing");
 
         // Act
-        var removalReceipts = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.RestorePng, fixture.Root, removalReceipts.Add));
+        var removalReceipts = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.RestorePng, fixture.Root, removalReceipts.Add));
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -435,8 +435,8 @@ public sealed class RemovalTests
         await File.WriteAllBytesAsync(record.StoredPath, ciphertext);
 
         // Act
-        var removalReceipts = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.RestorePng, fixture.Root, removalReceipts.Add));
+        var removalReceipts = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.RestorePng, fixture.Root, removalReceipts.Add));
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -462,8 +462,8 @@ public sealed class RemovalTests
         await File.WriteAllTextAsync(source, "replacement");
 
         // Act
-        var removalReceipts = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Delete, MissingOriginalAction.Discard, "", removalReceipts.Add));
+        var removalReceipts = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Delete, WebMissingOriginalAction.Discard, "", removalReceipts.Add));
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -488,8 +488,8 @@ public sealed class RemovalTests
         File.Delete(source);
 
         // Act
-        var removalReceipts = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", removalReceipts.Add));
+        var removalReceipts = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "", removalReceipts.Add));
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -505,7 +505,7 @@ public sealed class RemovalTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var records = new List<ImageRecord>();
+        var records = new List<WebImageRecord>();
         for (var index = 0; index < 3; index++)
         {
             var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30 + index, 20)), "same.png", "folder");
@@ -515,8 +515,8 @@ public sealed class RemovalTests
         await File.WriteAllTextAsync(Path.Combine(fixture.Root, records[1].Id + ".png"), "collision");
         var plan = await fixture.Service.PrepareRemovalAsync(records.Select(record => record.Id));
         // Act
-        var results = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.RestorePng, fixture.Root, results.Add));
+        var results = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.RestorePng, fixture.Root, results.Add));
 
         // Assert
         Assert.IsType<AggregateException>(removalError);
@@ -542,8 +542,8 @@ public sealed class RemovalTests
             await command.ExecuteNonQueryAsync();
         }
         // Act
-        var removalReceipts = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", removalReceipts.Add));
+        var removalReceipts = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "", removalReceipts.Add));
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -611,8 +611,8 @@ public sealed class RemovalTests
             await fixture.Service.UpdateAsync(image.Id, record => record with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([existing.Id, missing.Id]);
         // Act
-        var results = new List<RemovalResult>();
-        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Delete, MissingOriginalAction.RestorePng, fixture.Root, results.Add));
+        var results = new List<WebRemovalResult>();
+        var removalError = await Record.ExceptionAsync(() => fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Delete, WebMissingOriginalAction.RestorePng, fixture.Root, results.Add));
 
         // Assert
         Assert.Null(removalError);

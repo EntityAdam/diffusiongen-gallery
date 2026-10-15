@@ -3,7 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Text.Json;
 
-namespace Gallery.Core;
+namespace Gallery.Web.Exceptions;
 
 [ExcludeFromCodeCoverage]
 public abstract class GalleryException : Exception

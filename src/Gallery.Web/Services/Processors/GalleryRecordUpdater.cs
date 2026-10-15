@@ -1,18 +1,16 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using System.Security.Cryptography;
 using Gallery.Web.Models;
+using Gallery.Core.Processors;
 
 namespace Gallery.Web.Services.Processors;
 
 internal static class GalleryRecordUpdater
 {
-    public static ImageRecord Apply(ImageRecord original, Func<ImageRecordEdit, ImageRecordEdit> update)
+    public static WebImageRecord Apply(WebImageRecord original, Func<WebImageRecordEdit, WebImageRecordEdit> update)
     {
-        var updated = update(new ImageRecordEdit(original)).ToRecord(original);
-        if ((updated.Rating > 0 && updated.Rating != original.Rating)
-            || (updated.MarkedForDeletion && !original.MarkedForDeletion))
-            updated = updated with { Reviewed = true };
-        return updated;
+        var edit = update(new WebImageRecordEdit(original));
+        return LibraryRules.ApplyEdit(original.ToDomain(), edit.ToDomain()).ToWeb();
     }
 
     public static async Task UpdateBatchAsync(IReadOnlyList<string> ids, Func<string, Task> update)

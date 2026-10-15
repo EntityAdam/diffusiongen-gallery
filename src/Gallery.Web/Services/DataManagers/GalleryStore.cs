@@ -1,5 +1,5 @@
 using Gallery.Web.Services.Processors;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Services.DataManagers.Processors;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -199,17 +199,17 @@ internal sealed partial class GalleryStore(string databasePath)
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    public async Task<List<ImageRecord>> ReadRecordsAsync(byte[] key)
+    public async Task<List<WebImageRecord>> ReadRecordsAsync(byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
         return await ReadImageRecordsAsync(sqliteConnection, key);
     }
 
-    private static async Task<List<ImageRecord>> ReadImageRecordsAsync(SqliteConnection sqliteConnection, byte[] key)
+    private static async Task<List<WebImageRecord>> ReadImageRecordsAsync(SqliteConnection sqliteConnection, byte[] key)
     {
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadImageRecords(sqliteConnection);
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
-        var imageRecords = new List<ImageRecord>();
+        var imageRecords = new List<WebImageRecord>();
         while (await sqliteDataReader.ReadAsync())
         {
             var imageRecord = MapImageRecord(sqliteDataReader);
@@ -231,13 +231,13 @@ internal sealed partial class GalleryStore(string databasePath)
         return new ImageThumbnail(VaultCrypto.Decrypt(encryptedThumbnail, key, $"thumbnail:{id}"));
     }
 
-    public async Task InsertAsync(ImageRecord record, ImageThumbnail thumbnail, byte[] key)
+    public async Task InsertAsync(WebImageRecord record, ImageThumbnail thumbnail, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
         await InsertAsync(sqliteConnection, record, thumbnail, key);
     }
 
-    private static async Task InsertAsync(SqliteConnection sqliteConnection, ImageRecord record, ImageThumbnail thumbnail, byte[] key)
+    private static async Task InsertAsync(SqliteConnection sqliteConnection, WebImageRecord record, ImageThumbnail thumbnail, byte[] key)
     {
         using var sqliteCommand = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, record.Id, EncodeRecord(record, key),
             VaultCrypto.Encrypt(thumbnail.PngBytes, key, $"thumbnail:{record.Id}"),
@@ -256,7 +256,7 @@ internal sealed partial class GalleryStore(string databasePath)
 
         public SqliteTransaction BeginBatch() => sqliteConnection.BeginTransaction();
 
-        public async Task InsertEncryptedAsync(ImageRecord record, byte[] encryptedThumbnail, byte[] key,
+        public async Task InsertEncryptedAsync(WebImageRecord record, byte[] encryptedThumbnail, byte[] key,
             SqliteTransaction? transaction = null)
         {
             using var command = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, record.Id,
@@ -265,7 +265,7 @@ internal sealed partial class GalleryStore(string databasePath)
             await command.ExecuteNonQueryAsync();
         }
 
-        public async Task<(ImageRecord Record, byte[] Thumbnail)> ReadVerificationAsync(string id, byte[] key)
+        public async Task<(WebImageRecord Record, byte[] Thumbnail)> ReadVerificationAsync(string id, byte[] key)
         {
             using var command = sqliteConnection.CreateCommand();
             command.CommandText = "SELECT record, thumbnail FROM images WHERE id = $id";
@@ -337,7 +337,7 @@ internal sealed partial class GalleryStore(string databasePath)
         return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync()) != 0;
     }
 
-    public async Task<ImageRecord> ReadRecordAsync(string id, byte[] key)
+    public async Task<WebImageRecord> ReadRecordAsync(string id, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadRecord(sqliteConnection, id);
@@ -346,7 +346,7 @@ internal sealed partial class GalleryStore(string databasePath)
         return DecodeRecord(id, encryptedRecord, key);
     }
 
-    public async Task UpdateAsync(ImageRecord record, byte[] key)
+    public async Task UpdateAsync(WebImageRecord record, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, record.Id, EncodeRecord(record, key));
@@ -382,16 +382,16 @@ internal sealed partial class GalleryStore(string databasePath)
     private const string SavedViewsId = "saved-views";
     private const string SavedViewsPurpose = "saved-views:v1";
 
-    public async Task<List<SavedView>> LoadViewsAsync(byte[] key) =>
-        await ReadSettingsAsync<List<SavedView>>(SavedViewsId, SavedViewsPurpose, key) ?? [];
+    public async Task<List<WebSavedView>> LoadViewsAsync(byte[] key) =>
+        await ReadSettingsAsync<List<WebSavedView>>(SavedViewsId, SavedViewsPurpose, key) ?? [];
 
-    public Task SaveViewAsync(string name, GalleryFilter filter, byte[] key) =>
+    public Task SaveViewAsync(string name, WebGalleryFilter filter, byte[] key) =>
         ChangeViewsUnderGateAsync(views => SavedViewProcessor.Replace(views, name, filter), key);
 
     public Task DeleteViewAsync(string name, byte[] key) =>
         ChangeViewsUnderGateAsync(views => SavedViewProcessor.Remove(views, name), key);
 
-    private async Task ChangeViewsUnderGateAsync(Action<List<SavedView>> change, byte[] key)
+    private async Task ChangeViewsUnderGateAsync(Action<List<WebSavedView>> change, byte[] key)
     {
         await Gate.WaitAsync();
         try
@@ -403,15 +403,15 @@ internal sealed partial class GalleryStore(string databasePath)
         finally { Gate.Release(); }
     }
 
-    private static ImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key)
+    private static WebImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key)
     {
-        var record = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key)
+        var record = DecodeSetting<WebImageRecord>(encryptedRecord, $"record:{id}", key)
             ?? throw new InvalidOperationException("Invalid image record.");
         if (record.Id != id) throw new CryptographicException("Image record identity mismatch.");
         return record;
     }
 
-    private static byte[] EncodeRecord(ImageRecord record, byte[] key) =>
+    private static byte[] EncodeRecord(WebImageRecord record, byte[] key) =>
         EncodeSetting(record, $"record:{record.Id}", key);
 
     private static T? DecodeSetting<T>(byte[] encryptedSettings, string purpose, byte[] key)

@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace Gallery.Web.Models;
 
-public sealed record ImageRecord
+public sealed record WebImageRecord
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
     public string Name { get; init; } = "";
@@ -34,7 +34,7 @@ public sealed record ImageRecord
     /// <summary>Format of the stored plaintext; defaults to PNG for older records, which were converted on import.</summary>
     public string ContentType { get; init; } = "image/png";
     public double DurationSeconds { get; init; }
-    public GenerationInfo? Generation { get; init; }
+    public WebGenerationInfo? Generation { get; init; }
     /// <summary>Version of the generation-metadata parser applied to this record; older records are re-parsed once.</summary>
     public int MetadataVersion { get; init; }
 
@@ -44,7 +44,7 @@ public sealed record ImageRecord
 }
 
 /// <summary>Generation parameters extracted from an embedded ComfyUI API prompt.</summary>
-public sealed record GenerationInfo
+public sealed record WebGenerationInfo
 {
     public string Prompt { get; init; } = "";
     public string NegativePrompt { get; init; } = "";
@@ -57,11 +57,11 @@ public sealed record GenerationInfo
     public bool HasApiPrompt { get; init; }
 }
 
-public sealed record ExportFile
+public sealed record WebExportFile
 {
     private readonly byte[] content;
 
-    public ExportFile(string fileName, string contentType, ReadOnlySpan<byte> contentBytes)
+    public WebExportFile(string fileName, string contentType, ReadOnlySpan<byte> contentBytes)
     {
         FileName = fileName;
         ContentType = contentType;
@@ -76,23 +76,23 @@ public sealed record ExportFile
     internal ReadOnlyMemory<byte> OwnedContent => content;
 }
 
-public sealed record PromptGroup(string Kind, string Prompt, ImmutableArray<ImageRecord> Images)
+public sealed record WebPromptGroup(string Kind, string Prompt, ImmutableArray<WebImageRecord> Images)
 {
     public const string Shared = "shared", Unique = "unique", None = "none";
 }
 
-public enum ExistingOriginalAction { Retain, Delete }
-public enum MissingOriginalAction { RestorePng, Discard }
-public sealed record RemovalItem(string Id, string Name, string OriginalPath, bool OriginalExists);
-public sealed record RemovalFailure(string ImageId, string Message, Exception Cause);
-public sealed record RemovalResult(string Id, bool Removed, string? RestoredPath, RemovalFailure? Failure)
+public enum WebExistingOriginalAction { Retain, Delete }
+public enum WebMissingOriginalAction { RestorePng, Discard }
+public sealed record WebRemovalItem(string Id, string Name, string OriginalPath, bool OriginalExists);
+public sealed record WebRemovalFailure(string ImageId, string Message, Exception Cause);
+public sealed record WebRemovalResult(string Id, bool Removed, string? RestoredPath, WebRemovalFailure? Failure)
 {
     public string? Error => Failure?.Message;
 }
 
-public sealed record ImportProgress(int? Total, int Completed, int Imported, int Failed, string Status);
+public sealed record WebImportProgress(int? Total, int Completed, int Imported, int Failed, string Status);
 
-public sealed record UiPreferences
+public sealed record WebUiPreferences
 {
     public const string ComfortableDensity = "comfortable";
     public static readonly ImmutableArray<string> Densities = ["compact", ComfortableDensity, "large"];
@@ -101,20 +101,20 @@ public sealed record UiPreferences
     public int AutoLockMinutes { get; init; } = DefaultAutoLockMinutes;
 }
 
-public sealed record DuplicateGroup(
+public sealed record WebDuplicateGroup(
     string KeepId,
     [property: JsonPropertyName("Ids")] ImmutableArray<string> ImageIds,
     int MaxDistance,
     bool Exact,
     long ReclaimableBytes);
 
-public sealed record DuplicateScan(ImmutableArray<DuplicateGroup> Groups, int ScannedCount, DateTimeOffset ScannedAt)
+public sealed record WebDuplicateScan(ImmutableArray<WebDuplicateGroup> Groups, int ScannedCount, DateTimeOffset ScannedAt)
 {
     public int DuplicateCount => Groups.Sum(group => group.ImageIds.Length - 1);
     public long ReclaimableBytes => Groups.Sum(group => group.ReclaimableBytes);
 }
 
-public sealed record StorageOverview(
+public sealed record WebStorageOverview(
     long DatabaseBytes,
     int ImageFileCount,
     long ImageBytes,
@@ -131,16 +131,16 @@ public sealed record StorageOverview(
     public long? CatalogRevision { get; init; }
 }
 
-public enum DriveQueueState { Idle, Running, Waiting, Paused, Faulted }
+public enum WebDriveQueueState { Idle, Running, Waiting, Paused, Faulted }
 
 /// <summary>Progress of queued drive operations (file deletes, index scans and recovery) played in the background.</summary>
-public sealed record DriveQueueStatus(DriveQueueState State, int Pending, int Failed, int Completed, string Activity)
+public sealed record WebDriveQueueStatus(WebDriveQueueState State, int Pending, int Failed, int Completed, string Activity)
 {
-    public static readonly DriveQueueStatus Empty = new(DriveQueueState.Idle, 0, 0, 0, "");
-    public bool HasWork => Pending > 0 || Failed > 0 || State is DriveQueueState.Running or DriveQueueState.Waiting;
+    public static readonly WebDriveQueueStatus Empty = new(WebDriveQueueState.Idle, 0, 0, 0, "");
+    public bool HasWork => Pending > 0 || Failed > 0 || State is WebDriveQueueState.Running or WebDriveQueueState.Waiting;
 }
 
-public sealed record BackupOptions(
+public sealed record WebBackupOptions(
     string DestinationType,
     string LocalDirectory,
     string AzureContainer,
@@ -149,7 +149,7 @@ public sealed record BackupOptions(
     string? LastBackupName,
     string? LastBackupType);
 
-public sealed record BackupRunResult(
+public sealed record WebBackupRunResult(
     string BackupType,
     string BackupName,
     int MediaFilesCopied,
@@ -158,7 +158,7 @@ public sealed record BackupRunResult(
     DateTimeOffset CreatedAt,
     bool Skipped = false);
 
-public sealed record GalleryFilter
+public sealed record WebGalleryFilter
 {
     public const string AnyValue = "all";
     public string Search { get; init; } = "";
@@ -183,7 +183,7 @@ public sealed record GalleryFilter
     public string Prompt { get; init; } = "";
 }
 
-public sealed record VisionSettings
+public sealed record WebVisionSettings
 {
     public const int MinRequestTimeoutSeconds = 10;
     public const int MaxRequestTimeoutSeconds = 3600;

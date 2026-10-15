@@ -1,7 +1,7 @@
-using Gallery.Core.Extractors;
+using Gallery.Web.Services.Processors;
 using System.IO.Compression;
 using System.Security.Cryptography;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -20,25 +20,25 @@ public sealed partial class GalleryService
         return await ExportComposer.OpenMediaAsync(await FindAsync(id, key.Bytes), key.Bytes);
     }
 
-    public async Task<ExportFile> ExportAsync(string id)
+    public async Task<WebExportFile> ExportAsync(string id)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         return await ExportComposer.ExportAsync(await FindAsync(id, key.Bytes), key.Bytes);
     }
 
-    public async Task<ExportFile> ExportZipAsync(IEnumerable<string> ids)
+    public async Task<WebExportFile> ExportZipAsync(IEnumerable<string> ids)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         return await ExportComposer.ComposeZipAsync(ExportSelectionAsync(ids, key.Bytes));
     }
 
-    private async IAsyncEnumerable<ExportFile> ExportSelectionAsync(IEnumerable<string> ids, byte[] key)
+    private async IAsyncEnumerable<WebExportFile> ExportSelectionAsync(IEnumerable<string> ids, byte[] key)
     {
         foreach (var id in ids.Distinct(StringComparer.Ordinal))
             yield return await ExportComposer.ExportAsync(await FindAsync(id, key), key);
     }
 
-    public async Task<ExportFile?> WorkflowAsync(string id)
+    public async Task<WebExportFile?> WorkflowAsync(string id)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var record = await FindAsync(id, key.Bytes);
@@ -46,7 +46,7 @@ public sealed partial class GalleryService
         return ExportComposer.ComposeWorkflow(record, workflow);
     }
 
-    public static void ClearExportContent(ExportFile file) => ExportComposer.ClearOwnedContent(file);
+    public static void ClearExportContent(WebExportFile file) => ExportComposer.ClearOwnedContent(file);
 
     public static string SafeFileName(string name) => ExportComposer.SafeFileName(name);
 }

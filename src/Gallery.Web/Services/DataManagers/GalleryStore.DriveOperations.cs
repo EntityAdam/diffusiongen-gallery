@@ -34,7 +34,7 @@ internal sealed partial class GalleryStore
     }
 
     /// <summary>Updates a record, drops a superseded queued operation and enqueues follow-up drive work atomically.</summary>
-    public async Task UpdateImageAndEnqueueAsync(ImageRecord record, byte[] key, NewDriveOperation operation, long? supersededSequence = null)
+    public async Task UpdateImageAndEnqueueAsync(WebImageRecord record, byte[] key, NewDriveOperation operation, long? supersededSequence = null)
     {
         await using var connection = await OpenAsync();
         using var transaction = connection.BeginTransaction();
@@ -208,7 +208,7 @@ internal sealed partial class GalleryStore
         return lengths;
     }
 
-    public async Task<ImageRecord?> TryReadRecordAsync(string id, byte[] key)
+    public async Task<WebImageRecord?> TryReadRecordAsync(string id, byte[] key)
     {
         await using var connection = await OpenAsync();
         using var command = GalleryStoreCommandFactory.CreateReadRecord(connection, id);

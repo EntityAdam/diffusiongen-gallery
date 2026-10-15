@@ -101,7 +101,7 @@ public sealed partial class GalleryService
             await Blob(name).UploadAsync(sourcePath, overwrite: false);
     }
 
-    public async Task<BackupOptions> LoadBackupOptionsAsync()
+    public async Task<WebBackupOptions> LoadBackupOptionsAsync()
     {
         var settings = await ReadBackupSettingsAsync();
         return settings is null
@@ -111,7 +111,7 @@ public sealed partial class GalleryService
                 settings.LastBackupName, settings.LastBackupType);
     }
 
-    public async Task<BackupOptions> SaveBackupOptionsAsync(
+    public async Task<WebBackupOptions> SaveBackupOptionsAsync(
         string destinationType, string localDirectory, string azureContainer,
         string azurePrefix, string azureConnectionString)
     {
@@ -161,11 +161,11 @@ public sealed partial class GalleryService
             updated.LastBackupName, updated.LastBackupType);
     }
 
-    public Task<BackupRunResult> CreateFullBackupAsync() => CreateBackupAsync(incremental: false);
+    public Task<WebBackupRunResult> CreateFullBackupAsync() => CreateBackupAsync(incremental: false);
 
-    public Task<BackupRunResult> CreateIncrementalBackupAsync() => CreateBackupAsync(incremental: true);
+    public Task<WebBackupRunResult> CreateIncrementalBackupAsync() => CreateBackupAsync(incremental: true);
 
-    private async Task<BackupRunResult> CreateBackupAsync(bool incremental)
+    private async Task<WebBackupRunResult> CreateBackupAsync(bool incremental)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var settings = await ReadBackupSettingsAsync()

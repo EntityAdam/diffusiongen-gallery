@@ -52,9 +52,9 @@
 </Card>
 
 @code {
-    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
-    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
-    [Parameter] public EventCallback<GalleryFilter> Changed { get; set; }
+    [Parameter, EditorRequired] public WebGalleryFilter Filter { get; set; } = new();
+    [Parameter] public IReadOnlyList<WebImageRecord> Images { get; set; } = [];
+    [Parameter] public EventCallback<WebGalleryFilter> Changed { get; set; }
     [Parameter] public EventCallback Reset { get; set; }
     [Parameter] public bool Disabled { get; set; }
 
@@ -78,8 +78,8 @@
         public string Model { get; set; } = "";
         public bool FavoritesOnly { get; set; }
         public string Deletion { get; set; } = "active";
-        public string Analysis { get; set; } = GalleryFilter.AnyValue;
-        public string Orientation { get; set; } = GalleryFilter.AnyValue;
+        public string Analysis { get; set; } = WebGalleryFilter.AnyValue;
+        public string Orientation { get; set; } = WebGalleryFilter.AnyValue;
         public int MinWidth { get; set; }
         public int MinHeight { get; set; }
         public DateTime? From { get; set; }
@@ -87,12 +87,12 @@
         public string Sort { get; set; } = "newest";
         public string Collection { get; set; } = "";
         public int MinRating { get; set; }
-        public string Review { get; set; } = GalleryFilter.AnyValue;
+        public string Review { get; set; } = WebGalleryFilter.AnyValue;
         public bool UnorganizedOnly { get; set; }
-        public string Media { get; set; } = GalleryFilter.AnyValue;
+        public string Media { get; set; } = WebGalleryFilter.AnyValue;
         public string Prompt { get; set; } = "";
 
-        public static FilterDraft CreateFrom(GalleryFilter filter) => new()
+        public static FilterDraft CreateFrom(WebGalleryFilter filter) => new()
         {
             Search = filter.Search, Folder = filter.Folder, Tag = filter.Tag, Model = filter.Model,
             FavoritesOnly = filter.FavoritesOnly, Deletion = filter.Deletion, Analysis = filter.Analysis,
@@ -102,7 +102,7 @@
             Media = filter.Media, Prompt = filter.Prompt
         };
 
-        public GalleryFilter ToFilter() => new()
+        public WebGalleryFilter ToFilter() => new()
         {
             Search = Search, Folder = Folder, Tag = Tag, Model = Model, FavoritesOnly = FavoritesOnly,
             Deletion = Deletion, Analysis = Analysis, Orientation = Orientation, MinWidth = MinWidth,

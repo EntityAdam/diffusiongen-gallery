@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
@@ -31,7 +31,7 @@ public sealed class OriginalStorageTests
         // Act
         var record = await fixture.Service.ImportAsync(new MemoryStream(source), name, "folder");
         var stored = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), fixture.Session.Key, $"image:{record.Id}");
-        var original = await fixture.Service.ViewerImageAsync(record.Id, ImageResolution.Original);
+        var original = await fixture.Service.ViewerImageAsync(record.Id, WebImageResolution.Original);
 
         // Assert
         Assert.Equal(source, stored);

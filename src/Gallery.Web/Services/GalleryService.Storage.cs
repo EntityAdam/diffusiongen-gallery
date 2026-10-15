@@ -9,17 +9,17 @@ public sealed partial class GalleryService
     private const string StorageOverviewId = "storage-overview";
     private const string StorageOverviewPurpose = "storage-overview:v1";
 
-    public async Task<StorageOverview?> CachedStorageOverviewAsync()
+    public async Task<WebStorageOverview?> CachedStorageOverviewAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var overview = await galleryStore.ReadSettingsAsync<StorageOverview>(StorageOverviewId, StorageOverviewPurpose, key.Bytes);
+        var overview = await galleryStore.ReadSettingsAsync<WebStorageOverview>(StorageOverviewId, StorageOverviewPurpose, key.Bytes);
         return overview is null ? null : overview with
         {
             IsStale = overview.CatalogRevision != await galleryStore.ReadStorageRevisionAsync()
         };
     }
 
-    public async Task<StorageOverview> RefreshStorageOverviewAsync()
+    public async Task<WebStorageOverview> RefreshStorageOverviewAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var revision = await galleryStore.ReadStorageRevisionAsync();
@@ -36,8 +36,8 @@ public sealed partial class GalleryService
 
     private static class StorageOverviewCalculator
     {
-        public static (StorageOverview Overview, List<(byte[] Directory, IndexedFile File)> Measured) Measure(
-            string vaultRoot, IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
+        public static (WebStorageOverview Overview, List<(byte[] Directory, IndexedFile File)> Measured) Measure(
+            string vaultRoot, IEnumerable<WebImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
         {
             var vaultMeasurement = MeasureVaultFiles(vaultRoot);
             var imageMeasurement = MeasureImageFiles(records, indexedLengths, key);
@@ -66,7 +66,7 @@ public sealed partial class GalleryService
 
         // Indexed files are counted from the database; only files the index has not seen are measured on disk.
         private static (int FileCount, long Bytes, int Missing, List<(byte[] Directory, IndexedFile File)> Measured) MeasureImageFiles(
-            IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
+            IEnumerable<WebImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
         {
             long imageBytes = 0;
             int imageFileCount = 0, missing = 0;

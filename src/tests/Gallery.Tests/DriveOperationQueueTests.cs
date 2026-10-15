@@ -23,7 +23,7 @@ public sealed class DriveOperationQueueTests
         await fixture.Service.WaitForDriveOperationsAsync();
 
         // Assert
-        Assert.Equal(DriveQueueState.Paused, pausedStatus.State);
+        Assert.Equal(WebDriveQueueState.Paused, pausedStatus.State);
         Assert.Equal(1, pausedStatus.Pending);
         Assert.True(fileKeptWhilePaused);
         Assert.False(File.Exists(record.StoredPath));
@@ -59,7 +59,7 @@ public sealed class DriveOperationQueueTests
         using var fixture = await LoadedVaultAsync();
         fixture.Service.DriveRetryDelay = TimeSpan.FromMilliseconds(5);
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
-        DriveQueueStatus failedStatus;
+        WebDriveQueueStatus failedStatus;
 
         // Act
         using (new FileStream(record.StoredPath, FileMode.Open, FileAccess.Read, FileShare.None))
@@ -172,8 +172,8 @@ public sealed class DriveOperationQueueTests
     {
         await fixture.Service.UpdateAsync(id, record => record with { MarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([id]);
-        var results = new List<RemovalResult>();
-        await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", results.Add);
+        var results = new List<WebRemovalResult>();
+        await fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "", results.Add);
         Assert.True(Assert.Single(results).Removed);
     }
 }

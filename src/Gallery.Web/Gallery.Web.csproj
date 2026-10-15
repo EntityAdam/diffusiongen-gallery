@@ -16,6 +16,6 @@
     <InternalsVisibleTo Include="Gallery.TestSupport" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="..\Gallery.Core\**\*.cs" Exclude="..\Gallery.Core\bin\**\*;..\Gallery.Core\obj\**\*" />
+    <ProjectReference Include="..\Gallery.Core\Gallery.Core.csproj" />
   </ItemGroup>
 </Project>

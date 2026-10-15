@@ -1,5 +1,5 @@
 namespace Gallery.Web.Models;
 
-public enum ImageResolution { Fit, Original }
-public enum FolderSearchScope { SelectedFolder, Descendants }
-public enum SourceRetention { Retain, DeleteAfterVerification }
+public enum WebImageResolution { Fit, Original }
+public enum WebFolderSearchScope { SelectedFolder, Descendants }
+public enum WebSourceRetention { Retain, DeleteAfterVerification }

@@ -218,7 +218,7 @@ public sealed partial class GalleryService
             throw new InvalidOperationException("Choose a new or empty destination folder. Existing files will not be overwritten.");
     }
 
-    private static string MediaRelativePath(ImageRecord record)
+    private static string MediaRelativePath(WebImageRecord record)
     {
         if (record.Id.Length < 4 || record.Id.Any(character => !char.IsAsciiHexDigit(character)))
             throw new InvalidOperationException("The gallery contains an invalid media identifier.");
@@ -226,7 +226,7 @@ public sealed partial class GalleryService
             record.Id + (record.IsVideo ? ".dmp4" : ".dpng"));
     }
 
-    private static void ValidateMediaPath(ImageRecord record)
+    private static void ValidateMediaPath(WebImageRecord record)
     {
         var expected = record.IsVideo ? ".dmp4" : ".dpng";
         if (!string.Equals(Path.GetExtension(record.StoredPath), expected, StringComparison.OrdinalIgnoreCase))
@@ -235,7 +235,7 @@ public sealed partial class GalleryService
             throw new InvalidOperationException("Encrypted media cannot be a symbolic link.");
     }
 
-    private static void DeleteVaultData(string root, IEnumerable<ImageRecord> records)
+    private static void DeleteVaultData(string root, IEnumerable<WebImageRecord> records)
     {
         var media = records.Select(record => record.StoredPath).ToHashSet(
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);

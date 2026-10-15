@@ -4,9 +4,40 @@ A standalone local-only .NET 10 / Blazor Server gallery. It shares `src03`'s
 charcoal, mint, typography, and Diffusion Gen branding, but has no project or
 runtime dependency on it. `gallery01` is frozen; all new development lives here.
 This is an independent source copy, not a shared project.
-Gallery models, domain rules, persistence, and the web host are built into the
-single `Gallery.Web` production assembly. The domain behavior is exposed through
-the gallery service entry points.
+There are exactly two production projects: `Gallery.Web` depends on
+`Gallery.Core`, never the reverse. The existing projects under `src/tests` are
+test-only tooling.
+
+## Architecture
+
+`Gallery.Core` is a standalone .NET class library with no package or project
+dependencies. It owns domain records and the rules for curation, review/undo,
+duplicate grouping and keeper selection, prompt grouping, gallery filtering,
+and removal eligibility/decisions. Its operations work on in-memory domain
+values; they do not access files, databases, HTTP, configuration, or UI services.
+Collection membership changes and the implicit review state of record edits
+also live here; UI projections and persisted updates use the same rules.
+
+`Gallery.Web` is the outer application/adapter layer. It owns Blazor and HTTP
+boundaries, application orchestration (`GalleryService`), SQLite and encryption,
+filesystem operations, media decoding/hashing and metadata parsing, vision
+gateways, diagnostics, and dependency injection. With only two production
+projects, these outer-layer roles remain folders within Web rather than
+additional assemblies.
+
+Web uses its own `Web`-prefixed records and enums in `Gallery.Web.Models`.
+`DomainMappings` explicitly translates those values to/from `Gallery.Core.Models`
+when invoking domain rules. Neither UI components nor serialized persistence
+contracts expose Core records. Existing serialized property names, settings IDs,
+and encryption purposes are preserved, so the model type renaming requires no
+catalog migration.
+
+Boundary validation belongs to Web (and to any future adapter), not Core.
+Adapters validate incoming values and choices before mapping to the domain;
+Core applies business rules to those accepted values. Format parsing errors,
+HTTP status codes, logging context, size limits, paths, credentials, and external
+service settings remain outside Core. Domain rules should be added to Core,
+not reimplemented in components or storage adapters.
 
 ## UI
 

@@ -1,10 +1,11 @@
 using Gallery.Web.Services.DataManagers.Models;
+using Gallery.Web.Services.Processors;
 using Gallery.Core.Processors;
 using Gallery.Web.Services.DataManagers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Collections.Immutable;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 using SixLabors.ImageSharp;
 
@@ -14,14 +15,14 @@ public sealed partial class GalleryService
 {
     private static class PreferencesNormalizer
     {
-        public static UiPreferences Normalize(UiPreferences preferences)
+        public static WebUiPreferences Normalize(WebUiPreferences preferences)
         {
-            var density = UiPreferences.Densities.Contains(preferences.GridDensity)
+            var density = WebUiPreferences.Densities.Contains(preferences.GridDensity)
                 ? preferences.GridDensity
-                : UiPreferences.ComfortableDensity;
+                : WebUiPreferences.ComfortableDensity;
             var autoLock = preferences.AutoLockMinutes switch
             {
-                < 0 => UiPreferences.DefaultAutoLockMinutes,
+                < 0 => WebUiPreferences.DefaultAutoLockMinutes,
                 > 1440 => 1440,
                 _ => preferences.AutoLockMinutes
             };
@@ -42,9 +43,9 @@ public sealed partial class GalleryService
     private sealed class PerceptualHashProcessor(GalleryStore galleryStore)
     {
         public async Task<Dictionary<string, PerceptualHash>> ComputeAsync(
-            IReadOnlyList<ImageRecord> imageRecords, byte[] key)
+            IReadOnlyList<WebImageRecord> imageRecords, byte[] key)
         {
-            var imageThumbnails = new List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)>(imageRecords.Count);
+            var imageThumbnails = new List<(WebImageRecord ImageRecord, ImageThumbnail ImageThumbnail)>(imageRecords.Count);
             try
             {
                 await LoadThumbnailsAsync(imageRecords, key, imageThumbnails);
@@ -57,8 +58,8 @@ public sealed partial class GalleryService
                     CryptographicOperations.ZeroMemory(imageThumbnail.ImageThumbnail.PngBytes);
             }
         }
-        private async Task LoadThumbnailsAsync(IReadOnlyList<ImageRecord> imageRecords, byte[] key,
-            List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
+        private async Task LoadThumbnailsAsync(IReadOnlyList<WebImageRecord> imageRecords, byte[] key,
+            List<(WebImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
         {
         foreach (var imageRecord in imageRecords)
                 {
@@ -77,14 +78,14 @@ public sealed partial class GalleryService
         }
 
         private static async Task<PerceptualHash?[]> ComputeHashesAsync(
-            List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
+            List<(WebImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
         {
                 return await Task.Run(() =>
                 {
                     var computedHashes = new PerceptualHash?[imageThumbnails.Count];
                     Parallel.For(0, imageThumbnails.Count, index =>
                     {
-                        ImageRecord imageRecord;
+                        WebImageRecord imageRecord;
                         ImageThumbnail imageThumbnail;
                         (imageRecord, imageThumbnail) = imageThumbnails[index];
                         try
@@ -93,7 +94,7 @@ public sealed partial class GalleryService
                             try
                             {
                                 computedHashes[index] = new(
-                                    imageRecord.PngSha256, DuplicateRules.DifferenceHash(plainThumbnail));
+                                    imageRecord.PngSha256, PerceptualImageHasher.DifferenceHash(plainThumbnail));
                             }
                             finally { CryptographicOperations.ZeroMemory(plainThumbnail); }
                         }
@@ -110,7 +111,7 @@ public sealed partial class GalleryService
         }
 
         private static Dictionary<string, PerceptualHash> MapHashes(
-            List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails,
+            List<(WebImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails,
             PerceptualHash?[] perceptualHashes)
         {
                 var hashesByImageId = new Dictionary<string, PerceptualHash>(imageThumbnails.Count);
@@ -123,23 +124,23 @@ public sealed partial class GalleryService
         }
     }
 
-    public async Task<UiPreferences> LoadPreferencesAsync() =>
+    public async Task<WebUiPreferences> LoadPreferencesAsync() =>
         PreferencesNormalizer.Normalize(
-            await ReadEncryptedSettingAsync<UiPreferences>(PreferencesId, PreferencesPurpose) ?? new());
+            await ReadEncryptedSettingAsync<WebUiPreferences>(PreferencesId, PreferencesPurpose) ?? new());
 
-    public Task SavePreferencesAsync(UiPreferences preferences) =>
+    public Task SavePreferencesAsync(WebUiPreferences preferences) =>
         WriteEncryptedSettingAsync(PreferencesNormalizer.Normalize(preferences), PreferencesId, PreferencesPurpose);
 
-    public Task<DuplicateScan?> CachedDuplicateScanAsync() =>
-        ReadEncryptedSettingAsync<DuplicateScan>(DuplicateScanId, DuplicateScanPurpose);
+    public Task<WebDuplicateScan?> CachedDuplicateScanAsync() =>
+        ReadEncryptedSettingAsync<WebDuplicateScan>(DuplicateScanId, DuplicateScanPurpose);
 
-    public async Task<DuplicateScan> ScanDuplicatesAsync(IProgress<(int Completed, int Total)>? progress = null)
+    public async Task<WebDuplicateScan> ScanDuplicatesAsync(IProgress<(int Completed, int Total)>? progress = null)
     {
         var imageRecords = await ListAsync();
         var cachedHashesByImageId =
             await ReadEncryptedSettingAsync<Dictionary<string, PerceptualHash>>(PerceptualHashesId, PerceptualHashesPurpose) ?? [];
         Dictionary<string, PerceptualHash> perceptualHashesByImageId;
-        List<ImageRecord> pendingImageRecords;
+        List<WebImageRecord> pendingImageRecords;
         (perceptualHashesByImageId, pendingImageRecords) = ReconcileCachedHashes(imageRecords, cachedHashesByImageId);
         await ComputePendingHashesAsync(pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
         await WriteEncryptedSettingAsync(perceptualHashesByImageId, PerceptualHashesId, PerceptualHashesPurpose);
@@ -148,12 +149,12 @@ public sealed partial class GalleryService
         return duplicateScan;
     }
 
-    private static (Dictionary<string, PerceptualHash> PerceptualHashesByImageId, List<ImageRecord> PendingImageRecords)
-        ReconcileCachedHashes(IEnumerable<ImageRecord> imageRecords,
+    private static (Dictionary<string, PerceptualHash> PerceptualHashesByImageId, List<WebImageRecord> PendingImageRecords)
+        ReconcileCachedHashes(IEnumerable<WebImageRecord> imageRecords,
             IReadOnlyDictionary<string, PerceptualHash> cachedHashesByImageId)
     {
         var hashesByImageId = new Dictionary<string, PerceptualHash>();
-        var pendingImageRecords = new List<ImageRecord>();
+        var pendingImageRecords = new List<WebImageRecord>();
         foreach (var imageRecord in imageRecords)
         {
             if (cachedHashesByImageId.TryGetValue(imageRecord.Id, out var cachedPerceptualHash)
@@ -165,7 +166,7 @@ public sealed partial class GalleryService
         return (hashesByImageId, pendingImageRecords);
     }
 
-    private async Task ComputePendingHashesAsync(IReadOnlyList<ImageRecord> pendingImageRecords,
+    private async Task ComputePendingHashesAsync(IReadOnlyList<WebImageRecord> pendingImageRecords,
         IDictionary<string, PerceptualHash> perceptualHashesByImageId, int totalImageCount,
         IProgress<(int Completed, int Total)>? progress)
     {
@@ -183,13 +184,14 @@ public sealed partial class GalleryService
         }
     }
 
-    private static async Task<DuplicateScan> BuildDuplicateScanAsync(IEnumerable<ImageRecord> imageRecords,
+    private static async Task<WebDuplicateScan> BuildDuplicateScanAsync(IEnumerable<WebImageRecord> imageRecords,
         IReadOnlyDictionary<string, PerceptualHash> hashesByImageId)
     {
         var hashedImageRecords = imageRecords.Where(imageRecord => hashesByImageId.ContainsKey(imageRecord.Id)).ToList();
-        var groups = await Task.Run(() => DuplicateRules.GroupDuplicates(hashedImageRecords,
+        var groups = await Task.Run(() => DuplicateRules.GroupDuplicates(hashedImageRecords.Select(record => record.ToDomain()).ToArray(),
             imageRecord => hashesByImageId[imageRecord.Id].Hash, FileLength));
-        return new DuplicateScan(groups.ToImmutableArray(), hashedImageRecords.Count, DateTimeOffset.UtcNow);
+        return new WebDuplicateScan(groups.Select(group => group.ToWeb()).ToImmutableArray(),
+            hashedImageRecords.Count, DateTimeOffset.UtcNow);
     }
 
     /// <summary>Unmarks the kept copies and marks every other copy in the group for deletion. Returns the failure count.</summary>

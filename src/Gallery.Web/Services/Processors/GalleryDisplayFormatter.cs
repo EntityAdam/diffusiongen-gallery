@@ -4,7 +4,7 @@ namespace Gallery.Web.Services.Processors;
 
 internal static class GalleryDisplayFormatter
 {
-    public static string FormatDuration(ImageRecord image) => RenderDuration(NormalizeDuration(image.DurationSeconds));
+    public static string FormatDuration(WebImageRecord image) => RenderDuration(NormalizeDuration(image.DurationSeconds));
 
     private static TimeSpan NormalizeDuration(double seconds) => TimeSpan.FromSeconds(Math.Max(0, Math.Round(seconds)));
 

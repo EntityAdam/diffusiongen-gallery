@@ -1,11 +1,10 @@
 using Gallery.Web.Services.Processors;
-using Gallery.Core.Extractors;
 using Gallery.Core.Processors;
 using Gallery.Web.Managers.Gateways;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using Gallery.Web.Services;

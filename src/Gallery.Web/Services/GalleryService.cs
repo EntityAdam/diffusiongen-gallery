@@ -2,14 +2,13 @@ using System.Collections.Immutable;
 using Gallery.Web.Services.Validators;
 using Gallery.Web.Services.Processors;
 using Gallery.Web.Services.DataManagers.Models;
-using Gallery.Core.Extractors;
 using Gallery.Core.Processors;
 using Gallery.Web.Managers.Gateways;
 using Gallery.Web.Services.DataManagers;
 using Gallery.Web.Services.Sessions;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using SixLabors.ImageSharp;
@@ -43,13 +42,13 @@ public sealed partial class GalleryService
     private static class GalleryImageRenderer
     {
         public static async Task<string> CreatePreviewAsync(
-            ImageRecord record, byte[] key, ImageResolution resolution)
+            WebImageRecord record, byte[] key, WebImageResolution resolution)
         {
             var plainImage = await DecryptStoredImageAsync(record, key);
             try
             {
                 using var image = Image.Load(plainImage);
-                if (resolution == ImageResolution.Fit)
+                if (resolution == WebImageResolution.Fit)
                     image.Mutate(context => context.Resize(new ResizeOptions
                     {
                         Size = new Size(1600, 1600), Mode = ResizeMode.Max
@@ -65,12 +64,12 @@ public sealed partial class GalleryService
         }
 
         public static async Task<string> CreateViewerImageAsync(
-            ImageRecord record, byte[] key, ImageResolution resolution)
+            WebImageRecord record, byte[] key, WebImageResolution resolution)
         {
             var plainImage = await DecryptStoredImageAsync(record, key);
             try
             {
-                if (resolution == ImageResolution.Original)
+                if (resolution == WebImageResolution.Original)
                     return ImageContentFormats.DataUrlPrefix(record.ContentType) + Convert.ToBase64String(plainImage);
 
                 using var image = Image.Load(plainImage);
@@ -90,7 +89,7 @@ public sealed partial class GalleryService
             finally { CryptographicOperations.ZeroMemory(plainImage); }
         }
 
-        private static async Task<byte[]> DecryptStoredImageAsync(ImageRecord record, byte[] key) =>
+        private static async Task<byte[]> DecryptStoredImageAsync(WebImageRecord record, byte[] key) =>
             VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{record.Id}");
     }
 
@@ -112,32 +111,34 @@ public sealed partial class GalleryService
 
     public static bool IsVideoName(string name) => string.Equals(Path.GetExtension(name), Mp4Extension, StringComparison.OrdinalIgnoreCase);
 
-    public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter)
+    public List<WebImageRecord> Filter(IEnumerable<WebImageRecord> records, WebGalleryFilter filter)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentNullException.ThrowIfNull(filter);
-        return GalleryFilterProcessor.Apply(filter, records).ToList();
+        return GalleryFilterProcessor.Apply(filter.ToDomain(), records.Select(record => record.ToDomain()))
+            .Select(record => record.ToWeb()).ToList();
     }
 
-    public List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> records)
+    public List<WebPromptGroup> GroupByPrompt(IEnumerable<WebImageRecord> records)
     {
         ArgumentNullException.ThrowIfNull(records);
-        return ComfyMetadata.GroupByPrompt(records);
+        return PromptRules.GroupByPrompt(records.Select(record => record.ToDomain()))
+            .Select(group => group.ToWeb()).ToList();
     }
 
-    public ImageRecord PickDuplicateKeeper(IEnumerable<ImageRecord> records)
+    public WebImageRecord PickDuplicateKeeper(IEnumerable<WebImageRecord> records)
     {
         var candidates = RequireDuplicateCandidates(records);
-        return DuplicateRules.PickKeeper(candidates);
+        return DuplicateRules.PickKeeper(candidates.Select(record => record.ToDomain())).ToWeb();
     }
 
-    public HashSet<string> InitialDuplicateKeepers(IReadOnlyCollection<ImageRecord> duplicateImageRecords)
+    public HashSet<string> InitialDuplicateKeepers(IReadOnlyCollection<WebImageRecord> duplicateImageRecords)
     {
         var candidates = RequireDuplicateCandidates(duplicateImageRecords);
-        return DuplicateRules.InitialKeepers(candidates);
+        return DuplicateRules.InitialKeepers(candidates.Select(record => record.ToDomain()).ToArray());
     }
 
-    private static List<ImageRecord> RequireDuplicateCandidates(IEnumerable<ImageRecord> candidates)
+    private static List<WebImageRecord> RequireDuplicateCandidates(IEnumerable<WebImageRecord> candidates)
     {
         ArgumentNullException.ThrowIfNull(candidates);
         var candidateRecords = candidates.ToList();
@@ -146,50 +147,78 @@ public sealed partial class GalleryService
         return candidateRecords;
     }
 
-    public ImageRecordEdit ApplyReviewDecision(ImageRecordEdit image, ReviewAction action, int rating = 0)
+    public WebImageRecordEdit ApplyReviewDecision(WebImageRecordEdit image, WebReviewAction action, int rating = 0)
     {
         ArgumentNullException.ThrowIfNull(image);
         if (!Enum.IsDefined(action))
             throw new InvalidOperationException(
                 $"Review action value {(int)action} is invalid; choose Keep, Favorite, MarkDeletion, or Rate.");
-        if (action == ReviewAction.Rate && rating is < 1 or > 5)
+        if (action == WebReviewAction.Rate && rating is < 1 or > 5)
             throw new InvalidOperationException($"Rating {rating} must be between 1 and 5.");
-        return ReviewDecision.Apply(image, action, rating);
+        return ReviewDecision.Apply(image.ToDomain(), action.ToDomain(), rating).ToWeb();
     }
 
-    public ReviewState CaptureReviewState(ImageRecord image)
+    public WebReviewState CaptureReviewState(WebImageRecord image)
     {
         ArgumentNullException.ThrowIfNull(image);
-        return ReviewState.Capture(image);
+        return Gallery.Core.Models.ReviewState.Capture(image.ToDomain()).ToWeb();
     }
 
-    public ImageRecordEdit RestoreReviewState(ImageRecordEdit image, ReviewState state)
+    public WebImageRecordEdit RestoreReviewState(WebImageRecordEdit image, WebReviewState state)
     {
         ArgumentNullException.ThrowIfNull(image);
         ArgumentNullException.ThrowIfNull(state);
-        return ReviewDecision.Restore(image, state);
+        return ReviewDecision.Restore(image.ToDomain(), state.ToDomain()).ToWeb();
     }
 
-    public ImageRecordEdit SetCuration(ImageRecordEdit image, int? rating, bool? reviewed)
+    public WebImageRecordEdit SetCuration(WebImageRecordEdit image, int? rating, bool? reviewed)
     {
         ArgumentNullException.ThrowIfNull(image);
         ValidateCurationRating(rating);
-        return LibraryRules.SetCuration(image, rating, reviewed);
+        return LibraryRules.SetCuration(image.ToDomain(), rating, reviewed).ToWeb();
     }
 
-    public ImageRecordEdit SetDeletionMark(ImageRecordEdit image, bool markedForDeletion)
+    public WebImageRecordEdit SetDeletionMark(WebImageRecordEdit image, bool markedForDeletion)
     {
         ArgumentNullException.ThrowIfNull(image);
-        return LibraryRules.SetDeletionMark(image, markedForDeletion);
+        return LibraryRules.SetDeletionMark(image.ToDomain(), markedForDeletion).ToWeb();
     }
 
-    public ImageRecordEdit SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection)
+    public WebImageRecordEdit SetOrganization(WebImageRecordEdit image, int rating, bool reviewed, string? collection)
     {
         ArgumentNullException.ThrowIfNull(image);
         ValidateCurationRating(rating);
         if (IsInvalidCollectionName(collection))
             throw new InvalidOperationException("Collection names must have 1 to 80 characters.");
-        return LibraryRules.SetOrganization(image, rating, reviewed, collection);
+        return LibraryRules.SetOrganization(image.ToDomain(), rating, reviewed, collection).ToWeb();
+    }
+
+    public WebImageRecordEdit AddCollection(WebImageRecordEdit image, string collection)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        ValidateCollectionName(collection);
+        return LibraryRules.AddCollection(image.ToDomain(), collection).ToWeb();
+    }
+
+    public WebImageRecordEdit RemoveCollection(WebImageRecordEdit image, string collection)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        ValidateCollectionName(collection);
+        return LibraryRules.RemoveCollection(image.ToDomain(), collection).ToWeb();
+    }
+
+    private static void ValidateCollectionName(string collection)
+    {
+        ArgumentNullException.ThrowIfNull(collection);
+        if (IsInvalidCollectionName(collection))
+            throw new InvalidOperationException("Collection names must have 1 to 80 characters.");
+    }
+
+    public WebImageRecord ApplyEdit(WebImageRecord image, Func<WebImageRecordEdit, WebImageRecordEdit> update)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        ArgumentNullException.ThrowIfNull(update);
+        return GalleryRecordUpdater.Apply(image, update);
     }
 
     private static void ValidateCurationRating(int? rating)
@@ -211,13 +240,13 @@ public sealed partial class GalleryService
 
     public string MergeTags(string existing, string additions) => LibraryRules.MergeTags(existing, additions);
 
-    internal async Task<List<SavedView>> LoadViewsAsync()
+    internal async Task<List<WebSavedView>> LoadViewsAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         return await galleryStore.LoadViewsAsync(key.Bytes);
     }
 
-    internal async Task SaveViewAsync(string name, GalleryFilter filter)
+    internal async Task SaveViewAsync(string name, WebGalleryFilter filter)
     {
         var normalizedName = name.Trim();
         SavedViewNameValidator.Validate(normalizedName);
@@ -230,22 +259,22 @@ public sealed partial class GalleryService
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         await galleryStore.DeleteViewAsync(name, key.Bytes);
     }
-    public Task<IReadOnlyList<string>> GetVisionModelsAsync(VisionSettings settings) =>
+    public Task<IReadOnlyList<string>> GetVisionModelsAsync(WebVisionSettings settings) =>
         RequiredVision().GetModelsAsync(settings);
-    public Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData) =>
+    public Task<(string Description, string Tags)> AnalyzeImageAsync(WebVisionSettings settings, string imageData) =>
         RequiredVision().AnalyzeAsync(settings, imageData);
-    public Task<string> SuggestCollectionAsync(VisionSettings settings, string description, string tags,
+    public Task<string> SuggestCollectionAsync(WebVisionSettings settings, string description, string tags,
         IEnumerable<string> collections) => RequiredVision().SuggestCollectionAsync(settings, description, tags, collections);
-    public Task<GalleryFilter> InterpretSearchAsync(VisionSettings settings, string query, IEnumerable<string> collections) =>
+    public Task<WebGalleryFilter> InterpretSearchAsync(WebVisionSettings settings, string query, IEnumerable<string> collections) =>
         RequiredVision().InterpretSearchAsync(settings, query, collections);
     public Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
-        VisionSettings settings, string imageData, IEnumerable<string> collections) =>
+        WebVisionSettings settings, string imageData, IEnumerable<string> collections) =>
         RequiredVision().AnalyzeImageWithCollectionAsync(settings, imageData, collections);
 
     private VisionService RequiredVision() => visionService
         ?? throw new InvalidOperationException("The vision manager is not configured.");
 
-    public static string FormatDuration(ImageRecord image)
+    public static string FormatDuration(WebImageRecord image)
     {
         ArgumentNullException.ThrowIfNull(image);
         return GalleryDisplayFormatter.FormatDuration(image);
@@ -253,21 +282,21 @@ public sealed partial class GalleryService
 
     public static string FormatBytes(long bytes) => GalleryDisplayFormatter.FormatBytes(bytes);
 
-    public async Task<List<ImageRecord>> ListAsync()
+    public async Task<List<WebImageRecord>> ListAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         return await ListWithKeyAsync(key.Bytes);
     }
 
-    public async Task<List<ImageRecord>> LoadAsync()
+    public async Task<List<WebImageRecord>> LoadAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         return await LoadGalleryWithKeyAsync(key.Bytes);
     }
 
-    private async Task<List<ImageRecord>> LoadGalleryWithKeyAsync(byte[] key)
+    private async Task<List<WebImageRecord>> LoadGalleryWithKeyAsync(byte[] key)
     {
-        List<ImageRecord> records;
+        List<WebImageRecord> records;
         await galleryStore.Gate.WaitAsync();
         try
         {
@@ -281,18 +310,18 @@ public sealed partial class GalleryService
         return records;
     }
     /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
-    private async Task BackfillGenerationAsync(List<ImageRecord> records, byte[] key)
+    private async Task BackfillGenerationAsync(List<WebImageRecord> records, byte[] key)
     {
         var staleRecordIndices = records.Select((record, index) => (record, index))
             .Where(item => item.record.MetadataVersion < ComfyMetadata.Version).ToList();
         foreach (var staleRecordIndex in staleRecordIndices)
         {
-            ImageRecord record;
+            WebImageRecord record;
             int index;
             (record, index) = staleRecordIndex;
             try
             {
-                var edit = new ImageRecordEdit(record)
+                var edit = new WebImageRecordEdit(record)
                 {
                     Generation = ComfyMetadata.Extract(record.Metadata),
                     MetadataVersion = ComfyMetadata.Version
@@ -308,7 +337,7 @@ public sealed partial class GalleryService
         }
     }
 
-    private Task<List<ImageRecord>> ListWithKeyAsync(byte[] key) => galleryStore.ReadRecordsAsync(key);
+    private Task<List<WebImageRecord>> ListWithKeyAsync(byte[] key) => galleryStore.ReadRecordsAsync(key);
 
     private Task BackfillFingerprintsAsync(byte[] key) => galleryStore.BackfillFingerprintsAsync(key);
 
@@ -325,7 +354,7 @@ public sealed partial class GalleryService
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
-    public async Task<string> PreviewAsync(string id, ImageResolution resolution = ImageResolution.Fit)
+    public async Task<string> PreviewAsync(string id, WebImageResolution resolution = WebImageResolution.Fit)
     {
         ValidateOperationChoice(resolution);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
@@ -334,7 +363,7 @@ public sealed partial class GalleryService
         return await GalleryImageRenderer.CreatePreviewAsync(record, key.Bytes, resolution);
     }
 
-    public async Task<string> ViewerImageAsync(string id, ImageResolution resolution)
+    public async Task<string> ViewerImageAsync(string id, WebImageResolution resolution)
     {
         ValidateOperationChoice(resolution);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
@@ -343,7 +372,7 @@ public sealed partial class GalleryService
         return await GalleryImageRenderer.CreateViewerImageAsync(record, key.Bytes, resolution);
     }
 
-    public async Task<ImageRecord> ImportAsync(Stream input, string name, string sourceFolder, string sourcePath = "")
+    public async Task<WebImageRecord> ImportAsync(Stream input, string name, string sourceFolder, string sourcePath = "")
     {
         ValidateImportName(name);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
@@ -362,7 +391,7 @@ public sealed partial class GalleryService
         finally { galleryStore.Gate.Release(); }
     }
 
-    private async Task<ImageRecord> ImportWithKeyAsync(Stream input, string name, string sourceFolder,
+    private async Task<WebImageRecord> ImportWithKeyAsync(Stream input, string name, string sourceFolder,
         string sourcePath, byte[] key, GalleryStore.ImportCatalog catalog, IngestionTimings? timings)
     {
         var mediaRoot = await MediaDirectoryWithKeyAsync(key);
@@ -371,7 +400,7 @@ public sealed partial class GalleryService
             prepared.Record.Sha256, name, key, catalog, timings);
     }
 
-    private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImportAsync(
+    private async Task<(WebImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImportAsync(
         Stream input, string name, string sourceFolder, string sourcePath, byte[] key,
         GalleryStore.ImportCatalog catalog, IngestionTimings? timings, string mediaRoot)
     {
@@ -417,8 +446,8 @@ public sealed partial class GalleryService
             throw new InvalidOperationException($"'{name}' is already in the gallery.");
     }
 
-    private async Task<ImageRecord> PersistImportAsync(
-        ImageRecord record, byte[] encrypted, byte[] encryptedThumbnail, string sourceHash, string name, byte[] key,
+    private async Task<WebImageRecord> PersistImportAsync(
+        WebImageRecord record, byte[] encrypted, byte[] encryptedThumbnail, string sourceHash, string name, byte[] key,
         GalleryStore.ImportCatalog catalog, IngestionTimings? timings)
     {
         var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -463,7 +492,7 @@ public sealed partial class GalleryService
         }
     }
 
-    private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImageAsync(
+    private async Task<(WebImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImageAsync(
         MemoryStream original, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key,
         IngestionTimings? timings, string mediaRoot)
     {
@@ -482,7 +511,7 @@ public sealed partial class GalleryService
         stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var thumbnailBytes = await CreateThumbnailAsync(image);
         timings?.Record(IngestionStage.Thumbnail, stageStart);
-        var record = new ImageRecord
+        var record = new WebImageRecord
         {
             Name = Path.GetFileNameWithoutExtension(name),
             OriginalName = Path.GetFileName(name),
@@ -542,7 +571,7 @@ public sealed partial class GalleryService
     /// ffprobe/ffmpeg need a file, so the plaintext MP4 is written briefly to a randomly named temp file
     /// that is deleted as soon as the metadata and first frame are read.
     /// </summary>
-    private async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareVideoAsync(
+    private async Task<(WebImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareVideoAsync(
         ReadOnlyMemory<byte> bytes, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key,
         IngestionTimings? timings, string mediaRoot)
     {
@@ -618,14 +647,14 @@ public sealed partial class GalleryService
         finally { CryptographicOperations.ZeroMemory(frameBytes); }
     }
 
-    private ImageRecord CreateVideoRecord(VideoTools.ProbeResult probe, int contentLength,
+    private WebImageRecord CreateVideoRecord(VideoTools.ProbeResult probe, int contentLength,
         string name, string sourceFolder, string sourcePath, string sourceHash, string mediaRoot)
     {
         var metadata = JsonSerializer.Serialize(new
         {
             video = probe.Tags.Select(tag => new { Keyword = tag.Key, Value = tag.Value })
         });
-        var record = new ImageRecord
+        var record = new WebImageRecord
         {
             Name = Path.GetFileNameWithoutExtension(name),
             OriginalName = Path.GetFileName(name),
@@ -649,8 +678,8 @@ public sealed partial class GalleryService
         return record;
     }
 
-    private static (ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb) EncryptPreparedVideo(
-        ImageRecord record, ReadOnlyMemory<byte> bytes, byte[] thumbnailBytes, byte[] key)
+    private static (WebImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb) EncryptPreparedVideo(
+        WebImageRecord record, ReadOnlyMemory<byte> bytes, byte[] thumbnailBytes, byte[] key)
     {
         try
         {
@@ -682,11 +711,11 @@ public sealed partial class GalleryService
 
     private sealed class FolderImportProcessor(GalleryService galleryService)
     {
-        public static string[] DiscoverImagePaths(string folder, FolderSearchScope searchScope)
+        public static string[] DiscoverImagePaths(string folder, WebFolderSearchScope searchScope)
         {
             var options = new EnumerationOptions
             {
-                RecurseSubdirectories = searchScope == FolderSearchScope.Descendants,
+                RecurseSubdirectories = searchScope == WebFolderSearchScope.Descendants,
                 IgnoreInaccessible = false,
                 AttributesToSkip = FileAttributes.ReparsePoint
             };
@@ -704,9 +733,9 @@ public sealed partial class GalleryService
                     .Add("Folder", folder).Add("FailureCount", failures.Count)), new AggregateException(failures));
         }
 
-        public async Task ImportAsync(string folder, string[] imagePaths, byte[] key, SourceRetention sourceRetention,
-            Action<string>? progress, Func<ImportProgress, Task>? reportProgress, GalleryStore.ImportCatalog catalog,
-            IngestionTimings? timings, IngestionOptions options, string mediaRoot)
+        public async Task ImportAsync(string folder, string[] imagePaths, byte[] key, WebSourceRetention sourceRetention,
+            Action<string>? progress, Func<WebImportProgress, Task>? reportProgress, GalleryStore.ImportCatalog catalog,
+            IngestionTimings? timings, WebIngestionOptions options, string mediaRoot)
         {
             using var progressGate = new SemaphoreSlim(1);
             int completedCount = 0;
@@ -730,7 +759,7 @@ public sealed partial class GalleryService
                             {
                                 await ReportAsync($"Importing {item.Name}...", name: item.Name);
                                 var start = System.Diagnostics.Stopwatch.GetTimestamp();
-                                item.Source = new ImportSource(item.Path, sourceRetention == SourceRetention.DeleteAfterVerification);
+                                item.Source = new ImportSource(item.Path, sourceRetention == WebSourceRetention.DeleteAfterVerification);
                                 timings?.Record(IngestionStage.OpenSource, start);
                                 ValidateImportName(item.Name);
                                 var prepared = await galleryService.PrepareImportAsync(item.Source.Stream, item.Name,
@@ -750,7 +779,7 @@ public sealed partial class GalleryService
                         {
                             try
                             {
-                                if (item.Committed && sourceRetention == SourceRetention.DeleteAfterVerification)
+                                if (item.Committed && sourceRetention == WebSourceRetention.DeleteAfterVerification)
                                 {
                                     var start = System.Diagnostics.Stopwatch.GetTimestamp();
                                     await galleryService.VerifyImportedWithKeyAsync(item.Record!.Id, key, catalog);
@@ -884,7 +913,7 @@ public sealed partial class GalleryService
                     if (name is not null) progress?.Invoke(name);
                     if (reportProgress is not null && (force || lastReport.ElapsedMilliseconds >= 100))
                     {
-                        await reportProgress(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount, status));
+                        await reportProgress(new WebImportProgress(imagePaths.Length, completedCount, importedCount, failedCount, status));
                         lastReport.Restart();
                     }
                 }
@@ -907,7 +936,7 @@ public sealed partial class GalleryService
             public string Name { get; } = System.IO.Path.GetFileName(path);
             public long Started { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
             public ImportSource? Source { get; set; }
-            public ImageRecord? Record { get; set; }
+            public WebImageRecord? Record { get; set; }
             public byte[]? EncryptedThumbnail { get; set; }
             public Exception? Failure { get; set; }
             public bool Committed { get; set; }
@@ -915,15 +944,15 @@ public sealed partial class GalleryService
         }
     }
 
-    public async Task ImportFolderAsync(string folder, FolderSearchScope searchScope, Action<string>? progress = null,
-        SourceRetention sourceRetention = SourceRetention.Retain, Func<ImportProgress, Task>? reportProgress = null,
-        IngestionTimings? timings = null, IngestionOptions? options = null)
+    public async Task ImportFolderAsync(string folder, WebFolderSearchScope searchScope, Action<string>? progress = null,
+        WebSourceRetention sourceRetention = WebSourceRetention.Retain, Func<WebImportProgress, Task>? reportProgress = null,
+        IngestionTimings? timings = null, WebIngestionOptions? options = null)
     {
         ValidateOperationChoice(searchScope);
         ValidateOperationChoice(sourceRetention);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        options ??= await galleryStore.ReadSettingsAsync<IngestionOptions>("ingestion-options", "ingestion-options:v1", key.Bytes)
-            ?? new IngestionOptions();
+        options ??= await galleryStore.ReadSettingsAsync<WebIngestionOptions>("ingestion-options", "ingestion-options:v1", key.Bytes)
+            ?? new WebIngestionOptions();
         options.Validate();
         var mediaRoot = await MediaDirectoryWithKeyAsync(key.Bytes);
         folder = Path.GetFullPath(folder);
@@ -934,7 +963,7 @@ public sealed partial class GalleryService
             if (reportProgress is not null)
             {
                 var reportStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                try { await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder...")); }
+                try { await reportProgress(new WebImportProgress(null, 0, 0, 0, "Scanning selected folder...")); }
                 finally { timings?.Record(IngestionStage.ReportProgress, reportStart); }
             }
             var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1010,7 +1039,7 @@ public sealed partial class GalleryService
             await VerifyImportedWithKeyAsync(id, key, verificationCatalog);
             return;
         }
-        ImageRecord record;
+        WebImageRecord record;
         byte[] thumbnail;
         await galleryStore.Gate.WaitAsync();
         try { (record, thumbnail) = await catalog.ReadVerificationAsync(id, key); }
@@ -1035,7 +1064,7 @@ public sealed partial class GalleryService
         finally { CryptographicOperations.ZeroMemory(thumbnail); }
     }
 
-    public async Task UpdateAsync(string id, Func<ImageRecordEdit, ImageRecordEdit> update)
+    public async Task UpdateAsync(string id, Func<WebImageRecordEdit, WebImageRecordEdit> update)
     {
         ArgumentNullException.ThrowIfNull(update);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
@@ -1044,7 +1073,7 @@ public sealed partial class GalleryService
         finally { galleryStore.Gate.Release(); }
     }
 
-    public async Task UpdateManyAsync(IEnumerable<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update)
+    public async Task UpdateManyAsync(IEnumerable<string> ids, Func<WebImageRecordEdit, WebImageRecordEdit> update)
     {
         ArgumentNullException.ThrowIfNull(ids);
         ArgumentNullException.ThrowIfNull(update);
@@ -1056,7 +1085,7 @@ public sealed partial class GalleryService
         finally { galleryStore.Gate.Release(); }
     }
 
-    private async Task UpdateRecordAsync(string imageId, Func<ImageRecordEdit, ImageRecordEdit> update, byte[] key)
+    private async Task UpdateRecordAsync(string imageId, Func<WebImageRecordEdit, WebImageRecordEdit> update, byte[] key)
     {
         var record = await FindAsync(imageId, key);
         await galleryStore.UpdateAsync(GalleryRecordUpdater.Apply(record, update), key);
@@ -1072,7 +1101,7 @@ public sealed partial class GalleryService
         drivePlayer.Start();
     }
 
-    private async Task MoveUnderGateAsync(string id, StoredImageMoveDestination destination, byte[] key)
+    private async Task MoveUnderGateAsync(string id, WebStoredImageMoveDestination destination, byte[] key)
     {
         await galleryStore.Gate.WaitAsync();
         try
@@ -1087,7 +1116,7 @@ public sealed partial class GalleryService
 
     // The old copy is deleted by the drive queue after the catalog commits. Moving an image back onto a path
     // still queued for deletion cancels that delete and keeps the file instead of copying it again.
-    private async Task MoveStoredImageAsync(ImageRecord record, string target, string newName, byte[] key)
+    private async Task MoveStoredImageAsync(WebImageRecord record, string target, string newName, byte[] key)
     {
         var deleteOldCopy = CreateDriveOperation(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key);
         var queuedDelete = await galleryStore.FindPendingDriveOperationAsync(
@@ -1113,14 +1142,14 @@ public sealed partial class GalleryService
         }
     }
 
-    public async Task<VisionSettings> SettingsAsync() =>
-        await ReadEncryptedSettingAsync<VisionSettings>(VisionSettingsId, VisionSettingsId) ?? new();
+    public async Task<WebVisionSettings> SettingsAsync() =>
+        await ReadEncryptedSettingAsync<WebVisionSettings>(VisionSettingsId, VisionSettingsId) ?? new();
 
-    public async Task SaveSettingsAsync(VisionSettings settings)
+    public async Task SaveSettingsAsync(WebVisionSettings settings)
     {
         VisionService.Validate(settings);
         await WriteEncryptedSettingAsync(settings, VisionSettingsId, VisionSettingsId);
     }
 
-    private Task<ImageRecord> FindAsync(string id, byte[] key) => galleryStore.ReadRecordAsync(id, key);
+    private Task<WebImageRecord> FindAsync(string id, byte[] key) => galleryStore.ReadRecordAsync(id, key);
 }
