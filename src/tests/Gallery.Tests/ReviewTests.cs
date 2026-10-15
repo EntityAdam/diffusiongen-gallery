@@ -1,5 +1,5 @@
 using Gallery.Core.Processors;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
 
@@ -9,6 +9,129 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class ReviewTests
 {
+    [Fact]
+    public async Task Viewer_UsesSavedToggleResultsAndCapturesUndoFromTheLatestPersistedRecord()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var stale = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "stale-review.png", "folder");
+        await fixture.Service.UpdateAsync(stale.Id, edit => edit with { Favorite = true, Rating = 3 });
+        await fixture.Service.UpdateAsync(stale.Id, edit => edit with { Reviewed = false, Description = "latest" });
+        var viewer = new Gallery.Web.Components.FullscreenViewer();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = viewer.GetType();
+        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<WebImageRecord> { stale });
+        type.GetProperty("Gallery", flags)!.SetValue(viewer, fixture.Service);
+        type.GetProperty("Logger", flags)!.SetValue(viewer,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.FullscreenViewer>.Instance);
+        var cache = (Dictionary<string, (string Url, long Bytes)>)type.GetField("fitCache", flags)!.GetValue(viewer)!;
+        cache[stale.Id] = ("cached-url", 0);
+        Task Invoke(string method, params object[] args) => (Task)type.GetMethod(method, flags)!.Invoke(viewer, args)!;
+        WebImageRecord Current() => (WebImageRecord)type.GetProperty("Current", flags)!.GetValue(viewer)!;
+
+        await Invoke("FavoriteAsync");
+
+        Assert.False(Current().Favorite);
+        Assert.Equal("latest", Current().Description);
+        await fixture.Service.UpdateAsync(stale.Id, edit => edit with { Rating = 2, Favorite = true });
+        var beforeReview = fixture.Service.CaptureReviewState(await fixture.Service.UpdateAsync(stale.Id,
+            edit => edit with { Reviewed = false, Description = "latest review note" }));
+        Assert.Equal(3, Current().Rating);
+        Assert.Equal(2, beforeReview.Rating);
+        Assert.False(beforeReview.Reviewed);
+        await Invoke("DecideAsync", WebReviewAction.Rate, 4);
+        Assert.Equal(4, Current().Rating);
+        Assert.True(Current().Reviewed);
+        await Invoke("UndoAsync");
+
+        Assert.Equal("", type.GetField("error", flags)!.GetValue(viewer));
+        Assert.Equal(beforeReview, fixture.Service.CaptureReviewState(Current()));
+        Assert.Equal(beforeReview, fixture.Service.CaptureReviewState(Assert.Single(await fixture.Service.ListAsync())));
+        Assert.Equal("latest review note", Current().Description);
+    }
+
+    [Theory]
+    [InlineData(0, false, false)]
+    [InlineData(3, false, false)]
+    [InlineData(5, true, false)]
+    [InlineData(3, true, true)]
+    public async Task Undo_RestoresTheExactSnapshotWithoutInferringAReviewDecision(
+        int rating, bool markedForDeletion, bool favorite)
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "undo-rating.png", "folder");
+        await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        {
+            Rating = rating, MarkedForDeletion = markedForDeletion, Favorite = favorite
+        });
+        var unreviewed = await fixture.Service.UpdateAsync(image.Id, edit => edit with { Reviewed = false });
+        var snapshot = fixture.Service.CaptureReviewState(unreviewed);
+        await fixture.Service.UpdateAsync(image.Id, edit => fixture.Service.ApplyReviewDecision(edit, WebReviewAction.Rate, 4));
+        await fixture.Service.UpdateAsync(image.Id, edit => edit with { Description = "new note", Tags = "new tag" });
+
+        var restored = await fixture.Service.RestoreReviewStateAsync(image.Id, snapshot);
+        var stored = Assert.Single(await fixture.Service.ListAsync());
+
+        Assert.Equal(snapshot, fixture.Service.CaptureReviewState(restored));
+        Assert.Equal(snapshot, fixture.Service.CaptureReviewState(stored));
+        Assert.False(restored.Reviewed);
+        Assert.Equal("new note", restored.Description);
+        Assert.Equal("new tag", restored.Tags);
+        Assert.Equal(image.StoredPath, restored.StoredPath);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(6)]
+    public async Task Undo_ValidatesTheSnapshotBeforeAccessingTheVault(int rating)
+    {
+        using var fixture = new TestVault();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Service.RestoreReviewStateAsync("image", new(false, false, false, rating)));
+
+        Assert.False(Directory.Exists(fixture.Root));
+    }
+
+    [Fact]
+    public async Task EditProjection_UsesTheSameDomainRulesAsPersistedUpdates()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "projection.png", "folder");
+        WebImageRecordEdit Edit(WebImageRecordEdit edit) => fixture.Service.AddCollection(
+            edit with { Rating = 4, Favorite = true }, " collection ");
+
+        var projected = fixture.Service.ApplyEdit(image, Edit);
+        await fixture.Service.UpdateAsync(image.Id, Edit);
+        var stored = Assert.Single(await fixture.Service.ListAsync());
+
+        Assert.Equal(4, projected.Rating);
+        Assert.True(projected.Favorite);
+        Assert.True(projected.Reviewed);
+        Assert.Equal(["collection"], projected.Collections.ToArray());
+        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(stored),
+            System.Text.Json.JsonSerializer.Serialize(projected));
+        Assert.False(image.Reviewed);
+        Assert.Empty(image.Collections);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void CollectionChanges_RejectInvalidBoundaryValuesWithoutAccessingTheVault(string collection)
+    {
+        using var fixture = new TestVault();
+        var edit = new WebImageRecordEdit(new WebImageRecord());
+
+        Assert.Throws<InvalidOperationException>(() => fixture.Service.AddCollection(edit, collection));
+        Assert.Throws<InvalidOperationException>(() => fixture.Service.RemoveCollection(edit, collection));
+        Assert.Empty(edit.Collections);
+        Assert.False(Directory.Exists(fixture.Root));
+    }
+
     [Fact]
     public async Task Curation_WhenRatingOrDeletionMarkIsApplied_PersistsAsReviewed()
     {
@@ -35,9 +158,9 @@ public sealed class ReviewTests
         await fixture.Service.UpdateAsync(record.Id, image => image with { Rating = 3, Favorite = true, Tags = "original" });
         var before = fixture.Service.CaptureReviewState(Assert.Single(await fixture.Service.ListAsync()));
         // Act
-        await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.ApplyReviewDecision(image, ReviewAction.MarkDeletion));
+        await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.ApplyReviewDecision(image, WebReviewAction.MarkDeletion));
         await fixture.Service.UpdateAsync(record.Id, image => image with { Description = "New note" });
-        await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.RestoreReviewState(image, before));
+        await fixture.Service.RestoreReviewStateAsync(record.Id, before);
         // Assert
         var restored = Assert.Single(await fixture.Service.ListAsync());
         Assert.Equal(before, fixture.Service.CaptureReviewState(restored));
@@ -47,12 +170,12 @@ public sealed class ReviewTests
     }
 
     [Theory]
-    [InlineData(ReviewAction.Keep)]
-    [InlineData(ReviewAction.Favorite)]
-    [InlineData(ReviewAction.MarkDeletion)]
-    [InlineData(ReviewAction.Rate)]
+    [InlineData(WebReviewAction.Keep)]
+    [InlineData(WebReviewAction.Favorite)]
+    [InlineData(WebReviewAction.MarkDeletion)]
+    [InlineData(WebReviewAction.Rate)]
     // Every action should mark the item reviewed while preserving the original file.
-    public async Task ReviewDecision_WhenActionIsApplied_PersistsWithoutRemovingFiles(ReviewAction action)
+    public async Task ReviewDecision_WhenActionIsApplied_PersistsWithoutRemovingFiles(WebReviewAction action)
     {
         // Arrange
         using var fixture = new TestVault();
@@ -64,9 +187,9 @@ public sealed class ReviewTests
         // Assert
         var stored = Assert.Single(await fixture.Service.ListAsync());
         Assert.True(stored.Reviewed);
-        Assert.Equal(action == ReviewAction.MarkDeletion, stored.MarkedForDeletion);
-        Assert.Equal(action == ReviewAction.Favorite, stored.Favorite);
-        Assert.Equal(action == ReviewAction.Rate ? 4 : 0, stored.Rating);
+        Assert.Equal(action == WebReviewAction.MarkDeletion, stored.MarkedForDeletion);
+        Assert.Equal(action == WebReviewAction.Favorite, stored.Favorite);
+        Assert.Equal(action == WebReviewAction.Rate ? 4 : 0, stored.Rating);
         Assert.True(File.Exists(stored.StoredPath));
     }
 
@@ -75,10 +198,10 @@ public sealed class ReviewTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var record = new ImageRecordEdit(new ImageRecord { Rating = 5, Favorite = true, MarkedForDeletion = true });
+        var record = new WebImageRecordEdit(new WebImageRecord { Rating = 5, Favorite = true, MarkedForDeletion = true });
 
         // Act
-        record = fixture.Service.ApplyReviewDecision(record, ReviewAction.Keep);
+        record = fixture.Service.ApplyReviewDecision(record, WebReviewAction.Keep);
 
         // Assert
         Assert.True(record.Reviewed);
@@ -92,12 +215,12 @@ public sealed class ReviewTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var record = new ImageRecordEdit(new ImageRecord());
+        var record = new WebImageRecordEdit(new WebImageRecord());
 
         // Act
-        var ratingError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, ReviewAction.Rate, 0));
+        var ratingError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, WebReviewAction.Rate, 0));
         var reviewedAfterInvalidRating = record.Reviewed;
-        var actionError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, (ReviewAction)99));
+        var actionError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, (WebReviewAction)99));
 
         // Assert
         Assert.IsType<InvalidOperationException>(ratingError);

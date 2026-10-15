@@ -30,11 +30,11 @@ internal sealed class DriveOperationPlayer(
     private bool faulted;
     private bool disposed;
     private int completed;
-    private DriveQueueStatus status = DriveQueueStatus.Empty;
+    private WebDriveQueueStatus status = WebDriveQueueStatus.Empty;
 
     public event Action? Changed;
 
-    public DriveQueueStatus Status { get { lock (syncRoot) return status; } }
+    public WebDriveQueueStatus Status { get { lock (syncRoot) return status; } }
 
     public bool IsPaused { get { lock (syncRoot) return paused; } }
 
@@ -149,12 +149,12 @@ internal sealed class DriveOperationPlayer(
                 var counts = await readCounts();
                 if (report.Played > 0)
                 {
-                    Publish(counts, report.Activity, DriveQueueState.Running);
+                    Publish(counts, report.Activity, WebDriveQueueState.Running);
                     continue;
                 }
                 if (counts.NextDue is long due)
                 {
-                    Publish(counts, "Waiting to retry", DriveQueueState.Waiting);
+                    Publish(counts, "Waiting to retry", WebDriveQueueState.Waiting);
                     var delay = TimeSpan.FromMilliseconds(Math.Max(10, due - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
                     Task wakeTask;
                     lock (syncRoot) wakeTask = wake.Task;
@@ -186,16 +186,16 @@ internal sealed class DriveOperationPlayer(
         lock (syncRoot) running = false;
     }
 
-    private void Publish(DriveQueueCounts counts, string? activity, DriveQueueState? state = null)
+    private void Publish(DriveQueueCounts counts, string? activity, WebDriveQueueState? state = null)
     {
         lock (syncRoot)
         {
-            var effective = state ?? (faulted ? DriveQueueState.Faulted
-                : paused ? DriveQueueState.Paused
-                : running ? DriveQueueState.Running
-                : DriveQueueState.Idle);
-            if (counts.Pending == 0 && counts.Failed == 0 && effective == DriveQueueState.Idle) completed = 0;
-            status = new DriveQueueStatus(effective, counts.Pending, counts.Failed, completed, activity ?? "");
+            var effective = state ?? (faulted ? WebDriveQueueState.Faulted
+                : paused ? WebDriveQueueState.Paused
+                : running ? WebDriveQueueState.Running
+                : WebDriveQueueState.Idle);
+            if (counts.Pending == 0 && counts.Failed == 0 && effective == WebDriveQueueState.Idle) completed = 0;
+            status = new WebDriveQueueStatus(effective, counts.Pending, counts.Failed, completed, activity ?? "");
         }
         Changed?.Invoke();
     }

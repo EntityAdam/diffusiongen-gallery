@@ -1,4 +1,4 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
 using Gallery.Web.Services.Sessions;
@@ -65,7 +65,7 @@ public static class LifecycleContracts
     {
         // Arrange
         byte[] original = [1, 2, 3];
-        var file = new ExportFile("export.png", "image/png", original);
+        var file = new WebExportFile("export.png", "image/png", original);
         ImmutableArray<byte> snapshot = file.ContentBytes;
 
         // Act

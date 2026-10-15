@@ -1,16 +1,16 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 
 namespace Gallery.Web.Services.DataManagers.Processors;
 
 internal static class SavedViewProcessor
 {
-    public static void Replace(List<SavedView> views, string name, GalleryFilter galleryFilter)
+    public static void Replace(List<WebSavedView> views, string name, WebGalleryFilter galleryFilter)
     {
         views.RemoveAll(savedView => savedView.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        views.Add(new SavedView(name, galleryFilter with { }));
+        views.Add(new WebSavedView(name, galleryFilter with { }));
     }
 
-    public static void Remove(List<SavedView> views, string name) =>
+    public static void Remove(List<WebSavedView> views, string name) =>
         views.RemoveAll(savedView => savedView.Name == name);
 }

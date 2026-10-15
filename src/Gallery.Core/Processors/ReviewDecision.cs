@@ -1,14 +1,17 @@
-using Gallery.Web.Models;
+using Gallery.Core.Models;
 
 namespace Gallery.Core.Processors;
 
-internal static class ReviewDecision
+public static class ReviewDecision
 {
-    internal static ImageRecordEdit Restore(ImageRecordEdit image, ReviewState state) =>
+    public static ImageRecord Restore(ImageRecord image, ReviewState state) =>
+        Restore(new ImageRecordEdit(image), state).ToRecord(image);
+
+    public static ImageRecordEdit Restore(ImageRecordEdit image, ReviewState state) =>
         image with { Reviewed = state.Reviewed, Favorite = state.Favorite,
             MarkedForDeletion = state.MarkedForDeletion, Rating = state.Rating };
 
-    internal static ImageRecordEdit Apply(ImageRecordEdit imageRecordEdit, ReviewAction action, int rating = 0) =>
+    public static ImageRecordEdit Apply(ImageRecordEdit imageRecordEdit, ReviewAction action, int rating = 0) =>
         imageRecordEdit with
         {
             Reviewed = true,

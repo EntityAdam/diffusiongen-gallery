@@ -4,9 +4,56 @@ A standalone local-only .NET 10 / Blazor Server gallery. It shares `src03`'s
 charcoal, mint, typography, and Diffusion Gen branding, but has no project or
 runtime dependency on it. `gallery01` is frozen; all new development lives here.
 This is an independent source copy, not a shared project.
-Gallery models, domain rules, persistence, and the web host are built into the
-single `Gallery.Web` production assembly. The domain behavior is exposed through
-the gallery service entry points.
+There are exactly two production projects: `Gallery.Web` depends on
+`Gallery.Core`, never the reverse. The existing projects under `src/tests` are
+test-only tooling.
+
+## Architecture
+
+`Gallery.Core` is a standalone .NET class library with no project dependencies.
+It declares the ImageSharp package reference so the assembly-scoped Six Labors
+license is validated against `Gallery.Core`; Web consumes ImageSharp transitively.
+Core owns domain records and the rules for curation, review/undo,
+duplicate grouping and keeper selection, prompt grouping, gallery filtering,
+and removal eligibility/decisions. Its operations work on in-memory domain
+values; they do not access files, databases, HTTP, configuration, or UI services.
+Collection membership changes and the implicit review state of record edits
+also live here. Review undo restores an explicit snapshot without reapplying
+the implicit rules for a new curation decision.
+
+`Gallery.Web` is the outer application/adapter layer. It owns Blazor and HTTP
+boundaries, application orchestration (`GalleryService`), SQLite and encryption,
+filesystem operations, media decoding/hashing and metadata parsing, vision
+gateways, diagnostics, and dependency injection. With only two production
+projects, these outer-layer roles remain folders within Web rather than
+additional assemblies.
+
+Web uses its own `Web`-prefixed records and enums in `Gallery.Web.Models`.
+`DomainMappings` explicitly translates those values to/from `Gallery.Core.Models`
+when invoking domain rules. Neither UI components nor serialized persistence
+contracts expose Core records. Existing serialized property names, settings IDs,
+and encryption purposes are preserved, so the model type renaming requires no
+catalog migration.
+
+Boundary validation belongs to Web (and to any future adapter), not Core.
+Adapters validate incoming values and choices before mapping to the domain;
+Core applies business rules to those accepted values. Format parsing errors,
+HTTP status codes, logging context, size limits, paths, credentials, and external
+service settings remain outside Core. Domain rules should be added to Core,
+not reimplemented in components or storage adapters.
+
+Image edit callbacks expose only curation and annotation fields. Web validates
+the returned edit (including identity, ratings, initialized collections, and
+collection names) before mapping or persistence. Names/paths change through the
+move workflow; parsed generation metadata changes through import/backfill,
+not user edits. Single and batch updates return the committed records, which
+the UI uses directly rather than replaying callbacks against stale snapshots.
+Batch updates still attempt every selected image and report aggregate failures.
+
+The gallery caches its browsing projection across renders, pagination, density
+changes, and thumbnail updates. Record changes invalidate it; filter/sort and
+prompt-grouping changes rebuild it on demand. Locking clears the cached records
+and prompt groups along with the rest of the unlocked gallery state.
 
 ## UI
 
@@ -40,15 +87,17 @@ dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj
 
 ImageSharp 4 requires a valid Six Labors license for Release builds. Apply for
 the free Community license at [Six Labors pricing](https://sixlabors.com/pricing/)
-if eligible, save the issued license as `sixlabors.lic` in the repository root,
-and pass its absolute path to Release builds. In PowerShell, run:
+if eligible and save the issued license as `sixlabors.lic` in the repository root.
+The Core project automatically uses this file for Debug and Release builds,
+validating the license against its licensed assembly name, `Gallery.Core`.
+To run a Release build in PowerShell:
 
 ```powershell
-$license = (Resolve-Path .\sixlabors.lic).Path
-dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Release "-p:SixLaborsLicenseFile=$license"
+dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Release
 ```
 
-The license file is gitignored and must not be committed.
+An explicit `-p:SixLaborsLicenseFile=<absolute-path>` overrides the default location.
+The repository-root license file is not excluded by `.gitignore`.
 
 Open **http://127.0.0.1:5189**. Create a gallery with a unique passphrase of at least
 14 characters and **save the 32 recovery words offline before continuing**.

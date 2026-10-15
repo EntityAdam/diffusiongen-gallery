@@ -1,10 +1,10 @@
-using Gallery.Web.Models;
+using Gallery.Core.Models;
 
 namespace Gallery.Core.Queries;
 
-internal static class GalleryFilterProcessor
+public static class GalleryFilterProcessor
 {
-    internal static IEnumerable<ImageRecord> Apply(GalleryFilter galleryFilter, IEnumerable<ImageRecord> images) =>
+    public static IEnumerable<ImageRecord> Apply(GalleryFilter galleryFilter, IEnumerable<ImageRecord> images) =>
         OrderImages(images.Where(image => Matches(galleryFilter, image)), galleryFilter.Sort);
 
     private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord) =>

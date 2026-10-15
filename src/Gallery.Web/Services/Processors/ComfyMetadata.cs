@@ -3,8 +3,9 @@ using System.Text.Json.Nodes;
 using System.Collections.Immutable;
 using System.Text.RegularExpressions;
 using Gallery.Web.Models;
+using Gallery.Web.Exceptions;
 
-namespace Gallery.Core.Extractors;
+namespace Gallery.Web.Services.Processors;
 
 /// <summary>
 /// Finds ComfyUI documents embedded in imported files and extracts generation parameters.
@@ -114,11 +115,11 @@ internal static partial class ComfyMetadata
     [GeneratedRegex(@"^(?:workflow|prompt)\s*:\s*(?=\{)", RegexOptions.IgnoreCase)]
     private static partial Regex PrefixedJson();
 
-    public static GenerationInfo? Extract(string metadataJson)
+    public static WebGenerationInfo? Extract(string metadataJson)
     {
         var documents = Find(metadataJson);
         if (documents.ApiPrompt is null && documents.Workflow is null) return null;
-        var generationInfo = documents.ApiPrompt is null ? new GenerationInfo() : ParseApiPrompt(documents.ApiPrompt);
+        var generationInfo = documents.ApiPrompt is null ? new WebGenerationInfo() : ParseApiPrompt(documents.ApiPrompt);
         return generationInfo with { HasWorkflow = documents.Workflow is not null, HasApiPrompt = documents.ApiPrompt is not null };
     }
 
@@ -129,11 +130,11 @@ internal static partial class ComfyMetadata
         return documents.Workflow ?? documents.ApiPrompt;
     }
 
-    public static GenerationInfo ParseApiPrompt(string apiPrompt)
+    public static WebGenerationInfo ParseApiPrompt(string apiPrompt)
     {
         var graph = ParseApiPromptGraph(apiPrompt);
         var generationDetails = ResolveGenerationDetails(graph);
-        return new GenerationInfo
+        return new WebGenerationInfo
         {
             Prompt = generationDetails.Prompt.Trim(),
             NegativePrompt = generationDetails.NegativePrompt.Trim(),
@@ -170,64 +171,6 @@ internal static partial class ComfyMetadata
         if (prompt.Length == 0) prompt = graph.FirstText() ?? "";
         if (model.Length == 0) (model, modelKind) = graph.AnyModel();
         return new(prompt, negativePrompt, cfg, steps, model, modelKind);
-    }
-
-    /// <summary>Groups exactly matching prompts (shared groups first, largest first), then unique and missing prompts.</summary>
-    public static List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> orderedImages)
-    {
-        List<(string Prompt, List<ImageRecord> Images)> promptGroups;
-        List<ImageRecord> imagesWithoutPrompts;
-        (promptGroups, imagesWithoutPrompts) = CollectPromptGroups(orderedImages);
-        var sharedPromptGroups = OrderSharedPromptGroups(promptGroups);
-        var orderedPromptGroups = new List<PromptGroup>(sharedPromptGroups);
-        AppendUniquelyPromptedImages(orderedPromptGroups, promptGroups);
-        AppendImagesWithoutPrompts(orderedPromptGroups, imagesWithoutPrompts);
-        return orderedPromptGroups;
-    }
-
-    private static (List<(string Prompt, List<ImageRecord> Images)> PromptGroups, List<ImageRecord> ImagesWithoutPrompts)
-        CollectPromptGroups(IEnumerable<ImageRecord> orderedImages)
-    {
-        var promptGroups = new List<(string Prompt, List<ImageRecord> Images)>();
-        var promptGroupsByPrompt = new Dictionary<string, List<ImageRecord>>(StringComparer.Ordinal);
-        var imagesWithoutPrompts = new List<ImageRecord>();
-        foreach (var imageRecord in orderedImages)
-        {
-            var prompt = imageRecord.Prompt;
-            if (prompt.Length == 0) { imagesWithoutPrompts.Add(imageRecord); continue; }
-            if (!promptGroupsByPrompt.TryGetValue(prompt, out var promptGroupImages))
-            {
-                promptGroupImages = [];
-                promptGroupsByPrompt[prompt] = promptGroupImages;
-                promptGroups.Add((prompt, promptGroupImages));
-            }
-            promptGroupImages.Add(imageRecord);
-        }
-        return (promptGroups, imagesWithoutPrompts);
-    }
-
-    private static List<PromptGroup> OrderSharedPromptGroups(
-        List<(string Prompt, List<ImageRecord> Images)> promptGroups) =>
-        promptGroups.Where(promptGroup => promptGroup.Images.Count > 1)
-            .Select((promptGroup, order) => (promptGroup, order))
-            .OrderByDescending(item => item.promptGroup.Images.Count).ThenBy(item => item.order)
-            .Select(item => new PromptGroup(PromptGroup.Shared, item.promptGroup.Prompt, item.promptGroup.Images.ToImmutableArray()))
-            .ToList();
-
-    private static void AppendUniquelyPromptedImages(List<PromptGroup> orderedPromptGroups,
-        List<(string Prompt, List<ImageRecord> Images)> promptGroups)
-    {
-        var uniquelyPromptedImages = promptGroups.Where(promptGroup => promptGroup.Images.Count == 1)
-            .SelectMany(promptGroup => promptGroup.Images).ToList();
-        if (uniquelyPromptedImages.Count > 0)
-            orderedPromptGroups.Add(new(PromptGroup.Unique, "", uniquelyPromptedImages.ToImmutableArray()));
-    }
-
-    private static void AppendImagesWithoutPrompts(List<PromptGroup> orderedPromptGroups,
-        List<ImageRecord> imagesWithoutPrompts)
-    {
-        if (imagesWithoutPrompts.Count > 0)
-            orderedPromptGroups.Add(new(PromptGroup.None, "", imagesWithoutPrompts.ToImmutableArray()));
     }
 
     private sealed record GenerationDetails(string Prompt, string NegativePrompt, double? Cfg, int? Steps,

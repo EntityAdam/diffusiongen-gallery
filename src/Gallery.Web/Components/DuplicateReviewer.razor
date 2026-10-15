@@ -63,14 +63,14 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = [];
-    [Parameter, EditorRequired] public Func<string, ImageRecord?> Lookup { get; set; } = _ => null;
+    [Parameter, EditorRequired] public IReadOnlyList<WebDuplicateGroup> Groups { get; set; } = [];
+    [Parameter, EditorRequired] public Func<string, WebImageRecord?> Lookup { get; set; } = _ => null;
     [Parameter] public int InitialGroup { get; set; }
     [Parameter] public EventCallback<string> OnClose { get; set; }
     private ElementReference element;
     private DotNetObjectReference<DuplicateReviewer>? reference;
     private int groupIndex, imageIndex, appliedMarks, generation;
-    private List<ImageRecord> members = [];
+    private List<WebImageRecord> members = [];
     private string recommendedId = "";
     private readonly Dictionary<int, HashSet<string>> keepByGroup = [];
     private readonly HashSet<int> applied = [];
@@ -80,8 +80,8 @@
     private bool busy, originalSize, disposed, closed;
     private string imageData = "", error = "", status = "";
     private Task? preload;
-    private DuplicateGroup Group => Groups[groupIndex];
-    private ImageRecord Current => members[imageIndex];
+    private WebDuplicateGroup Group => Groups[groupIndex];
+    private WebImageRecord Current => members[imageIndex];
     private HashSet<string> Keep => keepByGroup[groupIndex];
 
     protected override void OnInitialized()
@@ -101,7 +101,7 @@
 
     private void PrepareGroup()
     {
-        var records = Group.ImageIds.Select(Lookup).OfType<ImageRecord>().ToList();
+        var records = Group.ImageIds.Select(Lookup).OfType<WebImageRecord>().ToList();
         recommendedId = Gallery.PickDuplicateKeeper(records).Id;
         members = records.OrderByDescending(record => record.Id == recommendedId).ToList();
         imageIndex = 0;
@@ -131,7 +131,7 @@
                 if (stale.Count > 0) await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)stale.Select(entry => entry.Value).ToArray());
                 foreach (var entry in stale) urls.Remove(entry.Key);
             }
-            var data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
+            var data = await Gallery.ViewerImageAsync(id, full ? WebImageResolution.Original : WebImageResolution.Fit);
             if (disposed || forGeneration != generation) return "";
             var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
             urls[(id, full)] = url;
@@ -239,12 +239,7 @@
     {
         if (Keep.Count == 0) throw new InvalidOperationException("Keep at least one copy in the group.");
         var ids = members.Select(member => member.Id).ToList();
-        await Gallery.ApplyDuplicateDecisionAsync(ids, Keep);
-        members = members.Select(member => member with
-        {
-            MarkedForDeletion = !Keep.Contains(member.Id),
-            Reviewed = !Keep.Contains(member.Id) || member.Reviewed
-        }).ToList();
+        members = await Gallery.ApplyDuplicateDecisionAsync(ids, Keep);
         var marked = ids.Count - Keep.Count;
         appliedMarks += marked;
         applied.Add(groupIndex);

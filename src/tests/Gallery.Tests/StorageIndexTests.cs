@@ -38,7 +38,7 @@ public sealed class StorageIndexTests
         var loaded = Assert.Single(await fixture.Service.LoadAsync());
         await fixture.Service.WaitForDriveOperationsAsync();
 
-        Assert.Equal(Gallery.Core.Extractors.ComfyMetadata.Version, loaded.MetadataVersion);
+        Assert.Equal(Gallery.Web.Services.Processors.ComfyMetadata.Version, loaded.MetadataVersion);
         Assert.True(await fixture.Store.ContainsFingerprintAsync(legacy.Sha256, fixture.Session.Key));
         Assert.True(File.Exists(legacy.StoredPath));
         Assert.False(File.Exists(stagedPath));

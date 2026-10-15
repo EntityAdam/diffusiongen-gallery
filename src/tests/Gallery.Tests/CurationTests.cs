@@ -1,6 +1,6 @@
 using Gallery.Core.Processors;
 using System.Text;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
 using SixLabors.ImageSharp;
@@ -101,8 +101,8 @@ public sealed class CurationTests
         // Arrange
         using var fixture = new TestVault();
         var now = DateTimeOffset.UtcNow;
-        var bigger = new ImageRecord { Id = "big", Width = 400, Height = 300, ImportedAt = now };
-        var smaller = new ImageRecord { Id = "small", Width = 200, Height = 150, ImportedAt = now.AddDays(-1) };
+        var bigger = new WebImageRecord { Id = "big", Width = 400, Height = 300, ImportedAt = now };
+        var smaller = new WebImageRecord { Id = "small", Width = 200, Height = 150, ImportedAt = now.AddDays(-1) };
         // Act
         var resolutionKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
         smaller = smaller with { Favorite = true };
@@ -111,7 +111,7 @@ public sealed class CurationTests
         var ratingKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
         bigger = bigger with { MarkedForDeletion = true };
         var unmarkedKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
-        var twin = new ImageRecord { Id = "twin", Width = 200, Height = 150, Favorite = true, ImportedAt = now.AddDays(-2) };
+        var twin = new WebImageRecord { Id = "twin", Width = 200, Height = 150, Favorite = true, ImportedAt = now.AddDays(-2) };
         var oldestKeeper = fixture.Service.PickDuplicateKeeper([smaller, twin]).Id;
 
         // Assert
@@ -160,14 +160,14 @@ public sealed class CurationTests
         var initial = await fixture.Service.LoadPreferencesAsync();
         var defaultDensity = initial.GridDensity;
         var defaultAutoLock = initial.AutoLockMinutes;
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 30 });
+        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "compact", AutoLockMinutes = 30 });
         var savedPreferences = await fixture.Service.LoadPreferencesAsync();
         var storedPreferences = await fixture.RawStore.ReadSettingsAsync("ui-preferences");
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "gigantic", AutoLockMinutes = -5 });
+        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "gigantic", AutoLockMinutes = -5 });
         var invalidFallback = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 0 });
+        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "compact", AutoLockMinutes = 0 });
         var disabledAutoLock = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "large", AutoLockMinutes = 99999 });
+        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "large", AutoLockMinutes = 99999 });
         var clampedHigh = await fixture.Service.LoadPreferencesAsync();
 
         // Assert
@@ -217,9 +217,9 @@ public sealed class CurationTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var big = new ImageRecord { Id = "big", Width = 400, Height = 300 };
-        var small = new ImageRecord { Id = "small", Width = 200, Height = 150 };
-        var tiny = new ImageRecord { Id = "tiny", Width = 100, Height = 75 };
+        var big = new WebImageRecord { Id = "big", Width = 400, Height = 300 };
+        var small = new WebImageRecord { Id = "small", Width = 200, Height = 150 };
+        var tiny = new WebImageRecord { Id = "tiny", Width = 100, Height = 75 };
         // Act
         var initialKeepers = fixture.Service.InitialDuplicateKeepers([small, big, tiny]);
         tiny = tiny with { MarkedForDeletion = true };

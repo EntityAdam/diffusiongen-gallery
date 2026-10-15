@@ -1,4 +1,4 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
 using Gallery.Web.Services.Processors;
@@ -17,10 +17,10 @@ public sealed class IngestionPerformanceTests
         var folder = await CreateSourcesAsync(fixture, 5);
         await fixture.Service.SaveIngestionOptionsAsync(new() { Workers = 3, CatalogBatchSize = 2 });
         var timings = new IngestionTimings();
-        ImportProgress? final = null;
+        WebImportProgress? final = null;
 
-        await fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
-            sourceRetention: SourceRetention.DeleteAfterVerification, timings: timings,
+        await fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
+            sourceRetention: WebSourceRetention.DeleteAfterVerification, timings: timings,
             reportProgress: update => { final = update; return Task.CompletedTask; });
 
         var report = timings.CreateReport();
@@ -35,7 +35,7 @@ public sealed class IngestionPerformanceTests
         Assert.Contains(report.Stages, stage => stage.Stage == IngestionStage.ReportProgress);
         Assert.DoesNotContain(folder, report.ToString());
         Assert.NotEqual("Unknown", report.CatalogDrive);
-        Assert.Equal(new ImportProgress(5, 5, 5, 0, "Ingestion complete."), final);
+        Assert.Equal(new WebImportProgress(5, 5, 5, 0, "Ingestion complete."), final);
         Assert.Empty(Directory.EnumerateFiles(folder));
         Assert.Equal(5, (await fixture.Service.ListAsync()).Count);
     }
@@ -56,8 +56,8 @@ public sealed class IngestionPerformanceTests
         await trigger.ExecuteNonQueryAsync();
 
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
-                sourceRetention: SourceRetention.DeleteAfterVerification,
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
+                sourceRetention: WebSourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 3, CatalogBatchSize = 3 }));
 
         Assert.Equal(3, failure.Failures.InnerExceptions.Count);
@@ -82,8 +82,8 @@ public sealed class IngestionPerformanceTests
         await trigger.ExecuteNonQueryAsync();
 
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
-                sourceRetention: SourceRetention.DeleteAfterVerification,
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
+                sourceRetention: WebSourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 2, CatalogBatchSize = 2 }));
 
         Assert.Equal(2, failure.Failures.InnerExceptions.Count);
@@ -105,11 +105,11 @@ public sealed class IngestionPerformanceTests
             BEGIN UPDATE images SET thumbnail = zeroblob(length(NEW.thumbnail)) WHERE id = NEW.id; END
             """;
         await trigger.ExecuteNonQueryAsync();
-        ImportProgress? final = null;
+        WebImportProgress? final = null;
 
         await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
-                sourceRetention: SourceRetention.DeleteAfterVerification,
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
+                sourceRetention: WebSourceRetention.DeleteAfterVerification,
                 reportProgress: update => { final = update; return Task.CompletedTask; }));
 
         Assert.Single(Directory.EnumerateFiles(folder));
@@ -130,8 +130,8 @@ public sealed class IngestionPerformanceTests
         await File.WriteAllBytesAsync(Path.Combine(folder, "two.png"), bytes);
 
         await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
-                sourceRetention: SourceRetention.DeleteAfterVerification,
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
+                sourceRetention: WebSourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 2, CatalogBatchSize = 2 }));
 
         var imported = Assert.Single(await fixture.Service.ListAsync());

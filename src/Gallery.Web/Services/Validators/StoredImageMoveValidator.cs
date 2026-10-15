@@ -4,7 +4,7 @@ namespace Gallery.Web.Services.Validators;
 
 internal static class StoredImageMoveValidator
 {
-    public static void ValidateDestination(StoredImageMoveDestination destination)
+    public static void ValidateDestination(WebStoredImageMoveDestination destination)
     {
         ValidateName(destination.Name);
         if (!Directory.Exists(destination.Folder))

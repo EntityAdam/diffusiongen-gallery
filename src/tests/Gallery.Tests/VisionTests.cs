@@ -138,7 +138,7 @@ public static class VisionTests
     public static void VisionSettings_WhenEndpointIsPublicOrUnsafe_RejectsItWithPolicyMessage(string endpoint)
     {
         // Arrange
-        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
 
         var expected = EndpointExpectation(endpoint);
         // Act
@@ -152,7 +152,7 @@ public static class VisionTests
     public static void VisionSettings_WhenEndpointIsLoopback_ThenAcceptsIt()
     {
         // Arrange
-        var settings = new VisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "vision" };
+        var settings = new WebVisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "vision" };
 
         // Act
         var validated = VisionService.Validate(settings);
@@ -166,7 +166,7 @@ public static class VisionTests
     public static void VisionSettings_WhenModelIsMissing_ThenExplainsTheRequirement()
     {
         // Arrange
-        var settings = new VisionSettings();
+        var settings = new WebVisionSettings();
         // Act
         var error = Record.Exception(() => VisionService.Validate(settings));
         // Assert - missing models explain how to satisfy the requirement
@@ -189,7 +189,7 @@ public static class VisionTests
     public static void VisionSettings_WhenEndpointIsPrivateOrIpv6Loopback_AcceptsIt(string endpoint)
     {
         // Arrange
-        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
 
         // Act
         var validated = VisionService.Validate(settings);
@@ -217,7 +217,7 @@ public static class VisionTests
                     : """{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""")
             });
         })));
-        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
 
         var expected = ExpectedVisionScenario.Create("private-LAN discovery uses the configured origin",
             new ExpectedVisionObligation("models", new[] { "vision" }), new ExpectedVisionObligation("request origins", new[] { new Uri(new Uri(endpoint), "models").AbsoluteUri }));
@@ -242,7 +242,7 @@ public static class VisionTests
             requestUri = request.RequestUri!.AbsoluteUri;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") });
         })));
-        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
         var expected = ExpectedVisionScenario.Create("private-LAN analysis uses the configured origin and parses the response",
             new ExpectedVisionObligation("request origin", new Uri(new Uri(endpoint), "chat/completions").AbsoluteUri), new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
@@ -306,7 +306,7 @@ public static class VisionTests
                 Content = new StringContent("""{"data":[{"id":"z-model"},{"id":"a-model"},{"id":"z-model"}]}""")
             });
         })));
-        var authenticatedSettings = new VisionSettings { ApiKey = "private-token" };
+        var authenticatedSettings = new WebVisionSettings { ApiKey = "private-token" };
 
         var expected = ExpectedVisionScenario.Create("model discovery orders unique identifiers and authentication never leaks to the next request",
             new ExpectedVisionObligation("models", new[] { "a-model", "z-model" }), new ExpectedVisionObligation("requests", new[]
@@ -365,10 +365,10 @@ public static class VisionTests
         var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })));
         var settings = violation switch
         {
-            "endpoint" => new VisionSettings { Endpoint = "https://example.com/v1/" },
-            "low timeout" => new VisionSettings { RequestTimeoutSeconds = 0 },
-            "high timeout" => new VisionSettings { RequestTimeoutSeconds = 3601 },
-            _ => new VisionSettings { ApiKey = "bad\r\nkey" }
+            "endpoint" => new WebVisionSettings { Endpoint = "https://example.com/v1/" },
+            "low timeout" => new WebVisionSettings { RequestTimeoutSeconds = 0 },
+            "high timeout" => new WebVisionSettings { RequestTimeoutSeconds = 3601 },
+            _ => new WebVisionSettings { ApiKey = "bad\r\nkey" }
         };
         var expected = violation == "endpoint" ? EndpointExpectation(settings.Endpoint) : ExpectedVisionScenario.Create("invalid settings explain the requirement before sending",
             new ExpectedVisionObligation("exception type", typeof(InvalidOperationException).FullName), new ExpectedVisionObligation("requests", 0));
@@ -401,7 +401,7 @@ public static class VisionTests
                 Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Landscapes\"}"}}]}""")
             });
         })));
-        var settings = new VisionSettings { Model = "vision", ApiKey = "saved-token" };
+        var settings = new WebVisionSettings { Model = "vision", ApiKey = "saved-token" };
 
         var expected = ExpectedVisionScenario.Create("saved authentication is applied to vision and text requests", new ExpectedVisionObligation("collection", "Landscapes"),
             new ExpectedVisionObligation("authorization", new[] { new[] { "Bearer", settings.ApiKey }, new[] { "Bearer", settings.ApiKey } }));

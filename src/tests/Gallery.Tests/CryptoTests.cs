@@ -1,4 +1,4 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Services.Processors;
 using Gallery.Web.Services.DataManagers;
 using Gallery.Web.Services.Sessions;

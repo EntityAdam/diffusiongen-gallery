@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace Gallery.Core;
+namespace Gallery.Web.Exceptions;
 
 public abstract class LogEventBase(string value)
 {

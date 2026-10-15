@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="Gallery.Core/Gallery.Core.csproj" />
   <Project Path="Gallery.Web/Gallery.Web.csproj" />
   <Project Path="tests/Gallery.ProcessMediator/Gallery.ProcessMediator.csproj" />
   <Project Path="tests/Gallery.TestSupport/Gallery.TestSupport.csproj" />

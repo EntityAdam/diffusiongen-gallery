@@ -3,7 +3,7 @@ using Gallery.Web.Managers.Gateways;
 using Gallery.Web.Services.DataManagers;
 using System.Net;
 using System.Text;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
@@ -25,7 +25,7 @@ public sealed class LibraryTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var image = new ImageRecordEdit(new ImageRecord { Rating = 4, Reviewed = true, Favorite = true, MarkedForDeletion = true });
+        var image = new WebImageRecordEdit(new WebImageRecord { Rating = 4, Reviewed = true, Favorite = true, MarkedForDeletion = true });
 
         // Act
         image = fixture.Service.SetCuration(image, rating, reviewed);
@@ -42,7 +42,7 @@ public sealed class LibraryTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var image = new ImageRecordEdit(new ImageRecord { Rating = 4, Reviewed = true });
+        var image = new WebImageRecordEdit(new WebImageRecord { Rating = 4, Reviewed = true });
 
         // Act
         var error = Assert.Throws<InvalidOperationException>(() => fixture.Service.SetCuration(image, 6, false));
@@ -63,7 +63,7 @@ public sealed class LibraryTests
     public void Curation_WhenRatingIsAssigned_MarksReviewedOnlyForNonzeroRatings(int? rating, bool expectedReviewed)
     {
         using var fixture = new TestVault();
-        var image = new ImageRecordEdit(new ImageRecord { Reviewed = false });
+        var image = new WebImageRecordEdit(new WebImageRecord { Reviewed = false });
 
         image = fixture.Service.SetCuration(image, rating, false);
 
@@ -76,7 +76,7 @@ public sealed class LibraryTests
     public void DeletionMark_WhenChanged_OnlyMarkingReviewed(bool markedForDeletion, bool expectedReviewed)
     {
         using var fixture = new TestVault();
-        var image = new ImageRecordEdit(new ImageRecord { Reviewed = false });
+        var image = new WebImageRecordEdit(new WebImageRecord { Reviewed = false });
 
         image = fixture.Service.SetDeletionMark(image, markedForDeletion);
 
@@ -101,7 +101,7 @@ public sealed class LibraryTests
         var storedRecords = await fixture.Service.ListAsync();
         var encryptedRecord = await fixture.RawStore.ReadRecordAsync(image.Id);
         var ratingError = Assert.Throws<InvalidOperationException>(() =>
-            fixture.Service.SetOrganization(new ImageRecordEdit(image), 6, true, null));
+            fixture.Service.SetOrganization(new WebImageRecordEdit(image), 6, true, null));
 
         // Assert
         var stored = Assert.Single(storedRecords);
@@ -123,7 +123,7 @@ public sealed class LibraryTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var library = fixture.Service;
-        var filter = new GalleryFilter { Collection = "private-worlds", MinRating = 4, Review = "pending", Sort = "rating" };
+        var filter = new WebGalleryFilter { Collection = "private-worlds", MinRating = 4, Review = "pending", Sort = "rating" };
         // Act
         await library.SaveViewAsync("Private view", filter);
         filter = filter with { MinRating = 1 };
@@ -199,10 +199,10 @@ public sealed class LibraryTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var first = new ImageRecord { Collections = ["Worlds"], Rating = 4, Reviewed = false, StoredPath = "C:\\one.dpng" };
+        var first = new WebImageRecord { Collections = ["Worlds"], Rating = 4, Reviewed = false, StoredPath = "C:\\one.dpng" };
         var second = first with { Id = "second", Rating = 5, Reviewed = true };
         var third = first with { Id = "third", Collections = [], Rating = 0 };
-        var filter = new GalleryFilter { Collection = "worlds", MinRating = 4, Review = "pending" };
+        var filter = new WebGalleryFilter { Collection = "worlds", MinRating = 4, Review = "pending" };
         // Act
         var matching = fixture.Service.Filter([first, second, third], filter).ToArray();
         var unorganized = fixture.Service.Filter([first, second, third], new() { UnorganizedOnly = true }).ToArray();
@@ -219,10 +219,10 @@ public sealed class LibraryTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var image = new ImageRecord { StoredPath = "image.dpng" };
+        var image = new WebImageRecord { StoredPath = "image.dpng" };
 
         // Act
-        var matches = fixture.Service.Filter([image], new GalleryFilter { Folder = "source" });
+        var matches = fixture.Service.Filter([image], new WebGalleryFilter { Folder = "source" });
 
         // Assert
         Assert.Empty(matches);

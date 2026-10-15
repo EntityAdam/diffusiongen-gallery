@@ -1,9 +1,10 @@
 using System.Collections.Immutable;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Services.DataManagers.Models;
 using Gallery.Web.Services.Processors;
 using System.Security.Cryptography;
 using Gallery.Web.Models;
+using Gallery.Core.Processors;
 using SixLabors.ImageSharp;
 
 namespace Gallery.Web.Services;
@@ -12,25 +13,25 @@ public sealed partial class GalleryService
 {
     private const string OriginalDeletedMessage = "Original was deleted. ";
 
-    public async Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids)
+    public async Task<List<WebRemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids)
     {
         ArgumentNullException.ThrowIfNull(ids);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         return await PrepareRemovalItemsAsync(ids, key.Bytes);
     }
 
-    private async Task<List<RemovalItem>> PrepareRemovalItemsAsync(IEnumerable<string> ids, byte[] key)
+    private async Task<List<WebRemovalItem>> PrepareRemovalItemsAsync(IEnumerable<string> ids, byte[] key)
     {
-        var removalItems = new List<RemovalItem>();
+        var removalItems = new List<WebRemovalItem>();
         foreach (var id in ids.Distinct(StringComparer.Ordinal))
             removalItems.Add(await PrepareRemovalItemAsync(id, key));
         return removalItems;
     }
 
-    private async Task<RemovalItem> PrepareRemovalItemAsync(string id, byte[] key)
+    private async Task<WebRemovalItem> PrepareRemovalItemAsync(string id, byte[] key)
     {
         var record = await FindAsync(id, key);
-        if (!record.MarkedForDeletion)
+        if (!RemovalRules.CanRemove(record.ToDomain()))
             throw new ImageNotMarkedForDeletionException($"'{record.Name}' (image '{record.Id}') must be marked for deletion first.",
                 GalleryLogEvent.PrepareRemoval, new ContextualData(ImmutableDictionary<string, object>.Empty
                     .Add("Image.Id", record.Id).Add("Image.MarkedForDeletion", false)));
@@ -38,16 +39,16 @@ public sealed partial class GalleryService
         return new(id, record.Name, original, SourceExists(original));
     }
 
-    public async Task RemoveAsync(IReadOnlyList<RemovalItem> removalItems,
-        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-        Action<RemovalResult>? reportRemoval = null)
+    public async Task RemoveAsync(IReadOnlyList<WebRemovalItem> removalItems,
+        WebExistingOriginalAction existingAction, WebMissingOriginalAction missingAction, string restoreFolder,
+        Action<WebRemovalResult>? reportRemoval = null)
     {
         ArgumentNullException.ThrowIfNull(removalItems);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         if (!Enum.IsDefined(existingAction) || !Enum.IsDefined(missingAction))
             throw new InvalidOperationException("Invalid removal action.");
         if (removalItems.Count == 0) throw new InvalidOperationException("Select marked images to remove.");
-        if (removalItems.Any(item => !item.OriginalExists) && missingAction == MissingOriginalAction.RestorePng)
+        if (removalItems.Any(item => !item.OriginalExists) && missingAction == WebMissingOriginalAction.RestorePng)
         {
             restoreFolder = Path.GetFullPath(restoreFolder);
             if (!Directory.Exists(restoreFolder)) throw new DirectoryNotFoundException("Choose an existing restoration folder.");
@@ -57,9 +58,9 @@ public sealed partial class GalleryService
         await RemoveBatchUnderGateAsync(selectedRemovalItems, key.Bytes, existingAction, missingAction, restoreFolder, reportRemoval);
     }
 
-    private async Task RemoveBatchUnderGateAsync(IReadOnlyList<RemovalItem> removalItems, byte[] key,
-        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-        Action<RemovalResult>? reportRemoval)
+    private async Task RemoveBatchUnderGateAsync(IReadOnlyList<WebRemovalItem> removalItems, byte[] key,
+        WebExistingOriginalAction existingAction, WebMissingOriginalAction missingAction, string restoreFolder,
+        Action<WebRemovalResult>? reportRemoval)
     {
         var failures = new List<Exception>();
         await galleryStore.Gate.WaitAsync();
@@ -75,12 +76,12 @@ public sealed partial class GalleryService
                 string.Join(", ", failures.Select(failure => failure.Message)), failures);
     }
 
-    private async Task AttemptRemovalAsync(RemovalItem item, byte[] key,
-        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-        Action<RemovalResult>? reportRemoval, List<Exception> failures)
+    private async Task AttemptRemovalAsync(WebRemovalItem item, byte[] key,
+        WebExistingOriginalAction existingAction, WebMissingOriginalAction missingAction, string restoreFolder,
+        Action<WebRemovalResult>? reportRemoval, List<Exception> failures)
     {
         string? restoredPath = null;
-        RemovalResult receipt;
+        WebRemovalResult receipt;
         try
         {
             await RemoveOneAsync(item, key, existingAction, missingAction, restoreFolder, path => restoredPath = path);
@@ -95,8 +96,8 @@ public sealed partial class GalleryService
         reportRemoval?.Invoke(receipt);
     }
 
-    private async Task RemoveOneAsync(RemovalItem removalItem, byte[] key,
-        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
+    private async Task RemoveOneAsync(WebRemovalItem removalItem, byte[] key,
+        WebExistingOriginalAction existingAction, WebMissingOriginalAction missingAction, string restoreFolder,
         Action<string> reportRestoredPath)
     {
         string? restoredPath = null;
@@ -104,7 +105,7 @@ public sealed partial class GalleryService
         try
         {
             var record = await FindAsync(removalItem.Id, key);
-            if (!record.MarkedForDeletion)
+            if (!RemovalRules.CanRemove(record.ToDomain()))
                 throw new ImageNotMarkedForDeletionException($"Image '{record.Id}' is no longer marked for deletion.",
                     GalleryLogEvent.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
                         .Add("Image.Id", record.Id).Add("Image.MarkedForDeletion", false)));
@@ -146,12 +147,12 @@ public sealed partial class GalleryService
             .Add("ImageId", imageId).Add("CatalogRemoved", catalogRemoved)
             .Add("RestoredPath", restoredPath ?? "").Add("OriginalDeleted", originalDeleted)), cause);
 
-    private static bool RemovalPreviewHasChanged(ImageRecord record, RemovalItem removalItem, string currentOriginalPath) =>
+    private static bool RemovalPreviewHasChanged(WebImageRecord record, WebRemovalItem removalItem, string currentOriginalPath) =>
         !string.Equals(currentOriginalPath, removalItem.OriginalPath, StringComparison.Ordinal)
         || SourceExists(currentOriginalPath) != removalItem.OriginalExists;
 
     private static async Task RestoreOriginalAsync(
-        ImageRecord record, byte[] key, string restoreFolder, Action<string> reportCreatedPath)
+        WebImageRecord record, byte[] key, string restoreFolder, Action<string> reportCreatedPath)
     {
         var plain = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{record.Id}");
         try
@@ -190,20 +191,20 @@ public sealed partial class GalleryService
     }
 
     // The catalog row and the queued ciphertext delete commit together; the drive queue deletes the file.
-    private Task DeleteGalleryRecordAsync(ImageRecord record, byte[] key) =>
+    private Task DeleteGalleryRecordAsync(WebImageRecord record, byte[] key) =>
         galleryStore.DeleteImageAndEnqueueAsync(record.Id,
             CreateDriveOperation(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key));
 
-    private static bool ShouldDeleteExistingOriginal(RemovalItem removalItem, ExistingOriginalAction existingAction) =>
-        removalItem.OriginalExists && existingAction == ExistingOriginalAction.Delete;
+    private static bool ShouldDeleteExistingOriginal(WebRemovalItem removalItem, WebExistingOriginalAction existingAction) =>
+        RemovalRules.ShouldDeleteOriginal(removalItem.ToDomain(), existingAction.ToDomain());
 
-    private static bool ShouldRestoreMissingOriginal(RemovalItem removalItem, MissingOriginalAction missingAction) =>
-        !removalItem.OriginalExists && missingAction == MissingOriginalAction.RestorePng;
+    private static bool ShouldRestoreMissingOriginal(WebRemovalItem removalItem, WebMissingOriginalAction missingAction) =>
+        RemovalRules.ShouldRestoreOriginal(removalItem.ToDomain(), missingAction.ToDomain());
 
     private static bool IsSavedContentHashInvalid(string savedHash, byte[] content) =>
         savedHash.Length > 0 && Convert.ToHexString(SHA256.HashData(content)) != savedHash;
 
-    private static string OriginalPath(ImageRecord record)
+    private static string OriginalPath(WebImageRecord record)
     {
         if (record.SourcePath.Length > 0) return Path.GetFullPath(record.SourcePath);
         // Legacy local-path imports can be recovered; relative browser folder names cannot.

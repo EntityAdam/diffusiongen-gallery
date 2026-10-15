@@ -63,7 +63,7 @@ public sealed partial class GalleryService : IDisposable
     }
 
     public async Task<string> CreateVaultAsync(string passphrase, string confirmation, string? name = null,
-        Gallery.Web.Models.MediaStorageOptions? storageOptions = null)
+        Gallery.Web.Models.WebMediaStorageOptions? storageOptions = null)
     {
         await lifecycleGate.WaitAsync();
         try

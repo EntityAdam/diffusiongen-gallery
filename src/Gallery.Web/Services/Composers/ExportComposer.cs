@@ -1,7 +1,7 @@
 using Gallery.Web.Services.Processors;
 using System.IO.Compression;
 using System.Security.Cryptography;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 
 namespace Gallery.Web.Services.Composers;
@@ -9,10 +9,10 @@ namespace Gallery.Web.Services.Composers;
 internal static class ExportComposer
 {
     internal const long MaxZipBytes = 1024L * 1024 * 1024;
-    public static async Task<ExportFile> ComposeZipAsync(IAsyncEnumerable<ExportFile> files)
+    public static async Task<WebExportFile> ComposeZipAsync(IAsyncEnumerable<WebExportFile> files)
         => await BuildZipAsync(files);
 
-    private static async Task<ExportFile> BuildZipAsync(IAsyncEnumerable<ExportFile> files)
+    private static async Task<WebExportFile> BuildZipAsync(IAsyncEnumerable<WebExportFile> files)
     {
         using var zip = new MemoryStream();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -43,7 +43,7 @@ internal static class ExportComposer
         return new($"gallery-export-{DateTime.Now:yyyyMMdd-HHmmss}.zip", "application/zip", zip.ToArray());
     }
 
-    public static void ClearOwnedContent(ExportFile file)
+    public static void ClearOwnedContent(WebExportFile file)
     {
         if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray(file.OwnedContent, out var content))
             throw new InvalidOperationException("Export content must retain its owned array for secure cleanup.");
@@ -61,26 +61,26 @@ internal static class ExportComposer
         return centralEntryBytes;
     }
 
-    public static async Task<(Stream Content, string ContentType)> OpenMediaAsync(ImageRecord record, byte[] key)
+    public static async Task<(Stream Content, string ContentType)> OpenMediaAsync(WebImageRecord record, byte[] key)
         => (new MemoryStream(await ReadMediaAsync(record, key), writable: false), record.ContentType);
 
-    public static ExportFile? ComposeWorkflow(ImageRecord record, string? workflow)
+    public static WebExportFile? ComposeWorkflow(WebImageRecord record, string? workflow)
         => workflow is null ? null : ComposeWorkflowDocument(record.Name, workflow);
 
-    private static ExportFile ComposeWorkflowDocument(string name, string workflow)
+    private static WebExportFile ComposeWorkflowDocument(string name, string workflow)
         => new(SafeFileName(name) + ".workflow.json", "application/json", System.Text.Encoding.UTF8.GetBytes(workflow));
 
-    private static async Task<byte[]> ReadMediaAsync(ImageRecord record, byte[] key)
+    private static async Task<byte[]> ReadMediaAsync(WebImageRecord record, byte[] key)
         => VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), key, $"image:{record.Id}");
 
-    public static async Task<ExportFile> ExportAsync(ImageRecord record, byte[] key)
+    public static async Task<WebExportFile> ExportAsync(WebImageRecord record, byte[] key)
     {
         var plain = await ReadMediaAsync(record, key);
         try { return ComposeCleanedMedia(record, plain); }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
-    private static ExportFile ComposeCleanedMedia(ImageRecord record, byte[] plain)
+    private static WebExportFile ComposeCleanedMedia(WebImageRecord record, byte[] plain)
     {
         var content = ExportMediaCleaner.Clean(record.ContentType, plain);
         try

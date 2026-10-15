@@ -28,14 +28,14 @@
             @if (!reviewComplete)
             {
                 <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Keep)">Keep (K)</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Favorite)">Favorite (F)</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.MarkDeletion)">Mark deletion (D)</Button>
+                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(WebReviewAction.Keep)">Keep (K)</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(WebReviewAction.Favorite)">Favorite (F)</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(WebReviewAction.MarkDeletion)">Mark deletion (D)</Button>
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SkipAsync">Skip (S)</Button>
                     @for (var score = 1; score <= 5; score++)
                     {
                         var value = score;
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Rate, value)" title="Rate, mark reviewed and advance">@value / 5</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(WebReviewAction.Rate, value)" title="Rate, mark reviewed and advance">@value / 5</Button>
                     }
                 </div>
             }
@@ -69,30 +69,30 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<WebImageRecord> Images { get; set; } = [];
     [Parameter] public string InitialId { get; set; } = "";
     [Parameter] public EventCallback OnClose { get; set; }
-    [Parameter] public EventCallback<ImageRecord> OnImageChanged { get; set; }
+    [Parameter] public EventCallback<WebImageRecord> OnImageChanged { get; set; }
     [Parameter] public bool ReviewMode { get; set; }
     private ElementReference element;
     private DotNetObjectReference<FullscreenViewer>? reference;
     private int index;
     private bool busy, originalSize;
     private string imageData = "", error = "";
-    private readonly Dictionary<string, ImageRecord> latestImagesById = [];
+    private readonly Dictionary<string, WebImageRecord> latestImagesById = [];
     private readonly Dictionary<string, (string Url, long Bytes)> fitCache = [];
     private readonly Dictionary<string, (string Url, long Bytes)> fullCache = [];
     private readonly SemaphoreSlim cacheGate = new(1);
     private const long CacheBudget = 64 * 1024 * 1024;
     private bool disposed;
     private Task? preload;
-    private ImageRecord Current => LatestSnapshot(Images[index]);
-    private ImageRecord LatestSnapshot(ImageRecord image) => latestImagesById.GetValueOrDefault(image.Id, image);
+    private WebImageRecord Current => LatestSnapshot(Images[index]);
+    private WebImageRecord LatestSnapshot(WebImageRecord image) => latestImagesById.GetValueOrDefault(image.Id, image);
     private bool reviewComplete;
     private readonly HashSet<string> decisions = [];
     private readonly HashSet<string> skipped = [];
     private int UntouchedCount => Images.Count - decisions.Count - skipped.Count;
-    private readonly Stack<(int Index, ReviewState State, bool Decided, bool Skipped)> undo = [];
+    private readonly Stack<(int Index, WebReviewState State, bool Decided, bool Skipped)> undo = [];
 
     protected override void OnInitialized()
     {
@@ -132,7 +132,7 @@
             }
             else
             {
-                data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
+                data = await Gallery.ViewerImageAsync(id, full ? WebImageResolution.Original : WebImageResolution.Fit);
                 bytes = data.Length * 3L / 4;
             }
             if (disposed) { media?.Dispose(); return ""; }
@@ -212,14 +212,19 @@
         reviewComplete = false;
     });
 
-    private Task DecideAsync(ReviewAction action, int rating = 0) => RunAsync(async () =>
+    private Task DecideAsync(WebReviewAction action, int rating = 0) => RunAsync(async () =>
     {
         if (reviewComplete) return;
         var id = Current.Id;
-        var previous = (index, Gallery.CaptureReviewState(Current), decisions.Contains(id), skipped.Contains(id));
-        await Gallery.UpdateAsync(id, image => Gallery.ApplyReviewDecision(image, action, rating));
-        undo.Push(previous);
-        latestImagesById[Current.Id] = ApplyEdit(Current, image => Gallery.ApplyReviewDecision(image, action, rating));
+        WebReviewState? previousState = null;
+        var updated = await Gallery.UpdateAsync(id, image =>
+        {
+            previousState = Gallery.CaptureReviewState(image);
+            return Gallery.ApplyReviewDecision(image, action, rating);
+        });
+        undo.Push((index, previousState ?? throw new InvalidOperationException("The review decision did not capture its previous state."),
+            decisions.Contains(id), skipped.Contains(id)));
+        latestImagesById[id] = updated;
         decisions.Add(id);
         skipped.Remove(id);
         await OnImageChanged.InvokeAsync(Current);
@@ -234,8 +239,7 @@
         if (!undo.TryPeek(out var previous)) return;
         var image = LatestSnapshot(Images[previous.Index]);
         var data = await LoadImageAsync(image.Id, originalSize);
-        await Gallery.UpdateAsync(image.Id, edit => Gallery.RestoreReviewState(edit, previous.State));
-        latestImagesById[image.Id] = ApplyEdit(image, edit => Gallery.RestoreReviewState(edit, previous.State));
+        latestImagesById[image.Id] = await Gallery.RestoreReviewStateAsync(image.Id, previous.State);
         undo.Pop();
         if (previous.Decided) decisions.Add(image.Id); else decisions.Remove(image.Id);
         if (previous.Skipped) skipped.Add(image.Id); else skipped.Remove(image.Id);
@@ -269,24 +273,18 @@
 
     private Task MarkAsync() => RunAsync(async () =>
     {
-        await Gallery.UpdateAsync(Current.Id, image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
-        latestImagesById[Current.Id] = ApplyEdit(Current, image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
+        var id = Current.Id;
+        latestImagesById[id] = await Gallery.UpdateAsync(id,
+            image => Gallery.SetDeletionMark(image, !image.MarkedForDeletion));
         await OnImageChanged.InvokeAsync(Current);
     });
 
     private Task FavoriteAsync() => RunAsync(async () =>
     {
-        await Gallery.UpdateAsync(Current.Id, image => image with { Favorite = !image.Favorite });
-        latestImagesById[Current.Id] = ApplyEdit(Current, image => image with { Favorite = !image.Favorite });
+        var id = Current.Id;
+        latestImagesById[id] = await Gallery.UpdateAsync(id, image => image with { Favorite = !image.Favorite });
         await OnImageChanged.InvokeAsync(Current);
     });
-
-    private static ImageRecord ApplyEdit(ImageRecord record, Func<ImageRecordEdit, ImageRecordEdit> update)
-    {
-        var edit = new ImageRecordEdit(record);
-        edit = update(edit);
-        return edit.ToRecord(record);
-    }
 
     private async Task CloseAsync()
     {
@@ -312,12 +310,12 @@
         {
             case "arrowleft": await NavigateAsync(-1); break;
             case "arrowright": await NavigateAsync(1); break;
-            case "d": if (ReviewMode) await DecideAsync(ReviewAction.MarkDeletion); else await MarkAsync(); break;
-            case "f": if (ReviewMode) await DecideAsync(ReviewAction.Favorite); else await FavoriteAsync(); break;
-            case "k" when ReviewMode: await DecideAsync(ReviewAction.Keep); break;
+            case "d": if (ReviewMode) await DecideAsync(WebReviewAction.MarkDeletion); else await MarkAsync(); break;
+            case "f": if (ReviewMode) await DecideAsync(WebReviewAction.Favorite); else await FavoriteAsync(); break;
+            case "k" when ReviewMode: await DecideAsync(WebReviewAction.Keep); break;
             case "s" when ReviewMode: await SkipAsync(); break;
             case "1" or "2" or "3" or "4" or "5" when ReviewMode:
-                await DecideAsync(ReviewAction.Rate, int.Parse(key)); break;
+                await DecideAsync(WebReviewAction.Rate, int.Parse(key)); break;
             case "o": await SetSizeAsync(true); break;
             case "p": await SetSizeAsync(false); break;
             case "escape": await CloseAsync(); return;

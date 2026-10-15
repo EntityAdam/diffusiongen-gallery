@@ -1,4 +1,4 @@
-namespace Gallery.Core;
+namespace Gallery.Web.Exceptions;
 
 internal sealed class GalleryLogEvent(string value) : LogEventBase(value)
 {

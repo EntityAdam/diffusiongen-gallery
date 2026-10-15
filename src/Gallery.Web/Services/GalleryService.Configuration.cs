@@ -35,7 +35,7 @@ public sealed partial class GalleryService
             await vaultStore.CopyHeaderAsync(Path.Combine(staging, "vault.json"));
             await galleryStore.CreateSnapshotAsync(Path.Combine(staging, "gallery.db"));
             var stagedStore = new GalleryStore(Path.Combine(staging, "gallery.db"));
-            await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
+            await stagedStore.SaveSettingsAsync(new WebMediaStorageOptions { MediaDirectory = mediaDirectory },
                 "media-storage", "media-storage:v1", key);
             await stagedStore.DeleteSettingsAsync(StorageOverviewId);
             var records = await stagedStore.ReadRecordsAsync(key);
@@ -74,30 +74,30 @@ public sealed partial class GalleryService
         }
     }
 
-    private static bool CatalogRecordsMatch(List<ImageRecord> copied, List<ImageRecord> source) =>
+    private static bool CatalogRecordsMatch(List<WebImageRecord> copied, List<WebImageRecord> source) =>
         copied.Count == source.Count && copied.OrderBy(record => record.Id).Zip(source.OrderBy(record => record.Id))
             .All(pair => (pair.First with { Collections = [] }) == (pair.Second with { Collections = [] })
                 && pair.First.Collections.SequenceEqual(pair.Second.Collections));
 
-    public async Task<IngestionOptions> LoadIngestionOptionsAsync() =>
-        await ReadEncryptedSettingAsync<IngestionOptions>("ingestion-options", "ingestion-options:v1") ?? new();
+    public async Task<WebIngestionOptions> LoadIngestionOptionsAsync() =>
+        await ReadEncryptedSettingAsync<WebIngestionOptions>("ingestion-options", "ingestion-options:v1") ?? new();
 
-    public Task SaveIngestionOptionsAsync(IngestionOptions options)
+    public Task SaveIngestionOptionsAsync(WebIngestionOptions options)
     {
         options.Validate();
         return WriteEncryptedSettingAsync(options, "ingestion-options", "ingestion-options:v1");
     }
 
-    public async Task<MediaStorageOptions> LoadMediaStorageOptionsAsync() =>
-        await ReadEncryptedSettingAsync<MediaStorageOptions>("media-storage", "media-storage:v1") ?? new();
+    public async Task<WebMediaStorageOptions> LoadMediaStorageOptionsAsync() =>
+        await ReadEncryptedSettingAsync<WebMediaStorageOptions>("media-storage", "media-storage:v1") ?? new();
 
-    public async Task SaveMediaStorageOptionsAsync(MediaStorageOptions options)
+    public async Task SaveMediaStorageOptionsAsync(WebMediaStorageOptions options)
     {
         options = NormalizeMediaStorageOptions(options);
         await WriteEncryptedSettingAsync(options, "media-storage", "media-storage:v1");
     }
 
-    private static MediaStorageOptions NormalizeMediaStorageOptions(MediaStorageOptions options)
+    private static WebMediaStorageOptions NormalizeMediaStorageOptions(WebMediaStorageOptions options)
     {
         var directory = options.MediaDirectory.Trim();
         if (directory.Length > 0)
@@ -111,7 +111,7 @@ public sealed partial class GalleryService
 
     private async Task<string> MediaDirectoryWithKeyAsync(byte[] key)
     {
-        var options = await galleryStore.ReadSettingsAsync<MediaStorageOptions>("media-storage", "media-storage:v1", key);
+        var options = await galleryStore.ReadSettingsAsync<WebMediaStorageOptions>("media-storage", "media-storage:v1", key);
         return options is { MediaDirectory.Length: > 0 } ? options.MediaDirectory : VaultRoot;
     }
 

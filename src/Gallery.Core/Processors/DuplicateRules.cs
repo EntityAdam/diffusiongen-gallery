@@ -1,51 +1,13 @@
 using System.Numerics;
 using System.Collections.Immutable;
-using Gallery.Web.Models;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using Gallery.Core.Models;
 
 namespace Gallery.Core.Processors;
 
-internal static class DuplicateRules
+public static class DuplicateRules
 {
-    private const int DifferenceHashDimension = 8;
 
     public const int Threshold = 6;
-    public const string EmptyKeeperCandidatesMessage =
-        "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
-
-    public static ulong DifferenceHash(byte[] imageBytes)
-    {
-        using var image = LoadNormalizedImage(imageBytes);
-        return ComputeDifferenceHash(image);
-    }
-
-    private static Image<L8> LoadNormalizedImage(byte[] imageBytes)
-    {
-        var image = Image.Load<L8>(imageBytes);
-        try
-        {
-            image.Mutate(context => context.Resize(new ResizeOptions { Size = new Size(DifferenceHashDimension + 1, DifferenceHashDimension), Mode = ResizeMode.Stretch }));
-            return image;
-        }
-        catch
-        {
-            image.Dispose();
-            throw;
-        }
-    }
-
-    private static ulong ComputeDifferenceHash(Image<L8> image)
-    {
-        ulong hash = 0;
-        var bit = 0;
-        for (var y = 0; y < DifferenceHashDimension; y++)
-            for (var x = 0; x < DifferenceHashDimension; x++, bit++)
-                if (image[x, y].PackedValue > image[x + 1, y].PackedValue) hash |= 1UL << bit;
-        return hash;
-    }
-
     public static int HammingDistance(ulong firstHash, ulong secondHash) => BitOperations.PopCount(firstHash ^ secondHash);
 
     public static List<DuplicateGroup> GroupDuplicates(IReadOnlyList<ImageRecord> records,
@@ -120,13 +82,7 @@ internal static class DuplicateRules
     public static ImageRecord PickKeeper(IEnumerable<ImageRecord> imageRecords)
     {
         var candidates = imageRecords.ToList();
-        RequireKeeperCandidates(candidates);
         return OrderKeeperCandidates(candidates).First();
-    }
-
-    private static void RequireKeeperCandidates(IReadOnlyCollection<ImageRecord> candidates)
-    {
-        if (candidates.Count == 0) throw new InvalidOperationException(EmptyKeeperCandidatesMessage);
     }
 
     private static IOrderedEnumerable<ImageRecord> OrderKeeperCandidates(IEnumerable<ImageRecord> candidates) => candidates

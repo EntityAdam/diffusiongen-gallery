@@ -1,4 +1,4 @@
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 
 namespace Gallery.Web.Services.Processors;
 

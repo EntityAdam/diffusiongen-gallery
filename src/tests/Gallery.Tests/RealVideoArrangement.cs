@@ -12,7 +12,7 @@ internal sealed class RealVideoArrangement : IDisposable
     private readonly string source = Path.Combine(Path.GetTempPath(), "gallery-real-video-" + Guid.NewGuid().ToString("N") + ".mp4");
     public TestVault TestVault { get; }
     public byte[] Bytes { get; private set; } = [];
-    public ImageRecord? ImageRecord { get; private set; }
+    public WebImageRecord? ImageRecord { get; private set; }
 
     private RealVideoArrangement(VideoTools tools) => TestVault = new(tools);
 

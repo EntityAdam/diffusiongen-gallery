@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 
-namespace Gallery.Core;
+namespace Gallery.Web.Exceptions;
 
 [ExcludeFromCodeCoverage]
 public sealed class ThumbnailNotFoundException : GalleryBusinessException

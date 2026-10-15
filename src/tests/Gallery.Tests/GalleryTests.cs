@@ -1,7 +1,7 @@
 using Gallery.Web.Services.Processors;
 using System.Security.Cryptography;
 using System.Text;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
@@ -225,8 +225,8 @@ public sealed class GalleryTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var original = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "immutable.png", "folder");
-        ImageRecordEdit? priorEdit = null;
-        ImageRecordEdit? replacement = null;
+        WebImageRecordEdit? priorEdit = null;
+        WebImageRecordEdit? replacement = null;
 
         // Act
         await fixture.Service.UpdateAsync(original.Id, edit =>
@@ -259,7 +259,7 @@ public sealed class GalleryTests
         await File.WriteAllBytesAsync(Path.Combine(folder, "image.png"), MakePng());
         await File.WriteAllBytesAsync(Path.Combine(folder, "clip.mp4"), [0, 0, 0, 24, 102, 116, 121, 112]);
         // Act
-        var actual = await Assert.ThrowsAsync<ImportFolderException>(() => fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder));
+        var actual = await Assert.ThrowsAsync<ImportFolderException>(() => fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder));
         var records = await fixture.Service.ListAsync();
 
         // Assert
@@ -293,7 +293,7 @@ public sealed class GalleryTests
 
         // Act
         ImportFolderException importFolderException = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder));
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder));
 
         // Assert
         Assert.Equal("One or more files could not be imported.", importFolderException.Reason);
@@ -316,7 +316,7 @@ public sealed class GalleryTests
         await File.WriteAllTextAsync(Path.Combine(folder, "invalid.png"), "invalid");
         // Act
         var failure = await Assert.ThrowsAsync<ImportFolderException>(
-            () => fixture.Service.ImportFolderAsync(folder, FolderSearchScope.Descendants));
+            () => fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.Descendants));
         var records = await fixture.Service.ListAsync();
         var preservedSource = await File.ReadAllBytesAsync(Path.Combine(folder, "one.png"));
 
@@ -344,11 +344,11 @@ public sealed class GalleryTests
         await File.WriteAllBytesAsync(Path.Combine(folder, "two.png"), MakePng(20, 10));
         await File.WriteAllTextAsync(Path.Combine(folder, "invalid.png"), "not an image");
         await File.WriteAllTextAsync(Path.Combine(folder, "ignored.txt"), "ignored");
-        var updates = new List<ImportProgress>();
+        var updates = new List<WebImportProgress>();
         var activeCallbacks = 0;
         // Act
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder, reportProgress: async update =>
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder, reportProgress: async update =>
         {
             Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
             try
@@ -409,7 +409,7 @@ public sealed class GalleryTests
 
         // Act
         await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder, timings: timings));
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder, timings: timings));
         var report = timings.CreateReport();
         var text = report.ToString();
 
@@ -437,15 +437,15 @@ public sealed class GalleryTests
         var folder = Path.Combine(fixture.Root, "source");
         Directory.CreateDirectory(folder);
         await File.WriteAllTextAsync(Path.Combine(folder, "ignored.txt"), "ignored");
-        var updates = new List<ImportProgress>();
+        var updates = new List<WebImportProgress>();
         // Act
-        await fixture.Service.ImportFolderAsync(folder, recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder, reportProgress: update =>
+        await fixture.Service.ImportFolderAsync(folder, recursive ? WebFolderSearchScope.Descendants : WebFolderSearchScope.SelectedFolder, reportProgress: update =>
         {
             updates.Add(update);
             return Task.CompletedTask;
         });
         // Assert
-        Assert.Equal(new ImportProgress(0, 0, 0, 0, "No supported images found."), updates[^1]);
+        Assert.Equal(new WebImportProgress(0, 0, 0, 0, "No supported images found."), updates[^1]);
         Assert.Empty(await fixture.Service.ListAsync());
     }
 
@@ -488,7 +488,7 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var settings = new VisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "private-vision-model", ApiKey = "private-api-token", RequestTimeoutSeconds = 600 };
+        var settings = new WebVisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "private-vision-model", ApiKey = "private-api-token", RequestTimeoutSeconds = 600 };
         // Act
         await fixture.Service.SaveSettingsAsync(settings);
         var reloaded = await fixture.Service.SettingsAsync();
@@ -654,7 +654,7 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var previous = new StorageOverview(100, 1, 200, 2, 300, 0, DateTimeOffset.UtcNow);
+        var previous = new WebStorageOverview(100, 1, 200, 2, 300, 0, DateTimeOffset.UtcNow);
         await fixture.Store.SaveSettingsAsync(previous, "storage-overview", "storage-overview:v1", fixture.Session.Key);
 
         // Act
@@ -750,10 +750,10 @@ public sealed class GalleryTests
 
     // Each entry rejects an unknown operation choice before any media or folder work begins.
     [Theory]
-    [InlineData("preview", "ImageResolution", "Fit", "Original")]
-    [InlineData("viewer", "ImageResolution", "Fit", "Original")]
-    [InlineData("folder-scope", "FolderSearchScope", "SelectedFolder", "Descendants")]
-    [InlineData("source-retention", "SourceRetention", "Retain", "DeleteAfterVerification")]
+    [InlineData("preview", "WebImageResolution", "Fit", "Original")]
+    [InlineData("viewer", "WebImageResolution", "Fit", "Original")]
+    [InlineData("folder-scope", "WebFolderSearchScope", "SelectedFolder", "Descendants")]
+    [InlineData("source-retention", "WebSourceRetention", "Retain", "DeleteAfterVerification")]
     public async Task Operation_WhenChoiceIsUnknown_ThenIdentifiesTheValueAndEveryAllowedChoice(
         string operationName, string expectedChoiceName, string firstOption, string secondOption)
     {
@@ -764,14 +764,14 @@ public sealed class GalleryTests
         var exception = operationName switch
         {
             "preview" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.PreviewAsync("unused", (ImageResolution)99)),
+                fixture.Service.PreviewAsync("unused", (WebImageResolution)99)),
             "viewer" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.ViewerImageAsync("unused", (ImageResolution)99)),
+                fixture.Service.ViewerImageAsync("unused", (WebImageResolution)99)),
             "folder-scope" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.ImportFolderAsync(fixture.Root, (FolderSearchScope)99)),
+                fixture.Service.ImportFolderAsync(fixture.Root, (WebFolderSearchScope)99)),
             "source-retention" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.ImportFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder,
-                    sourceRetention: (SourceRetention)99)),
+                fixture.Service.ImportFolderAsync(fixture.Root, WebFolderSearchScope.SelectedFolder,
+                    sourceRetention: (WebSourceRetention)99)),
             _ => throw new ArgumentOutOfRangeException(nameof(operationName))
         };
 
@@ -794,17 +794,17 @@ public sealed class GalleryTests
         var secondFolder = Directory.CreateDirectory(Path.Combine(fixture.Root, "second-import")).FullName;
         await File.WriteAllBytesAsync(Path.Combine(firstFolder, "first.png"), MakePng(30, 20));
         await File.WriteAllBytesAsync(Path.Combine(secondFolder, "second.png"), MakePng(40, 20));
-        var firstProgress = new List<ImportProgress>();
-        var secondProgress = new List<ImportProgress>();
+        var firstProgress = new List<WebImportProgress>();
+        var secondProgress = new List<WebImportProgress>();
 
         // Act
         await Task.WhenAll(
-            fixture.Service.ImportFolderAsync(firstFolder, FolderSearchScope.SelectedFolder, reportProgress: update =>
+            fixture.Service.ImportFolderAsync(firstFolder, WebFolderSearchScope.SelectedFolder, reportProgress: update =>
             {
                 firstProgress.Add(update);
                 return Task.CompletedTask;
             }),
-            fixture.Service.ImportFolderAsync(secondFolder, FolderSearchScope.SelectedFolder, reportProgress: update =>
+            fixture.Service.ImportFolderAsync(secondFolder, WebFolderSearchScope.SelectedFolder, reportProgress: update =>
             {
                 secondProgress.Add(update);
                 return Task.CompletedTask;
@@ -839,10 +839,10 @@ public sealed class GalleryTests
         var duplicateBytes = MakePng(20, 10);
         await fixture.Service.ImportAsync(new MemoryStream(duplicateBytes), "existing.png", "other");
         await File.WriteAllBytesAsync(duplicate, duplicateBytes);
-        ImportProgress? final = null;
+        WebImportProgress? final = null;
         // Act
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder, sourceRetention: SourceRetention.DeleteAfterVerification, reportProgress: update =>
+            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder, sourceRetention: WebSourceRetention.DeleteAfterVerification, reportProgress: update =>
         {
             final = update;
             return Task.CompletedTask;
@@ -857,7 +857,7 @@ public sealed class GalleryTests
             exception.Message.Contains(invalid, StringComparison.Ordinal));
         Assert.Contains(failure.Failures.InnerExceptions, exception =>
             exception.Message.Contains(duplicate, StringComparison.Ordinal));
-        Assert.Equal(new ImportProgress(3, 3, 1, 2, "Ingestion complete."), final);
+        Assert.Equal(new WebImportProgress(3, 3, 1, 2, "Ingestion complete."), final);
         Assert.False(File.Exists(valid));
         Assert.True(File.Exists(invalid));
         Assert.Equal(duplicateBytes, retainedDuplicate);
@@ -897,7 +897,7 @@ public sealed class GalleryTests
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng(1800, 10)), "wide.png", "folder");
         // Act
         var data = await fixture.Service.PreviewAsync(record.Id);
-        var fullData = await fixture.Service.PreviewAsync(record.Id, resolution: ImageResolution.Original);
+        var fullData = await fixture.Service.PreviewAsync(record.Id, resolution: WebImageResolution.Original);
         using var preview = Image.Load(Convert.FromBase64String(data["data:image/png;base64,".Length..]));
         using var fullImage = Image.Load(Convert.FromBase64String(fullData["data:image/png;base64,".Length..]));
 
@@ -917,8 +917,8 @@ public sealed class GalleryTests
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng(1800, 10)), "wide.png", "folder");
         // Act
-        var fit = await fixture.Service.ViewerImageAsync(record.Id, ImageResolution.Fit);
-        var full = await fixture.Service.ViewerImageAsync(record.Id, ImageResolution.Original);
+        var fit = await fixture.Service.ViewerImageAsync(record.Id, WebImageResolution.Fit);
+        var full = await fixture.Service.ViewerImageAsync(record.Id, WebImageResolution.Original);
         using var fitImage = Image.Load(Convert.FromBase64String(fit["data:image/jpeg;base64,".Length..]));
         var fullBytes = Convert.FromBase64String(full["data:image/png;base64,".Length..]);
         using var fullImage = Image.Load(fullBytes);
@@ -1008,7 +1008,7 @@ public sealed class GalleryTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var matching = new ImageRecord
+        var matching = new WebImageRecord
         {
             Name = "sunset", Description = "green landscape", Tags = "green, cinematic",
             SourceFolder = "folder-a", StoredPath = Path.Combine("C:\\", "gallery", "one.dpng"),
@@ -1016,7 +1016,7 @@ public sealed class GalleryTests
             ImportedAt = new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero)
         };
         var other = matching with { Id = "other", Favorite = false, MarkedForDeletion = true };
-        var filter = new GalleryFilter
+        var filter = new WebGalleryFilter
         {
             Search = "landscape", Tag = "green", Folder = "folder-a", Model = "vision",
             FavoritesOnly = true, MinWidth = 1000, MinHeight = 700, Orientation = "landscape",

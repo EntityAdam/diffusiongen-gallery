@@ -1,11 +1,10 @@
 using Gallery.Web.Services.Processors;
-using Gallery.Core.Extractors;
 using Gallery.Core.Processors;
 using Gallery.Web.Managers.Gateways;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Core.Queries;
 using Gallery.Web.Models;
 using Gallery.Web.Services;
@@ -65,9 +64,9 @@ public sealed class MediaAndComfyTests
     {
         // Arrange
         using var fixture = new TestVault();
-        ImageRecord Make(string name, string? prompt) => new()
+        WebImageRecord Make(string name, string? prompt) => new()
         {
-            Name = name, Generation = prompt is null ? null : new GenerationInfo { Prompt = prompt }
+            Name = name, Generation = prompt is null ? null : new WebGenerationInfo { Prompt = prompt }
         };
         var ordered = new[]
         {
@@ -94,10 +93,10 @@ public sealed class MediaAndComfyTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var image = new ImageRecord { Name = "image", Generation = new GenerationInfo { Prompt = "cat" } };
-        var video = new ImageRecord { Name = "video", MediaType = "video", Generation = new GenerationInfo { Prompt = "cat " } };
-        ImageRecord[] expectedRecords = [expectedName == "image" ? image : video];
-        var filter = new GalleryFilter { Media = media, Prompt = prompt };
+        var image = new WebImageRecord { Name = "image", Generation = new WebGenerationInfo { Prompt = "cat" } };
+        var video = new WebImageRecord { Name = "video", MediaType = "video", Generation = new WebGenerationInfo { Prompt = "cat " } };
+        WebImageRecord[] expectedRecords = [expectedName == "image" ? image : video];
+        var filter = new WebGalleryFilter { Media = media, Prompt = prompt };
 
         // Act
         var records = fixture.Service.Filter(new[] { image, video }, filter).ToArray();
@@ -113,7 +112,7 @@ public sealed class MediaAndComfyTests
     public void Duration_WhenFormatted_ThenShowsMinutesAndSeconds(double duration, string expectedText)
     {
         // Arrange
-        var record = new ImageRecord { DurationSeconds = duration };
+        var record = new WebImageRecord { DurationSeconds = duration };
 
         // Act
         var text = GalleryService.FormatDuration(record);
@@ -217,7 +216,9 @@ public sealed class MediaAndComfyTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
-        await fixture.Service.UpdateAsync(record.Id, current => current with { Generation = null, MetadataVersion = 0 });
+        var legacy = record with { Generation = null, MetadataVersion = 0 };
+        await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(
+            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(legacy), fixture.Session.Key, $"record:{record.Id}"));
 
         // Act
         var records = await fixture.Service.LoadAsync();
@@ -369,7 +370,7 @@ public sealed class MediaAndComfyTests
         return new JsonObject { ["png"] = new JsonArray(), ["exif"] = new JsonArray("Make: Prompt:" + KSamplerPrompt.ReplaceLineEndings(""), "ImageDescription: Workflow:" + UiWorkflow) }.ToJsonString();
     }
 
-    internal static async Task<ImageRecord> ArrangeStoredMetadataAsync(TestVault fixture, string metadata)
+    internal static async Task<WebImageRecord> ArrangeStoredMetadataAsync(TestVault fixture, string metadata)
     {
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy-metadata.png", "folder");
         var legacy = record with { Metadata = metadata, MetadataVersion = 0, Generation = null };

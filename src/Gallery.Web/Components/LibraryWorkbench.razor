@@ -92,20 +92,20 @@
 @code {
     [Parameter] public string Workflow { get; set; } = "organize";
     [Parameter] public bool Visible { get; set; } = true;
-    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public IReadOnlyList<WebImageRecord> Images { get; set; } = [];
     [Parameter] public IReadOnlyCollection<string> SelectedIds { get; set; } = [];
-    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
-    [Parameter] public EventCallback<GalleryFilter> FilterChanged { get; set; }
+    [Parameter, EditorRequired] public WebGalleryFilter Filter { get; set; } = new();
+    [Parameter] public EventCallback<WebGalleryFilter> FilterChanged { get; set; }
     [Parameter] public EventCallback Changed { get; set; }
-    [Parameter] public EventCallback<LibraryJobStatus> JobChanged { get; set; }
+    [Parameter] public EventCallback<WebLibraryJobStatus> JobChanged { get; set; }
     private string collection = "", tags = "", viewName = "", query = "", error = "", notice = "", status = "";
     private int rating = -1;
     private string reviewStatus = "unchanged", jobWorkflow = "", jobMessage = "";
     private bool working, analyzing, reportingJob, cancelRequested, disposed;
-    private List<SavedView> views = [];
-    private List<OrganizationSuggestion> suggestions = [];
-    private GalleryFilter? suggestedFilter;
-    private List<ImageRecord> compareImages = [];
+    private List<WebSavedView> views = [];
+    private List<WebOrganizationSuggestion> suggestions = [];
+    private WebGalleryFilter? suggestedFilter;
+    private List<WebImageRecord> compareImages = [];
     private readonly Dictionary<string, string> comparison = [];
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
     protected override void OnParametersSet()
@@ -140,7 +140,7 @@
     }
 
     private Task PublishJobAsync() => disposed ? Task.CompletedTask : JobChanged.InvokeAsync(
-        new LibraryJobStatus(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
+        new WebLibraryJobStatus(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
             suggestions.Count, analyzing && !cancelRequested));
 
     public async Task StopAnalysisAsync()
@@ -151,14 +151,14 @@
         await PublishJobAsync();
     }
 
-    private async Task DismissAsync(OrganizationSuggestion suggestion)
+    private async Task DismissAsync(WebOrganizationSuggestion suggestion)
     {
         suggestions.Remove(suggestion);
         jobMessage = $"{suggestions.Count} suggestions await approval.";
         await PublishJobAsync();
     }
 
-    private async Task ApplyBulkAsync(Func<ImageRecordEdit, ImageRecordEdit> change)
+    private async Task ApplyBulkAsync(Func<WebImageRecordEdit, WebImageRecordEdit> change)
     {
         var failures = new List<string>();
         var ids = SelectedIds.ToArray();
@@ -191,7 +191,7 @@
     });
 
     private Task RemoveCollectionAsync() => RunAsync("Updating collections...", () => ApplyBulkAsync(image =>
-        image with { Collections = image.Collections.RemoveAll(name => name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase)) }));
+        Gallery.RemoveCollection(image, collection)));
 
     private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
         Gallery.SetCuration(image, rating == -1 ? null : rating,
@@ -256,7 +256,7 @@
         error = string.Join(" / ", failures);
     }, reportJob: true);
 
-    private Task ApproveAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved suggestion...", async () =>
+    private Task ApproveAsync(WebOrganizationSuggestion suggestion) => RunAsync("Saving approved suggestion...", async () =>
     {
         await Gallery.UpdateAsync(suggestion.Id, image =>
         {
@@ -275,15 +275,15 @@
         comparison.Clear();
         var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
         if (selected.Count != 2) throw new InvalidOperationException("Select exactly two images.");
-        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, ImageResolution.Fit);
+        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, WebImageResolution.Fit);
         compareImages = selected;
     });
 
-    private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
+    private Task RateOneAsync(WebImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
+        var updated = await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
         var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);
-        if (comparisonIndex >= 0) compareImages[comparisonIndex] = image with { Rating = value, Reviewed = true };
+        if (comparisonIndex >= 0) compareImages[comparisonIndex] = updated;
         await Changed.InvokeAsync();
     });
 

@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
-using Gallery.Core;
+using Gallery.Web.Exceptions;
 using Gallery.Web.Models;
 using Gallery.Web.Services.DataManagers;
 using Gallery.Web.Services.DataManagers.Models;
@@ -27,7 +27,7 @@ public sealed partial class GalleryService
     /// <summary>Raised from a background thread whenever queued drive work progresses.</summary>
     public event Action? DriveQueueChanged;
 
-    public DriveQueueStatus DriveQueueStatus => drivePlayer.Status;
+    public WebDriveQueueStatus DriveQueueStatus => drivePlayer.Status;
 
     private sealed record MediaIndexMarker(DateTimeOffset ScheduledAt);
 
@@ -94,7 +94,7 @@ public sealed partial class GalleryService
     private static long NowMilliseconds() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     /// <summary>Schedules the one-time scan that seeds the media index; later loads read the index instead of the drive.</summary>
-    private async Task ScheduleMediaIndexAsync(IReadOnlyCollection<ImageRecord> records, byte[] key)
+    private async Task ScheduleMediaIndexAsync(IReadOnlyCollection<WebImageRecord> records, byte[] key)
     {
         if (await galleryStore.ReadSettingsAsync<MediaIndexMarker>(MediaIndexId, MediaIndexPurpose, key) is not null) return;
         var imageRoot = ImageRoot(vaultStore.Root);
@@ -307,7 +307,7 @@ public sealed partial class GalleryService
             catch (CryptographicException) { return false; }
         }
 
-        private async Task<ImageRecord?> FindOwnerAsync(string stagedPath)
+        private async Task<WebImageRecord?> FindOwnerAsync(string stagedPath)
         {
             var originalPath = RemovalOriginalPath(stagedPath);
             var stagingIdentity = stagedPath[(stagedPath.LastIndexOf(".removing-", StringComparison.Ordinal) + ".removing-".Length)..];

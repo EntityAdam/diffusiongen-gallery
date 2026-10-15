@@ -18,7 +18,7 @@ public sealed class UiComponentTests
     {
         var html = await RenderAsync<GalleryImageCard>(new()
         {
-            [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "sample", Name = "Sample", Rating = 3, Favorite = true },
+            [nameof(GalleryImageCard.Image)] = new WebImageRecord { Id = "sample", Name = "Sample", Rating = 3, Favorite = true },
             [nameof(GalleryImageCard.ShowSelection)] = true,
             [nameof(GalleryImageCard.Selected)] = true
         });
@@ -42,7 +42,7 @@ public sealed class UiComponentTests
     {
         var html = await RenderAsync<GalleryImageCard>(new()
         {
-            [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "pending", Name = "Pending" },
+            [nameof(GalleryImageCard.Image)] = new WebImageRecord { Id = "pending", Name = "Pending" },
             [nameof(GalleryImageCard.ThumbnailFailed)] = failed
         });
 
@@ -77,7 +77,7 @@ public sealed class UiComponentTests
     {
         var html = await RenderAsync<GalleryFilterPanel>(new()
         {
-            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter(),
+            [nameof(GalleryFilterPanel.Filter)] = new WebGalleryFilter(),
             [nameof(GalleryFilterPanel.Disabled)] = true
         });
 
@@ -127,7 +127,7 @@ public sealed class UiComponentTests
     [InlineData(true)]
     public async Task StorageOverviewStatus_ShowsLastUpdatedAndIndicatesStaleData(bool stale)
     {
-        var overview = new StorageOverview(1, 1, 1, 1, 1, 0, DateTimeOffset.UtcNow) { IsStale = stale };
+        var overview = new WebStorageOverview(1, 1, 1, 1, 1, 0, DateTimeOffset.UtcNow) { IsStale = stale };
 
         var html = await RenderAsync<StorageOverviewStatus>(new()
         {
