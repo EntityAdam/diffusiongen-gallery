@@ -40,7 +40,7 @@ public sealed class DomainArchitectureTests
     }
 
     [Fact]
-    public void CoreProject_HasNoOuterDependenciesOrLinkedSourceCompilation()
+    public void CoreProject_HasNoOuterProjectDependenciesOrLinkedSourceCompilation()
     {
         var sourceRoot = SourceRoot();
         var coreProject = XDocument.Load(Path.Combine(sourceRoot, "Gallery.Core", "Gallery.Core.csproj"));
@@ -48,7 +48,8 @@ public sealed class DomainArchitectureTests
 
         Assert.Equal("Microsoft.NET.Sdk", coreProject.Root!.Attribute("Sdk")!.Value);
         Assert.Empty(coreProject.Descendants("ProjectReference"));
-        Assert.Empty(coreProject.Descendants("PackageReference"));
+        Assert.Equal("SixLabors.ImageSharp",
+            Assert.Single(coreProject.Descendants("PackageReference")).Attribute("Include")!.Value);
         Assert.Empty(coreProject.Descendants("FrameworkReference"));
         Assert.Empty(webProject.Descendants("Compile"));
         Assert.EndsWith("Gallery.Core.csproj",

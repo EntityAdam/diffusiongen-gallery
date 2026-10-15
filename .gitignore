@@ -6,5 +6,4 @@ obj/
 *.userosscache
 *.sln.docstates
 publish/
-sixlabors.lic
 node_modules/

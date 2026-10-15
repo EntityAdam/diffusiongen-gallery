@@ -10,8 +10,10 @@ test-only tooling.
 
 ## Architecture
 
-`Gallery.Core` is a standalone .NET class library with no package or project
-dependencies. It owns domain records and the rules for curation, review/undo,
+`Gallery.Core` is a standalone .NET class library with no project dependencies.
+It declares the ImageSharp package reference so the assembly-scoped Six Labors
+license is validated against `Gallery.Core`; Web consumes ImageSharp transitively.
+Core owns domain records and the rules for curation, review/undo,
 duplicate grouping and keeper selection, prompt grouping, gallery filtering,
 and removal eligibility/decisions. Its operations work on in-memory domain
 values; they do not access files, databases, HTTP, configuration, or UI services.
@@ -71,15 +73,17 @@ dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj
 
 ImageSharp 4 requires a valid Six Labors license for Release builds. Apply for
 the free Community license at [Six Labors pricing](https://sixlabors.com/pricing/)
-if eligible, save the issued license as `sixlabors.lic` in the repository root,
-and pass its absolute path to Release builds. In PowerShell, run:
+if eligible and save the issued license as `sixlabors.lic` in the repository root.
+The Core project automatically uses this file for Debug and Release builds,
+validating the license against its licensed assembly name, `Gallery.Core`.
+To run a Release build in PowerShell:
 
 ```powershell
-$license = (Resolve-Path .\sixlabors.lic).Path
-dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Release "-p:SixLaborsLicenseFile=$license"
+dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Release
 ```
 
-The license file is gitignored and must not be committed.
+An explicit `-p:SixLaborsLicenseFile=<absolute-path>` overrides the default location.
+The repository-root license file is not excluded by `.gitignore`.
 
 Open **http://127.0.0.1:5189**. Create a gallery with a unique passphrase of at least
 14 characters and **save the 32 recovery words offline before continuing**.
