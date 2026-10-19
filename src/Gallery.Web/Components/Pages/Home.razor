@@ -659,29 +659,20 @@ else
             <Card Class="mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close image details"><XIcon aria-hidden="true" /></Button></div>
                 <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
-                    <div class="preview grid min-h-52 place-items-center self-start rounded-lg bg-black/40 lg:sticky lg:top-0">
-                        @if (selected.IsVideo && videoUrl.Length > 0)
-                        { <video src="@videoUrl" poster="@preview" controls loop playsinline aria-label="@selected.Name"></video> }
-                        else { <img src="@preview" alt="@selected.Name" draggable="false" /> }
-                    </div>
+                    <ImageDetailPreview Image="selected" Preview="@preview" VideoUrl="@videoUrl" Busy="busy"
+                                        Download="() => ExportAsync(selected)" Fullscreen="() => OpenViewer(selected.Id)"
+                                        Rate="value => RateImageAsync(selected, value)" Favorite="() => FavoriteAsync(selected)"
+                                        Mark="() => MarkAsync(selected)" />
                     <div class="min-w-0 space-y-4 text-sm">
                         <div class="eyebrow">ENCRYPTED ORIGINAL@(selected.IsVideo ? " · MP4 VIDEO" : "")</div>
                         <p>@selected.Width &times; @selected.Height@(selected.IsVideo ? $" · {GalleryService.FormatDuration(selected)}" : "") &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
                         <p class="text-muted-foreground">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => OpenViewer(selected.Id)">Full screen view</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => FavoriteAsync(selected)">@(selected.IsFavorite ? "Remove favorite" : "Favorite")</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => MarkAsync(selected)">@(selected.IsMarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted copy in its original format, including embedded metadata")" OnClick="() => ExportAsync(selected)">Save a copy</Button>
-                            @if (selected.Generation?.HasWorkflow == true || selected.Generation?.HasApiPrompt == true)
-                            {
-                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="Download the embedded ComfyUI workflow as JSON" OnClick="() => ExportWorkflowAsync(selected)">Export workflow</Button>
-                            }
-                            @if (selected.IsMarkedForDeletion)
-                            {
+                        @if (selected.IsMarkedForDeletion)
+                        {
+                            <div class="flex flex-wrap items-center gap-2">
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</Button>
-                            }
-                        </div>
+                            </div>
+                        }
                         @if (selected.Generation is { } generation)
                         {
                             <h3>ComfyUI generation</h3>
@@ -692,7 +683,7 @@ else
                                 @if (generation.Steps is int steps) { <dt>Steps</dt><dd>@steps</dd> }
                                 @if (generation.Cfg is double cfg) { <dt>CFG</dt><dd>@cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)</dd> }
                             </dl>
-                            @if (!generation.HasApiPrompt) { <p class="text-muted-foreground">Only a UI workflow was embedded; export it to inspect the graph in ComfyUI.</p> }
+                            @if (!generation.HasApiPrompt) { <p class="text-muted-foreground">Only a UI workflow was embedded; download a copy to inspect the graph in ComfyUI.</p> }
                             @if (generation.Prompt.Length > 0)
                             {
                                 var count = images.Count(image => image.Prompt == generation.Prompt);
@@ -1809,14 +1800,6 @@ else
         try { await DownloadAsync(file); }
         finally { GalleryService.ClearExportContent(file); }
         message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the gallery.";
-    });
-
-    private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
-    {
-        var file = await Gallery.WorkflowAsync(image.Id) ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
-        try { await DownloadAsync(file); }
-        finally { GalleryService.ClearExportContent(file); }
-        message = $"Saved the ComfyUI workflow as {file.FileName}.";
     });
 
     private Task ExportSelectedAsync() => RunAsync($"Packing {librarySelection.Count} decrypted copies...", async () =>

@@ -67,7 +67,7 @@
 .image-grid.density-compact { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .image-grid.density-large { grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
 .image-grid.density-compact .card-info { padding: 8px 10px; }
-.image-grid.density-compact .card-meta, .image-grid.density-compact .card-rating-row > span, .image-grid.density-compact .collection-chips, .image-grid.density-compact .card-actions .action-label { display: none; }
+.image-grid.density-compact .card-info > h3, .image-grid.density-compact .card-meta, .image-grid.density-compact .card-actions .action-label { display: none; }
 .image-card:hover, .image-card:focus-within { border-color: #75e0b155; }
 .image-card.marked { border-color: #795156; }
 .image-card.selected { border-color: hsl(var(--primary)); box-shadow: 0 0 0 2px #75e0b1aa; }

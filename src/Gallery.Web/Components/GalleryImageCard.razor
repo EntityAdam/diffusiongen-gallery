@@ -16,7 +16,6 @@
             <span>@Image.Width &times; @Image.Height</span>
             <span class="inline-flex items-center gap-2">
                 @if (Image.Description.Length > 0) { <span>Analyzed</span> }
-                <ShieldCheckIcon Size="16" ClassName="text-primary" role="img" aria-label="Encrypted" />
             </span>
         </div>
         <div class="card-rating-row mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -32,16 +31,14 @@
                     </Button>
                 }
             </div>
-            <span class="text-muted-foreground">@(Image.IsReviewed ? "Reviewed" : "Pending")</span>
         </div>
-        @if (!Image.Collections.IsEmpty) { <div class="collection-chips mt-3 flex flex-wrap gap-1">@foreach (var name in Image.Collections) { <Badge Variant="BadgeVariant.Secondary" Class="max-w-full whitespace-normal break-words">@name</Badge> }</div> }
     </div>
     <div class="card-actions flex gap-1 border-t border-border p-2">
         <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@Busy" Class="@(Image.IsFavorite ? "min-w-0 flex-1 px-2 text-xs text-primary" : "min-w-0 flex-1 px-2 text-xs")" OnClick="Favorite" aria-label="Toggle favorite" aria-pressed="@Image.IsFavorite">
             <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" /><span class="action-label">Favorite</span>
         </Button>
-        <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Sm" Disabled="@Busy" Class="min-w-0 flex-1 px-2 text-xs" OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Mark deletion")" aria-pressed="@Image.IsMarkedForDeletion">
-            <TrashIcon Size="16" aria-hidden="true" /><span class="action-label">@(Image.IsMarkedForDeletion ? "Unmark" : "Mark deletion")</span>
+        <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Sm" Disabled="@Busy" Class="min-w-0 flex-1 px-2 text-xs" OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Trash")" aria-pressed="@Image.IsMarkedForDeletion">
+            <TrashIcon Size="16" aria-hidden="true" /><span class="action-label">@(Image.IsMarkedForDeletion ? "Unmark" : "Trash")</span>
         </Button>
     </div>
     @if (RemovalMode && Image.IsMarkedForDeletion)

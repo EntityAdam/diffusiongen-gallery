@@ -259,9 +259,15 @@ They combine with each other and with the full filter panel, and appear in the
 active-filter chips like any other filter.
 
 **Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
-Compact shows 49 smaller cards per page with condensed details, Comfortable shows
+Compact shows 49 smaller cards per page, Comfortable shows
 24 and Large shows 12. The choice is saved encrypted per gallery and restored on
 unlock.
+
+Image details have a **Download a copy** icon over the top-right corner of the
+preview and a **Full screen view** icon over the bottom-right corner (above playback
+controls for videos). Rating stars, favorite and Trash controls sit below the preview.
+Click the current rating again to clear it. Workflow export is no longer a separate
+modal action; downloaded copies retain embedded ComfyUI metadata.
 
 Every gallery workflow except removal has a select button on each card. Click it to
 toggle an image, or Shift+click to select the range from the last selected image
@@ -437,7 +443,7 @@ references original image files. Keep gallery01 on its own original gallery.
   matches, largest groups first, followed by unique and no-prompt images.
   **Show only these** or **Show all N with this exact prompt** filters to one prompt.
   The **Media type** filter and **Videos** quick filter limit the grid to videos.
-- **Save a copy** downloads a decrypted, cleaned copy in the stored format, without
+- The **Download a copy** preview icon downloads a decrypted, cleaned copy in the stored format, without
   decoding pixels or transcoding video. Images keep standard image data plus EXIF,
   ICC, XMP and PNG text (compressed PNG text is written uncompressed as `tEXt`, so
   ComfyUI can read prompt/workflow); unknown or private chunks/segments and any bytes
@@ -446,8 +452,6 @@ references original image files. Keep gallery01 on its own original gallery.
   `uuid` vendor data) and `free`/`skip` padding are zero-filled in place, keeping
   sample offsets valid, and bytes after the last box are dropped. Boxes nested
   inside `moov` are not cleaned. Playback and in-app viewing use the stored bytes.
-  **Export
-  workflow** downloads the embedded ComfyUI workflow (or API prompt) as JSON.
   **Save copies (zip)** exports a selection (up to 1 GiB). Exports are plaintext
   once saved; protect them accordingly.
 - New imports use `images\<first two ID characters>\<next two ID characters>\<id>.dpng`

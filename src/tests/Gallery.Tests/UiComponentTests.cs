@@ -19,7 +19,7 @@ public sealed class UiComponentTests
         HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
         ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
-            [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "sample", Name = "Sample", Rating = 3, IsFavorite = true },
+            [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "sample", Name = "Sample", Rating = 3, IsFavorite = true, Collections = ["Hidden collection"] },
             [nameof(GalleryImageCard.ShowSelection)] = true,
             [nameof(GalleryImageCard.Selected)] = true
         });
@@ -41,8 +41,86 @@ public sealed class UiComponentTests
         Assert.Contains("aria-label=\"Clear rating\"", actualHtml);
         Assert.Contains("h-7!", actualHtml);
         Assert.Contains("focus-visible:ring-ring", actualHtml);
+        Assert.Contains("aria-label=\"Trash\"", actualHtml);
+        Assert.DoesNotContain("Mark deletion", actualHtml);
+        Assert.DoesNotContain("Encrypted", actualHtml);
+        Assert.DoesNotContain("Reviewed", actualHtml);
+        Assert.DoesNotContain(">Pending<", actualHtml);
+        Assert.DoesNotContain("collection-chips", actualHtml);
+        Assert.DoesNotContain("Hidden collection", actualHtml);
         Assert.Contains("<svg", actualHtml);
         Assert.DoesNotContain("<Trash", actualHtml);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ImageDetailPreview_WhenMediaAndCurationChange_ThenShowsOverlayAndBelowImageControls(
+        bool isVideo, bool isCurated)
+    {
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
+        {
+            [nameof(ImageDetailPreview.Image)] = new ImageRecord
+            {
+                Id = "sample",
+                Name = "Sample",
+                MediaType = isVideo ? "video" : "image",
+                Rating = isCurated ? 3 : 0,
+                IsFavorite = isCurated,
+                IsMarkedForDeletion = isCurated
+            },
+            [nameof(ImageDetailPreview.Preview)] = "preview.png",
+            [nameof(ImageDetailPreview.VideoUrl)] = isVideo ? "blob:video" : ""
+        });
+
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<ImageDetailPreview>(parameterView));
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        Assert.Contains(isVideo ? "<video" : "<img", actualHtml);
+        Assert.Contains(isVideo ? "poster=\"preview.png\"" : "src=\"preview.png\"", actualHtml);
+        string[] buttons = Regex.Matches(actualHtml, @"<button\b[^>]*>").Select(match => match.Value).ToArray();
+        Assert.Contains("absolute top-2 right-2", Assert.Single(buttons, button => button.Contains("aria-label=\"Download a copy\"")));
+        Assert.Contains($"absolute right-2 {(isVideo ? "bottom-14" : "bottom-2")}",
+            Assert.Single(buttons, button => button.Contains("aria-label=\"Full screen view\"")));
+        Assert.Contains($"aria-label=\"Rating for Sample: {(isCurated ? 3 : 0)} out of 5 stars\"", actualHtml);
+        Assert.Equal(5, Regex.Matches(actualHtml, "<button[^>]*aria-label=\"(?:Clear rating|Rate [1-5] out of 5 stars)\"").Count);
+        Assert.Contains(isCurated ? "aria-label=\"Clear rating\"" : "aria-label=\"Rate 3 out of 5 stars\"", actualHtml);
+        Assert.Contains($"aria-pressed=\"{isCurated.ToString().ToLowerInvariant()}\"",
+            Assert.Single(buttons, button => button.Contains("aria-label=\"Toggle favorite\"")));
+        Assert.Contains($"aria-label=\"{(isCurated ? "Unmark deletion" : "Trash")}\"", actualHtml);
+        Assert.True(actualHtml.IndexOf("aria-label=\"Full screen view\"", StringComparison.Ordinal)
+            < actualHtml.IndexOf("role=\"group\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(">Full screen view<", actualHtml);
+        Assert.DoesNotContain("Save a copy", actualHtml);
+        Assert.DoesNotContain("Export workflow", actualHtml);
+        Assert.DoesNotContain("Mark for deletion", actualHtml);
+    }
+
+    [Fact]
+    public async Task ImageDetailPreview_WhenBusy_ThenAllActionsAreDisabled()
+    {
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
+        {
+            [nameof(ImageDetailPreview.Image)] = new ImageRecord { Id = "sample", Name = "Sample" },
+            [nameof(ImageDetailPreview.Busy)] = true
+        });
+
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<ImageDetailPreview>(parameterView));
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        MatchCollection buttons = Regex.Matches(actualHtml, @"<button\b[^>]*>");
+        Assert.Equal(9, buttons.Count);
+        foreach (Match button in buttons) Assert.Contains("disabled", button.Value);
     }
 
     // Every unavailable thumbnail state selects its matching placeholder and hides the image.
