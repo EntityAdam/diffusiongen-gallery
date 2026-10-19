@@ -188,7 +188,7 @@ public sealed class LibraryTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var root = Path.Combine(fixture.Root, "DiffusionGenGallery02");
+        var root = Path.Combine(fixture.Root, "DiffusionGenGallery");
         var services = new ServiceCollection();
         GalleryServiceRegistration.Register(services, fixture.Configuration, root);
         using var provider = services.BuildServiceProvider();

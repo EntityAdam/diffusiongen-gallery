@@ -1,9 +1,8 @@
-# Diffusion Gen Gallery 02
+# DiffusionGen Gallery
 
-A standalone local-only .NET 10 / Blazor Server gallery. It shares `src03`'s
-charcoal, mint, typography, and Diffusion Gen branding, but has no project or
-runtime dependency on it. `gallery01` is frozen; all new development lives here.
-This is an independent source copy, not a shared project.
+A standalone local-only .NET 10 / Blazor Server application for managing private
+creative libraries. Its charcoal and mint palette, typography, and DiffusionGen
+Gallery branding are implemented within this application.
 There are exactly two production projects: `Gallery.Web` depends on
 `Gallery.Core`, never the reverse. The existing projects under `src/tests` are
 test-only tooling.
@@ -102,7 +101,7 @@ The repository-root license file is not excluded by `.gitignore`.
 Open **http://127.0.0.1:5189**. Create a gallery with a unique passphrase of at least
 14 characters and **save the 32 recovery words offline before continuing**.
 New galleries get a pseudo-random name and their own folder beneath the OS-specific
-local application data directory (`%LOCALAPPDATA%\DiffusionGenGallery02\galleries`
+local application data directory (`%LOCALAPPDATA%\DiffusionGenGallery\galleries`
 on Windows). You can edit the name and directory before creation. The welcome
 screen remembers the last successfully opened gallery and offers **Switch gallery**
 to create, open, or restore another gallery. Enter a fully qualified local directory
@@ -164,7 +163,7 @@ unrelated files are retained. Purge is permanent deletion, not secure disk erasu
 
 ### Smart library, curation and discovery
 
-**Settings > LLM endpoints** borrows src03's connection workflow: enter the API base URL,
+**Settings > LLM endpoints** lets you enter the API base URL,
 an optional bearer API key and a request timeout (10-3600 seconds, default 180).
 **Fetch models** tests the entered connection and populates the model selector
 without saving settings. You can also enter a model ID manually. Discovery does
@@ -179,7 +178,7 @@ Hostnames, public addresses, other IPv6 addresses, redirects and proxies remain
 blocked. Use `127.0.0.1` rather than `localhost`. A LAN endpoint receives decrypted
 previews and metadata; trust the server and use HTTPS when available, since HTTP
 does not encrypt traffic in transit. The gallery web application itself still binds
-only to loopback. Gallery02 does not import or share src03's configuration.
+only to loopback.
 
 The left navigation separates Library, Guided review, Organize, Explore & saved
 views, Local intelligence, Duplicate finder, Remove marked images, Ingest images and Settings.
@@ -359,11 +358,10 @@ configuration changes are blocked. Browsing and review remain available. Stop th
 job and wait for the current image to finish before changing files. Suggestions
 for images removed from the current library are discarded.
 
-The default port and gallery are separate from gallery01. Do not run both apps
-against the same gallery concurrently. No existing gallery is automatically copied
-or modified. For testing an existing library, use a complete separate backup;
-stored image paths are absolute, so pointing at a copied database alone still
-references original image files. Keep gallery01 on its own original gallery.
+Do not open the same gallery concurrently in multiple application instances.
+No existing gallery is automatically copied or modified. For testing an existing
+library, use a complete separate backup; stored image paths are absolute, so
+pointing at a copied database alone still references original image files.
 
 - **Ingest images** accepts a local folder path with optional recursive ingestion.
   Browser folder/file uploads are not supported. PNG, JPEG,
@@ -534,9 +532,9 @@ references original image files. Keep gallery01 on its own original gallery.
   directory counts as empty; a failing directory retries on its own. Because the
   gallery owns its media folders, files changed outside it are only noticed after
   **Rebuild file index** in **Settings > Gallery overview**. The same scans find
-  `.removing-*` residue from older versions. Recovery restores a staged copy only if it
-  authenticates as that image. It deletes identical or orphaned copies, and preserves
-  conflicting copies as failed operations.
+  `.removing-*` residue from interrupted removal operations. Recovery restores a
+  staged copy only if it authenticates as that image. It deletes identical or
+  orphaned copies, and preserves conflicting copies as failed operations.
   Gallery loading composes a catalog read, fingerprint backfill, and generation-metadata
   migration, then schedules this background work. `ListAsync` only reads catalog records.
   Vault move and purge still enumerate the whole gallery folder.
