@@ -122,6 +122,12 @@ public sealed partial class GalleryService
             .ToList();
     }
 
+    public List<DiffusionModelGroup> GroupByDiffusionModel(IEnumerable<ImageRecord> records)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        return DiffusionModelRules.GroupByDiffusionModel(records);
+    }
+
     public ImageRecord PickDuplicateKeeper(IEnumerable<ImageRecord> records)
     {
         var candidates = RequireDuplicateCandidates(records);

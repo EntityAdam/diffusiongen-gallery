@@ -17,6 +17,8 @@ internal static class GalleryFilterProcessor
         && (galleryFilter.Tag.Length == 0 || imageRecord.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Contains(galleryFilter.Tag, StringComparer.OrdinalIgnoreCase))
         && (galleryFilter.Model.Length == 0 || imageRecord.AnalysisModel.Contains(galleryFilter.Model, StringComparison.OrdinalIgnoreCase))
+        && (string.IsNullOrWhiteSpace(galleryFilter.DiffusionModel) || imageRecord.Generation?.Model.Contains(
+            galleryFilter.DiffusionModel.Trim(), StringComparison.OrdinalIgnoreCase) == true)
         && (!galleryFilter.IncludesFavoritesOnly || imageRecord.IsFavorite)
         && (galleryFilter.Collection.Length == 0 || imageRecord.Collections.Contains(galleryFilter.Collection, StringComparer.OrdinalIgnoreCase))
         && imageRecord.Rating >= galleryFilter.MinRating

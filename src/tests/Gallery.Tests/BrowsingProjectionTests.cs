@@ -52,6 +52,9 @@ public sealed class BrowsingProjectionTests
         var sortedProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter, false);
         var filteredProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter with { MinRating = 3 }, false);
         var groupedProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter, true);
+        records[0] = records[0] with { Generation = new() { Prompt = "shared", Model = "Flux" } };
+        records[1] = records[1] with { Generation = new() { Prompt = "shared", Model = "SDXL" } };
+        var modelGroupedProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter, "model");
 
         // Assert
         Assert.Equal(["high", "low"], sortedProjection.Images.Select(image => image.Id));
@@ -59,6 +62,9 @@ public sealed class BrowsingProjectionTests
         Assert.Equal("high", filteredProjection.Images[0].Id);
         Assert.Equal(2, groupedProjection.PromptGroupsByImageId["high"].Images.Length);
         Assert.True(sortedProjection.PromptGroupsByImageId.Count == 0, $"Expected 0 groups for ungrouped projection; Actual: {sortedProjection.PromptGroupsByImageId.Count} groups.");
+        Assert.Equal(["high", "low"], modelGroupedProjection.Images.Select(image => image.Id));
+        Assert.Equal("SDXL", modelGroupedProjection.DiffusionModelGroupsByImageId["high"].Model);
+        Assert.Equal("Flux", modelGroupedProjection.DiffusionModelGroupsByImageId["low"].Model);
     }
 
     [Fact]

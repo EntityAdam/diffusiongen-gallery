@@ -96,6 +96,23 @@ public sealed class CoreRulesTests
         Assert.Equal(["first", "second"], groups[0].Images.Select(image => image.Id));
     }
 
+    [Fact]
+    public void DiffusionModelFilteringAndGrouping_UseEmbeddedModelNames()
+    {
+        var first = new ImageRecord { Id = "first", Generation = new() { Model = "Flux Dev" } };
+        var second = new ImageRecord { Id = "second", Generation = new() { Model = "SDXL" } };
+        var third = new ImageRecord { Id = "third", Generation = new() { Model = "flux dev" } };
+        var missing = new ImageRecord { Id = "missing" };
+
+        var filtered = GalleryFilterProcessor.Apply(new() { DiffusionModel = "FLUX" }, [first, second, third, missing]);
+        var groups = DiffusionModelRules.GroupByDiffusionModel([first, second, third, missing]);
+
+        Assert.Equal(["first", "third"], filtered.Select(image => image.Id).Order(StringComparer.Ordinal));
+        Assert.Equal(["Flux Dev", "SDXL", ""], groups.Select(group => group.Model));
+        Assert.Equal(["first", "third"], groups[0].Images.Select(image => image.Id));
+        Assert.Equal(["missing"], groups[^1].Images.Select(image => image.Id));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

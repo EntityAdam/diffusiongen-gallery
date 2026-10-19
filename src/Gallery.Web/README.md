@@ -435,12 +435,16 @@ pointing at a copied database alone still references original image files.
 - **ComfyUI metadata** (PNG `prompt`/`workflow` text chunks, EXIF, and video tags)
   is parsed into prompt, negative prompt, CFG, steps and the checkpoint, UNet or
   diffusion model, by following the API prompt graph from the sampler. Results are
-  shown in the image details and are searchable; existing records are backfilled
-  automatically. UI-only workflows are detected but not parsed into fields.
+  shown in the image details and can be searched using the diffusion-model filter;
+  existing records are backfilled automatically. UI-only workflows are detected
+  but not parsed into fields.
 - **Group by same prompt** (grid controls) groups exact positive-prompt
   matches, largest groups first, followed by unique and no-prompt images.
   **Show only these** or **Show all N with this exact prompt** filters to one prompt.
-  The **Media type** filter and **Videos** quick filter limit the grid to videos.
+  **Group by diffusion model** groups images by their embedded checkpoint/model
+  name, with images missing model metadata in a separate group. The **Diffusion
+  model** filter supports partial, case-insensitive model-name searches. The
+  **Media type** filter and **Videos** quick filter limit the grid to videos.
 - The **Download a copy** preview icon downloads a decrypted, cleaned copy in the stored format, without
   decoding pixels or transcoding video. Images keep standard image data plus EXIF,
   ICC, XMP and PNG text (compressed PNG text is written uncompressed as `tEXt`, so
@@ -468,8 +472,8 @@ pointing at a copied database alone still references original image files.
   Later imports use indexed lookups rather than decrypting the entire catalog;
   a unique constraint and serialized insertion also prevent concurrent duplicates.
   Backfill failures roll back and are surfaced rather than silently skipping records.
-- Filter by prompt/metadata/text, tag, source/current folder, vision model,
-  favorite, deletion mark, orientation, minimum dimensions, analysis status,
+- Filter by prompt/metadata/text, tag, source/current folder, vision and diffusion
+  models, favorite, deletion mark, orientation, minimum dimensions, analysis status,
   and import date range. Sort and page results. Encrypted metadata is decrypted
   and filtered in application memory, not indexed as plaintext in SQLite.
   This favors privacy over large-library query scalability.

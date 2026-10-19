@@ -28,6 +28,9 @@
         <Input Disabled="@Disabled" id="folder" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
         <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
         <Input Disabled="@Disabled" id="analysis-model" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
+        <Label For="diffusion-model" Class="mt-4 mb-2 block">Diffusion model</Label>
+        <Input Disabled="@Disabled" id="diffusion-model" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" list="diffusion-models" />
+        <datalist id="diffusion-models">@foreach (var model in DiffusionModels) { <option value="@model"></option> }</datalist>
         <Label For="orientation" Class="mt-4 mb-2 block">Orientation</Label>
         <Select Disabled="@Disabled" id="orientation" @bind-Value="draft.Orientation" @bind-Value:after="NotifyChangedAsync">
             <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
@@ -68,6 +71,9 @@
             image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         .Distinct().Order();
 
+    private IEnumerable<string> DiffusionModels => Images.Select(image => image.Generation?.Model.Trim() ?? "")
+        .Where(model => model.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+
     private Task NotifyChangedAsync() => Changed.InvokeAsync(draft.ToFilter());
 
     private sealed class FilterDraft
@@ -76,6 +82,7 @@
         public string Folder { get; set; } = "";
         public string Tag { get; set; } = "";
         public string Model { get; set; } = "";
+        public string DiffusionModel { get; set; } = "";
         public bool IncludesFavoritesOnly { get; set; }
         public string Deletion { get; set; } = "active";
         public string Analysis { get; set; } = GalleryFilter.AnyValue;
@@ -95,6 +102,7 @@
         public static FilterDraft CreateFrom(GalleryFilter filter) => new()
         {
             Search = filter.Search, Folder = filter.Folder, Tag = filter.Tag, Model = filter.Model,
+            DiffusionModel = filter.DiffusionModel,
             IncludesFavoritesOnly = filter.IncludesFavoritesOnly, Deletion = filter.Deletion, Analysis = filter.Analysis,
             Orientation = filter.Orientation, MinWidth = filter.MinWidth, MinHeight = filter.MinHeight,
             From = filter.From, To = filter.To, Sort = filter.Sort, Collection = filter.Collection,
@@ -104,7 +112,8 @@
 
         public GalleryFilter ToFilter() => new()
         {
-            Search = Search, Folder = Folder, Tag = Tag, Model = Model, IncludesFavoritesOnly = IncludesFavoritesOnly,
+            Search = Search, Folder = Folder, Tag = Tag, Model = Model, DiffusionModel = DiffusionModel,
+            IncludesFavoritesOnly = IncludesFavoritesOnly,
             Deletion = Deletion, Analysis = Analysis, Orientation = Orientation, MinWidth = MinWidth,
             MinHeight = MinHeight, From = From, To = To, Sort = Sort, Collection = Collection,
             MinRating = MinRating, Review = Review, IncludesUnorganizedOnly = IncludesUnorganizedOnly,

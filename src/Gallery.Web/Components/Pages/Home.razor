@@ -534,7 +534,7 @@ else
                         </TabsList>
                     </Tabs>
                     <Select Disabled="@busy" Class="min-w-0 sm:w-44" aria-label="Group images" @bind-Value="grouping" @bind-Value:after="FilterChangedAsync">
-                        <option value="none">No grouping</option><option value="prompt">Group by same prompt</option>
+                        <option value="none">No grouping</option><option value="prompt">Group by same prompt</option><option value="model">Group by diffusion model</option>
                     </Select>
                     <Select Disabled="@busy" Class="min-w-0 sm:w-44" aria-label="Sort images" @bind-Value:get="filter.Sort" @bind-Value:set="SetSort">
                         <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
@@ -606,7 +606,7 @@ else
             {
                 <p class="mb-3 hidden text-xs md:block text-muted-foreground">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>D</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
                 <div class="image-grid density-@density">
-                    @{ PromptGroup? previousGroup = null; var firstOnPage = true; }
+                    @{ PromptGroup? previousGroup = null; DiffusionModelGroup? previousModelGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
                     {
                         var isSelected = workflow != "remove" && librarySelection.Contains(image.Id);
@@ -629,6 +629,14 @@ else
                                 {
                                     <div class="flex flex-wrap items-center gap-3 text-sm"><strong>@(group.Kind == PromptGroup.Unique ? "Unique prompts" : "No ComfyUI prompt found") (@group.Images.Length)@(continued ? " (continued)" : "")</strong></div>
                                 }
+                            </div>
+                        }
+                        else if (grouping == "model" && diffusionModelGroupOf.TryGetValue(image.Id, out var modelGroup) && !ReferenceEquals(modelGroup, previousModelGroup))
+                        {
+                            var continued = firstOnPage && modelGroup.Images[0].Id != image.Id;
+                            previousModelGroup = modelGroup;
+                            <div class="col-span-full rounded-md border-l-2 border-primary bg-primary/5 px-4 py-3" @key="@("model-group-" + image.Id)">
+                                <strong>@(modelGroup.Model.Length == 0 ? "No diffusion model recorded" : modelGroup.Model) (@modelGroup.Images.Length)@(continued ? " (continued)" : "")</strong>
                             </div>
                         }
                         firstOnPage = false;
@@ -918,8 +926,9 @@ else
     private GalleryBrowsingProjection browsingProjection = GalleryBrowsingProjection.Empty;
     private IReadOnlyList<ImageRecord>? browsingSource;
     private GalleryFilter? projectedFilter;
-    private bool projectedGrouping;
+    private string? projectedGrouping;
     private IReadOnlyDictionary<string, PromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
+    private IReadOnlyDictionary<string, DiffusionModelGroup> diffusionModelGroupOf => Browsing.DiffusionModelGroupsByImageId;
     private bool useRecovery, recoverySaved, busy, recursive;
     private string workflow = "library";
     private LibraryWorkbench? workbench;
@@ -1021,13 +1030,12 @@ else
     {
         get
         {
-            var groupByPrompt = grouping == "prompt";
-            if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != groupByPrompt)
+            if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != grouping)
             {
-                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, groupByPrompt);
+                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, grouping);
                 browsingSource = images;
                 projectedFilter = filter;
-                projectedGrouping = groupByPrompt;
+                projectedGrouping = grouping;
             }
             return browsingProjection;
         }
