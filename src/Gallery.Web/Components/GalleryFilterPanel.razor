@@ -14,7 +14,7 @@
         <Label For="review-filter" Class="mt-4 mb-2 block">Review queue</Label><Select Disabled="@Disabled" id="review-filter" @bind-Value="draft.Review" @bind-Value:after="NotifyChangedAsync">
             <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
         </Select>
-        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.UnorganizedOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
+        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.IncludesUnorganizedOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
         <Label For="media-filter" Class="mt-4 mb-2 block">Media type</Label>
         <Select Disabled="@Disabled" id="media-filter" @bind-Value="draft.Media" @bind-Value:after="NotifyChangedAsync">
             <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
@@ -46,15 +46,15 @@
         </Select>
         <Label For="from" Class="mt-4 mb-2 block">Imported from</Label><input disabled="@Disabled" id="from" type="date" @bind="draft.From" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
         <Label For="to" Class="mt-4 mb-2 block">Imported through</Label><input disabled="@Disabled" id="to" type="date" @bind="draft.To" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
-        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-favoritesonly" Class="mt-0.5" @bind-Checked="draft.FavoritesOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-favoritesonly" Class="text-sm leading-relaxed">Favorites only</Label></div>
+        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-favoritesonly" Class="mt-0.5" @bind-Checked="draft.IncludesFavoritesOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-favoritesonly" Class="text-sm leading-relaxed">Favorites only</Label></div>
         <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked.</div>
     </details>
 </Card>
 
 @code {
-    [Parameter, EditorRequired] public WebGalleryFilter Filter { get; set; } = new();
-    [Parameter] public IReadOnlyList<WebImageRecord> Images { get; set; } = [];
-    [Parameter] public EventCallback<WebGalleryFilter> Changed { get; set; }
+    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
+    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public EventCallback<GalleryFilter> Changed { get; set; }
     [Parameter] public EventCallback Reset { get; set; }
     [Parameter] public bool Disabled { get; set; }
 
@@ -76,10 +76,10 @@
         public string Folder { get; set; } = "";
         public string Tag { get; set; } = "";
         public string Model { get; set; } = "";
-        public bool FavoritesOnly { get; set; }
+        public bool IncludesFavoritesOnly { get; set; }
         public string Deletion { get; set; } = "active";
-        public string Analysis { get; set; } = WebGalleryFilter.AnyValue;
-        public string Orientation { get; set; } = WebGalleryFilter.AnyValue;
+        public string Analysis { get; set; } = GalleryFilter.AnyValue;
+        public string Orientation { get; set; } = GalleryFilter.AnyValue;
         public int MinWidth { get; set; }
         public int MinHeight { get; set; }
         public DateTime? From { get; set; }
@@ -87,27 +87,27 @@
         public string Sort { get; set; } = "newest";
         public string Collection { get; set; } = "";
         public int MinRating { get; set; }
-        public string Review { get; set; } = WebGalleryFilter.AnyValue;
-        public bool UnorganizedOnly { get; set; }
-        public string Media { get; set; } = WebGalleryFilter.AnyValue;
+        public string Review { get; set; } = GalleryFilter.AnyValue;
+        public bool IncludesUnorganizedOnly { get; set; }
+        public string Media { get; set; } = GalleryFilter.AnyValue;
         public string Prompt { get; set; } = "";
 
-        public static FilterDraft CreateFrom(WebGalleryFilter filter) => new()
+        public static FilterDraft CreateFrom(GalleryFilter filter) => new()
         {
             Search = filter.Search, Folder = filter.Folder, Tag = filter.Tag, Model = filter.Model,
-            FavoritesOnly = filter.FavoritesOnly, Deletion = filter.Deletion, Analysis = filter.Analysis,
+            IncludesFavoritesOnly = filter.IncludesFavoritesOnly, Deletion = filter.Deletion, Analysis = filter.Analysis,
             Orientation = filter.Orientation, MinWidth = filter.MinWidth, MinHeight = filter.MinHeight,
             From = filter.From, To = filter.To, Sort = filter.Sort, Collection = filter.Collection,
-            MinRating = filter.MinRating, Review = filter.Review, UnorganizedOnly = filter.UnorganizedOnly,
+            MinRating = filter.MinRating, Review = filter.Review, IncludesUnorganizedOnly = filter.IncludesUnorganizedOnly,
             Media = filter.Media, Prompt = filter.Prompt
         };
 
-        public WebGalleryFilter ToFilter() => new()
+        public GalleryFilter ToFilter() => new()
         {
-            Search = Search, Folder = Folder, Tag = Tag, Model = Model, FavoritesOnly = FavoritesOnly,
+            Search = Search, Folder = Folder, Tag = Tag, Model = Model, IncludesFavoritesOnly = IncludesFavoritesOnly,
             Deletion = Deletion, Analysis = Analysis, Orientation = Orientation, MinWidth = MinWidth,
             MinHeight = MinHeight, From = From, To = To, Sort = Sort, Collection = Collection,
-            MinRating = MinRating, Review = Review, UnorganizedOnly = UnorganizedOnly,
+            MinRating = MinRating, Review = Review, IncludesUnorganizedOnly = IncludesUnorganizedOnly,
             Media = Media, Prompt = Prompt
         };
     }

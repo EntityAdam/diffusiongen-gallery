@@ -2,14 +2,14 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using Gallery.Core.Models;
-using Gallery.Core.Processors;
-using Gallery.Core.Queries;
-using Gallery.Web.Managers.Gateways;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
-using Gallery.Web.Services.DataManagers;
-using Gallery.Web.Services.Processors;
-using Gallery.Web.Services.Sessions;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Queries;
+using Gallery.Core.Services;
+using Gallery.Core.Services.Gateways;
+using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services.Processors.Hashing;
+using Gallery.Core.Services.Sessions;
+using Gallery.Web.Components;
 
 namespace Gallery.Tests;
 
@@ -17,30 +17,29 @@ namespace Gallery.Tests;
 public sealed class DomainArchitectureTests
 {
     [Fact]
-    public void ProductionAssemblies_DependInwardOnAnIndependentCoreLibrary()
+    public void ProductionAssemblies_KeepDomainBehaviorBehindAnIndependentCoreEntry()
     {
-        var core = typeof(ImageRecord).Assembly;
-        var web = typeof(GalleryService).Assembly;
+        var core = typeof(GalleryService).Assembly;
+        var web = typeof(App).Assembly;
 
         Assert.Equal("Gallery.Core", core.GetName().Name);
+        Assert.Equal("Gallery.Web", web.GetName().Name);
         Assert.NotSame(web, core);
         Assert.Contains(web.GetReferencedAssemblies(), reference => reference.Name == "Gallery.Core");
-        Assert.All(core.GetReferencedAssemblies(), reference =>
-            Assert.StartsWith("System", reference.Name!));
+        Assert.DoesNotContain(core.GetReferencedAssemblies(), reference =>
+            reference.Name == "Gallery.Web" || reference.Name!.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal));
         Assert.All(new[] { typeof(DuplicateRules), typeof(LibraryRules), typeof(ReviewDecision),
-            typeof(PromptRules), typeof(RemovalRules), typeof(GalleryFilterProcessor) },
-            type => Assert.Same(core, type.Assembly));
-        Assert.Null(web.GetType(typeof(DuplicateRules).FullName!));
-        Assert.All(new[] { typeof(ComfyMetadata), typeof(PerceptualImageHasher), typeof(VisionService),
-            typeof(VideoTools), typeof(GalleryStore), typeof(VaultStore), typeof(VaultSession) }, type =>
+            typeof(PromptRules), typeof(RemovalRules), typeof(GalleryFilterProcessor), typeof(ComfyMetadata),
+            typeof(PerceptualImageHasher), typeof(VisionService), typeof(VideoTools),
+            typeof(GalleryStore), typeof(VaultStore), typeof(VaultSession), typeof(IngestionTimings) }, type =>
         {
-            Assert.Same(web, type.Assembly);
+            Assert.Same(core, type.Assembly);
             Assert.False(type.IsPublic);
         });
     }
 
     [Fact]
-    public void CoreProject_HasNoOuterProjectDependenciesOrLinkedSourceCompilation()
+    public void ProjectBoundary_HasNoHostFriendAccessOrLinkedDomainSource()
     {
         var sourceRoot = SourceRoot();
         var coreProject = XDocument.Load(Path.Combine(sourceRoot, "Gallery.Core", "Gallery.Core.csproj"));
@@ -48,48 +47,48 @@ public sealed class DomainArchitectureTests
 
         Assert.Equal("Microsoft.NET.Sdk", coreProject.Root!.Attribute("Sdk")!.Value);
         Assert.Empty(coreProject.Descendants("ProjectReference"));
-        Assert.Equal("SixLabors.ImageSharp",
-            Assert.Single(coreProject.Descendants("PackageReference")).Attribute("Include")!.Value);
         Assert.Empty(coreProject.Descendants("FrameworkReference"));
+        Assert.DoesNotContain(coreProject.Descendants("InternalsVisibleTo"),
+            friend => friend.Attribute("Include")!.Value == "Gallery.Web");
+        Assert.Empty(coreProject.Descendants("Compile"));
         Assert.Empty(webProject.Descendants("Compile"));
         Assert.EndsWith("Gallery.Core.csproj",
             Assert.Single(webProject.Descendants("ProjectReference")).Attribute("Include")!.Value);
-        var productionProjects = Directory.EnumerateFiles(sourceRoot, "*.csproj", SearchOption.AllDirectories)
-            .Where(path => !Path.GetRelativePath(sourceRoot, path).StartsWith("tests" + Path.DirectorySeparatorChar))
-            .Select(path => Path.GetFileName(path)).Order().ToArray();
-        Assert.Equal(["Gallery.Core.csproj", "Gallery.Web.csproj"], productionProjects);
     }
 
     [Fact]
-    public void WebBoundary_ExposesOnlyItsOwnModels()
+    public void EntryContracts_UseCanonicalCoreModelsWithoutExposingInteriorComponents()
     {
-        var core = typeof(ImageRecord).Assembly;
-        var web = typeof(GalleryService).Assembly;
-        var domainModels = core.GetExportedTypes().Where(type => type.Namespace == "Gallery.Core.Models");
-        foreach (var domainType in domainModels)
-        {
-            var webType = web.GetType($"Gallery.Web.Models.Web{domainType.Name}");
-            Assert.NotNull(webType);
-            Assert.NotEqual(domainType, webType);
-            Assert.Same(web, webType!.Assembly);
-        }
+        var core = typeof(GalleryService).Assembly;
         foreach (var method in typeof(GalleryService).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
         {
-            AssertNoCoreType(method.ReturnType);
-            foreach (var parameter in method.GetParameters()) AssertNoCoreType(parameter.ParameterType);
+            AssertPublicContract(method.ReturnType, core);
+            foreach (var parameter in method.GetParameters()) AssertPublicContract(parameter.ParameterType, core);
         }
-        foreach (var type in web.GetExportedTypes().Where(type => type.Namespace == "Gallery.Web.Models"))
-        {
-            Assert.StartsWith("Web", type.Name);
-            foreach (var property in type.GetProperties()) AssertNoCoreType(property.PropertyType);
-        }
+        Assert.DoesNotContain(typeof(App).Assembly.GetTypes(),
+            type => type.Namespace == "Gallery.Web.Models");
     }
 
-    private static void AssertNoCoreType(Type type)
+    [Theory]
+    [InlineData(typeof(ImageRecordEdit))]
+    [InlineData(typeof(ReviewState))]
+    public void PublicEditAndReviewContracts_ExposeStateWithoutDomainOperations(Type type)
     {
-        Assert.NotSame(typeof(ImageRecord).Assembly, type.Assembly);
-        if (type.HasElementType) AssertNoCoreType(type.GetElementType()!);
-        foreach (var argument in type.GenericTypeArguments) AssertNoCoreType(argument);
+        Assert.DoesNotContain(type.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static),
+            method => method.Name is "ToRecord" or "Capture");
+        Assert.Same(typeof(GalleryService).Assembly, type.Assembly);
+    }
+
+    private static void AssertPublicContract(Type type, Assembly core)
+    {
+        if (type.HasElementType) AssertPublicContract(type.GetElementType()!, core);
+        foreach (var argument in type.GenericTypeArguments) AssertPublicContract(argument, core);
+        if (type.Assembly != core) return;
+        Assert.True(type.IsPublic || type.IsNestedPublic, $"Public entry exposes internal {type.FullName}.");
+        Assert.DoesNotContain(".DataManagers", type.Namespace ?? "");
+        Assert.DoesNotContain(".Processors", type.Namespace ?? "");
+        Assert.DoesNotContain(".Sessions", type.Namespace ?? "");
+        Assert.DoesNotContain(".Gateways", type.Namespace ?? "");
     }
 
     private static string SourceRoot([CallerFilePath] string path = "") =>

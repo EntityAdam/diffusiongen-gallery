@@ -2,11 +2,4 @@ namespace Gallery.Core.Models;
 
 public enum ReviewAction { Keep, Favorite, MarkDeletion, Rate }
 
-public sealed record ReviewState(bool Reviewed, bool Favorite, bool MarkedForDeletion, int Rating)
-{
-    public static ReviewState Capture(ImageRecord image) =>
-        new(image.Reviewed, image.Favorite, image.MarkedForDeletion, image.Rating);
-
-    public static ReviewState Capture(ImageRecordEdit image) =>
-        new(image.Reviewed, image.Favorite, image.MarkedForDeletion, image.Rating);
-}
+public sealed record ReviewState([property: System.Text.Json.Serialization.JsonPropertyName("Reviewed")] bool IsReviewed, [property: System.Text.Json.Serialization.JsonPropertyName("Favorite")] bool IsFavorite, [property: System.Text.Json.Serialization.JsonPropertyName("MarkedForDeletion")] bool IsMarkedForDeletion, int Rating);

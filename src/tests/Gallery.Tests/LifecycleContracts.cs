@@ -1,7 +1,7 @@
-using Gallery.Web.Exceptions;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
-using Gallery.Web.Services.Sessions;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
+using Gallery.Core.Services.Sessions;
 using System.Collections.Immutable;
 
 namespace Gallery.Tests;
@@ -32,9 +32,10 @@ public static class LifecycleContracts
         catch (VaultLockedException exception) { failure = exception; }
 
         // Assert
-        Assert.IsType<VaultLockedException>(failure);
-        Assert.Contains("revoked", failure!.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("unlock", failure.Message, StringComparison.OrdinalIgnoreCase);
+        var expectedFailure = ExpectedExceptionContract.Create(typeof(VaultLockedException), ["revoked", "unlock"],
+            System.Net.HttpStatusCode.BadRequest, Severity.Error, "Unlock the gallery first.", "Vault.AcquireKey",
+            new Dictionary<string, object?> { ["Vault.State"] = "revoked" });
+        AsserterExceptionContract.AssertMatches(expectedFailure, Assert.IsType<VaultLockedException>(failure));
         Assert.Equal(originalKey, leasedKey);
     }
 
@@ -65,7 +66,7 @@ public static class LifecycleContracts
     {
         // Arrange
         byte[] original = [1, 2, 3];
-        var file = new WebExportFile("export.png", "image/png", original);
+        var file = new ExportFile("export.png", "image/png", original);
         ImmutableArray<byte> snapshot = file.ContentBytes;
 
         // Act
@@ -96,7 +97,11 @@ public static class LifecycleContracts
         // Assert
         Assert.Equal(autoLockedTcs.Task, signaled);
         Assert.False(session.IsUnlocked);
-        Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession());
+        var expectedLocked = ExpectedExceptionContract.Create(typeof(VaultLockedException), ["automatically", "inactivity"],
+            System.Net.HttpStatusCode.BadRequest, Severity.Error, "Unlock the gallery first.", "Vault.AcquireKey",
+            new Dictionary<string, object?> { ["Vault.State"] = "timed_out" });
+        var locked = Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession());
+        AsserterExceptionContract.AssertMatches(expectedLocked, locked);
     }
 
     [Fact]
@@ -152,8 +157,16 @@ public static class LifecycleContracts
 
         // Assert
         Assert.False(session.IsUnlocked);
-        Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession());
-        Assert.Throws<VaultLockedException>(() => unlockedSession.Borrow());
+        var expectedLocked = ExpectedExceptionContract.Create(typeof(VaultLockedException), ["unlock", "gallery"],
+            System.Net.HttpStatusCode.BadRequest, Severity.Error, "Unlock the gallery first.", "Vault.AcquireKey",
+            new Dictionary<string, object?> { ["Vault.State"] = "locked" });
+        var locked = Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession());
+        AsserterExceptionContract.AssertMatches(expectedLocked, locked);
+        var expectedRevoked = ExpectedExceptionContract.Create(typeof(VaultLockedException), ["revoked", "unlock"],
+            System.Net.HttpStatusCode.BadRequest, Severity.Error, "Unlock the gallery first.", "Vault.AcquireKey",
+            new Dictionary<string, object?> { ["Vault.State"] = "revoked" });
+        var revoked = Assert.Throws<VaultLockedException>(() => unlockedSession.Borrow());
+        AsserterExceptionContract.AssertMatches(expectedRevoked, revoked);
     }
 
     [Fact]

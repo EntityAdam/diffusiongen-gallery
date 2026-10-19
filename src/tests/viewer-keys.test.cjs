@@ -26,7 +26,7 @@ function setup({ dialog = false } = {}) {
         querySelectorAll() { return []; }
     };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
         window, Element: class { }, document: { addEventListener() { } }
     });
     window.galleryGrid.attach({ invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } }, doc);
@@ -85,7 +85,7 @@ test("full screen viewer forwards declared extra keys only", async () => {
         removeEventListener() { keydown = null; }
     };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), { window, Element: class { }, document });
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), { window, Element: class { }, document });
     const calls = [];
     const element = { dataset: { review: "false", keys: "arrowup k a" }, focus() { }, querySelectorAll() { return []; } };
     window.galleryViewer.attach(element, { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } });
@@ -117,7 +117,7 @@ test("gallerySecurity recognizes panic hotkeys and triggers panic lock", async (
             revokeObjectURL(url) { revokedUrls.push(url); }
         }
     };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
         window, Element: class { }, document: { addEventListener() { } }, URL: window.URL, setInterval, clearInterval, Date
     });
 
@@ -154,7 +154,7 @@ test("gallerySecurity purgeAllMedia clears tracked blobs and DOM images/videos",
     const window = {
         URL: { revokeObjectURL: url => revoked.push(url) }
     };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
         window, Element: class { }, document: { addEventListener() { } }, URL: window.URL
     });
 
@@ -193,7 +193,7 @@ test("gallerySecurity idle auto-lock triggers after configured inactivity", asyn
     const window = {
         URL: { revokeObjectURL() {} }
     };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
         window, Element: class { }, document: { addEventListener() { } }, URL: window.URL, setInterval, clearInterval, Date
     });
 

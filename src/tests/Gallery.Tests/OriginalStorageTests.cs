@@ -1,10 +1,11 @@
+using Gallery.Core.Services.Processors.Codecs;
 using System.Buffers.Binary;
 using System.Text;
-using Gallery.Web.Exceptions;
-using Gallery.Core.Queries;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
-using Gallery.Web.Services.Processors;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Services.Queries;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
+using Gallery.Core.Services.Processors;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
@@ -17,6 +18,7 @@ public sealed class OriginalStorageTests
 {
     private static readonly byte[] TrailingSecret = "TRAILING-SECRET"u8.ToArray();
 
+    // Every supported image format preserves its original bytes and media type.
     [Theory]
     [InlineData("photo.jpg", "image/jpeg")]
     [InlineData("photo.webp", "image/webp")]
@@ -31,7 +33,7 @@ public sealed class OriginalStorageTests
         // Act
         var record = await fixture.Service.ImportAsync(new MemoryStream(source), name, "folder");
         var stored = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), fixture.Session.Key, $"image:{record.Id}");
-        var original = await fixture.Service.ViewerImageAsync(record.Id, WebImageResolution.Original);
+        var original = await fixture.Service.ViewerImageAsync(record.Id, ImageResolution.Original);
 
         // Assert
         Assert.Equal(source, stored);
@@ -57,7 +59,7 @@ public sealed class OriginalStorageTests
             fixture.Service.ImportAsync(new MemoryStream(bmp.ToArray()), "disguised.png", "folder"));
 
         // Assert
-        Assert.Contains("PNG, JPEG and WebP", error.Message);
+        AsserterExceptionContract.AssertMessageContains(["BMP", "PNG", "JPEG", "WebP"], error.Message);
     }
 
     [Fact]
@@ -82,7 +84,9 @@ public sealed class OriginalStorageTests
         Assert.Equal(-1, exported.AsSpan().IndexOf(TrailingSecret));
         Assert.Equal(PngIdat(clean), PngIdat(exported));
         using var image = Image.Load(exported);
-        Assert.Contains(image.Metadata.GetPngMetadata().TextData, text => text.Keyword == "prompt" && text.Value == "a lighthouse");
+        var actualPromptValues = image.Metadata.GetPngMetadata().TextData
+            .Where(text => text.Keyword == "prompt").Select(text => text.Value).ToArray();
+        Assert.Equal(["a lighthouse"], actualPromptValues);
     }
 
     [Fact]
@@ -130,7 +134,7 @@ public sealed class OriginalStorageTests
     }
 
     [Fact]
-    public void Clean_WhenMp4HasPrivateBoxesPaddingAndTrailingData_ThenBlanksThemInPlace()
+    public async Task Export_WhenMp4HasPrivateBoxesPaddingAndTrailingData_ThenBlanksThemWithoutMovingMediaBoxes()
     {
         // Arrange
         var ftyp = Mp4Box("ftyp", "isom\0\0\0\0isom"u8.ToArray());
@@ -141,8 +145,17 @@ public sealed class OriginalStorageTests
         var clean = (byte[])[.. ftyp, .. vendor, .. padding, .. mdat, .. moov];
         byte[] source = [.. clean, .. TrailingSecret];
 
+        using var transport = new MediaProcessTransport(
+            """{"streams":[{"codec_type":"video","width":32,"height":24,"duration":"1"}],"format":{"format_name":"mov,mp4","duration":"1"}}""");
+        using var fixture = new TestVault(transport.VideoTools);
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(source), "clip.mp4", "folder");
+
         // Act
-        var exported = ExportMediaCleaner.Clean("video/mp4", source);
+        var export = await fixture.Service.ExportAsync(record.Id);
+
+        // Assert - gather the exported bytes
+        var exported = export.CopyContentBytes();
 
         // Assert - every box keeps its size and position so sample offsets stay valid
         Assert.Equal(clean.Length, exported.Length);

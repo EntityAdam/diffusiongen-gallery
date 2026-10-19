@@ -1,6 +1,7 @@
+using Gallery.Web.Composition;
 using System.Net;
 using Gallery.Web.Components;
-using Gallery.Web.Services;
+using Gallery.Core.Services;
 using ShadCn.Blazor.Components;
 
 var webApplicationBuilder = WebApplication.CreateBuilder(args);
@@ -15,7 +16,7 @@ webApplicationBuilder.Services.AddRazorComponents().AddInteractiveServerComponen
 {
     options.DisconnectedCircuitRetentionPeriod = TimeSpan.Zero;
 });
-GalleryService.Register(webApplicationBuilder.Services, webApplicationBuilder.Configuration, normalizedVaultRoot);
+GalleryServiceRegistration.Register(webApplicationBuilder.Services, webApplicationBuilder.Configuration, normalizedVaultRoot);
 webApplicationBuilder.Services.AddShadCnBlazorComponents();
 
 var webApplication = webApplicationBuilder.Build();

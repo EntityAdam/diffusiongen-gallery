@@ -1,12 +1,10 @@
 using System.Net;
 using System.Text.RegularExpressions;
 using Gallery.Web.Components;
-using Gallery.Web.Models;
+using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using ShadCn.Blazor.Components;
+using Microsoft.AspNetCore.Components.Web.HtmlRendering;
 
 namespace Gallery.Tests;
 
@@ -16,148 +14,223 @@ public sealed class UiComponentTests
     [Fact]
     public async Task ImageCard_WhenSelectedAndRated_ThenRetainsKeyboardHooksAndAccessibleLibraryControls()
     {
-        var html = await RenderAsync<GalleryImageCard>(new()
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
-            [nameof(GalleryImageCard.Image)] = new WebImageRecord { Id = "sample", Name = "Sample", Rating = 3, Favorite = true },
+            [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "sample", Name = "Sample", Rating = 3, IsFavorite = true },
             [nameof(GalleryImageCard.ShowSelection)] = true,
             [nameof(GalleryImageCard.Selected)] = true
         });
 
-        Assert.Contains("image-card", html);
-        Assert.Contains("data-image-id=\"sample\"", html);
-        Assert.Contains("image-open", html);
-        Assert.Contains("aria-label=\"Select Sample\"", html);
-        Assert.Contains("aria-label=\"Rating for Sample: 3 out of 5 stars\"", html);
-        Assert.Contains("aria-label=\"Clear rating\"", html);
-        Assert.Contains("h-7!", html);
-        Assert.Contains("focus-visible:ring-ring", html);
-        Assert.Contains("<svg", html);
-        Assert.DoesNotContain("<Trash", html);
+        // Act
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<GalleryImageCard>(parameterView));
+
+        // Assert - gather the completed component HTML on its dispatcher
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        // Assert
+        Assert.Contains("image-card", actualHtml);
+        Assert.Contains("data-image-id=\"sample\"", actualHtml);
+        Assert.Contains("image-open", actualHtml);
+        Assert.Contains("aria-label=\"Select Sample\"", actualHtml);
+        Assert.Contains("aria-label=\"Rating for Sample: 3 out of 5 stars\"", actualHtml);
+        Assert.Contains("aria-label=\"Clear rating\"", actualHtml);
+        Assert.Contains("h-7!", actualHtml);
+        Assert.Contains("focus-visible:ring-ring", actualHtml);
+        Assert.Contains("<svg", actualHtml);
+        Assert.DoesNotContain("<Trash", actualHtml);
     }
 
+    // Every unavailable thumbnail state selects its matching placeholder and hides the image.
     [Theory]
     [InlineData(false, "Loading preview...")]
     [InlineData(true, "Preview unavailable")]
-    public async Task ImageCard_WhenThumbnailIsNotYetDecrypted_ThenShowsPlaceholder(bool failed, string expected)
+    public async Task ImageCard_WhenThumbnailIsNotYetDecrypted_ThenShowsPlaceholder(bool thumbnailHasFailed, string expectedPlaceholder)
     {
-        var html = await RenderAsync<GalleryImageCard>(new()
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
-            [nameof(GalleryImageCard.Image)] = new WebImageRecord { Id = "pending", Name = "Pending" },
-            [nameof(GalleryImageCard.ThumbnailFailed)] = failed
+            [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "pending", Name = "Pending" },
+            [nameof(GalleryImageCard.ThumbnailFailed)] = thumbnailHasFailed
         });
 
-        Assert.Contains(expected, html);
-        Assert.DoesNotContain("<img", html);
+        // Act
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<GalleryImageCard>(parameterView));
+
+        // Assert - gather the completed component HTML on its dispatcher
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        // Assert
+        Assert.Contains(expectedPlaceholder, actualHtml);
+        Assert.DoesNotContain("<img", actualHtml);
     }
 
+    // Both credential modes preserve secret-field behavior and the same accessible tabs.
     [Theory]
     [InlineData(false, "input", "password")]
     [InlineData(true, "textarea", null)]
     public async Task Credentials_WhenModeChanges_ThenPreservesSecretFieldAndTabSemantics(
-        bool recovery, string field, string? type)
+        bool useRecoveryPhrase, string expectedElementName, string? expectedInputType)
     {
-        var html = await RenderAsync<GalleryCredentialInput>(new()
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
             [nameof(GalleryCredentialInput.Value)] = "secret value",
-            [nameof(GalleryCredentialInput.UseRecovery)] = recovery,
+            [nameof(GalleryCredentialInput.UseRecovery)] = useRecoveryPhrase,
             [nameof(GalleryCredentialInput.Disabled)] = true
         });
 
-        Assert.Contains("role=\"tablist\"", html);
-        Assert.Equal(2, Regex.Matches(html, "role=\"tab\"").Count);
-        Assert.Contains($"<{field}", html);
-        if (type is not null) Assert.Contains($"type=\"{type}\"", html);
-        Assert.Contains("autocomplete=\"off\"", html);
-        Assert.Contains("secret value", html);
-        Assert.Equal(3, Regex.Matches(html, @"\bdisabled(?:=|\s|>)").Count);
+        // Act
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<GalleryCredentialInput>(parameterView));
+
+        // Assert - gather the completed component HTML on its dispatcher
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        // Assert
+        Assert.Contains("role=\"tablist\"", actualHtml);
+        Assert.Equal(2, Regex.Matches(actualHtml, "role=\"tab\"").Count);
+        Assert.Contains($"<{expectedElementName}", actualHtml);
+        if (expectedInputType is not null) Assert.Contains($"type=\"{expectedInputType}\"", actualHtml);
+        Assert.Contains("autocomplete=\"off\"", actualHtml);
+        Assert.Contains("secret value", actualHtml);
+        Assert.Equal(3, Regex.Matches(actualHtml, @"\bdisabled(?:=|\s|>)").Count);
     }
 
     [Fact]
     public async Task Filters_WhenBusy_ThenEveryFieldIsDisabledIncludingTypedNativeFields()
     {
-        var html = await RenderAsync<GalleryFilterPanel>(new()
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
-            [nameof(GalleryFilterPanel.Filter)] = new WebGalleryFilter(),
+            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter(),
             [nameof(GalleryFilterPanel.Disabled)] = true
         });
 
-        var controls = Regex.Matches(html, @"<(?:input|select|button)\b[^>]*>");
+        // Act
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<GalleryFilterPanel>(parameterView));
+
+        // Assert - gather the completed component HTML on its dispatcher
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        MatchCollection controls = Regex.Matches(actualHtml, @"<(?:input|select|button)\b[^>]*>");
+
+        // Assert
         Assert.NotEmpty(controls);
         foreach (Match control in controls) Assert.Contains("disabled", control.Value);
-        Assert.Contains("type=\"date\"", html);
-        Assert.Contains("type=\"number\"", html);
-        Assert.Contains("role=\"checkbox\"", html);
+        Assert.Contains("type=\"date\"", actualHtml);
+        Assert.Contains("type=\"number\"", actualHtml);
+        Assert.Contains("role=\"checkbox\"", actualHtml);
     }
 
     [Fact]
     public async Task BackupDestination_WhenAzureSelected_ThenPreservesPasswordAndSavedCredentialHint()
     {
-        var html = await RenderAsync<BackupLocation>(new()
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
             [nameof(BackupLocation.Type)] = "azure",
             [nameof(BackupLocation.Container)] = "backups",
             [nameof(BackupLocation.HasSavedCredentials)] = true
         });
 
-        Assert.Contains("value=\"backups\"", html);
-        Assert.Contains("type=\"password\"", html);
-        Assert.Contains("Saved securely; leave blank to keep it", html);
-        Assert.Contains("autocomplete=\"off\"", html);
+        // Act
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<BackupLocation>(parameterView));
+
+        // Assert - gather the completed component HTML on its dispatcher
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        // Assert
+        Assert.Contains("value=\"backups\"", actualHtml);
+        Assert.Contains("type=\"password\"", actualHtml);
+        Assert.Contains("Saved securely; leave blank to keep it", actualHtml);
+        Assert.Contains("autocomplete=\"off\"", actualHtml);
     }
 
+    // Directory guidance follows the configured local-only or network-capable storage policy.
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task DirectoryInput_ExplainsWhetherNetworkStorageIsAllowed(bool localOnly)
+    public async Task DirectoryInput_WhenStoragePolicyVaries_ThenExplainsWhetherNetworkStorageIsAllowed(bool storageIsLocalOnly)
     {
-        var html = await RenderAsync<DirectoryPathInput>(new()
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
             [nameof(DirectoryPathInput.Label)] = "Catalog location",
-            [nameof(DirectoryPathInput.LocalOnly)] = localOnly
+            [nameof(DirectoryPathInput.LocalOnly)] = storageIsLocalOnly
         });
 
-        Assert.Contains("Catalog location", html);
-        Assert.Contains("aria-describedby", html);
-        Assert.Contains(localOnly ? "not a NAS/SMB share" : "local directory or UNC path", html);
-        Assert.Contains(localOnly ? @"C:\Gallery\catalog" : @"\\server\share\gallery", html);
+        // Act
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<DirectoryPathInput>(parameterView));
+
+        // Assert - gather the completed component HTML on its dispatcher
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        // Assert
+        Assert.Contains("Catalog location", actualHtml);
+        Assert.Contains("aria-describedby", actualHtml);
+        Assert.Contains(storageIsLocalOnly ? "not a NAS/SMB share" : "local directory or UNC path", actualHtml);
+        Assert.Contains(storageIsLocalOnly ? @"C:\Gallery\catalog" : @"\\server\share\gallery", actualHtml);
     }
 
+    // Every freshness state shows its timestamp; only stale data asks the user to refresh.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task StorageOverviewStatus_ShowsLastUpdatedAndIndicatesStaleData(bool stale)
+    public async Task StorageOverviewStatus_WhenFreshnessChanges_ThenShowsLastUpdatedAndIndicatesStaleData(bool overviewIsStale)
     {
-        var overview = new WebStorageOverview(1, 1, 1, 1, 1, 0, DateTimeOffset.UtcNow) { IsStale = stale };
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        var storageOverview = new StorageOverview(1, 1, 1, 1, 1, 0, DateTimeOffset.UtcNow) { IsStale = overviewIsStale };
 
-        var html = await RenderAsync<StorageOverviewStatus>(new()
+        ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
-            [nameof(StorageOverviewStatus.Overview)] = overview
+            [nameof(StorageOverviewStatus.Overview)] = storageOverview
         });
 
-        Assert.Contains("Last updated", html);
-        Assert.Contains($"datetime=\"{overview.UpdatedAt:O}\"", html);
-        if (stale)
+        // Act
+        HtmlRootComponent htmlRootComponent = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            htmlRenderer.RenderComponentAsync<StorageOverviewStatus>(parameterView));
+
+        // Assert - gather the completed component HTML on its dispatcher
+        string actualHtml = await htmlRenderer.Dispatcher.InvokeAsync(() =>
+            WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
+
+        // Assert
+        Assert.Contains("Last updated", actualHtml);
+        Assert.Contains($"datetime=\"{storageOverview.UpdatedAt:O}\"", actualHtml);
+        if (overviewIsStale)
         {
-            Assert.Contains("data-testid=\"overview-stale\"", html);
-            Assert.Contains("role=\"status\"", html);
-            Assert.Contains("Select Refresh", html);
+            Assert.Contains("data-testid=\"overview-stale\"", actualHtml);
+            Assert.Contains("role=\"status\"", actualHtml);
+            Assert.Contains("Select Refresh", actualHtml);
         }
         else
-            Assert.DoesNotContain("overview-stale", html);
+            Assert.DoesNotContain("overview-stale", actualHtml);
     }
 
-    private static async Task<string> RenderAsync<TComponent>(Dictionary<string, object?> parameters)
-        where TComponent : IComponent
-    {
-        var services = new ServiceCollection();
-        services.AddLogging();
-        services.AddShadCnBlazorComponents();
-        await using var provider = services.BuildServiceProvider();
-        await using var renderer = new HtmlRenderer(provider, provider.GetRequiredService<ILoggerFactory>());
-        return await renderer.Dispatcher.InvokeAsync(async () =>
-        {
-            var component = await renderer.RenderComponentAsync<TComponent>(ParameterView.FromDictionary(parameters));
-            return WebUtility.HtmlDecode(component.ToHtmlString());
-        });
-    }
 }

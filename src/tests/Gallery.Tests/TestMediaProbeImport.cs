@@ -1,13 +1,12 @@
-using Gallery.Web.Services.Processors;
-using Gallery.Core.Processors;
-using Gallery.Web.Managers.Gateways;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Gateways;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
-using Gallery.Web.Exceptions;
-using Gallery.Core.Queries;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Services.Queries;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
 using Microsoft.Extensions.Configuration;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -93,6 +92,7 @@ public sealed class TestMediaProbeImport
         var invalidMetadata = Assert.IsType<InvalidOperationException>(exception);
         Assert.Contains("ffprobe", invalidMetadata.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(expectedField, invalidMetadata.Message, StringComparison.OrdinalIgnoreCase);
+        AsserterExceptionContract.AssertMessageContains([replacement], invalidMetadata.Message);
     }
 
     // Required structural fields cannot disappear silently.
@@ -130,7 +130,6 @@ public sealed class TestMediaProbeImport
     [Theory]
     [InlineData(null, "2.5", 2.5)]
     [InlineData("N/A", "2.5", 2.5)]
-    [InlineData(null, null, 0)]
     [InlineData("0", "2.5", 0)]
     public async Task Probe_WhenOptionalMetadataIsAbsent_ThenPreservesKnownMetadata(
         string? formatDuration, string? streamDuration, double expectedDuration)
@@ -157,6 +156,27 @@ public sealed class TestMediaProbeImport
             (probeResult.Width, probeResult.Height, probeResult.DurationSeconds, probeResult.ContentType));
         using var actualMetadata = System.Text.Json.JsonDocument.Parse(probeResult.Metadata);
         Assert.Empty(actualMetadata.RootElement.GetProperty("video").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Probe_WhenNeitherSourceProvidesDuration_ThenRejectsWithoutPublishingMediaOrCatalog()
+    {
+        var metadata = MakeProbeMetadata();
+        ((JsonObject)metadata["format"]!).Remove("duration");
+        ((JsonObject)metadata["streams"]![0]!).Remove("duration");
+        using var transport = new MediaProcessTransport(metadata.ToJsonString());
+        using var fixture = new TestVault(transport.VideoTools);
+        await fixture.InitializeAsync();
+
+        var error = await Assert.ThrowsAsync<VideoProbeMetadataException>(() =>
+            fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "unknown-duration.mp4", "folder"));
+
+        AsserterExceptionContract.AssertMessageContains(["ffprobe", "duration"], error.Message);
+        Assert.Empty(await fixture.Service.ListAsync());
+        var imagesDirectory = Path.Combine(fixture.Root, "images");
+        var publishedFiles = Directory.Exists(imagesDirectory)
+            ? Directory.EnumerateFiles(imagesDirectory, "*", SearchOption.AllDirectories).ToArray() : [];
+        Assert.Empty(publishedFiles);
     }
 
 

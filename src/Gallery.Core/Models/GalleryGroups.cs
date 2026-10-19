@@ -9,13 +9,13 @@ public sealed record PromptGroup(string Kind, string Prompt, ImmutableArray<Imag
 
 public sealed record DuplicateGroup(
     string KeepId,
-    ImmutableArray<string> ImageIds,
+    [property: System.Text.Json.Serialization.JsonPropertyName("Ids")] ImmutableArray<string> ImageIds,
     int MaxDistance,
-    bool Exact,
+    [property: System.Text.Json.Serialization.JsonPropertyName("Exact")] bool IsExact,
     long ReclaimableBytes);
 
 public sealed record DuplicateScan(ImmutableArray<DuplicateGroup> Groups, int ScannedCount, DateTimeOffset ScannedAt)
 {
-    public int DuplicateCount => Groups.Sum(group => group.ImageIds.Length - 1);
-    public long ReclaimableBytes => Groups.Sum(group => group.ReclaimableBytes);
+    public int DuplicateCount => Groups.Sum(duplicateGroup => duplicateGroup.ImageIds.Length - 1);
+    public long ReclaimableBytes => Groups.Sum(duplicateGroup => duplicateGroup.ReclaimableBytes);
 }

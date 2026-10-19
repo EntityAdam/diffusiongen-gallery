@@ -1,7 +1,8 @@
-using Gallery.Web.Services.Processors;
-using Gallery.Web.Services.DataManagers;
+using Gallery.Core.Services.Processors.Codecs;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.DataManagers;
 using System.Security.Cryptography;
-using Gallery.Web.Services;
+using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
 
 
@@ -20,14 +21,16 @@ public sealed class TestRawStoreFingerprintConstraint
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
-        var fingerprint = VaultCrypto.ContentFingerprint(fixture.Session.Key, image.Sha256);
+        var fingerprint = VaultCrypto.ContentFingerprint(fixture.Session.Key, Convert.FromHexString(image.Sha256));
         // Act
         var exception = await Assert.ThrowsAsync<SqliteException>(
             () => fixture.RawStore.InsertAsync("duplicate-id", [1], [2], fingerprint));
 
         // Assert
         Assert.Equal(19, exception.SqliteErrorCode);
-        Assert.Single(await fixture.Service.ListAsync());
+        var survivors = await fixture.Service.ListAsync();
+        Assert.True(survivors.Count == 1, $"Expected exactly 1 surviving record; Actual: {survivors.Count} records.");
+        AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(image), survivors[0]);
     }
 
 

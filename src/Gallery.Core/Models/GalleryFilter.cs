@@ -7,7 +7,8 @@ public sealed record GalleryFilter
     public string Folder { get; init; } = "";
     public string Tag { get; init; } = "";
     public string Model { get; init; } = "";
-    public bool FavoritesOnly { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("FavoritesOnly")]
+    public bool IncludesFavoritesOnly { get; init; }
     public string Deletion { get; init; } = "active";
     public string Analysis { get; init; } = AnyValue;
     public string Orientation { get; init; } = AnyValue;
@@ -19,7 +20,8 @@ public sealed record GalleryFilter
     public string Collection { get; init; } = "";
     public int MinRating { get; init; }
     public string Review { get; init; } = AnyValue;
-    public bool UnorganizedOnly { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("UnorganizedOnly")]
+    public bool IncludesUnorganizedOnly { get; init; }
     public string Media { get; init; } = AnyValue;
     public string Prompt { get; init; } = "";
 }

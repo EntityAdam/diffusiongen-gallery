@@ -1,6 +1,6 @@
-using Gallery.Web.Managers.Gateways;
-using Gallery.Web.Models;
-using Gallery.Web.Services.ConfigurationProviders;
+using Gallery.Core.Services.Gateways;
+using Gallery.Core.Models;
+using Gallery.Core.Services.ConfigurationProviders;
 using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
@@ -12,15 +12,15 @@ internal sealed class RealVideoArrangement : IDisposable
     private readonly string source = Path.Combine(Path.GetTempPath(), "gallery-real-video-" + Guid.NewGuid().ToString("N") + ".mp4");
     public TestVault TestVault { get; }
     public byte[] Bytes { get; private set; } = [];
-    public WebImageRecord? ImageRecord { get; private set; }
+    public ImageRecord? ImageRecord { get; private set; }
 
     private RealVideoArrangement(VideoTools tools) => TestVault = new(tools);
 
     public static VideoTools InstalledTools()
     {
         var configuration = new ConfigurationBuilder().AddEnvironmentVariables().Build();
-        var options = new Gallery.Web.Services.ConfigurationProviders.ConfigurationProvider(configuration).GetVideoToolsOptions();
-        return new VideoTools(options);
+        var options = new Gallery.Core.Services.ConfigurationProviders.ConfigurationProvider(configuration).GetVideoToolsOptions();
+        return new VideoTools(options.ConfiguredPath, options.SearchPaths);
     }
 
     public static async Task<RealVideoArrangement> CreateSourceAsync()

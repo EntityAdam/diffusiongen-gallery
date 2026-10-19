@@ -1,7 +1,9 @@
-using Gallery.Web.Services.Processors;
-using Gallery.Web.Services.DataManagers;
+using Gallery.Core.Services.Processors.Codecs;
+using Gallery.Core.Services.DataManagers.Validators;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.DataManagers;
 using System.Security.Cryptography;
-using Gallery.Web.Services;
+using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
 
 
@@ -21,12 +23,12 @@ public sealed class TestContentFingerprintOracle
         var hash = SHA256.HashData("source image"u8);
 
         // Act
-        var fingerprint = VaultCrypto.ContentFingerprint(key, Convert.ToHexString(hash));
+        var fingerprint = VaultCrypto.ContentFingerprint(key, SourceFingerprintValidator.Decode(Convert.ToHexString(hash)));
 
         // Assert
         Assert.Equal(32, fingerprint.Length);
-        Assert.Equal(fingerprint, VaultCrypto.ContentFingerprint(key, Convert.ToHexString(hash).ToLowerInvariant()));
-        Assert.NotEqual(fingerprint, VaultCrypto.ContentFingerprint(RandomNumberGenerator.GetBytes(32), Convert.ToHexString(hash)));
+        Assert.Equal(fingerprint, VaultCrypto.ContentFingerprint(key, SourceFingerprintValidator.Decode(Convert.ToHexString(hash).ToLowerInvariant())));
+        Assert.NotEqual(fingerprint, VaultCrypto.ContentFingerprint(RandomNumberGenerator.GetBytes(32), hash));
         Assert.NotEqual(fingerprint, HMACSHA256.HashData(key, hash));
         Assert.NotEqual(hash, fingerprint);
 
@@ -41,7 +43,7 @@ public sealed class TestContentFingerprintOracle
 
         // Act
         var exception = Assert.Throws<InvalidOperationException>(() =>
-            VaultCrypto.ContentFingerprint(key, malformedHash));
+            SourceFingerprintValidator.Decode(malformedHash));
 
         // Assert
         Assert.IsType<InvalidOperationException>(exception);

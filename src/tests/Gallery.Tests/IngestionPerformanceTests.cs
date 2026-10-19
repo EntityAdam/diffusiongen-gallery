@@ -1,7 +1,8 @@
-using Gallery.Web.Exceptions;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
-using Gallery.Web.Services.Processors;
+using System.Net;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
+using Gallery.Core.Services.Processors;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;
@@ -16,14 +17,15 @@ public sealed class IngestionPerformanceTests
         await fixture.InitializeAsync();
         var folder = await CreateSourcesAsync(fixture, 5);
         await fixture.Service.SaveIngestionOptionsAsync(new() { Workers = 3, CatalogBatchSize = 2 });
-        var timings = new IngestionTimings();
-        WebImportProgress? final = null;
+        IngestionTimingReport? completedTimingReport = null;
+        ImportProgress? final = null;
 
-        await fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
-            sourceRetention: WebSourceRetention.DeleteAfterVerification, timings: timings,
+        await fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            sourceRetention: SourceRetention.DeleteAfterVerification, reportTimings: report => completedTimingReport = report,
             reportProgress: update => { final = update; return Task.CompletedTask; });
 
-        var report = timings.CreateReport();
+        var report = completedTimingReport
+            ?? throw new Xunit.Sdk.XunitException("Expected a completed ingestion timing report; Actual: null.");
         Assert.Equal(3, report.Workers);
         Assert.Equal(5, report.Imported);
         Assert.Equal(0, report.Failed);
@@ -35,7 +37,7 @@ public sealed class IngestionPerformanceTests
         Assert.Contains(report.Stages, stage => stage.Stage == IngestionStage.ReportProgress);
         Assert.DoesNotContain(folder, report.ToString());
         Assert.NotEqual("Unknown", report.CatalogDrive);
-        Assert.Equal(new WebImportProgress(5, 5, 5, 0, "Ingestion complete."), final);
+        Assert.Equal(new ImportProgress(5, 5, 5, 0, "Ingestion complete."), final);
         Assert.Empty(Directory.EnumerateFiles(folder));
         Assert.Equal(5, (await fixture.Service.ListAsync()).Count);
     }
@@ -55,10 +57,15 @@ public sealed class IngestionPerformanceTests
             """;
         await trigger.ExecuteNonQueryAsync();
 
+        var expectedFailure = ExpectedExceptionContract.Create(typeof(ImportFolderException),
+            [folder, "file failures"], HttpStatusCode.InternalServerError, Severity.Error,
+            "One or more files could not be imported.", "FolderImport.Failed",
+            new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 3 });
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
-                sourceRetention: WebSourceRetention.DeleteAfterVerification,
+            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                sourceRetention: SourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 3, CatalogBatchSize = 3 }));
+        AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
         Assert.Equal(3, failure.Failures.InnerExceptions.Count);
         Assert.Empty(await fixture.Service.ListAsync());
@@ -81,10 +88,15 @@ public sealed class IngestionPerformanceTests
             """;
         await trigger.ExecuteNonQueryAsync();
 
+        var expectedFailure = ExpectedExceptionContract.Create(typeof(ImportFolderException),
+            [folder, "file failures"], HttpStatusCode.InternalServerError, Severity.Error,
+            "One or more files could not be imported.", "FolderImport.Failed",
+            new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 2 });
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
-                sourceRetention: WebSourceRetention.DeleteAfterVerification,
+            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                sourceRetention: SourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 2, CatalogBatchSize = 2 }));
+        AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
         Assert.Equal(2, failure.Failures.InnerExceptions.Count);
         Assert.Equal(2, (await fixture.Service.ListAsync()).Count);
@@ -105,12 +117,17 @@ public sealed class IngestionPerformanceTests
             BEGIN UPDATE images SET thumbnail = zeroblob(length(NEW.thumbnail)) WHERE id = NEW.id; END
             """;
         await trigger.ExecuteNonQueryAsync();
-        WebImportProgress? final = null;
+        ImportProgress? final = null;
 
-        await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
-                sourceRetention: WebSourceRetention.DeleteAfterVerification,
+        var expectedFailure = ExpectedExceptionContract.Create(typeof(ImportFolderException),
+            [folder, "file failures"], HttpStatusCode.InternalServerError, Severity.Error,
+            "One or more files could not be imported.", "FolderImport.Failed",
+            new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 1 });
+        var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
+            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                sourceRetention: SourceRetention.DeleteAfterVerification,
                 reportProgress: update => { final = update; return Task.CompletedTask; }));
+        AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
         Assert.Single(Directory.EnumerateFiles(folder));
         Assert.Single(await fixture.Service.ListAsync());
@@ -129,10 +146,15 @@ public sealed class IngestionPerformanceTests
         await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), bytes);
         await File.WriteAllBytesAsync(Path.Combine(folder, "two.png"), bytes);
 
-        await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, WebFolderSearchScope.SelectedFolder,
-                sourceRetention: WebSourceRetention.DeleteAfterVerification,
+        var expectedFailure = ExpectedExceptionContract.Create(typeof(ImportFolderException),
+            [folder, "file failures"], HttpStatusCode.InternalServerError, Severity.Error,
+            "One or more files could not be imported.", "FolderImport.Failed",
+            new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 1 });
+        var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
+            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                sourceRetention: SourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 2, CatalogBatchSize = 2 }));
+        AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
         var imported = Assert.Single(await fixture.Service.ListAsync());
         Assert.False(File.Exists(imported.SourcePath));
@@ -169,8 +191,12 @@ public sealed class IngestionPerformanceTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var expectedPhrases = workers is < 1 or > 32
+            ? new[] { workers.ToString(System.Globalization.CultureInfo.InvariantCulture), "1", "32", "workers" }
+            : new[] { batchSize.ToString(System.Globalization.CultureInfo.InvariantCulture), "1", "64", "batch" };
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             fixture.Service.SaveIngestionOptionsAsync(new() { Workers = workers, CatalogBatchSize = batchSize }));
+        AsserterExceptionContract.AssertMessageContains(expectedPhrases, error.Message);
     }
 
     private static async Task<string> CreateSourcesAsync(TestVault fixture, int count)

@@ -1,5 +1,5 @@
-using Gallery.Web.Models;
-using Gallery.Web.Services;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 
@@ -23,12 +23,13 @@ public sealed class DriveOperationQueueTests
         await fixture.Service.WaitForDriveOperationsAsync();
 
         // Assert
-        Assert.Equal(WebDriveQueueState.Paused, pausedStatus.State);
+        Assert.Equal(DriveQueueState.Paused, pausedStatus.State);
         Assert.Equal(1, pausedStatus.Pending);
         Assert.True(fileKeptWhilePaused);
         Assert.False(File.Exists(record.StoredPath));
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Pending);
-        Assert.Empty(await fixture.Service.ListAsync());
+        var remainingRecords = await fixture.Service.ListAsync();
+        Assert.True(remainingRecords.Count == 0, $"Expected an empty catalog with 0 records; Actual: {remainingRecords.Count} records.");
     }
 
     [Fact]
@@ -49,17 +50,18 @@ public sealed class DriveOperationQueueTests
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Pending);
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
         Assert.True(File.Exists(record.StoredPath));
-        Assert.Empty(await fixture.Service.ListAsync());
+        var remainingRecords = await fixture.Service.ListAsync();
+        Assert.True(remainingRecords.Count == 0, $"Expected an empty catalog with 0 records; Actual: {remainingRecords.Count} records.");
     }
 
-    [Fact]
+    [WindowsFileSharingFact]
     public async Task Delete_WhenFileStaysLocked_ThenFailsAfterRetriesAndSucceedsWhenRetried()
     {
         // Arrange
         using var fixture = await LoadedVaultAsync();
         fixture.Service.DriveRetryDelay = TimeSpan.FromMilliseconds(5);
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
-        WebDriveQueueStatus failedStatus;
+        DriveQueueStatus failedStatus;
 
         // Act
         using (new FileStream(record.StoredPath, FileMode.Open, FileAccess.Read, FileShare.None))
@@ -106,7 +108,9 @@ public sealed class DriveOperationQueueTests
             Assert.True(interimCopied);
             Assert.True(File.Exists(record.StoredPath));
             Assert.False(File.Exists(interimPath));
-            Assert.Equal(record.StoredPath, Assert.Single(await fixture.Service.ListAsync()).StoredPath);
+            var actualRecords = await fixture.Service.ListAsync();
+            Assert.True(actualRecords.Count == 1, $"Expected exactly 1 catalog record; Actual: {actualRecords.Count} records.");
+            Assert.Equal(record.StoredPath, actualRecords[0].StoredPath);
             await fixture.Service.VerifyImportedAsync(record.Id);
             Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
         }
@@ -133,7 +137,7 @@ public sealed class DriveOperationQueueTests
         // Assert
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
         Assert.Equal(1, overview.MissingImageFiles);
-        Assert.False(overview.IndexPending);
+        Assert.False(overview.IsIndexPending);
     }
 
     [Fact]
@@ -153,8 +157,8 @@ public sealed class DriveOperationQueueTests
         var complete = await fixture.Service.RefreshStorageOverviewAsync();
 
         // Assert
-        Assert.True(pending.IndexPending);
-        Assert.False(complete.IndexPending);
+        Assert.True(pending.IsIndexPending);
+        Assert.False(complete.IsIndexPending);
         Assert.Equal(1, complete.ImageFileCount);
         Assert.Equal(0, complete.MissingImageFiles);
     }
@@ -170,10 +174,10 @@ public sealed class DriveOperationQueueTests
 
     private static async Task RemoveAsync(TestVault fixture, string id)
     {
-        await fixture.Service.UpdateAsync(id, record => record with { MarkedForDeletion = true });
+        await fixture.Service.UpdateAsync(id, record => record with { IsMarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([id]);
-        var results = new List<WebRemovalResult>();
-        await fixture.Service.RemoveAsync(plan, WebExistingOriginalAction.Retain, WebMissingOriginalAction.Discard, "", results.Add);
-        Assert.True(Assert.Single(results).Removed);
+        var results = new List<RemovalResult>();
+        await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", results.Add);
+        Assert.True(Assert.Single(results).WasRemoved);
     }
 }

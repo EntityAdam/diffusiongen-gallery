@@ -1,8 +1,8 @@
-using Gallery.Core.Processors;
+using Gallery.Core.Services.Processors;
 using System.Text;
-using Gallery.Web.Exceptions;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -38,13 +38,13 @@ public sealed class CurationTests
         var original = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(320, 240, 0)), "original.png", "folder");
         var resized = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(160, 120, 0)), "resized.png", "folder");
         var different = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(320, 240, 1)), "different.png", "folder");
-        var expectedIds = new[] { original.Id, resized.Id }.Order(StringComparer.Ordinal).ToArray();
+        var expectedIds = new[] { original.Id, resized.Id }.Order(StringComparer.Ordinal);
 
         // Act
         var scan = await fixture.Service.ScanDuplicatesAsync();
 
         // Assert - the actual perceptual threshold groups the resized copy and excludes the different image
-        Assert.Equal(expectedIds, Assert.Single(scan.Groups).ImageIds.Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(expectedIds, Assert.Single(scan.Groups).ImageIds.Order(StringComparer.Ordinal));
         Assert.DoesNotContain(different.Id, scan.Groups.SelectMany(group => group.ImageIds));
     }
 
@@ -58,40 +58,41 @@ public sealed class CurationTests
         var small = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(200, 150, 0)), "small.png", "folder");
         var large = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(400, 300, 0)), "large.png", "folder");
         var other = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(200, 150, 1)), "other.png", "folder");
-        var progress = new List<(int Completed, int Total)>();
+        var progress = new SynchronousProgress();
 
         // Act
-        var scan = await fixture.Service.ScanDuplicatesAsync(new SyncProgress(progress.Add));
-        var initialProgress = progress.ToArray();
+        var scan = await fixture.Service.ScanDuplicatesAsync(progress);
+        var initialProgress = progress.Snapshot();
         var cachedResult = await fixture.Service.CachedDuplicateScanAsync();
         var encryptedSettings = new Dictionary<string, string>();
         foreach (var id in new[] { "duplicate-scan", "perceptual-hashes" })
             encryptedSettings[id] = Encoding.UTF8.GetString((await fixture.RawStore.ReadSettingsAsync(id))!);
         await fixture.Service.UpdateAsync(small.Id, image => image with { Rating = 5 });
-        progress.Clear();
-        var rescan = await fixture.Service.ScanDuplicatesAsync(new SyncProgress(progress.Add));
+        var rescanProgress = new SynchronousProgress();
+        var rescan = await fixture.Service.ScanDuplicatesAsync(rescanProgress);
+        var finalProgress = rescanProgress.Snapshot();
 
         // Assert
         Assert.Null(initialCache);
         Assert.Equal(3, scan.ScannedCount);
         var group = Assert.Single(scan.Groups);
         Assert.Equal(large.Id, group.KeepId);
-        Assert.Equal([large.Id, small.Id], group.ImageIds.ToArray());
+        Assert.Equal<string>([large.Id, small.Id], group.ImageIds);
         Assert.DoesNotContain(other.Id, group.ImageIds);
-        Assert.False(group.Exact);
+        Assert.False(group.IsExact);
         Assert.Equal(new FileInfo(small.StoredPath).Length, group.ReclaimableBytes);
         Assert.Equal((3, 3), initialProgress[^1]);
 
         Assert.NotNull(cachedResult);
         var cached = cachedResult!;
         Assert.Equal(scan.ScannedAt, cached.ScannedAt);
-        Assert.Equal(group.ImageIds.ToArray(),
-            Assert.Single(cached.Groups).ImageIds.ToArray());
+        Assert.Equal<string>(group.ImageIds,
+            Assert.Single(cached.Groups).ImageIds);
         foreach (var (id, setting) in encryptedSettings)
             Assert.DoesNotContain(small.Id, setting);
 
         // A rescan reuses cached fingerprints and reflects curation changes in the keeper.
-        Assert.Equal((3, 3), progress[0]);
+        Assert.Equal((3, 3), finalProgress[0]);
         Assert.Equal(small.Id, Assert.Single(rescan.Groups).KeepId);
     }
 
@@ -101,17 +102,17 @@ public sealed class CurationTests
         // Arrange
         using var fixture = new TestVault();
         var now = DateTimeOffset.UtcNow;
-        var bigger = new WebImageRecord { Id = "big", Width = 400, Height = 300, ImportedAt = now };
-        var smaller = new WebImageRecord { Id = "small", Width = 200, Height = 150, ImportedAt = now.AddDays(-1) };
+        var bigger = new ImageRecord { Id = "big", Width = 400, Height = 300, ImportedAt = now };
+        var smaller = new ImageRecord { Id = "small", Width = 200, Height = 150, ImportedAt = now.AddDays(-1) };
         // Act
         var resolutionKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
-        smaller = smaller with { Favorite = true };
+        smaller = smaller with { IsFavorite = true };
         var favoriteKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
         bigger = bigger with { Rating = 3 };
         var ratingKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
-        bigger = bigger with { MarkedForDeletion = true };
+        bigger = bigger with { IsMarkedForDeletion = true };
         var unmarkedKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
-        var twin = new WebImageRecord { Id = "twin", Width = 200, Height = 150, Favorite = true, ImportedAt = now.AddDays(-2) };
+        var twin = new ImageRecord { Id = "twin", Width = 200, Height = 150, IsFavorite = true, ImportedAt = now.AddDays(-2) };
         var oldestKeeper = fixture.Service.PickDuplicateKeeper([smaller, twin]).Id;
 
         // Assert
@@ -143,7 +144,7 @@ public sealed class CurationTests
         if (identicalPixels)
         {
             var group = Assert.Single(scan.Groups);
-            Assert.True(group.Exact);
+            Assert.True(group.IsExact);
         }
         else
             Assert.Empty(scan.Groups);
@@ -160,14 +161,14 @@ public sealed class CurationTests
         var initial = await fixture.Service.LoadPreferencesAsync();
         var defaultDensity = initial.GridDensity;
         var defaultAutoLock = initial.AutoLockMinutes;
-        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "compact", AutoLockMinutes = 30 });
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 30 });
         var savedPreferences = await fixture.Service.LoadPreferencesAsync();
         var storedPreferences = await fixture.RawStore.ReadSettingsAsync("ui-preferences");
-        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "gigantic", AutoLockMinutes = -5 });
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "gigantic", AutoLockMinutes = -5 });
         var invalidFallback = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "compact", AutoLockMinutes = 0 });
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 0 });
         var disabledAutoLock = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new WebUiPreferences { GridDensity = "large", AutoLockMinutes = 99999 });
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "large", AutoLockMinutes = 99999 });
         var clampedHigh = await fixture.Service.LoadPreferencesAsync();
 
         // Assert
@@ -195,7 +196,7 @@ public sealed class CurationTests
         var failure = await Assert.ThrowsAsync<AggregateException>(() =>
             fixture.Service.UpdateManyAsync([first.Id, second.Id, "missing", first.Id], image =>
         {
-            return image with { Favorite = true, Tags = fixture.Service.MergeTags(image.Tags, "batch") };
+            return image with { IsFavorite = true, Tags = fixture.Service.MergeTags(image.Tags, "batch") };
         }));
 
         // Assert
@@ -207,7 +208,7 @@ public sealed class CurationTests
             images.Select(image => image.Id).Order(StringComparer.Ordinal));
         Assert.All(images, image =>
         {
-            Assert.True(image.Favorite);
+            Assert.True(image.IsFavorite);
             Assert.Equal("batch", image.Tags);
         });
     }
@@ -217,15 +218,15 @@ public sealed class CurationTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var big = new WebImageRecord { Id = "big", Width = 400, Height = 300 };
-        var small = new WebImageRecord { Id = "small", Width = 200, Height = 150 };
-        var tiny = new WebImageRecord { Id = "tiny", Width = 100, Height = 75 };
+        var big = new ImageRecord { Id = "big", Width = 400, Height = 300 };
+        var small = new ImageRecord { Id = "small", Width = 200, Height = 150 };
+        var tiny = new ImageRecord { Id = "tiny", Width = 100, Height = 75 };
         // Act
         var initialKeepers = fixture.Service.InitialDuplicateKeepers([small, big, tiny]);
-        tiny = tiny with { MarkedForDeletion = true };
+        tiny = tiny with { IsMarkedForDeletion = true };
         var partialDecisionKeepers = fixture.Service.InitialDuplicateKeepers([big, small, tiny]);
-        big = big with { MarkedForDeletion = true };
-        small = small with { MarkedForDeletion = true };
+        big = big with { IsMarkedForDeletion = true };
+        small = small with { IsMarkedForDeletion = true };
         var allMarkedKeepers = fixture.Service.InitialDuplicateKeepers([big, small, tiny]);
 
         // Assert
@@ -243,12 +244,12 @@ public sealed class CurationTests
         var a = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "a.png", "folder");
         var b = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "b.png", "folder");
         var c = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(80, 60, 0)), "c.png", "folder");
-        await fixture.Service.UpdateAsync(a.Id, image => image with { MarkedForDeletion = true });
+        await fixture.Service.UpdateAsync(a.Id, image => image with { IsMarkedForDeletion = true });
         string[] group = [a.Id, b.Id, c.Id];
 
         // Act
         await fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string> { a.Id, c.Id });
-        var marks = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id, image => image.MarkedForDeletion);
+        var marks = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id, image => image.IsMarkedForDeletion);
         var emptyKeepersError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string>()));
         var outsideKeeperError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -265,11 +266,15 @@ public sealed class CurationTests
         Assert.Contains("elsewhere", outsideKeeperError.Message, StringComparison.Ordinal);
         Assert.All(group, id => Assert.Contains(id, outsideKeeperError.Message, StringComparison.Ordinal));
         var unchanged = Assert.Single(afterRejectedDecisions, image => image.Id == b.Id);
-        Assert.True(unchanged.MarkedForDeletion);
+        Assert.True(unchanged.IsMarkedForDeletion);
     }
 
-    private sealed class SyncProgress(Action<(int, int)> report) : IProgress<(int Completed, int Total)>
+    // One recorder belongs to one awaited scan; Report completes capture synchronously.
+    // ConcurrentQueue protects concurrent reports and snapshots never expose mutable capture state.
+    private sealed class SynchronousProgress : IProgress<(int Completed, int Total)>
     {
-        public void Report((int Completed, int Total) value) => report(value);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<(int Completed, int Total)> observations = new();
+        public void Report((int Completed, int Total) value) => observations.Enqueue(value);
+        public System.Collections.Immutable.ImmutableArray<(int Completed, int Total)> Snapshot() => [.. observations.ToArray()];
     }
 }

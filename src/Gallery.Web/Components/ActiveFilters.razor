@@ -10,31 +10,31 @@
 </div>
 
 @code {
-    [Parameter, EditorRequired] public WebGalleryFilter Filter { get; set; } = new();
-    [Parameter] public EventCallback<WebGalleryFilter> Changed { get; set; }
+    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
+    [Parameter] public EventCallback<GalleryFilter> Changed { get; set; }
     [Parameter] public EventCallback Reset { get; set; }
     [Parameter] public bool Disabled { get; set; }
 
-    private List<(string Label, Func<WebGalleryFilter, WebGalleryFilter> Clear)> Chips
+    private List<(string Label, Func<GalleryFilter, GalleryFilter> Clear)> Chips
     {
         get
         {
-            var chips = new List<(string, Func<WebGalleryFilter, WebGalleryFilter>)>();
+            var chips = new List<(string, Func<GalleryFilter, GalleryFilter>)>();
             if (Filter.Search.Length > 0) chips.Add(($"Search: {Filter.Search}", filter => filter with { Search = "" }));
             if (Filter.Prompt.Length > 0)
                 chips.Add(($"Prompt: {(Filter.Prompt.Length > 48 ? Filter.Prompt[..48] + "…" : Filter.Prompt)}", filter => filter with { Prompt = "" }));
-            if (Filter.Media != WebGalleryFilter.AnyValue) chips.Add((Filter.Media == "video" ? "Videos only" : "Images only", filter => filter with { Media = WebGalleryFilter.AnyValue }));
+            if (Filter.Media != GalleryFilter.AnyValue) chips.Add((Filter.Media == "video" ? "Videos only" : "Images only", filter => filter with { Media = GalleryFilter.AnyValue }));
             if (Filter.Collection.Length > 0) chips.Add(($"Collection: {Filter.Collection}", filter => filter with { Collection = "" }));
             if (Filter.Tag.Length > 0) chips.Add(($"Tag: {Filter.Tag}", filter => filter with { Tag = "" }));
             if (Filter.Folder.Length > 0) chips.Add(($"Folder: {Filter.Folder}", filter => filter with { Folder = "" }));
             if (Filter.Model.Length > 0) chips.Add(($"Model: {Filter.Model}", filter => filter with { Model = "" }));
             if (Filter.MinRating > 0) chips.Add(($"Rating: {Filter.MinRating}+", filter => filter with { MinRating = 0 }));
-            if (Filter.Review != WebGalleryFilter.AnyValue) chips.Add(($"Review: {Filter.Review}", filter => filter with { Review = WebGalleryFilter.AnyValue }));
-            if (Filter.UnorganizedOnly) chips.Add(("Without a collection", filter => filter with { UnorganizedOnly = false }));
-            if (Filter.FavoritesOnly) chips.Add(("Favorites only", filter => filter with { FavoritesOnly = false }));
-            if (Filter.Deletion != WebGalleryFilter.AnyValue) chips.Add(($"Deletion: {Filter.Deletion}", filter => filter with { Deletion = WebGalleryFilter.AnyValue }));
-            if (Filter.Analysis != WebGalleryFilter.AnyValue) chips.Add(($"Analysis: {Filter.Analysis}", filter => filter with { Analysis = WebGalleryFilter.AnyValue }));
-            if (Filter.Orientation != WebGalleryFilter.AnyValue) chips.Add(($"Orientation: {Filter.Orientation}", filter => filter with { Orientation = WebGalleryFilter.AnyValue }));
+            if (Filter.Review != GalleryFilter.AnyValue) chips.Add(($"Review: {Filter.Review}", filter => filter with { Review = GalleryFilter.AnyValue }));
+            if (Filter.IncludesUnorganizedOnly) chips.Add(("Without a collection", filter => filter with { IncludesUnorganizedOnly = false }));
+            if (Filter.IncludesFavoritesOnly) chips.Add(("Favorites only", filter => filter with { IncludesFavoritesOnly = false }));
+            if (Filter.Deletion != GalleryFilter.AnyValue) chips.Add(($"Deletion: {Filter.Deletion}", filter => filter with { Deletion = GalleryFilter.AnyValue }));
+            if (Filter.Analysis != GalleryFilter.AnyValue) chips.Add(($"Analysis: {Filter.Analysis}", filter => filter with { Analysis = GalleryFilter.AnyValue }));
+            if (Filter.Orientation != GalleryFilter.AnyValue) chips.Add(($"Orientation: {Filter.Orientation}", filter => filter with { Orientation = GalleryFilter.AnyValue }));
             if (Filter.MinWidth > 0) chips.Add(($"Width: {Filter.MinWidth}+", filter => filter with { MinWidth = 0 }));
             if (Filter.MinHeight > 0) chips.Add(($"Height: {Filter.MinHeight}+", filter => filter with { MinHeight = 0 }));
             if (Filter.From is not null) chips.Add(($"From: {Filter.From:yyyy-MM-dd}", filter => filter with { From = null }));
@@ -43,7 +43,7 @@
         }
     }
 
-    private Task RemoveAsync(Func<WebGalleryFilter, WebGalleryFilter> clear)
+    private Task RemoveAsync(Func<GalleryFilter, GalleryFilter> clear)
     {
         return Changed.InvokeAsync(clear(Filter));
     }

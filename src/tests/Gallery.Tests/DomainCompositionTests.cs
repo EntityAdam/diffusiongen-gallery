@@ -1,4 +1,5 @@
-using Gallery.Web.Services;
+using Gallery.Web.Composition;
+using Gallery.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Gallery.Tests;
@@ -15,7 +16,7 @@ public sealed class DomainCompositionTests
         var expectedDomainTypes = new[] { typeof(GalleryService) };
 
         // Act
-        GalleryService.Register(services, fixture.Configuration, fixture.Root);
+        GalleryServiceRegistration.Register(services, fixture.Configuration, fixture.Root);
         var registeredDomainTypes = services
             .Where(descriptor => descriptor.ServiceType.Assembly == typeof(GalleryService).Assembly)
             .Select(descriptor => descriptor.ServiceType).ToArray();
@@ -30,7 +31,7 @@ public sealed class DomainCompositionTests
         // Arrange
         using var fixture = new TestVault();
         var services = new ServiceCollection();
-        GalleryService.Register(services, fixture.Configuration, fixture.Root);
+        GalleryServiceRegistration.Register(services, fixture.Configuration, fixture.Root);
         using var provider = services.BuildServiceProvider();
         var firstScope = provider.CreateScope();
         using var secondScope = provider.CreateScope();
@@ -59,12 +60,52 @@ public sealed class DomainCompositionTests
         // Arrange
         using var fixture = new TestVault();
         // Act
-        var exception = await Record.ExceptionAsync(() => fixture.Service.SaveViewAsync(name, new()));
+        var invalidName = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SaveViewAsync(name, new()));
 
         // Assert
-        var invalidName = Assert.IsType<InvalidOperationException>(exception);
-        Assert.Contains("Saved view name", invalidName.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("1", invalidName.Message, StringComparison.Ordinal);
-        Assert.Contains("80", invalidName.Message, StringComparison.Ordinal);
+        AsserterExceptionContract.AssertMessageContains(
+            ["Saved view name", $"'{name.Trim()}'", "1 to 80 characters"], invalidName.Message);
     }
+
+    [Fact]
+    public void DomainConstruction_WhenScopeIsDisposed_ThenOwnedTransportIsDisposed()
+    {
+        using var fixture = new TestVault();
+        var transport = new DisposalTrackingTransport();
+        var client = new HttpClient(transport);
+        var options = new Gallery.Core.Models.GalleryRuntimeOptions { StateDirectory = fixture.Root + "-state" };
+
+        var service = GalleryService.Create(fixture.Root, options, client);
+        service.Dispose();
+
+        Assert.True(transport.IsDisposed);
+    }
+
+    [Fact]
+    public void DomainConstruction_WhenConstructionFails_ThenOwnedTransportIsDisposed()
+    {
+        using var fixture = new TestVault();
+        var transport = new DisposalTrackingTransport();
+        var client = new HttpClient(transport);
+        var options = new Gallery.Core.Models.GalleryRuntimeOptions { StateDirectory = fixture.Root + "-state" };
+
+        Assert.Throws<ArgumentException>(() => GalleryService.Create("invalid\0path", options, client));
+
+        Assert.True(transport.IsDisposed);
+    }
+
+    private sealed class DisposalTrackingTransport : HttpMessageHandler
+    {
+        public bool IsDisposed { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Transport lifetime checks do not send requests.");
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) IsDisposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
 }

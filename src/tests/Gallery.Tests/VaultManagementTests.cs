@@ -1,11 +1,16 @@
+using Gallery.Core.Services.Sessions.Locations;
+using System.Collections.Immutable;
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
+using Gallery.Web.Composition;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Gallery.Web.Services;
-using Gallery.Web.Services.DataManagers;
-using Gallery.Web.Services.Sessions;
+using Gallery.Core.Services;
+using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services.Sessions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Gallery.Tests;
@@ -18,7 +23,7 @@ public sealed class VaultManagementTests
     {
         using var fixture = new TestVault();
         var services = new ServiceCollection();
-        GalleryService.Register(services, fixture.Configuration, fixture.Root);
+        GalleryServiceRegistration.Register(services, fixture.Configuration, fixture.Root);
         using var provider = services.BuildServiceProvider();
         using var firstScope = provider.CreateScope();
         using var secondScope = provider.CreateScope();
@@ -231,8 +236,27 @@ public sealed class VaultManagementTests
                 using var stream = archive.CreateEntry(name).Open();
                 stream.Write([1, 2, 3]);
             }
-            await Assert.ThrowsAnyAsync<Exception>(() => fixture.Service.RestoreVaultAsync("local", backups, "", "", "",
-                latest.BackupName, destination, failure == "credentials" ? "incorrect credentials" : TestVault.Passphrase));
+            Func<Task> restore = () => fixture.Service.RestoreVaultAsync("local", backups, "", "", "",
+                latest.BackupName, destination, failure == "credentials" ? "incorrect credentials" : TestVault.Passphrase);
+            switch (failure)
+            {
+                case "credentials":
+                    await Assert.ThrowsAsync<AuthenticationTagMismatchException>(restore);
+                    break;
+                case "missing-parent":
+                    await Assert.ThrowsAsync<FileNotFoundException>(restore);
+                    break;
+                case "media":
+                    var corruptMedia = await Assert.ThrowsAsync<CryptographicException>(restore);
+                    AsserterExceptionContract.AssertMessageContains(["media", "integrity"], corruptMedia.Message);
+                    break;
+                case "database":
+                    var corruptDatabase = await Assert.ThrowsAsync<SqliteException>(restore);
+                    Assert.Equal(26, corruptDatabase.SqliteErrorCode);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(failure));
+            }
             Assert.Equal(fixture.Root, fixture.Service.VaultRoot);
             Assert.True(fixture.Service.IsUnlocked);
             Assert.False(File.Exists(Path.Combine(destination, "vault.json")));
@@ -263,7 +287,7 @@ public sealed class VaultManagementTests
         listener.Prefixes.Add(endpoint);
         listener.Start();
         Task? server = null;
-        var requests = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var requests = new System.Collections.Concurrent.ConcurrentQueue<AzureRequest>();
         try
         {
             await fixture.Service.SaveBackupOptionsAsync("local", backups, "", "", "");
@@ -279,7 +303,10 @@ public sealed class VaultManagementTests
                     var response = context.Response;
                     try
                     {
-                        requests.Enqueue(context.Request.RawUrl!);
+                        requests.Enqueue(new AzureRequest(context.Request.HttpMethod, context.Request.Url!.AbsolutePath,
+                            context.Request.QueryString.AllKeys.Where(key => key is not null)
+                                .ToImmutableDictionary(key => key!, key => context.Request.QueryString[key] ?? "", StringComparer.Ordinal),
+                            context.Request.Headers["x-ms-version"]));
                         var listing = context.Request.QueryString["comp"] == "list";
                         var body = listing ? Encoding.UTF8.GetBytes($"""
                             <?xml version="1.0" encoding="utf-8"?>
@@ -307,7 +334,17 @@ public sealed class VaultManagementTests
             Assert.Contains(full.BackupName, await fixture.Service.ListRestoreBackupsAsync("azure", "", "gallery-backups", "nightly", connection));
             var error = await Record.ExceptionAsync(() => fixture.Service.RestoreVaultAsync("azure", "", "gallery-backups", "nightly", connection,
                 full.BackupName, destination, TestVault.Passphrase));
-            Assert.True(error is null, $"{error}; Requests: {string.Join(", ", requests)}");
+            var observedRequests = requests.ToArray().ToImmutableArray();
+            Assert.True(error is null, $"Expected no restore exception; Actual: {error?.ToString() ?? "<none>"}. Requests: {JsonSerializer.Serialize(observedRequests)}.");
+            Assert.True(observedRequests.Any(request => request.Method == "GET"
+                && request.Path == "/testaccount/gallery-backups"
+                && request.Query.GetValueOrDefault("comp") == "list"
+                && request.Query.GetValueOrDefault("prefix") == "nightly/"),
+                $"Expected a GET listing for testaccount/gallery-backups with prefix nightly/; Actual: {JsonSerializer.Serialize(observedRequests)}.");
+            Assert.True(observedRequests.Any(request => request.Method == "GET"
+                && Uri.UnescapeDataString(request.Path) == $"/testaccount/gallery-backups/nightly/{full.BackupName}"
+                && !string.IsNullOrEmpty(request.Version)),
+                $"Expected a versioned GET download for backup '{full.BackupName}'; Actual: {JsonSerializer.Serialize(observedRequests)}.");
             await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
             Assert.Equal(image.Id, Assert.Single(await fixture.Service.ListAsync()).Id);
             Assert.StartsWith("data:image/", await fixture.Service.PreviewAsync(image.Id));
@@ -368,4 +405,6 @@ public sealed class VaultManagementTests
     {
         if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
     }
+    private sealed record AzureRequest(string Method, string Path, ImmutableDictionary<string, string> Query, string? Version);
+
 }

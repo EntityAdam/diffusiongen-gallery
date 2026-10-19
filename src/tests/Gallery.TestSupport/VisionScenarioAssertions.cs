@@ -27,12 +27,12 @@ internal sealed record ExpectedVisionScenario(string BusinessRule, ImmutableArra
 
 internal static class AsserterVisionScenario
 {
-    public static void AssertAllObligationsAreMet(ExpectedVisionScenario expected, IReadOnlyDictionary<string, object?> actual)
+    public static void AssertAllObligationsAreMet(ExpectedVisionScenario expectedVisionScenario, IReadOnlyDictionary<string, object?> actualVisionValues)
     {
         var discrepancies = new List<string>();
-        foreach (var obligation in expected.Obligations)
+        foreach (var obligation in expectedVisionScenario.Obligations)
         {
-            var present = actual.TryGetValue(obligation.Name, out var value);
+            var present = actualVisionValues.TryGetValue(obligation.Name, out var value);
             var matches = present && obligation.Comparison switch
             {
                 VisionComparison.Equal => obligation.ValueJson == JsonSerializer.Serialize(value),
@@ -44,7 +44,7 @@ internal static class AsserterVisionScenario
                 discrepancies.Add($"{obligation.Name}: Expected ({obligation.Comparison}): {obligation.ValueJson}; Actual: {(present ? JsonSerializer.Serialize(value) : "<missing evidence>")}");
         }
         Assert.True(discrepancies.Count == 0,
-            "VISION SCENARIO ASSERTION FAILED\n" + string.Join("\n", discrepancies) + "\nBusiness Rule Violated: " + expected.BusinessRule);
+            $"VISION SCENARIO ASSERTION FAILED\n{discrepancies.Count}-of-{expectedVisionScenario.Obligations.Length} obligations failed.\n" + string.Join("\n", discrepancies) + "\nBusiness Rule Violated: " + expectedVisionScenario.BusinessRule);
     }
 }
 

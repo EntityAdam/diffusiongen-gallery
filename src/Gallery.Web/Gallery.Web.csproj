@@ -7,10 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="LucideBlazor" Version="1.0.6" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
-    <PackageReference Include="Azure.Storage.Blobs" Version="12.25.1" />
     <PackageReference Include="ShadCn.Blazor.Components" Version="1.0.37" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <InternalsVisibleTo Include="Gallery.Tests" />
     <InternalsVisibleTo Include="Gallery.TestSupport" />
   </ItemGroup>

@@ -30,7 +30,7 @@
                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@working" OnClick="SaveViewAsync">Save view</Button>
                 @foreach (var view in views)
                 {
-                    <div class="mt-3 flex items-center gap-2 [&>button:first-child]:min-w-0 [&>button:first-child]:flex-1 [&>button:first-child]:justify-start"><Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@working" OnClick="() => FilterChanged.InvokeAsync(view.Filter with { })">@view.Name</Button><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@working" aria-label="@($"Delete saved view {view.Name}")" OnClick="() => DeleteViewAsync(view.Name)"><XIcon aria-hidden="true" /></Button></div>
+                    <div class="mt-3 flex items-center gap-2 [&>button:first-child]:min-w-0 [&>button:first-child]:flex-1 [&>button:first-child]:justify-start"><Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@working" OnClick="() => FilterChanged.InvokeAsync(view.GalleryFilter with { })">@view.Name</Button><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@working" aria-label="@($"Delete saved view {view.Name}")" OnClick="() => DeleteViewAsync(view.Name)"><XIcon aria-hidden="true" /></Button></div>
                 }
             </div>
             <div>
@@ -39,7 +39,7 @@
                 <p class="text-muted-foreground">Converts language to explicit filters, not embedding search. Review the interpretation before applying it.</p>
                 @if (suggestedFilter is not null)
                 {
-                    <div class="mt-4 space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4 break-words">Search: @suggestedFilter.Search / Tag: @suggestedFilter.Tag / Collection: @suggestedFilter.Collection / Minimum rating: @suggestedFilter.MinRating / Favorites: @suggestedFilter.FavoritesOnly / Orientation: @suggestedFilter.Orientation / Review: @suggestedFilter.Review</div>
+                    <div class="mt-4 space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4 break-words">Search: @suggestedFilter.Search / Tag: @suggestedFilter.Tag / Collection: @suggestedFilter.Collection / Minimum rating: @suggestedFilter.MinRating / Favorites: @suggestedFilter.IncludesFavoritesOnly / Orientation: @suggestedFilter.Orientation / Review: @suggestedFilter.Review</div>
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@working" OnClick="ApplySearchAsync">Apply suggested filters</Button>
                 }
             </div>
@@ -72,7 +72,7 @@
                     @foreach (var image in compareImages)
                     {
                         <article class="min-w-0 space-y-4 [&>img]:h-[55vh] [&>img]:w-full [&>img]:bg-black/40 [&>img]:object-contain"><h3>@image.Name</h3><img src="@comparison[image.Id]" alt="@image.Name" draggable="false" />
-                            <p>@image.Width &times; @image.Height / Rating: @image.Rating / @(image.Reviewed ? "Reviewed" : "Pending review")</p>
+                            <p>@image.Width &times; @image.Height / Rating: @image.Rating / @(image.IsReviewed ? "Reviewed" : "Pending review")</p>
                             <div class="flex flex-wrap items-center gap-2">
                                 @for (var score = 1; score <= 5; score++)
                                 {
@@ -92,20 +92,20 @@
 @code {
     [Parameter] public string Workflow { get; set; } = "organize";
     [Parameter] public bool Visible { get; set; } = true;
-    [Parameter] public IReadOnlyList<WebImageRecord> Images { get; set; } = [];
+    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
     [Parameter] public IReadOnlyCollection<string> SelectedIds { get; set; } = [];
-    [Parameter, EditorRequired] public WebGalleryFilter Filter { get; set; } = new();
-    [Parameter] public EventCallback<WebGalleryFilter> FilterChanged { get; set; }
+    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
+    [Parameter] public EventCallback<GalleryFilter> FilterChanged { get; set; }
     [Parameter] public EventCallback Changed { get; set; }
-    [Parameter] public EventCallback<WebLibraryJobStatus> JobChanged { get; set; }
+    [Parameter] public EventCallback<LibraryJobStatus> JobChanged { get; set; }
     private string collection = "", tags = "", viewName = "", query = "", error = "", notice = "", status = "";
     private int rating = -1;
     private string reviewStatus = "unchanged", jobWorkflow = "", jobMessage = "";
     private bool working, analyzing, reportingJob, cancelRequested, disposed;
-    private List<WebSavedView> views = [];
-    private List<WebOrganizationSuggestion> suggestions = [];
-    private WebGalleryFilter? suggestedFilter;
-    private List<WebImageRecord> compareImages = [];
+    private List<SavedView> views = [];
+    private List<OrganizationSuggestion> suggestions = [];
+    private GalleryFilter? suggestedFilter;
+    private List<ImageRecord> compareImages = [];
     private readonly Dictionary<string, string> comparison = [];
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
     protected override void OnParametersSet()
@@ -140,7 +140,7 @@
     }
 
     private Task PublishJobAsync() => disposed ? Task.CompletedTask : JobChanged.InvokeAsync(
-        new WebLibraryJobStatus(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
+        new LibraryJobStatus(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
             suggestions.Count, analyzing && !cancelRequested));
 
     public async Task StopAnalysisAsync()
@@ -151,14 +151,14 @@
         await PublishJobAsync();
     }
 
-    private async Task DismissAsync(WebOrganizationSuggestion suggestion)
+    private async Task DismissAsync(OrganizationSuggestion suggestion)
     {
         suggestions.Remove(suggestion);
         jobMessage = $"{suggestions.Count} suggestions await approval.";
         await PublishJobAsync();
     }
 
-    private async Task ApplyBulkAsync(Func<WebImageRecordEdit, WebImageRecordEdit> change)
+    private async Task ApplyBulkAsync(Func<ImageRecordEdit, ImageRecordEdit> change)
     {
         var failures = new List<string>();
         var ids = SelectedIds.ToArray();
@@ -186,7 +186,7 @@
         {
             var updated = image with { Tags = Gallery.MergeTags(image.Tags, tags) };
             return collection.Trim().Length > 0
-                ? Gallery.SetOrganization(updated, updated.Rating, updated.Reviewed, collection) : updated;
+                ? Gallery.SetOrganization(updated, updated.Rating, updated.IsReviewed, collection) : updated;
         });
     });
 
@@ -256,14 +256,14 @@
         error = string.Join(" / ", failures);
     }, reportJob: true);
 
-    private Task ApproveAsync(WebOrganizationSuggestion suggestion) => RunAsync("Saving approved suggestion...", async () =>
+    private Task ApproveAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved suggestion...", async () =>
     {
         await Gallery.UpdateAsync(suggestion.Id, image =>
         {
             var updated = image with { Description = suggestion.Description,
                 Tags = Gallery.MergeTags(image.Tags, suggestion.Tags), AnalysisModel = suggestion.Model };
             return suggestion.Collection.Length > 0
-                ? Gallery.SetOrganization(updated, updated.Rating, updated.Reviewed, suggestion.Collection) : updated;
+                ? Gallery.SetOrganization(updated, updated.Rating, updated.IsReviewed, suggestion.Collection) : updated;
         });
         suggestions.Remove(suggestion);
         jobMessage = $"{suggestions.Count} suggestions await approval.";
@@ -275,11 +275,11 @@
         comparison.Clear();
         var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
         if (selected.Count != 2) throw new InvalidOperationException("Select exactly two images.");
-        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, WebImageResolution.Fit);
+        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, ImageResolution.Fit);
         compareImages = selected;
     });
 
-    private Task RateOneAsync(WebImageRecord image, int value) => RunAsync("Saving rating...", async () =>
+    private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
         var updated = await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
         var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);

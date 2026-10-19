@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Gallery.Core.Models;
-using Gallery.Web.Models;
 
 namespace Gallery.Tests;
 
@@ -26,7 +25,7 @@ public sealed class EditBoundaryTests
         await fixture.InitializeAsync();
         var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "boundary.png", "folder");
         var before = await fixture.RawStore.ReadRecordAsync(image.Id);
-        WebImageRecordEdit InvalidEdit(WebImageRecordEdit edit) => scenario switch
+        ImageRecordEdit InvalidEdit(ImageRecordEdit edit) => scenario switch
         {
             "negative-rating" => edit with { Rating = -1 },
             "excessive-rating" => edit with { Rating = 999 },
@@ -39,16 +38,35 @@ public sealed class EditBoundaryTests
             "null-tags" => edit with { Tags = null! },
             "null-model" => edit with { AnalysisModel = null! },
             "null-edit" => null!,
-            "different-image" => new WebImageRecordEdit(new WebImageRecord { Id = "different" }),
+            "different-image" => new ImageRecordEdit(new ImageRecord { Id = "different" }),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario))
         };
 
-        Assert.Throws<InvalidOperationException>(() => fixture.Service.ApplyEdit(image, InvalidEdit));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.UpdateAsync(image.Id, InvalidEdit));
+        var expectedPhrases = scenario switch
+        {
+            "negative-rating" => new[] { "-1", "0", "5", "rating" },
+            "excessive-rating" => new[] { "999", "0", "5", "rating" },
+            "empty-collection" => new[] { "''", "1", "80", "collection" },
+            "whitespace-collection" => new[] { "' '", "1", "80", "collection" },
+            "long-collection" => new[] { new string('a', 81), "1", "80", "collection" },
+            "null-collection" => new[] { "null", "1", "80", "collection" },
+            "default-collections" => new[] { "collections", "initialized" },
+            "null-description" => new[] { "description", "null" },
+            "null-tags" => new[] { "tags", "null" },
+            "null-model" => new[] { "model", "null" },
+            "null-edit" => new[] { "edit", "null" },
+            "different-image" => new[] { image.Id, "different", "identity" },
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario))
+        };
+        var projectedError = Assert.Throws<InvalidOperationException>(() => fixture.Service.ApplyEdit(image, InvalidEdit));
+        var persistedError = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.UpdateAsync(image.Id, InvalidEdit));
         var batchError = await Assert.ThrowsAsync<AggregateException>(() =>
             fixture.Service.UpdateManyAsync([image.Id], InvalidEdit));
 
-        Assert.IsType<InvalidOperationException>(Assert.Single(batchError.InnerExceptions).InnerException);
+        var perImageError = Assert.IsType<InvalidOperationException>(Assert.Single(batchError.InnerExceptions).InnerException);
+        AsserterExceptionContract.AssertMessageContains(expectedPhrases, projectedError.Message);
+        AsserterExceptionContract.AssertMessageContains(expectedPhrases, persistedError.Message);
+        AsserterExceptionContract.AssertMessageContains(expectedPhrases, perImageError.Message);
         Assert.Equal(before, await fixture.RawStore.ReadRecordAsync(image.Id));
         Assert.True(File.Exists(image.StoredPath));
     }
@@ -56,12 +74,12 @@ public sealed class EditBoundaryTests
     [Fact]
     public void EditContracts_ExposeOnlyUserEditableFields()
     {
-        var expected = new[] { "Id", "Description", "Tags", "AnalysisModel", "Favorite",
-            "MarkedForDeletion", "Collections", "Rating", "Reviewed" }.Order();
+        var expected = new[] { "Id", "Description", "Tags", "AnalysisModel", "IsFavorite",
+            "IsMarkedForDeletion", "Collections", "Rating", "IsReviewed" }.Order();
 
-        Assert.Equal(expected, typeof(WebImageRecordEdit).GetProperties().Select(property => property.Name).Order());
         Assert.Equal(expected, typeof(ImageRecordEdit).GetProperties().Select(property => property.Name).Order());
-        Assert.Null(typeof(WebImageRecordEdit).GetProperty("Id")!.SetMethod);
+        Assert.Equal(expected, typeof(ImageRecordEdit).GetProperties().Select(property => property.Name).Order());
+        Assert.Null(typeof(ImageRecordEdit).GetProperty("Id")!.SetMethod);
     }
 
     [Fact]
@@ -85,7 +103,7 @@ public sealed class EditBoundaryTests
         foreach (var image in batch)
         {
             Assert.Equal(JsonSerializer.Serialize(stored[image.Id]), JsonSerializer.Serialize(image));
-            Assert.True(image.Reviewed);
+            Assert.True(image.IsReviewed);
             var original = image.Id == first.Id ? first : second;
             Assert.Equal(original.StoredPath, image.StoredPath);
             Assert.Equal(original.Name, image.Name);

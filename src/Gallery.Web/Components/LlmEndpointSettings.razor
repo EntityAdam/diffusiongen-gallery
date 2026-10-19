@@ -11,7 +11,7 @@
         <Label For="api-key" Class="mt-4 mb-2 block">API key (optional)</Label>
         <Input id="api-key" Type="password" autocomplete="new-password" @bind-Value="draft.ApiKey" Disabled="@working" Placeholder="Leave blank for unauthenticated local endpoints" />
         <Label For="request-timeout" Class="mt-4 mb-2 block">Request timeout (seconds)</Label>
-        <input id="request-timeout" type="number" min="@WebVisionSettings.MinRequestTimeoutSeconds" max="@WebVisionSettings.MaxRequestTimeoutSeconds" @bind="draft.RequestTimeoutSeconds" disabled="@working" required  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
+        <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds" @bind="draft.RequestTimeoutSeconds" disabled="@working" required  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
         <Label For="model-select" Class="mt-4 mb-2 block">Model</Label>
         @if (models.Count > 0)
         {
@@ -36,8 +36,8 @@
 </Card>
 
 @code {
-    [Parameter, EditorRequired] public WebVisionSettings SavedSettings { get; set; } = new();
-    [Parameter] public EventCallback<WebVisionSettings> Saved { get; set; }
+    [Parameter, EditorRequired] public VisionSettings SavedSettings { get; set; } = new();
+    [Parameter] public EventCallback<VisionSettings> Saved { get; set; }
     private VisionSettingsDraft draft = new();
     protected override void OnInitialized() => draft = VisionSettingsDraft.From(SavedSettings);
     private IReadOnlyList<string> models = [];
@@ -86,7 +86,7 @@
         public string ApiKey { get; set; } = "";
         public int RequestTimeoutSeconds { get; set; }
 
-        public static VisionSettingsDraft From(WebVisionSettings settings) => new()
+        public static VisionSettingsDraft From(VisionSettings settings) => new()
         {
             Endpoint = settings.Endpoint,
             Model = settings.Model,
@@ -94,7 +94,7 @@
             RequestTimeoutSeconds = settings.RequestTimeoutSeconds
         };
 
-        public WebVisionSettings ToSettings() => new()
+        public VisionSettings ToSettings() => new()
         {
             Endpoint = Endpoint,
             Model = Model,

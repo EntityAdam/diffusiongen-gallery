@@ -10,32 +10,24 @@ public sealed record ImageRecordEdit
         Description = imageRecord.Description;
         Tags = imageRecord.Tags;
         AnalysisModel = imageRecord.AnalysisModel;
-        Favorite = imageRecord.Favorite;
-        MarkedForDeletion = imageRecord.MarkedForDeletion;
+        IsFavorite = imageRecord.IsFavorite;
+        IsMarkedForDeletion = imageRecord.IsMarkedForDeletion;
         Collections = imageRecord.Collections;
         Rating = imageRecord.Rating;
-        Reviewed = imageRecord.Reviewed;
+        IsReviewed = imageRecord.IsReviewed;
     }
 
     public string Id { get; }
     public string Description { get; init; }
     public string Tags { get; init; }
     public string AnalysisModel { get; init; }
-    public bool Favorite { get; init; }
-    public bool MarkedForDeletion { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("Favorite")]
+    public bool IsFavorite { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("MarkedForDeletion")]
+    public bool IsMarkedForDeletion { get; init; }
     public ImmutableArray<string> Collections { get; init; }
     public int Rating { get; init; }
-    public bool Reviewed { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("Reviewed")]
+    public bool IsReviewed { get; init; }
 
-    public ImageRecord ToRecord(ImageRecord imageRecord) => imageRecord with
-    {
-        Description = Description,
-        Tags = Tags,
-        AnalysisModel = AnalysisModel,
-        Favorite = Favorite,
-        MarkedForDeletion = MarkedForDeletion,
-        Collections = Collections.ToImmutableArray(),
-        Rating = Rating,
-        Reviewed = Reviewed
-    };
 }

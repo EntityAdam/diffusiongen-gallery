@@ -1,6 +1,6 @@
 using Gallery.Core.Models;
-using Gallery.Core.Processors;
-using Gallery.Core.Queries;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Queries;
 
 namespace Gallery.Tests;
 
@@ -12,13 +12,13 @@ public sealed class CoreRulesTests
     {
         var image = new ImageRecord
         {
-            Rating = 4, Reviewed = true, Description = "latest", Tags = "unchanged", Width = 1024
+            Rating = 4, IsReviewed = true, Description = "latest", Tags = "unchanged", Width = 1024
         };
         var state = new ReviewState(false, true, true, 3);
 
         var restored = ReviewDecision.Restore(image, state);
 
-        Assert.Equal(state, ReviewState.Capture(restored));
+        Assert.Equal(state, ReviewDecision.Capture(restored));
         Assert.Equal(image.Description, restored.Description);
         Assert.Equal(image.Tags, restored.Tags);
         Assert.Equal(image.Width, restored.Width);
@@ -35,18 +35,18 @@ public sealed class CoreRulesTests
         var rated = LibraryRules.SetCuration(edit, 4, false);
         var organized = LibraryRules.SetOrganization(rated, 5, true, " collection ");
         var repeated = LibraryRules.SetOrganization(organized, 5, true, "COLLECTION");
-        var restored = ReviewDecision.Restore(marked, ReviewState.Capture(original));
+        var restored = ReviewDecision.Restore(marked, ReviewDecision.Capture(original));
 
-        Assert.True(favorite.Reviewed);
-        Assert.True(favorite.Favorite);
-        Assert.True(marked.MarkedForDeletion);
-        Assert.True(rated.Reviewed);
+        Assert.True(favorite.IsReviewed);
+        Assert.True(favorite.IsFavorite);
+        Assert.True(marked.IsMarkedForDeletion);
+        Assert.True(rated.IsReviewed);
         Assert.Equal(4, rated.Rating);
         Assert.Equal(["collection"], repeated.Collections.ToArray());
         Assert.Empty(LibraryRules.RemoveCollection(repeated, " COLLECTION ").Collections);
         Assert.Equal(edit, restored);
         Assert.Equal("first, Second", LibraryRules.MergeTags("first", "Second, FIRST"));
-        Assert.False(original.Reviewed);
+        Assert.False(original.IsReviewed);
     }
 
     [Theory]
@@ -56,13 +56,13 @@ public sealed class CoreRulesTests
     public void RecordEdits_ApplyImplicitReviewRule(int rating, bool marked, bool expectedReviewed)
     {
         var original = new ImageRecord { Id = "same", Width = 1024 };
-        var edit = new ImageRecordEdit(original) { Rating = rating, MarkedForDeletion = marked };
+        var edit = new ImageRecordEdit(original) { Rating = rating, IsMarkedForDeletion = marked };
         var updated = LibraryRules.ApplyEdit(original, edit);
 
-        Assert.Equal(expectedReviewed, updated.Reviewed);
+        Assert.Equal(expectedReviewed, updated.IsReviewed);
         Assert.Equal(original.Id, updated.Id);
         Assert.Equal(original.Width, updated.Width);
-        Assert.False(original.Reviewed);
+        Assert.False(original.IsReviewed);
     }
 
     [Fact]
@@ -75,8 +75,8 @@ public sealed class CoreRulesTests
         Assert.Equal("large", group.KeepId);
         Assert.Equal(["large", "small"], group.ImageIds.ToArray());
         Assert.Equal(42, group.ReclaimableBytes);
-        Assert.True(group.Exact);
-        Assert.Equal(["small"], DuplicateRules.InitialKeepers([small, large with { MarkedForDeletion = true }]));
+        Assert.True(group.IsExact);
+        Assert.Equal(["small"], DuplicateRules.InitialKeepers([small, large with { IsMarkedForDeletion = true }]));
         Assert.Equal(6, DuplicateRules.HammingDistance(0, 63));
     }
 
@@ -105,7 +105,7 @@ public sealed class CoreRulesTests
         var item = new RemovalItem(original.Id, original.Name, "original", exists);
 
         Assert.False(RemovalRules.CanRemove(original));
-        Assert.True(RemovalRules.CanRemove(original with { MarkedForDeletion = true }));
+        Assert.True(RemovalRules.CanRemove(original with { IsMarkedForDeletion = true }));
         Assert.Equal(exists, RemovalRules.ShouldDeleteOriginal(item, ExistingOriginalAction.Delete));
         Assert.False(RemovalRules.ShouldDeleteOriginal(item, ExistingOriginalAction.Retain));
         Assert.Equal(!exists, RemovalRules.ShouldRestoreOriginal(item, MissingOriginalAction.RestorePng));

@@ -1,9 +1,11 @@
-using Gallery.Web.Exceptions;
-using Gallery.Web.Services.Processors;
-using Gallery.Web.Services.DataManagers;
-using Gallery.Web.Services.Sessions;
+using Gallery.Core.Services.Processors.Codecs;
+using Gallery.Core.Services.Validators;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services.Sessions;
 using System.Security.Cryptography;
-using Gallery.Web.Services;
+using Gallery.Core.Services;
 using Microsoft.Extensions.Configuration;
 
 namespace Gallery.Tests;
@@ -78,9 +80,9 @@ public sealed class CryptoTests
         var unknownWords = string.Join(' ', Enumerable.Repeat("no-suchword", 32));
 
         // Act
-        var normalized = VaultCrypto.NormalizeRecovery(whitespacePhrase);
-        var shortPhraseError = Assert.Throws<InvalidOperationException>(() => VaultCrypto.NormalizeRecovery("wrong words"));
-        var unknownWordError = Assert.Throws<InvalidOperationException>(() => VaultCrypto.NormalizeRecovery(unknownWords));
+        var normalized = RecoveryPhraseValidator.Normalize(whitespacePhrase);
+        var shortPhraseError = Assert.Throws<InvalidOperationException>(() => RecoveryPhraseValidator.Normalize("wrong words"));
+        var unknownWordError = Assert.Throws<InvalidOperationException>(() => RecoveryPhraseValidator.Normalize(unknownWords));
 
         // Assert
         Assert.Equal(32, phrase.Split(' ').Length);

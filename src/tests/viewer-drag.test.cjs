@@ -10,7 +10,7 @@ function setup() {
         constructor(image = false) { this.image = image; }
         closest(selector) { return selector === "img" && this.image ? this : null; }
     }
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "wwwroot", "viewer.js"), "utf8"), {
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
         window: {},
         Element,
         document: {

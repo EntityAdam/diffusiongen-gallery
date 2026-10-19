@@ -1,7 +1,7 @@
-using Gallery.Web.Managers.Gateways;
+using Gallery.Core.Services.Gateways;
 using System.Net;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 
@@ -12,7 +12,7 @@ namespace Gallery.Tests;
 public static class VisionTests
 {
     [Fact]
-    public static async Task BulkAnalysis_WhenCollectionsAreAvailable_UsesOneVisionRequestWithCollectionContext()
+    public static async Task BulkAnalysis_WhenCollectionsAreAvailable_ThenUsesOneVisionRequestWithCollectionContext()
     {
         // Arrange
         var calls = 0;
@@ -30,7 +30,7 @@ public static class VisionTests
             new ExpectedVisionObligation("image payload", "image_url", VisionComparison.Contains), new ExpectedVisionObligation("available collections", "Worlds", VisionComparison.Contains),
             new ExpectedVisionObligation("collection instruction", "collection", VisionComparison.Contains), new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green", "Worlds", "" }), new ExpectedVisionObligation("requests", 1));
         // Act
-        var result = await service.AnalyzeImageWithCollectionAsync(new() { Model = "vision" }, "data:image/png;base64,example", ["Worlds"]);
+        var result = await service.AnalyzeImageWithCollectionAsync("vision", 180, "data:image/png;base64,example", ["Worlds"]);
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
@@ -49,14 +49,14 @@ public static class VisionTests
     [InlineData("""{"choices":[{"finish_reason":"length","message":{"content":""}}]}""", "token limit")]
     [InlineData("""{"choices":[{"message":{"content":"```json\n\n```"}}]}""", "empty JSON code block")]
     [InlineData("""{"choices":[{"message":{"content":"not JSON"}}]}""", "valid JSON")]
-    public static async Task BulkAnalysis_WhenResponseIsEmptyOrInvalid_ExplainsTheFailure(string body, string expected)
+    public static async Task BulkAnalysis_WhenResponseIsEmptyOrInvalid_ThenExplainsTheFailure(string body, string expected)
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) }))));
         // Act
-        var error = await Record.ExceptionAsync(() =>
-            service.AnalyzeImageWithCollectionAsync(new() { Model = "vision" }, "image", []));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []));
 
         // Assert
         var malformedResponse = Assert.IsType<InvalidOperationException>(error);
@@ -64,7 +64,7 @@ public static class VisionTests
     }
 
     [Fact]
-    public static async Task BulkAnalysis_WhenCollectionIsMissing_PreservesAnalysisWithWarning()
+    public static async Task BulkAnalysis_WhenCollectionIsMissing_ThenPreservesAnalysisWithWarning()
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
@@ -75,7 +75,7 @@ public static class VisionTests
         var expected = ExpectedVisionScenario.Create("missing collection preserves description and tags and explains the omission",
             new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green", "" }), new ExpectedVisionObligation("warning", "missing collection", VisionComparison.Contains));
         // Act
-        var result = await service.AnalyzeImageWithCollectionAsync(new() { Model = "vision" }, "image", []);
+        var result = await service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []);
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
@@ -90,7 +90,7 @@ public static class VisionTests
         { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") }))));
         var expected = ExpectedVisionScenario.Create("basic analysis does not require a collection", new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
-        var analysis = await service.AnalyzeAsync(new() { Model = "vision" }, "image");
+        var analysis = await service.AnalyzeAsync("vision", 180, "image");
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?> { ["analysis"] = new[] { analysis.Description, analysis.Tags } });
     }
@@ -103,15 +103,15 @@ public static class VisionTests
     [InlineData("""{"description":"Valid","tags":[null]}""", "not a string")]
     [InlineData("""{"description":"Valid","tags":[123]}""", "not a string")]
     [InlineData("""[]""", "description")]
-    public static async Task Analysis_WhenResponseFieldsAreInvalid_ReportsActionableErrors(string content, string expected)
+    public static async Task Analysis_WhenResponseFieldsAreInvalid_ThenReportsActionableErrors(string content, string expected)
     {
         // Arrange
         var envelope = System.Text.Json.JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } });
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(envelope) }))));
         // Act
-        var error = await Record.ExceptionAsync(() =>
-            service.AnalyzeImageWithCollectionAsync(new() { Model = "vision" }, "image", []));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []));
 
         // Assert
         var invalidAnalysis = Assert.IsType<InvalidOperationException>(error);
@@ -135,14 +135,14 @@ public static class VisionTests
     [InlineData("file:///C:/data")]
     [InlineData("http://user:password@127.0.0.1/v1/")]
     [InlineData("http://127.0.0.1/v1/?secret=123")]
-    public static void VisionSettings_WhenEndpointIsPublicOrUnsafe_RejectsItWithPolicyMessage(string endpoint)
+    public static void VisionSettings_WhenEndpointIsPublicOrUnsafe_ThenRejectsItWithPolicyMessage(string endpoint)
     {
         // Arrange
-        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
 
         var expected = EndpointExpectation(endpoint);
         // Act
-        var error = Record.Exception(() => VisionService.Validate(settings));
+        var error = Assert.Throws<InvalidOperationException>(() => VisionService.Validate(settings));
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, EndpointEvidence(error));
@@ -152,13 +152,13 @@ public static class VisionTests
     public static void VisionSettings_WhenEndpointIsLoopback_ThenAcceptsIt()
     {
         // Arrange
-        var settings = new WebVisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "vision" };
+        var settings = new VisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "vision" };
 
         // Act
         var validated = VisionService.Validate(settings);
 
         // Assert - loopback validation normalizes the accepted endpoint
-        Assert.Contains("http://127.0.0.1:1234/v1/", validated.AbsoluteUri);
+        Assert.Equal("http://127.0.0.1:1234/v1/", validated.AbsoluteUri);
 
     }
 
@@ -166,15 +166,14 @@ public static class VisionTests
     public static void VisionSettings_WhenModelIsMissing_ThenExplainsTheRequirement()
     {
         // Arrange
-        var settings = new WebVisionSettings();
+        var settings = new VisionSettings();
+        string[] expectedMessagePhrases = ["Model ''", "empty", "loaded", "vision-capable model"];
+
         // Act
-        var error = Record.Exception(() => VisionService.Validate(settings));
+        var error = Assert.Throws<InvalidOperationException>(() => VisionService.Validate(settings));
         // Assert - missing models explain how to satisfy the requirement
         var missingModel = Assert.IsType<InvalidOperationException>(error);
-        Assert.Contains("Model ''", missingModel.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("empty", missingModel.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded", missingModel.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("vision-capable model", missingModel.Message, StringComparison.OrdinalIgnoreCase);
+        AsserterExceptionContract.AssertMessageContains(expectedMessagePhrases, missingModel.Message);
     }
 
     [Theory]
@@ -186,10 +185,10 @@ public static class VisionTests
     [InlineData("http://192.168.0.0/v1/")]
     [InlineData("http://192.168.255.255/v1/")]
     [InlineData("http://[::1]:1234/v1/")]
-    public static void VisionSettings_WhenEndpointIsPrivateOrIpv6Loopback_AcceptsIt(string endpoint)
+    public static void VisionSettings_WhenEndpointIsPrivateOrIpv6Loopback_ThenAcceptsIt(string endpoint)
     {
         // Arrange
-        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
 
         // Act
         var validated = VisionService.Validate(settings);
@@ -217,18 +216,19 @@ public static class VisionTests
                     : """{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""")
             });
         })));
-        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
 
         var expected = ExpectedVisionScenario.Create("private-LAN discovery uses the configured origin",
             new ExpectedVisionObligation("models", new[] { "vision" }), new ExpectedVisionObligation("request origins", new[] { new Uri(new Uri(endpoint), "models").AbsoluteUri }));
         // Act
-        var models = await service.GetModelsAsync(settings);
+        var models = await service.Connect(settings.Endpoint, settings.ApiKey).GetModelsAsync(settings.RequestTimeoutSeconds);
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
-        { ["models"] = models, ["request origins"] = requests.Select(uri => uri!.AbsoluteUri).ToArray() });
+        { ["models"] = models, ["request origins"] = requests.Select(uri => uri!.AbsoluteUri) });
     }
 
+    // Every private-LAN origin keeps analysis on its configured validated address.
     [Theory]
     [InlineData("http://10.1.2.3:1234/v1/")]
     [InlineData("http://172.20.1.2:1234/v1/")]
@@ -242,17 +242,17 @@ public static class VisionTests
             requestUri = request.RequestUri!.AbsoluteUri;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") });
         })));
-        var settings = new WebVisionSettings { Endpoint = endpoint, Model = "vision" };
+        var settings = new VisionSettings { Endpoint = endpoint, Model = "vision" };
         var expected = ExpectedVisionScenario.Create("private-LAN analysis uses the configured origin and parses the response",
             new ExpectedVisionObligation("request origin", new Uri(new Uri(endpoint), "chat/completions").AbsoluteUri), new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
-        var analysis = await service.AnalyzeAsync(settings, "image");
+        var analysis = await service.Connect(settings.Endpoint, settings.ApiKey).AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, "image");
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?> { ["request origin"] = requestUri, ["analysis"] = new[] { analysis.Description, analysis.Tags } });
     }
 
     [Fact]
-    public static async Task VisionService_WhenAnalyzingLocally_SendsAndParsesStructuredOpenAiRequest()
+    public static async Task VisionService_WhenAnalyzingLocally_ThenSendsAndParsesStructuredOpenAiRequest()
     {
         // Arrange
         string? sent = null;
@@ -271,7 +271,7 @@ public static class VisionTests
             new ExpectedVisionObligation("origin", "http://127.0.0.1:1234/v1/chat/completions"), new ExpectedVisionObligation("analysis", new[] { "A green landscape.", "green, landscape" }),
             new ExpectedVisionObligation("model", "local-vision", VisionComparison.Contains), new ExpectedVisionObligation("payload", "data:image/png;base64,example", VisionComparison.Contains));
         // Act
-        var result = await service.AnalyzeAsync(new() { Model = "local-vision" }, "data:image/png;base64,example");
+        var result = await service.AnalyzeAsync("local-vision", 180, "data:image/png;base64,example");
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
@@ -279,13 +279,13 @@ public static class VisionTests
     }
 
     [Fact]
-    public static async Task VisionService_WhenEndpointReturnsError_ReportsTheHttpFailure()
+    public static async Task VisionService_WhenEndpointReturnsError_ThenReportsTheHttpFailure()
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.BadRequest)))));
         // Act
-        var error = await Record.ExceptionAsync(() => service.AnalyzeAsync(new() { Model = "local" }, "image"));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.AnalyzeAsync("local", 180, "image"));
 
         // Assert
         var httpFailure = Assert.IsType<InvalidOperationException>(error);
@@ -293,7 +293,7 @@ public static class VisionTests
     }
 
     [Fact]
-    public static async Task ModelDiscovery_WhenModelIsNotConfigured_UsesPerRequestAuthentication()
+    public static async Task ModelDiscovery_WhenModelIsNotConfigured_ThenUsesPerRequestAuthentication()
     {
         // Arrange
         var requests = new List<(HttpMethod Method, Uri Uri, string? Scheme, string? Token)>();
@@ -306,90 +306,130 @@ public static class VisionTests
                 Content = new StringContent("""{"data":[{"id":"z-model"},{"id":"a-model"},{"id":"z-model"}]}""")
             });
         })));
-        var authenticatedSettings = new WebVisionSettings { ApiKey = "private-token" };
+        var authenticatedSettings = new VisionSettings { ApiKey = "private-token" };
 
         var expected = ExpectedVisionScenario.Create("model discovery orders unique identifiers and authentication never leaks to the next request",
             new ExpectedVisionObligation("models", new[] { "a-model", "z-model" }), new ExpectedVisionObligation("requests", new[]
             { new string?[] { "GET", "http://127.0.0.1:1234/v1/models", "Bearer", authenticatedSettings.ApiKey },
               new string?[] { "GET", "http://127.0.0.1:1234/v1/models", null, null } }));
-        await service.GetModelsAsync(authenticatedSettings);
+        await service.Connect(authenticatedSettings.Endpoint, authenticatedSettings.ApiKey).GetModelsAsync(authenticatedSettings.RequestTimeoutSeconds);
 
         // Act - authentication from the preceding request must not persist
-        var models = await service.GetModelsAsync(new());
+        var models = await service.GetModelsAsync(180);
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
-        { ["models"] = models, ["requests"] = requests.Select(request => new[] { request.Method.Method, request.Uri.AbsoluteUri, request.Scheme, request.Token }).ToArray() });
+        { ["models"] = models, ["requests"] = requests.Select(request => new[] { request.Method.Method, request.Uri.AbsoluteUri, request.Scheme, request.Token }) });
     }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenResponseContainsAnEmptyModelList_ThenReturnsNoModels()
+    {
+        // Arrange
+        var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"data":[]}""") }))));
+        var expectedVisionScenario = ExpectedVisionScenario.Create("valid empty model lists succeed without an error",
+            new ExpectedVisionObligation("models", Array.Empty<string>()));
+
+        // Act
+        IReadOnlyList<string> models = await service.GetModelsAsync(180);
+
+        // Assert
+        AsserterVisionScenario.AssertAllObligationsAreMet(expectedVisionScenario,
+            new Dictionary<string, object?> { ["models"] = models });
+    }
+
+    // Every malformed model-list envelope is rejected with the invalid shape or identifier.
     [Theory]
-    [InlineData("""{"data":[]}""", false)]
-    [InlineData("""{"models":[]}""", true)]
-    [InlineData("""{"data":[{"id":""}]}""", true)]
-    [InlineData("""{"data":[{}]}""", true)]
-    // Empty arrays are valid; malformed response shapes and identifiers must explain model-list failure.
-    public static async Task ModelDiscovery_WhenResponseIsEmptyOrMalformed_ReportsTheCorrectOutcome(string json, bool invalid)
+    [InlineData("""{"models":[]}""")]
+    [InlineData("""{"data":[{"id":""}]}""")]
+    [InlineData("""{"data":[{}]}""")]
+    public static async Task ModelDiscovery_WhenResponseIsMalformed_ThenReportsTheInvalidEnvelope(string json)
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) }))));
-        IReadOnlyList<string>? models = null;
-
-        var expectedParts = json.Contains("\"models\"", StringComparison.Ordinal)
-            ? new[] { "{\"models\":[]}", "OpenAI-compatible object", "data array" }
-            : new[] { "model element", "nonempty string id", json.Contains("\"id\":\"\"") ? "\"\"" : "{}" };
-        var expectedEmpty = ExpectedVisionScenario.Create("valid empty model lists succeed without an error", new ExpectedVisionObligation("error", null), new ExpectedVisionObligation("models", Array.Empty<string>()));
+        string[] expectedMessagePhrases = json.Contains("\"models\"", StringComparison.Ordinal)
+            ? ["{\"models\":[]}", "OpenAI-compatible object", "data array"]
+            : ["model element", "nonempty string id", json.Contains("\"id\":\"\"", StringComparison.Ordinal) ? "\"\"" : "{}"];
 
         // Act
-        var error = await Record.ExceptionAsync(async () => models = await service.GetModelsAsync(new()));
+        var malformedResponse = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetModelsAsync(180));
 
         // Assert
-        if (invalid)
-        {
-            var malformedResponse = Assert.IsType<InvalidOperationException>(error);
-            Assert.All(expectedParts, part =>
-                Assert.Contains(part, malformedResponse.Message, StringComparison.OrdinalIgnoreCase));
-        }
-        else
-            AsserterVisionScenario.AssertAllObligationsAreMet(expectedEmpty, new Dictionary<string, object?> { ["error"] = error?.GetType().FullName, ["models"] = models });
+        AsserterExceptionContract.AssertMessageContains(expectedMessagePhrases, malformedResponse.Message);
     }
 
-    [Theory]
-    [InlineData("endpoint")]
-    [InlineData("low timeout")]
-    [InlineData("high timeout")]
-    [InlineData("key")]
-    public static async Task ModelDiscovery_WhenSettingsAreInvalid_ThenRejectsBeforeSending(string violation)
+    [Fact]
+    public static async Task ModelDiscovery_WhenEndpointIsPublic_ThenRejectsItsRoutingPolicyBeforeSending()
     {
         // Arrange
         var calls = 0;
         var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })));
-        var settings = violation switch
+        var settings = new VisionSettings { Endpoint = "https://example.com/v1/" };
+        ExpectedVisionScenario expectedVisionScenario = EndpointExpectation(settings.Endpoint);
+        expectedVisionScenario = expectedVisionScenario with
         {
-            "endpoint" => new WebVisionSettings { Endpoint = "https://example.com/v1/" },
-            "low timeout" => new WebVisionSettings { RequestTimeoutSeconds = 0 },
-            "high timeout" => new WebVisionSettings { RequestTimeoutSeconds = 3601 },
-            _ => new WebVisionSettings { ApiKey = "bad\r\nkey" }
+            Obligations = expectedVisionScenario.Obligations.Add(new ExpectedVisionObligation("requests", 0))
         };
-        var expected = violation == "endpoint" ? EndpointExpectation(settings.Endpoint) : ExpectedVisionScenario.Create("invalid settings explain the requirement before sending",
-            new ExpectedVisionObligation("exception type", typeof(InvalidOperationException).FullName), new ExpectedVisionObligation("requests", 0));
-        if (violation == "endpoint")
-            expected = expected with { Obligations = expected.Obligations.Add(new ExpectedVisionObligation("requests", 0)) };
-        if (violation.Contains("timeout", StringComparison.Ordinal))
-            expected = expected with { Obligations = expected.Obligations.AddRange(new ExpectedVisionObligation[]
-            { new ExpectedVisionObligation("timeout value", settings.RequestTimeoutSeconds + " seconds", VisionComparison.Contains), new ExpectedVisionObligation("lower bound", "between 10 and 3600 seconds", VisionComparison.Contains), new ExpectedVisionObligation("requirement", "between", VisionComparison.Contains) }) };
-        if (violation == "key")
-            expected = expected with { Obligations = expected.Obligations.Add(new ExpectedVisionObligation("requirement", "control characters", VisionComparison.Contains)) };
+
         // Act
-        var error = await Record.ExceptionAsync(() => service.GetModelsAsync(settings));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.Connect(settings.Endpoint, settings.ApiKey).GetModelsAsync(settings.RequestTimeoutSeconds));
+
+        // Assert - gather the rejection and the number of attempted transport requests
+        Dictionary<string, object?> actualVisionValues = EndpointEvidence(error);
+        actualVisionValues["requests"] = calls;
+
         // Assert
-        var evidence = EndpointEvidence(error);
-        evidence["requests"] = calls;
-        evidence["timeout value"] = evidence["lower bound"] = evidence["requirement"] = error?.Message;
-        AsserterVisionScenario.AssertAllObligationsAreMet(expected, evidence);
+        AsserterVisionScenario.AssertAllObligationsAreMet(expectedVisionScenario, actualVisionValues);
+    }
+
+    // Both out-of-range timeout bounds must be explained before any request reaches transport.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3601)]
+    public static async Task ModelDiscovery_WhenTimeoutIsOutsideTheSupportedRange_ThenRejectsBeforeSending(int timeoutSeconds)
+    {
+        // Arrange
+        var calls = 0;
+        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })));
+        var settings = new VisionSettings { RequestTimeoutSeconds = timeoutSeconds };
+        var expectedVisionScenario = ExpectedVisionScenario.Create("invalid timeout settings explain both bounds before sending",
+            new ExpectedVisionObligation("exception type", typeof(InvalidOperationException).FullName),
+            new ExpectedVisionObligation("requests", 0));
+        string[] expectedMessagePhrases = [timeoutSeconds + " seconds", "between 10 and 3600 seconds", "between"];
+
+        // Act
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.Connect(settings.Endpoint, settings.ApiKey).GetModelsAsync(settings.RequestTimeoutSeconds));
+
+        // Assert
+        AsserterVisionScenario.AssertAllObligationsAreMet(expectedVisionScenario,
+            new Dictionary<string, object?> { ["exception type"] = error.GetType().FullName, ["requests"] = calls });
+        AsserterExceptionContract.AssertMessageContains(expectedMessagePhrases, error.Message);
     }
 
     [Fact]
-    public static async Task VisionAndTextRequests_WhenAuthenticationIsSaved_UseItForBothOperations()
+    public static async Task ModelDiscovery_WhenApiKeyContainsControlCharacters_ThenRejectsBeforeSending()
+    {
+        // Arrange
+        var calls = 0;
+        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })));
+        var settings = new VisionSettings { ApiKey = "bad\r\nkey" };
+        var expectedVisionScenario = ExpectedVisionScenario.Create("API-key control characters are rejected before sending",
+            new ExpectedVisionObligation("exception type", typeof(InvalidOperationException).FullName),
+            new ExpectedVisionObligation("requests", 0),
+            new ExpectedVisionObligation("requirement", "control characters", VisionComparison.Contains));
+
+        // Act
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.Connect(settings.Endpoint, settings.ApiKey).GetModelsAsync(settings.RequestTimeoutSeconds));
+
+        // Assert
+        AsserterVisionScenario.AssertAllObligationsAreMet(expectedVisionScenario,
+            new Dictionary<string, object?> { ["exception type"] = error.GetType().FullName, ["requests"] = calls, ["requirement"] = error.Message });
+    }
+
+    [Fact]
+    public static async Task VisionAndTextRequests_WhenAuthenticationIsSaved_ThenUseItForBothOperations()
     {
         // Arrange
         var authorization = new List<(string? Scheme, string? Token)>();
@@ -401,18 +441,18 @@ public static class VisionTests
                 Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Landscapes\"}"}}]}""")
             });
         })));
-        var settings = new WebVisionSettings { Model = "vision", ApiKey = "saved-token" };
+        var settings = new VisionSettings { Model = "vision", ApiKey = "saved-token" };
 
         var expected = ExpectedVisionScenario.Create("saved authentication is applied to vision and text requests", new ExpectedVisionObligation("collection", "Landscapes"),
             new ExpectedVisionObligation("authorization", new[] { new[] { "Bearer", settings.ApiKey }, new[] { "Bearer", settings.ApiKey } }));
-        await service.AnalyzeAsync(settings, "image");
+        await service.Connect(settings.Endpoint, settings.ApiKey).AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, "image");
 
         // Act - text request follows an authenticated vision request
-        var collection = await service.SuggestCollectionAsync(settings, "Landscape", "green", []);
+        var collection = await service.Connect(settings.Endpoint, settings.ApiKey).SuggestCollectionAsync(settings.Model, settings.RequestTimeoutSeconds, "Landscape", "green", []);
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
-        { ["collection"] = collection, ["authorization"] = authorization.Select(value => new[] { value.Scheme, value.Token }).ToArray() });
+        { ["collection"] = collection, ["authorization"] = authorization.Select(value => new[] { value.Scheme, value.Token }) });
     }
 
     private static ExpectedVisionScenario EndpointExpectation(string endpoint)

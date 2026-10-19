@@ -172,11 +172,11 @@ else
                 }
             </div>
         }
-        @if (driveQueue.HasWork || driveQueue.State == WebDriveQueueState.Paused)
+        @if (driveQueue.HasWork || driveQueue.State == DriveQueueState.Paused)
         {
             <div class="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs break-words" role="status" aria-live="polite" data-testid="drive-queue">
                 <strong>Background file operations</strong>
-                @if (driveQueue.Pending > 0 && driveQueue.State is WebDriveQueueState.Running or WebDriveQueueState.Waiting)
+                @if (driveQueue.Pending > 0 && driveQueue.State is DriveQueueState.Running or DriveQueueState.Waiting)
                 {
                     <Progress Value="@DriveQueuePercent" aria-label="Background file operation progress" />
                 }
@@ -184,7 +184,7 @@ else
                 @if (driveQueue.Activity.Length > 0) { <p class="text-muted-foreground">@driveQueue.Activity</p> }
                 @if (driveQueue.Failed > 0) { <p class="text-destructive">@driveQueue.Failed operation(s) failed. Files were left unchanged.</p> }
                 <div class="flex flex-wrap gap-2">
-                    @if (driveQueue.State is WebDriveQueueState.Paused or WebDriveQueueState.Faulted)
+                    @if (driveQueue.State is DriveQueueState.Paused or DriveQueueState.Faulted)
                     {
                         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="ResumeDriveOperations">Resume</Button>
                     }
@@ -226,8 +226,8 @@ else
             <div class="mt-4 space-y-3">
                 <Label Class="block">Ingestion performance</Label>
                 <div class="flex flex-wrap gap-2">
-                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(WebIngestionOptions.Hdd)">HDD / NAS: 4 workers</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(WebIngestionOptions.Ssd)">SSD / NVMe: @WebIngestionOptions.Ssd.Workers workers</Button>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Hdd)">HDD / NAS: 4 workers</Button>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Ssd)">SSD / NVMe: @IngestionOptions.Ssd.Workers workers</Button>
                 </div>
                 <Label For="ingestion-workers">Parallel workers (1-32)</Label>
                 <input id="ingestion-workers" type="number" min="1" max="32" @bind="ingestionWorkers" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
@@ -318,7 +318,7 @@ else
                 {
                     <Alert Variant="AlertVariant.Destructive">@storageOverview.MissingImageFiles catalogued image file(s) were not found on disk and are not counted.</Alert>
                 }
-                @if (storageOverview.IndexPending)
+                @if (storageOverview.IsIndexPending)
                 {
                     <p class="text-muted-foreground" data-testid="index-pending">The file index is still being built in the background; some sizes were measured directly. Refresh once background file operations finish.</p>
                 }
@@ -374,7 +374,7 @@ else
             @if (duplicateScan is not null)
             {
                 var groups = VisibleDuplicateGroups;
-                var pendingMarks = groups.Sum(group => group.ImageIds.Count(id => id != KeeperOf(group).Id && !ImageById(id)!.MarkedForDeletion));
+                var pendingMarks = groups.Sum(group => group.ImageIds.Count(id => id != KeeperOf(group).Id && !ImageById(id)!.IsMarkedForDeletion));
                 <div class="my-4 flex flex-col gap-2">
                     <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.ImageIds.Length - 1)</strong> extra copies &middot; <strong>@GalleryService.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
                     <span class="text-muted-foreground">Scanned @duplicateScan.ScannedCount.ToString("N0") images <time datetime="@duplicateScan.ScannedAt.ToString("O")">@duplicateScan.ScannedAt.ToLocalTime().ToString("g")</time></span>
@@ -388,10 +388,10 @@ else
                 @foreach (var (group, groupNumber) in groups.Take(DuplicateGroupsShown).Select((group, index) => (group, index)))
                 {
                     var keeper = KeeperOf(group);
-                    var groupMarks = group.ImageIds.Count(id => id != keeper.Id && !ImageById(id)!.MarkedForDeletion);
+                    var groupMarks = group.ImageIds.Count(id => id != keeper.Id && !ImageById(id)!.IsMarkedForDeletion);
                     <article class="mt-4 rounded-xl border border-border p-4 [&>header]:mb-3 [&>header]:flex [&>header]:flex-wrap [&>header]:items-center [&>header]:justify-between [&>header]:gap-3 [&>header]:text-sm" @key="group.ImageIds[0]">
                         <header>
-                            <span>@(group.Exact ? "Exact copies" : $"Similar images (difference {group.MaxDistance}/64)") &middot; @GalleryService.FormatBytes(group.ReclaimableBytes) reclaimable</span>
+                            <span>@(group.IsExact ? "Exact copies" : $"Similar images (difference {group.MaxDistance}/64)") &middot; @GalleryService.FormatBytes(group.ReclaimableBytes) reclaimable</span>
                             <div class="flex flex-wrap items-center gap-2">
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => OpenDuplicateReview(groups, groupNumber)">Review &amp; choose keepers</Button>
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || groupMarks == 0)" OnClick="() => MarkDuplicatesAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</Button>
@@ -401,14 +401,14 @@ else
                             @foreach (var id in group.ImageIds.OrderByDescending(id => id == keeper.Id))
                             {
                                 var image = ImageById(id)!;
-                                <figure class="@(id == keeper.Id ? "keep" : "") @(image.MarkedForDeletion ? "marked" : "")">
+                                <figure class="@(id == keeper.Id ? "keep" : "") @(image.IsMarkedForDeletion ? "marked" : "")">
                                     @if (duplicateThumbnails.TryGetValue(id, out var thumbnail)) { <img src="@thumbnail" alt="@image.Name" draggable="false" /> }
                                     else { <div class="grid h-full place-items-center text-xs text-muted-foreground">Preview</div> }
                                     <figcaption>
                                         <strong title="@image.Name">@image.Name</strong>
-                                        <span>@image.Width &times; @image.Height &middot; @GalleryService.FormatBytes(image.OriginalBytes)@(image.Rating > 0 ? $" · {image.Rating}★" : "")@(image.Favorite ? " · Favorite" : "")</span>
+                                        <span>@image.Width &times; @image.Height &middot; @GalleryService.FormatBytes(image.OriginalBytes)@(image.Rating > 0 ? $" · {image.Rating}★" : "")@(image.IsFavorite ? " · Favorite" : "")</span>
                                         @if (id == keeper.Id) { <Badge Variant="BadgeVariant.Secondary" Class="self-start">Keep</Badge> }
-                                        else if (image.MarkedForDeletion) { <Badge Variant="BadgeVariant.Destructive" Class="self-start">Marked</Badge> }
+                                        else if (image.IsMarkedForDeletion) { <Badge Variant="BadgeVariant.Destructive" Class="self-start">Marked</Badge> }
                                     </figcaption>
                                 </figure>
                             }
@@ -494,9 +494,9 @@ else
     {
     <div class="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4 [&>button]:h-auto [&>button]:flex-col [&>button]:items-start [&>button]:p-5 [&_strong]:text-3xl [&_strong]:text-primary [&_span]:text-xs [&_span]:text-muted-foreground">
         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("all")'><strong>@images.Count</strong><span>In your library</span></Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.Reviewed && !image.MarkedForDeletion)</strong><span>Awaiting review</span></Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("favorites")'><strong>@images.Count(image => image.Favorite && !image.MarkedForDeletion)</strong><span>Favorites</span></Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("unorganized")'><strong>@images.Count(image => image.Collections.IsEmpty && !image.MarkedForDeletion)</strong><span>Without a collection</span></Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion)</strong><span>Awaiting review</span></Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("favorites")'><strong>@images.Count(image => image.IsFavorite && !image.IsMarkedForDeletion)</strong><span>Favorites</span></Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("unorganized")'><strong>@images.Count(image => image.Collections.IsEmpty && !image.IsMarkedForDeletion)</strong><span>Without a collection</span></Button>
     </div>
     }
     @if (workflow == "review")
@@ -504,7 +504,7 @@ else
         <Card Class="mb-6 p-5 md:p-6 review-intro">
             <h3>One image. One decision.</h3>
             <p class="text-muted-foreground">Keep, favorite, rate or mark for deletion to finish reviewing an image. Skip leaves it pending. The session includes pending, unmarked images matching your filters across all pages.</p>
-            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(busy || !Filtered.Any(image => !image.Reviewed && !image.MarkedForDeletion))" OnClick="StartReview">Start guided review (@Filtered.Count(image => !image.Reviewed && !image.MarkedForDeletion))</Button>
+            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(busy || !Filtered.Any(image => !image.IsReviewed && !image.IsMarkedForDeletion))" OnClick="StartReview">Start guided review (@Filtered.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion))</Button>
         </Card>
     }
     <LibraryWorkbench @ref="workbench" Visible="@(workflow is "organize" or "explore" or "ai")" Workflow="@workflow" Images="images" SelectedIds="librarySelection" Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" JobChanged="LibraryJobChanged" />
@@ -527,7 +527,7 @@ else
                 <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto [&>select]:w-full sm:[&>select]:w-auto">
                     <Tabs Value="@density" ValueChanged="SetDensityAsync">
                         <TabsList aria-label="Thumbnail size">
-                            @foreach (var option in WebUiPreferences.Densities)
+                            @foreach (var option in UiPreferences.Densities)
                             {
                                 <TabsTrigger Value="@option" disabled="@busy">@(char.ToUpperInvariant(option[0]) + option[1..])</TabsTrigger>
                             }
@@ -590,10 +590,10 @@ else
             }
             @if (removalResults.Count > 0)
             {
-                <details open><summary>Removal results: @removalResults.Count(result => result.Removed) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
+                <details open><summary>Removal results: @removalResults.Count(result => result.WasRemoved) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
                     @foreach (var result in removalResults)
                     {
-                        <p class="break-all text-muted-foreground">@result.Id: @(result.Removed ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
+                        <p class="break-all text-muted-foreground">@result.Id: @(result.WasRemoved ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
                     }
                 </details>
             }
@@ -606,7 +606,7 @@ else
             {
                 <p class="mb-3 hidden text-xs md:block text-muted-foreground">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>D</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
                 <div class="image-grid density-@density">
-                    @{ WebPromptGroup? previousGroup = null; var firstOnPage = true; }
+                    @{ PromptGroup? previousGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
                     {
                         var isSelected = workflow != "remove" && librarySelection.Contains(image.Id);
@@ -615,7 +615,7 @@ else
                             var continued = firstOnPage && group.Images[0].Id != image.Id;
                             previousGroup = group;
                             <div class="col-span-full rounded-md border-l-2 border-primary bg-primary/5 px-4 py-3" @key="@("group-" + image.Id)">
-                                @if (group.Kind == WebPromptGroup.Shared)
+                                @if (group.Kind == PromptGroup.Shared)
                                 {
                                     var sample = group.Images[0].Generation;
                                     <div class="flex flex-wrap items-center gap-3 text-sm">
@@ -627,7 +627,7 @@ else
                                 }
                                 else
                                 {
-                                    <div class="flex flex-wrap items-center gap-3 text-sm"><strong>@(group.Kind == WebPromptGroup.Unique ? "Unique prompts" : "No ComfyUI prompt found") (@group.Images.Length)@(continued ? " (continued)" : "")</strong></div>
+                                    <div class="flex flex-wrap items-center gap-3 text-sm"><strong>@(group.Kind == PromptGroup.Unique ? "Unique prompts" : "No ComfyUI prompt found") (@group.Images.Length)@(continued ? " (continued)" : "")</strong></div>
                                 }
                             </div>
                         }
@@ -670,14 +670,14 @@ else
                         <p class="text-muted-foreground">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
                         <div class="flex flex-wrap items-center gap-2">
                             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => OpenViewer(selected.Id)">Full screen view</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => FavoriteAsync(selected)">@(selected.Favorite ? "Remove favorite" : "Favorite")</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => MarkAsync(selected)">@(selected.MarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</Button>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => FavoriteAsync(selected)">@(selected.IsFavorite ? "Remove favorite" : "Favorite")</Button>
+                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => MarkAsync(selected)">@(selected.IsMarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</Button>
                             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted copy in its original format, including embedded metadata")" OnClick="() => ExportAsync(selected)">Save a copy</Button>
                             @if (selected.Generation?.HasWorkflow == true || selected.Generation?.HasApiPrompt == true)
                             {
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="Download the embedded ComfyUI workflow as JSON" OnClick="() => ExportWorkflowAsync(selected)">Export workflow</Button>
                             }
-                            @if (selected.MarkedForDeletion)
+                            @if (selected.IsMarkedForDeletion)
                             {
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</Button>
                             }
@@ -736,18 +736,18 @@ else
                 {
                     <Label For="existing-action" Class="mt-4 mb-2 block">Original exists (@removalPlan.Count(item => item.OriginalExists))</Label>
                     <select id="existing-action" @bind="existingOriginalAction" disabled="@busy" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-                        <option value="@WebExistingOriginalAction.Retain">Remove from gallery, retain original</option>
-                        <option value="@WebExistingOriginalAction.Delete">Remove from gallery AND delete original</option>
+                        <option value="@ExistingOriginalAction.Retain">Remove from gallery, retain original</option>
+                        <option value="@ExistingOriginalAction.Delete">Remove from gallery AND delete original</option>
                     </select>
                 }
                 @if (removalPlan.Any(item => !item.OriginalExists))
                 {
                     <Label For="missing-action" Class="mt-4 mb-2 block">No accessible original (@removalPlan.Count(item => !item.OriginalExists))</Label>
                     <select id="missing-action" @bind="missingOriginalAction" disabled="@busy" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-                        <option value="@WebMissingOriginalAction.RestorePng">Restore the stored copy, then remove from gallery</option>
-                        <option value="@WebMissingOriginalAction.Discard">Remove from gallery without restoration (lost forever)</option>
+                        <option value="@MissingOriginalAction.RestorePng">Restore the stored copy, then remove from gallery</option>
+                        <option value="@MissingOriginalAction.Discard">Remove from gallery without restoration (lost forever)</option>
                     </select>
-                    @if (missingOriginalAction == WebMissingOriginalAction.RestorePng)
+                    @if (missingOriginalAction == MissingOriginalAction.RestorePng)
                     {
                         <Label For="restore-folder" Class="mt-4 mb-2 block">Existing folder for restored files</Label>
                         <Input id="restore-folder" @bind-Value="restoreFolder" Disabled="@busy" />
@@ -777,7 +777,7 @@ else
     private string galleryScreen = "welcome", galleryTab = "create";
     private string existingGalleryDirectory = "", newGalleryName = "", newGalleryDirectory = "";
     private string newMediaDirectory = "", mediaDirectory = "", catalogDirectory = "";
-    private int ingestionWorkers = WebIngestionOptions.Hdd.Workers, ingestionBatchSize = WebIngestionOptions.Hdd.CatalogBatchSize;
+    private int ingestionWorkers = IngestionOptions.Hdd.Workers, ingestionBatchSize = IngestionOptions.Hdd.CatalogBatchSize;
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
     private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
     private string restoreArchive = "", restoreCredential = "";
@@ -835,7 +835,7 @@ else
         if (secret != confirm) throw new InvalidOperationException("Passphrases do not match.");
         await Gallery.SelectNewVaultAsync(newGalleryDirectory);
         recoveryPhrase = await Gallery.CreateVaultAsync(secret, confirm, newGalleryName,
-            new WebMediaStorageOptions { MediaDirectory = newMediaDirectory });
+            new MediaStorageOptions { MediaDirectory = newMediaDirectory });
         secret = confirm = "";
     });
 
@@ -845,7 +845,7 @@ else
         message = "Gallery renamed.";
     });
 
-    private void ApplyIngestionProfile(WebIngestionOptions options)
+    private void ApplyIngestionProfile(IngestionOptions options)
     {
         ingestionWorkers = options.Workers;
         ingestionBatchSize = options.CatalogBatchSize;
@@ -853,13 +853,13 @@ else
 
     private Task SaveIngestionOptionsAsync() => RunAsync("Saving ingestion settings...", async () =>
     {
-        await Gallery.SaveIngestionOptionsAsync(new WebIngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
+        await Gallery.SaveIngestionOptionsAsync(new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
         message = "Performance settings saved for this gallery.";
     });
 
     private Task SaveMediaStorageAsync() => RunAsync("Saving media location...", async () =>
     {
-        await Gallery.SaveMediaStorageOptionsAsync(new WebMediaStorageOptions { MediaDirectory = mediaDirectory });
+        await Gallery.SaveMediaStorageOptionsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory });
         message = "Media location saved for future imports. Existing files were not moved.";
     });
 
@@ -924,13 +924,16 @@ else
     private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
     private string videoUrl = "";
     private string grouping = "none";
-    private readonly GalleryBrowsingProjection browsingProjection = new();
-    private IReadOnlyDictionary<string, WebPromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
+    private GalleryBrowsingProjection browsingProjection = GalleryBrowsingProjection.Empty;
+    private IReadOnlyList<ImageRecord>? browsingSource;
+    private GalleryFilter? projectedFilter;
+    private bool projectedGrouping;
+    private IReadOnlyDictionary<string, PromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
     private bool useRecovery, recoverySaved, busy, recursive;
     private string workflow = "library";
     private LibraryWorkbench? workbench;
-    private WebLibraryJobStatus libraryJob = new(false, "", "", 0, false);
-    private WebGalleryFilter? browsingFilter;
+    private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
+    private GalleryFilter? browsingFilter;
     private static readonly (string Id, string Name)[] Workflows =
     [
         ("library", "Library"), ("review", "Guided review"), ("organize", "Organize"),
@@ -951,9 +954,9 @@ else
         ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Gallery security")
     ];
     private string settingsTab = "overview";
-    private WebStorageOverview? storageOverview;
-    private WebDriveQueueStatus driveQueue = WebDriveQueueStatus.Empty;
-    private WebBackupOptions? backupOptions;
+    private StorageOverview? storageOverview;
+    private DriveQueueStatus driveQueue = DriveQueueStatus.Empty;
+    private BackupOptions? backupOptions;
     private string backupDestinationType = "local", backupLocalDirectory = "", backupAzureContainer = "", backupAzurePrefix = "", backupAzureConnectionString = "";
     private bool BackupDestinationReady => backupOptions is not null
         && backupAzureConnectionString.Length == 0
@@ -965,17 +968,17 @@ else
             ? backupLocalDirectory.Trim().Length > 0
             : backupAzureContainer.Trim().Length > 0 && backupOptions.HasAzureCredentials);
     private bool ShowsGallery => workflow is not ("ingest" or "settings" or "duplicates");
-    private int PendingReviewCount => images.Count(image => !image.Reviewed && !image.MarkedForDeletion);
+    private int PendingReviewCount => images.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion);
     private bool deleteSources, confirmSourceDeletion;
     private readonly HashSet<string> removalSelection = [];
-    private List<WebRemovalItem> removalPlan = [];
-    private List<WebRemovalResult> removalResults = [];
-    private WebExistingOriginalAction existingOriginalAction = WebExistingOriginalAction.Retain;
-    private WebMissingOriginalAction missingOriginalAction = WebMissingOriginalAction.RestorePng;
+    private List<RemovalItem> removalPlan = [];
+    private List<RemovalResult> removalResults = [];
+    private ExistingOriginalAction existingOriginalAction = ExistingOriginalAction.Retain;
+    private MissingOriginalAction missingOriginalAction = MissingOriginalAction.RestorePng;
     private string restoreFolder = "";
     private bool confirmRemoval;
     private readonly HashSet<string> librarySelection = [];
-    private List<WebImageRecord> viewerImages = [];
+    private List<ImageRecord> viewerImages = [];
     private string viewerInitialId = "";
     private bool reviewMode;
     private int page;
@@ -983,36 +986,36 @@ else
     private string density = "comfortable";
     private string bulkTags = "", bulkCollection = "";
     private string? selectionAnchor;
-    private WebDuplicateScan? duplicateScan;
+    private DuplicateScan? duplicateScan;
     private readonly Dictionary<string, string> duplicateThumbnails = [];
     private int DuplicateGroupsShown = 20;
-    private List<WebDuplicateGroup> reviewGroups = [];
+    private List<DuplicateGroup> reviewGroups = [];
     private int reviewStartGroup;
     private DotNetObjectReference<Home>? gridReference;
     private DotNetObjectReference<Home>? securityReference;
-    private int autoLockMinutes = WebUiPreferences.DefaultAutoLockMinutes;
-    private sealed record QuickFilter(string Label, Func<WebGalleryFilter, bool> IsActive, Func<WebGalleryFilter, bool, WebGalleryFilter> Toggle, Func<IEnumerable<WebImageRecord>, int> Count);
+    private int autoLockMinutes = UiPreferences.DefaultAutoLockMinutes;
+    private sealed record QuickFilter(string Label, Func<GalleryFilter, bool> IsActive, Func<GalleryFilter, bool, GalleryFilter> Toggle, Func<IEnumerable<ImageRecord>, int> Count);
     private static readonly QuickFilter[] QuickFilters =
     [
-        new("Unreviewed", f => f.Review == "pending", (f, on) => f with { Review = on ? "pending" : WebGalleryFilter.AnyValue }, all => all.Count(i => !i.Reviewed && !i.MarkedForDeletion)),
-        new("5\u2605", f => f.MinRating == 5, (f, on) => f with { MinRating = on ? 5 : 0 }, all => all.Count(i => i.Rating == 5 && !i.MarkedForDeletion)),
-        new("Favorites", f => f.FavoritesOnly, (f, on) => f with { FavoritesOnly = on }, all => all.Count(i => i.Favorite && !i.MarkedForDeletion)),
-        new("Not analyzed", f => f.Analysis == "pending", (f, on) => f with { Analysis = on ? "pending" : WebGalleryFilter.AnyValue }, all => all.Count(i => i.Description.Length == 0 && !i.MarkedForDeletion)),
-        new("Videos", f => f.Media == "video", (f, on) => f with { Media = on ? "video" : WebGalleryFilter.AnyValue }, all => all.Count(i => i.IsVideo && !i.MarkedForDeletion)),
+        new("Unreviewed", f => f.Review == "pending", (f, on) => f with { Review = on ? "pending" : GalleryFilter.AnyValue }, all => all.Count(i => !i.IsReviewed && !i.IsMarkedForDeletion)),
+        new("5\u2605", f => f.MinRating == 5, (f, on) => f with { MinRating = on ? 5 : 0 }, all => all.Count(i => i.Rating == 5 && !i.IsMarkedForDeletion)),
+        new("Favorites", f => f.IncludesFavoritesOnly, (f, on) => f with { IncludesFavoritesOnly = on }, all => all.Count(i => i.IsFavorite && !i.IsMarkedForDeletion)),
+        new("Not analyzed", f => f.Analysis == "pending", (f, on) => f with { Analysis = on ? "pending" : GalleryFilter.AnyValue }, all => all.Count(i => i.Description.Length == 0 && !i.IsMarkedForDeletion)),
+        new("Videos", f => f.Media == "video", (f, on) => f with { Media = on ? "video" : GalleryFilter.AnyValue }, all => all.Count(i => i.IsVideo && !i.IsMarkedForDeletion)),
     ];
     private IEnumerable<string> AllCollections => images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
-    private WebImageRecord? ImageById(string id) => imagesById.GetValueOrDefault(id);
-    private Dictionary<string, WebImageRecord> imagesById = [];
-    private List<WebDuplicateGroup> VisibleDuplicateGroups = [];
+    private ImageRecord? ImageById(string id) => imagesById.GetValueOrDefault(id);
+    private Dictionary<string, ImageRecord> imagesById = [];
+    private List<DuplicateGroup> VisibleDuplicateGroups = [];
     private void UpdateDuplicateGroups() => VisibleDuplicateGroups = duplicateScan is null ? [] : duplicateScan.Groups
         .Select(group => group with { ImageIds = group.ImageIds.Where(imagesById.ContainsKey).ToImmutableArray() })
         .Where(group => group.ImageIds.Length > 1).ToList();
-    private WebImageRecord KeeperOf(WebDuplicateGroup group) => Gallery.PickDuplicateKeeper(group.ImageIds.Select(id => ImageById(id)!));
-    private WebGalleryFilter filter = new();
-    private WebVisionSettings settings = new();
-    private List<WebImageRecord> images = [];
+    private ImageRecord KeeperOf(DuplicateGroup group) => Gallery.PickDuplicateKeeper(group.ImageIds.Select(id => ImageById(id)!));
+    private GalleryFilter filter = new();
+    private VisionSettings settings = new();
+    private List<ImageRecord> images = [];
     private List<string> importFailures = [];
-    private WebImportProgress? importProgress;
+    private ImportProgress? importProgress;
     private bool importRunning;
     private bool recordTimings;
     private string? timingReport;
@@ -1021,19 +1024,26 @@ else
     private readonly HashSet<string> thumbnailFailures = [];
     private CancellationTokenSource? thumbnailLoad;
     private Task? thumbnailTask;
-    private WebImageRecord? selected;
+    private ImageRecord? selected;
     private bool disposed;
     private GalleryBrowsingProjection Browsing
     {
         get
         {
-            browsingProjection.Update(Gallery, images, filter, grouping == "prompt");
+            var groupByPrompt = grouping == "prompt";
+            if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != groupByPrompt)
+            {
+                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, groupByPrompt);
+                browsingSource = images;
+                projectedFilter = filter;
+                projectedGrouping = groupByPrompt;
+            }
             return browsingProjection;
         }
     }
-    private IReadOnlyList<WebImageRecord> Filtered => Browsing.Images;
+    private IReadOnlyList<ImageRecord> Filtered => Browsing.Images;
     private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
-    private IEnumerable<WebImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
+    private IEnumerable<ImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
     private async Task RunAsync(string status, Func<Task> action, bool allowDuringImport = false)
     {
         var nested = allowDuringImport && busy && importRunning;
@@ -1095,10 +1105,10 @@ else
 
     private string DriveQueueSummary => driveQueue.State switch
     {
-        WebDriveQueueState.Paused => $"Paused with {driveQueue.Pending:N0} operation(s) queued. Queued work is kept.",
-        WebDriveQueueState.Waiting => $"{driveQueue.Pending:N0} operation(s) waiting to retry.",
-        WebDriveQueueState.Faulted => $"Stopped unexpectedly with {driveQueue.Pending:N0} operation(s) queued. Resume or retry to continue.",
-        WebDriveQueueState.Running => $"{driveQueue.Completed:N0} done, {driveQueue.Pending:N0} queued.",
+        DriveQueueState.Paused => $"Paused with {driveQueue.Pending:N0} operation(s) queued. Queued work is kept.",
+        DriveQueueState.Waiting => $"{driveQueue.Pending:N0} operation(s) waiting to retry.",
+        DriveQueueState.Faulted => $"Stopped unexpectedly with {driveQueue.Pending:N0} operation(s) queued. Resume or retry to continue.",
+        DriveQueueState.Running => $"{driveQueue.Completed:N0} done, {driveQueue.Pending:N0} queued.",
         _ => driveQueue.Pending > 0 ? $"{driveQueue.Pending:N0} operation(s) queued; they continue the next time the gallery is unlocked." : "No queued work."
     };
 
@@ -1183,7 +1193,7 @@ else
     private async Task ReloadAsync()
     {
         images = await Gallery.LoadAsync();
-        browsingProjection.Invalidate();
+        browsingSource = null;
         mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
         catalogDirectory = "";
         ApplyIngestionProfile(await Gallery.LoadIngestionOptionsAsync());
@@ -1194,7 +1204,7 @@ else
         storageOverview = await Gallery.CachedStorageOverviewAsync();
         selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
         if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }
-        removalSelection.IntersectWith(images.Where(image => image.MarkedForDeletion).Select(image => image.Id));
+        removalSelection.IntersectWith(images.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
         librarySelection.IntersectWith(images.Select(image => image.Id));
         page = Math.Min(page, PageCount - 1);
         await LoadThumbnailsAsync();
@@ -1288,7 +1298,7 @@ else
 
     private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
     private Task ResetFilters() { filter = new() { Deletion = workflow == "remove" ? "marked" : "all" }; return FilterChangedAsync(); }
-    private Task ApplyLibraryFilterAsync(WebGalleryFilter value) { filter = value; return FilterChangedAsync(); }
+    private Task ApplyLibraryFilterAsync(GalleryFilter value) { filter = value; return FilterChangedAsync(); }
     private Task SetSort(string? value)
     {
         filter = filter with { Sort = value ?? "newest" };
@@ -1299,10 +1309,10 @@ else
         browsingFilter = null;
         workflow = queue == "pending" ? "review" : "library";
         filter = new();
-        if (queue == "all") filter = filter with { Deletion = WebGalleryFilter.AnyValue };
+        if (queue == "all") filter = filter with { Deletion = GalleryFilter.AnyValue };
         if (queue == "pending") filter = filter with { Review = "pending" };
-        if (queue == "favorites") filter = filter with { FavoritesOnly = true };
-        if (queue == "unorganized") filter = filter with { UnorganizedOnly = true };
+        if (queue == "favorites") filter = filter with { IncludesFavoritesOnly = true };
+        if (queue == "unorganized") filter = filter with { IncludesUnorganizedOnly = true };
         return FilterChangedAsync();
     }
     private Task SwitchWorkflowAsync(string value)
@@ -1380,7 +1390,7 @@ else
     {
         var result = await Gallery.CreateIncrementalBackupAsync();
         backupOptions = await Gallery.LoadBackupOptionsAsync();
-        message = result.Skipped
+        message = result.WasSkipped
             ? $"No changes since the last backup ({result.BackupName}); no incremental backup was created."
             : $"Incremental backup created: {result.MediaFilesCopied:N0} changed media file(s) of {result.TotalMediaFiles:N0}, {GalleryService.FormatBytes(result.BytesWritten)}.";
     });
@@ -1415,7 +1425,7 @@ else
         await LoadDuplicateThumbnailsAsync();
         message = $"Duplicate scan complete: {VisibleDuplicateGroups.Count} group(s) found.";
     });
-    private Task MarkDuplicatesAsync(IReadOnlyCollection<WebDuplicateGroup> groups) => RunAsync("Marking extra copies...", async () =>
+    private Task MarkDuplicatesAsync(IReadOnlyCollection<DuplicateGroup> groups) => RunAsync("Marking extra copies...", async () =>
     {
         var ids = groups.SelectMany(group =>
         {
@@ -1430,7 +1440,7 @@ else
     {
         public void Report(T value) => _ = report(value);
     }
-    private void OpenDuplicateReview(IReadOnlyList<WebDuplicateGroup> groups, int start)
+    private void OpenDuplicateReview(IReadOnlyList<DuplicateGroup> groups, int start)
     {
         if (busy || groups.Count == 0) return;
         reviewGroups = groups.ToList();
@@ -1473,18 +1483,18 @@ else
         storageOverview = await Gallery.RefreshStorageOverviewAsync();
         message = "Gallery overview refreshed.";
     });
-    private void LibraryJobChanged(WebLibraryJobStatus status) => libraryJob = status;
+    private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
     private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.IsRunning ? "ai" : libraryJob.Workflow);
     private void DismissLibraryJob() => libraryJob = new(false, "", "", 0, false);
     private Task StopLibraryJobAsync() => workbench?.StopAnalysisAsync() ?? Task.CompletedTask;
     private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); selectionAnchor = null; }
-    private void ViewerImageChanged(WebImageRecord updated)
+    private void ViewerImageChanged(ImageRecord updated)
     {
         imagesById[updated.Id] = updated;
         var imageIndex = images.FindIndex(image => image.Id == updated.Id);
         if (imageIndex >= 0) images[imageIndex] = updated;
         if (selected?.Id == updated.Id) selected = updated;
-        browsingProjection.Invalidate();
+        browsingSource = null;
     }
     private void SelectLibraryPage() { librarySelection.UnionWith(PageImages.Select(image => image.Id)); }
     private void ToggleLibrarySelection(string id, bool value)
@@ -1518,13 +1528,13 @@ else
         density = value;
         page = Math.Min(first / PageSize, PageCount - 1);
         await LoadThumbnailsAsync();
-        await Gallery.SavePreferencesAsync(new WebUiPreferences { GridDensity = value, AutoLockMinutes = autoLockMinutes });
+        await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = value, AutoLockMinutes = autoLockMinutes });
     });
 
-    private async Task CurateAsync(IReadOnlyCollection<string> ids, Func<WebImageRecordEdit, WebImageRecordEdit> update, string done)
+    private async Task CurateAsync(IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update, string done)
     {
         if (ids.Count == 0) return;
-        List<WebImageRecord> updated;
+        List<ImageRecord> updated;
         try { updated = await Gallery.UpdateManyAsync(ids, update); }
         catch (AggregateException)
         {
@@ -1537,11 +1547,11 @@ else
         message = done;
     }
 
-    private Task BulkAsync(string status, Func<WebImageRecordEdit, WebImageRecordEdit> update, string done) =>
+    private Task BulkAsync(string status, Func<ImageRecordEdit, ImageRecordEdit> update, string done) =>
         RunAsync(status, () => CurateAsync(librarySelection.ToList(), update, $"{done} ({librarySelection.Count} images)."));
     private Task BulkRateAsync(int value) => BulkAsync("Rating selected images...", image => Gallery.SetCuration(image, value, null), value == 0 ? "Ratings cleared" : $"Rated {value} stars");
-    private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image with { Favorite = value }, value ? "Added to favorites" : "Removed from favorites");
-    private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image with { Reviewed = value }, "Marked reviewed");
+    private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image with { IsFavorite = value }, value ? "Added to favorites" : "Removed from favorites");
+    private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image with { IsReviewed = value }, "Marked reviewed");
     private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => Gallery.SetDeletionMark(image, value), value ? "Marked for deletion" : "Deletion marks cleared");
     private Task BulkTagAsync()
     {
@@ -1571,20 +1581,20 @@ else
             StateHasChanged();
             return;
         }
-        Func<WebImageRecordEdit, WebImageRecordEdit>? update = key switch
+        Func<ImageRecordEdit, ImageRecordEdit>? update = key switch
         {
             "0" or "1" or "2" or "3" or "4" or "5" => current => Gallery.SetCuration(current, key[0] - '0', null),
-            "f" when !image.Favorite => current => current with { Favorite = true },
-            "f" => current => current with { Favorite = false },
-            "d" when !image.MarkedForDeletion => current => Gallery.SetDeletionMark(current, true),
+            "f" when !image.IsFavorite => current => current with { IsFavorite = true },
+            "f" => current => current with { IsFavorite = false },
+            "d" when !image.IsMarkedForDeletion => current => Gallery.SetDeletionMark(current, true),
             "d" => current => Gallery.SetDeletionMark(current, false),
             _ => null
         };
         if (update is null) return;
         var done = key switch
         {
-            "f" => image.Favorite ? "Removed from favorites." : "Added to favorites.",
-            "d" => image.MarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.",
+            "f" => image.IsFavorite ? "Removed from favorites." : "Added to favorites.",
+            "d" => image.IsMarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.",
             "0" => "Rating cleared.",
             _ => $"Rated {key} stars."
         };
@@ -1611,8 +1621,8 @@ else
         var deletingSources = deleteSources;
         importFailures = [];
         timingReport = null;
-        var timings = recordTimings ? new IngestionTimings() : null;
-        importProgress = new WebImportProgress(null, 0, 0, 0, "Scanning selected folder...");
+        IngestionTimingReport? completedTimingReport = null;
+        importProgress = new ImportProgress(null, 0, 0, 0, "Scanning selected folder...");
         importRunning = true;
         await InvokeAsync(StateHasChanged);
         var lastProgressRender = System.Diagnostics.Stopwatch.StartNew();
@@ -1620,7 +1630,7 @@ else
         {
             try
             {
-                await Gallery.ImportFolderAsync(importPath, recursive ? WebFolderSearchScope.Descendants : WebFolderSearchScope.SelectedFolder, sourceRetention: deletingSources ? WebSourceRetention.DeleteAfterVerification : WebSourceRetention.Retain,
+                await Gallery.ImportFolderAsync(importPath, recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder, sourceRetention: deletingSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
                     reportProgress: update => InvokeAsync(() =>
                     {
                         if (disposed) return;
@@ -1632,7 +1642,7 @@ else
                             StateHasChanged();
                             lastProgressRender.Restart();
                         }
-                    }), timings: timings, options: new WebIngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
+                    }), reportTimings: recordTimings ? report => completedTimingReport = report : null, options: new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
             }
             catch (ImportFolderException exception)
             {
@@ -1658,31 +1668,31 @@ else
         finally
         {
             importRunning = false;
-            if (timings is not null)
+            if (completedTimingReport is not null)
             {
-                timingReport = timings.CreateReport().ToString();
+                timingReport = completedTimingReport.ToString();
                 Logger.LogInformation("{IngestionTimings}", timingReport);
             }
         }
         deleteSources = confirmSourceDeletion = false;
     });
 
-    private Task RateImageAsync(WebImageRecord image, int value) => RunAsync("Saving rating...", async () =>
+    private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
         await Gallery.UpdateAsync(image.Id, current =>
             Gallery.SetCuration(current, current.Rating == value ? 0 : value, null));
         await ReloadAsync();
     });
 
-    private Task FavoriteAsync(WebImageRecord image) => RunAsync("Saving favorite...", async () =>
+    private Task FavoriteAsync(ImageRecord image) => RunAsync("Saving favorite...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => current with { Favorite = !current.Favorite });
+        await Gallery.UpdateAsync(image.Id, current => current with { IsFavorite = !current.IsFavorite });
         await ReloadAsync();
     });
 
-    private Task MarkAsync(WebImageRecord image) => RunAsync("Saving deletion mark...", async () =>
+    private Task MarkAsync(ImageRecord image) => RunAsync("Saving deletion mark...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.MarkedForDeletion));
+        await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.IsMarkedForDeletion));
         await ReloadAsync();
     });
 
@@ -1695,7 +1705,7 @@ else
     private void SelectFilteredMarked()
     {
         removalSelection.Clear();
-        removalSelection.UnionWith(Filtered.Where(image => image.MarkedForDeletion).Select(image => image.Id));
+        removalSelection.UnionWith(Filtered.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
     }
 
     private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(removalSelection.ToArray());
@@ -1704,8 +1714,8 @@ else
         EnsureNoLibraryJob();
         removalPlan = await Gallery.PrepareRemovalAsync(ids);
         confirmRemoval = false;
-        existingOriginalAction = WebExistingOriginalAction.Retain;
-        missingOriginalAction = WebMissingOriginalAction.RestorePng;
+        existingOriginalAction = ExistingOriginalAction.Retain;
+        missingOriginalAction = MissingOriginalAction.RestorePng;
         removalResults.Clear();
     });
 
@@ -1728,10 +1738,10 @@ else
             CloseDetail();
             await ReloadAsync();
         }
-        message = $"Removed {removalResults.Count(result => result.Removed)} images. {removalResults.Count(result => result.Error is not null)} issue(s); review the removal results.";
+        message = $"Removed {removalResults.Count(result => result.WasRemoved)} images. {removalResults.Count(result => result.Error is not null)} issue(s); review the removal results.";
     });
 
-    private Task OpenAsync(WebImageRecord image) => RunAsync("Decrypting preview...", async () =>
+    private Task OpenAsync(ImageRecord image) => RunAsync("Decrypting preview...", async () =>
     {
         await ReleaseVideoAsync();
         var data = await Gallery.PreviewAsync(image.Id);
@@ -1766,7 +1776,7 @@ else
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
     }
 
-    private static string GenerationSummary(WebGenerationInfo info) => string.Join(" · ", new[]
+    private static string GenerationSummary(GenerationInfo info) => string.Join(" · ", new[]
     {
         info.Model,
         info.Steps is int steps ? $"{steps} steps" : "",
@@ -1780,9 +1790,9 @@ else
         return FilterChangedAsync();
     }
 
-    private async Task DownloadAsync(WebExportFile file)
+    private async Task DownloadAsync(ExportFile file)
     {
-        var contentBytes = file.CopyContentBytes();
+        var contentBytes = GalleryService.CopyExportContent(file);
         try { await DownloadAsync(new MemoryStream(contentBytes, writable: false), file.FileName, file.ContentType); }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(contentBytes); }
     }
@@ -1793,7 +1803,7 @@ else
         await JS.InvokeVoidAsync("galleryMedia.download", reference, fileName, contentType);
     }
 
-    private Task ExportAsync(WebImageRecord image) => RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing image copy...", async () =>
+    private Task ExportAsync(ImageRecord image) => RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing image copy...", async () =>
     {
         var file = await Gallery.ExportAsync(image.Id);
         try { await DownloadAsync(file); }
@@ -1801,7 +1811,7 @@ else
         message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the gallery.";
     });
 
-    private Task ExportWorkflowAsync(WebImageRecord image) => RunAsync("Exporting workflow...", async () =>
+    private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
     {
         var file = await Gallery.WorkflowAsync(image.Id) ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
         try { await DownloadAsync(file); }
@@ -1829,7 +1839,7 @@ else
 
     private void StartReview()
     {
-        viewerImages = Filtered.Where(image => !image.Reviewed && !image.MarkedForDeletion)
+        viewerImages = Filtered.Where(image => !image.IsReviewed && !image.IsMarkedForDeletion)
             .Select(image => image with { }).ToList();
         viewerInitialId = viewerImages.FirstOrDefault()?.Id ?? "";
         reviewMode = true;
@@ -1898,7 +1908,7 @@ else
             Gallery.ConfigureAutoLock(autoLockMinutes);
             try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
             catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-            await Gallery.SavePreferencesAsync(new WebUiPreferences { GridDensity = density, AutoLockMinutes = autoLockMinutes });
+            await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = density, AutoLockMinutes = autoLockMinutes });
         }
     }
 
@@ -1936,7 +1946,8 @@ else
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         Gallery.LockVault();
         images.Clear();
-        browsingProjection.Clear();
+        browsingProjection = GalleryBrowsingProjection.Empty;
+        browsingSource = null;
         StopThumbnailLoad();
         thumbnailTask = null;
         thumbnails.Clear();

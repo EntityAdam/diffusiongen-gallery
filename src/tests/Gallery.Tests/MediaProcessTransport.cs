@@ -1,4 +1,4 @@
-using Gallery.Web.Managers.Gateways;
+using Gallery.Core.Services.Gateways;
 
 namespace Gallery.Tests;
 
@@ -26,7 +26,7 @@ internal sealed class MediaProcessTransport : IDisposable
         }
         File.WriteAllText(Path.Combine(directory, "probe.json"), probeJson);
         File.WriteAllBytes(Path.Combine(directory, "frame.png"), GalleryTests.MakePng(32, 24));
-        VideoTools = new(new VideoToolsOptions(directory));
+        VideoTools = new(directory);
     }
 
     public void Dispose()

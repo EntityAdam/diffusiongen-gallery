@@ -1,13 +1,14 @@
-using Gallery.Web.Services.Processors;
-using Gallery.Core.Processors;
-using Gallery.Web.Managers.Gateways;
+using Gallery.Core.Services.Processors.Codecs;
+using System.Net;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Gateways;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text.Json.Nodes;
-using Gallery.Web.Exceptions;
-using Gallery.Core.Queries;
-using Gallery.Web.Models;
-using Gallery.Web.Services;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Services.Queries;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
 using Microsoft.Extensions.Configuration;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
@@ -64,9 +65,9 @@ public sealed class MediaAndComfyTests
     {
         // Arrange
         using var fixture = new TestVault();
-        WebImageRecord Make(string name, string? prompt) => new()
+        ImageRecord Make(string name, string? prompt) => new()
         {
-            Name = name, Generation = prompt is null ? null : new WebGenerationInfo { Prompt = prompt }
+            Name = name, Generation = prompt is null ? null : new GenerationInfo { Prompt = prompt }
         };
         var ordered = new[]
         {
@@ -93,10 +94,10 @@ public sealed class MediaAndComfyTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var image = new WebImageRecord { Name = "image", Generation = new WebGenerationInfo { Prompt = "cat" } };
-        var video = new WebImageRecord { Name = "video", MediaType = "video", Generation = new WebGenerationInfo { Prompt = "cat " } };
-        WebImageRecord[] expectedRecords = [expectedName == "image" ? image : video];
-        var filter = new WebGalleryFilter { Media = media, Prompt = prompt };
+        var image = new ImageRecord { Name = "image", Generation = new GenerationInfo { Prompt = "cat" } };
+        var video = new ImageRecord { Name = "video", MediaType = "video", Generation = new GenerationInfo { Prompt = "cat " } };
+        ImageRecord[] expectedRecords = [expectedName == "image" ? image : video];
+        var filter = new GalleryFilter { Media = media, Prompt = prompt };
 
         // Act
         var records = fixture.Service.Filter(new[] { image, video }, filter).ToArray();
@@ -112,7 +113,7 @@ public sealed class MediaAndComfyTests
     public void Duration_WhenFormatted_ThenShowsMinutesAndSeconds(double duration, string expectedText)
     {
         // Arrange
-        var record = new WebImageRecord { DurationSeconds = duration };
+        var record = new ImageRecord { DurationSeconds = duration };
 
         // Act
         var text = GalleryService.FormatDuration(record);
@@ -234,7 +235,7 @@ public sealed class MediaAndComfyTests
     {
         // Arrange
         var missingPath = Path.Combine(Path.GetTempPath(), "no-ffmpeg-here-" + Guid.NewGuid().ToString("N"));
-        var missing = new VideoTools(new VideoToolsOptions(missingPath));
+        var missing = new VideoTools(missingPath);
         using var fixture = new TestVault(missing);
         await fixture.InitializeAsync();
 
@@ -243,10 +244,11 @@ public sealed class MediaAndComfyTests
             fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder"));
 
         // Assert
-        Assert.IsType<VideoToolUnavailableException>(error);
-        Assert.Contains("Install", error.Message, StringComparison.Ordinal);
-        Assert.Contains("ffmpeg", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Gallery:FFmpegPath", error.Message, StringComparison.Ordinal);
+        var expectedFailure = ExpectedExceptionContract.Create(typeof(VideoToolUnavailableException),
+            ["Install", "ffmpeg", "Gallery:FFmpegPath"], HttpStatusCode.InternalServerError, Severity.Error,
+            "Required video tools are unavailable.", "Video.PrepareImport",
+            new Dictionary<string, object?> { ["Video.RequiredTools"] = "ffmpeg, ffprobe" });
+        AsserterExceptionContract.AssertMatches(expectedFailure, error);
         Assert.Contains("MP4", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(await fixture.Service.ListAsync());
     }
@@ -306,7 +308,7 @@ public sealed class MediaAndComfyTests
         var thumbnail = await arrangement.TestVault.Service.ThumbnailAsync(arrangement.ImageRecord!.Id);
 
         // Assert - video thumbnails expose the decoded PNG frame
-        Assert.StartsWith("data:image/png;base64,", thumbnail);
+        AsserterPngFrame.AssertMatches(new(384, 216), thumbnail);
     }
 
     [InstalledVideoToolsFact]
@@ -319,7 +321,7 @@ public sealed class MediaAndComfyTests
         var preview = await arrangement.TestVault.Service.PreviewAsync(arrangement.ImageRecord!.Id);
 
         // Assert - preview exposes a PNG representation of the decoded frame
-        Assert.StartsWith("data:image/png;base64,", preview);
+        AsserterPngFrame.AssertMatches(new(384, 216), preview);
     }
 
     [InstalledVideoToolsFact]
@@ -370,7 +372,7 @@ public sealed class MediaAndComfyTests
         return new JsonObject { ["png"] = new JsonArray(), ["exif"] = new JsonArray("Make: Prompt:" + KSamplerPrompt.ReplaceLineEndings(""), "ImageDescription: Workflow:" + UiWorkflow) }.ToJsonString();
     }
 
-    internal static async Task<WebImageRecord> ArrangeStoredMetadataAsync(TestVault fixture, string metadata)
+    internal static async Task<ImageRecord> ArrangeStoredMetadataAsync(TestVault fixture, string metadata)
     {
         var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy-metadata.png", "folder");
         var legacy = record with { Metadata = metadata, MetadataVersion = 0, Generation = null };

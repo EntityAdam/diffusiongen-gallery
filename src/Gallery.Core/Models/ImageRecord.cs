@@ -20,19 +20,22 @@ public sealed record ImageRecord
     public string Description { get; init; } = "";
     public string Tags { get; init; } = "";
     public string AnalysisModel { get; init; } = "";
-    public bool Favorite { get; init; }
-    public bool MarkedForDeletion { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("Favorite")]
+    public bool IsFavorite { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("MarkedForDeletion")]
+    public bool IsMarkedForDeletion { get; init; }
     public ImmutableArray<string> Collections { get; init; } = [];
     public int Rating { get; init; }
-    public bool Reviewed { get; init; }
+    [System.Text.Json.Serialization.JsonPropertyName("Reviewed")]
+    public bool IsReviewed { get; init; }
     public string MediaType { get; init; } = "image";
     public string ContentType { get; init; } = "image/png";
     public double DurationSeconds { get; init; }
     public GenerationInfo? Generation { get; init; }
     public int MetadataVersion { get; init; }
 
-    public bool IsVideo => MediaType == "video";
-    public string Prompt => Generation?.Prompt ?? "";
+    [System.Text.Json.Serialization.JsonIgnore] public bool IsVideo => MediaType == "video";
+    [System.Text.Json.Serialization.JsonIgnore] public string Prompt => Generation?.Prompt ?? "";
 }
 
 public sealed record GenerationInfo

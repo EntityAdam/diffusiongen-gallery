@@ -22,7 +22,7 @@
     <div class="max-h-[35vh] shrink-0 space-y-3 overflow-auto border-b border-border bg-primary/5 px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-4">
         <div>
             <strong>@(applied.Contains(groupIndex) ? "Saved. Change your picks and apply again, or move on." : Keep.Count == 0 ? "Keep at least one copy." : "Choose one or more copies to keep.")</strong>
-            <p class="text-muted-foreground">Keeping @Keep.Count of @members.Count. Applying marks the other @(members.Count - Keep.Count) for deletion and clears marks on kept copies. @(Group.Exact ? "Exact copies." : $"Similar images (difference {Group.MaxDistance}/64).") Nothing is deleted until you use Remove marked images.</p>
+            <p class="text-muted-foreground">Keeping @Keep.Count of @members.Count. Applying marks the other @(members.Count - Keep.Count) for deletion and clears marks on kept copies. @(Group.IsExact ? "Exact copies." : $"Similar images (difference {Group.MaxDistance}/64).") Nothing is deleted until you use Remove marked images.</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
             <Button Variant="@(Keep.Contains(Current.Id) ? ButtonVariant.Secondary : ButtonVariant.Outline)" Disabled="@busy" aria-pressed="@(Keep.Contains(Current.Id) ? "true" : "false")" OnClick="() => ToggleKeep(Current.Id)"><CheckIcon aria-hidden="true" />@(Keep.Contains(Current.Id) ? "Keeping this copy" : "Keep this copy") (K)</Button>
@@ -48,7 +48,7 @@
                     @if (thumbs.TryGetValue(member.Id, out var thumbnail)) { <img src="@thumbnail" alt="" draggable="false" /> }
                     else { <span class="grid h-full place-items-center text-xs text-muted-foreground">Preview</span> }
                     <span class="truncate px-2 text-xs font-semibold">@member.Name</span>
-                    <span class="px-2 text-xs text-muted-foreground">@member.Width &times; @member.Height &middot; @GalleryService.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.Favorite ? " · Favorite" : "")</span>
+                    <span class="px-2 text-xs text-muted-foreground">@member.Width &times; @member.Height &middot; @GalleryService.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.IsFavorite ? " · Favorite" : "")</span>
                     @if (member.Id == recommendedId) { <span class="px-2 text-xs text-muted-foreground text-primary">Recommended</span> }
                 </button>
                 <Button Variant="@(kept ? ButtonVariant.Default : ButtonVariant.Outline)" Size="ButtonSize.Sm" Class="mx-2 my-2" Disabled="@busy" aria-pressed="@(kept ? "true" : "false")" aria-label="@($"Keep {member.Name}")" OnClick="() => ToggleKeep(member.Id)"><CheckIcon aria-hidden="true" />Keep</Button>
@@ -63,14 +63,14 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IReadOnlyList<WebDuplicateGroup> Groups { get; set; } = [];
-    [Parameter, EditorRequired] public Func<string, WebImageRecord?> Lookup { get; set; } = _ => null;
+    [Parameter, EditorRequired] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = [];
+    [Parameter, EditorRequired] public Func<string, ImageRecord?> Lookup { get; set; } = _ => null;
     [Parameter] public int InitialGroup { get; set; }
     [Parameter] public EventCallback<string> OnClose { get; set; }
     private ElementReference element;
     private DotNetObjectReference<DuplicateReviewer>? reference;
     private int groupIndex, imageIndex, appliedMarks, generation;
-    private List<WebImageRecord> members = [];
+    private List<ImageRecord> members = [];
     private string recommendedId = "";
     private readonly Dictionary<int, HashSet<string>> keepByGroup = [];
     private readonly HashSet<int> applied = [];
@@ -80,8 +80,8 @@
     private bool busy, originalSize, disposed, closed;
     private string imageData = "", error = "", status = "";
     private Task? preload;
-    private WebDuplicateGroup Group => Groups[groupIndex];
-    private WebImageRecord Current => members[imageIndex];
+    private DuplicateGroup Group => Groups[groupIndex];
+    private ImageRecord Current => members[imageIndex];
     private HashSet<string> Keep => keepByGroup[groupIndex];
 
     protected override void OnInitialized()
@@ -101,7 +101,7 @@
 
     private void PrepareGroup()
     {
-        var records = Group.ImageIds.Select(Lookup).OfType<WebImageRecord>().ToList();
+        var records = Group.ImageIds.Select(Lookup).OfType<ImageRecord>().ToList();
         recommendedId = Gallery.PickDuplicateKeeper(records).Id;
         members = records.OrderByDescending(record => record.Id == recommendedId).ToList();
         imageIndex = 0;
@@ -131,7 +131,7 @@
                 if (stale.Count > 0) await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)stale.Select(entry => entry.Value).ToArray());
                 foreach (var entry in stale) urls.Remove(entry.Key);
             }
-            var data = await Gallery.ViewerImageAsync(id, full ? WebImageResolution.Original : WebImageResolution.Fit);
+            var data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
             if (disposed || forGeneration != generation) return "";
             var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
             urls[(id, full)] = url;

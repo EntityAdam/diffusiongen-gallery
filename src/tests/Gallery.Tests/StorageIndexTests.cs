@@ -1,7 +1,8 @@
-using Gallery.Web.Services.Processors;
-using Gallery.Web.Services.DataManagers;
+using Gallery.Core.Services.Processors.Codecs;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.DataManagers;
 using System.Security.Cryptography;
-using Gallery.Web.Services;
+using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;
@@ -38,7 +39,7 @@ public sealed class StorageIndexTests
         var loaded = Assert.Single(await fixture.Service.LoadAsync());
         await fixture.Service.WaitForDriveOperationsAsync();
 
-        Assert.Equal(Gallery.Web.Services.Processors.ComfyMetadata.Version, loaded.MetadataVersion);
+        Assert.Equal(Gallery.Core.Services.Processors.ComfyMetadata.Version, loaded.MetadataVersion);
         Assert.True(await fixture.Store.ContainsFingerprintAsync(legacy.Sha256, fixture.Session.Key));
         Assert.True(File.Exists(legacy.StoredPath));
         Assert.False(File.Exists(stagedPath));
@@ -96,15 +97,19 @@ public sealed class StorageIndexTests
         var bytes = GalleryTests.MakePng();
         var image = await fixture.Service.ImportAsync(new MemoryStream(bytes), "legacy.png", "folder");
         await fixture.Service.MoveAsync(image.Id, fixture.Root, "legacy-flat");
+        await fixture.Service.WaitForDriveOperationsAsync();
         await using (var connection = Connect(fixture))
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();
+            using var transaction = connection.BeginTransaction(deferred: false);
+            command.Transaction = transaction;
             command.CommandText = "DROP INDEX images_fingerprint; ALTER TABLE images DROP COLUMN fingerprint;";
             await command.ExecuteNonQueryAsync();
+            transaction.Commit();
         }
         var store = new GalleryStore(Path.Combine(fixture.Vault.Root, "gallery.db"));
-        var service = new GalleryService(store, fixture.Vault, fixture.Session);
+        using var service = new GalleryService(store, fixture.Vault, fixture.Session);
         // Act
         var migratedRecords = await service.LoadAsync();
         await service.WaitForDriveOperationsAsync();
@@ -119,7 +124,7 @@ public sealed class StorageIndexTests
         await verify.OpenAsync();
         using var query = verify.CreateCommand();
         query.CommandText = "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM images WHERE fingerprint = $fingerprint)";
-        query.Parameters.AddWithValue("$fingerprint", VaultCrypto.ContentFingerprint(fixture.Session.Key, migrated.Sha256));
+        query.Parameters.AddWithValue("$fingerprint", VaultCrypto.ContentFingerprint(fixture.Session.Key, Convert.FromHexString(migrated.Sha256)));
         await using var reader = await query.ExecuteReaderAsync();
         var plan = new List<string>();
         while (await reader.ReadAsync()) plan.Add(reader.GetString(3));

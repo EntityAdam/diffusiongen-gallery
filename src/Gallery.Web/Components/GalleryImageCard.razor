@@ -1,4 +1,4 @@
-<Card Class="@($"image-card relative min-w-0 overflow-hidden {(Image.MarkedForDeletion ? "marked" : "")} {(Selected ? "selected" : "")}")" data-image-id="@Image.Id">
+<Card Class="@($"image-card relative min-w-0 overflow-hidden {(Image.IsMarkedForDeletion ? "marked" : "")} {(Selected ? "selected" : "")}")" data-image-id="@Image.Id">
     @if (ShowSelection)
     {
         <Button Variant="@(Selected ? ButtonVariant.Default : ButtonVariant.Outline)" Size="ButtonSize.Icon" Class="absolute top-2 left-2 z-10 h-7! w-7! rounded-full! shadow-sm" Disabled="@Busy" aria-pressed="@(Selected ? "true" : "false")"
@@ -32,26 +32,26 @@
                     </Button>
                 }
             </div>
-            <span class="text-muted-foreground">@(Image.Reviewed ? "Reviewed" : "Pending")</span>
+            <span class="text-muted-foreground">@(Image.IsReviewed ? "Reviewed" : "Pending")</span>
         </div>
         @if (!Image.Collections.IsEmpty) { <div class="collection-chips mt-3 flex flex-wrap gap-1">@foreach (var name in Image.Collections) { <Badge Variant="BadgeVariant.Secondary" Class="max-w-full whitespace-normal break-words">@name</Badge> }</div> }
     </div>
     <div class="card-actions flex gap-1 border-t border-border p-2">
-        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@Busy" Class="@(Image.Favorite ? "min-w-0 flex-1 px-2 text-xs text-primary" : "min-w-0 flex-1 px-2 text-xs")" OnClick="Favorite" aria-label="Toggle favorite" aria-pressed="@Image.Favorite">
-            <HeartIcon Size="16" Fill="@(Image.Favorite ? "currentColor" : "none")" aria-hidden="true" /><span class="action-label">Favorite</span>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@Busy" Class="@(Image.IsFavorite ? "min-w-0 flex-1 px-2 text-xs text-primary" : "min-w-0 flex-1 px-2 text-xs")" OnClick="Favorite" aria-label="Toggle favorite" aria-pressed="@Image.IsFavorite">
+            <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" /><span class="action-label">Favorite</span>
         </Button>
-        <Button Variant="@(Image.MarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Sm" Disabled="@Busy" Class="min-w-0 flex-1 px-2 text-xs" OnClick="Mark" aria-label="@(Image.MarkedForDeletion ? "Unmark deletion" : "Mark deletion")" aria-pressed="@Image.MarkedForDeletion">
-            <TrashIcon Size="16" aria-hidden="true" /><span class="action-label">@(Image.MarkedForDeletion ? "Unmark" : "Mark deletion")</span>
+        <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Sm" Disabled="@Busy" Class="min-w-0 flex-1 px-2 text-xs" OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Mark deletion")" aria-pressed="@Image.IsMarkedForDeletion">
+            <TrashIcon Size="16" aria-hidden="true" /><span class="action-label">@(Image.IsMarkedForDeletion ? "Unmark" : "Mark deletion")</span>
         </Button>
     </div>
-    @if (RemovalMode && Image.MarkedForDeletion)
+    @if (RemovalMode && Image.IsMarkedForDeletion)
     {
         <div class="flex items-start gap-3 px-4 pb-4"><Checkbox id="@("removal-" + Image.Id)" Class="mt-0.5" Checked="@RemovalSelected" Disabled="@Busy" CheckedChanged="RemovalSelectionChanged" /><Label For="@("removal-" + Image.Id)" Class="text-sm leading-relaxed">Select for removal</Label></div>
     }
 </Card>
 
 @code {
-    [Parameter, EditorRequired] public WebImageRecord Image { get; set; } = new();
+    [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
     [Parameter] public string? Thumbnail { get; set; }
     [Parameter] public bool ThumbnailFailed { get; set; }
     [Parameter] public bool Busy { get; set; }
