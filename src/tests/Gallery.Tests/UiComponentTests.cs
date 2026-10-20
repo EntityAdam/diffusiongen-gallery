@@ -207,13 +207,52 @@ public sealed class UiComponentTests
             WebUtility.HtmlDecode(htmlRootComponent.ToHtmlString()));
 
         MatchCollection controls = Regex.Matches(actualHtml, @"<(?:input|select|button)\b[^>]*>");
+        Match[] fields = controls.Where(control => !control.Value.Contains("data-filter-navigation")).ToArray();
+        Match[] navigation = controls.Where(control => control.Value.Contains("data-filter-navigation")).ToArray();
 
         // Assert
-        Assert.NotEmpty(controls);
-        foreach (Match control in controls) Assert.Contains("disabled", control.Value);
+        Assert.NotEmpty(fields);
+        foreach (Match field in fields) Assert.Matches(@"\sdisabled(?:=|\s|/?>)", field.Value);
+        Assert.NotEmpty(navigation);
+        foreach (Match control in navigation) Assert.DoesNotMatch(@"\sdisabled(?:=|\s|/?>)", control.Value);
         Assert.Contains("type=\"date\"", actualHtml);
         Assert.Contains("type=\"number\"", actualHtml);
         Assert.Contains("role=\"checkbox\"", actualHtml);
+    }
+
+    [Fact]
+    public async Task FilterDrawer_WhenClosed_ThenIsNotModalAndWhenOpen_ThenExpandsActiveSectionsOnly()
+    {
+        // Arrange
+        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
+        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
+        GalleryFilter activeFilter = new() { Deletion = GalleryFilter.AnyValue, Orientation = "portrait" };
+
+        async Task<string> RenderAsync(bool open) => await htmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            HtmlRootComponent root = await htmlRenderer.RenderComponentAsync<GalleryFilterPanel>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(GalleryFilterPanel.Filter)] = activeFilter,
+                [nameof(GalleryFilterPanel.Open)] = open,
+                [nameof(GalleryFilterPanel.ResultCount)] = 7
+            }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+
+        // Act
+        string closedHtml = await RenderAsync(false);
+        string openHtml = await RenderAsync(true);
+
+        // Assert
+        Assert.DoesNotContain("aria-modal", closedHtml);
+        Assert.DoesNotContain("role=\"dialog\"", closedHtml);
+        Assert.Contains("inert", closedHtml);
+        Assert.Contains("role=\"dialog\"", openHtml);
+        Assert.Contains("aria-modal=\"true\"", openHtml);
+        Assert.Contains("Show 7 images", openHtml);
+        Assert.Matches(@"aria-expanded=""true"" aria-controls=""filter-section-media""", openHtml);
+        Assert.Matches(@"aria-expanded=""false"" aria-controls=""filter-section-organization""", openHtml);
+        Assert.Matches(@"id=""filter-section-organization"" class=""filter-section-body"" hidden", openHtml);
     }
 
     [Fact]

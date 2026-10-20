@@ -1,68 +1,177 @@
-<Card Class="mb-6 p-5 md:p-6 space-y-4" role="complementary">
-    <details class="filter-disclosure">
-        <summary>Filter images</summary>
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Find your image</h3><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Class="h-auto px-0" OnClick="Reset" Disabled="@Disabled">Reset</Button></div>
-        <Label For="collection-filter" Class="mt-4 mb-2 block">Collection</Label>
-        <Select Disabled="@Disabled" id="collection-filter" @bind-Value="draft.Collection" @bind-Value:after="NotifyChangedAsync">
-            <option value="">All collections</option>
-            @foreach (var name in Collections)
-            { <option value="@name">@name</option> }
-        </Select>
-        <Label For="rating-filter" Class="mt-4 mb-2 block">Minimum rating</Label><select disabled="@Disabled" id="rating-filter" @bind="draft.MinRating" @bind:after="NotifyChangedAsync" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-            <option value="0">Any rating</option>@for (var score = 1; score <= 5; score++) { <option value="@score">@score / 5</option> }
-        </select>
-        <Label For="review-filter" Class="mt-4 mb-2 block">Review queue</Label><Select Disabled="@Disabled" id="review-filter" @bind-Value="draft.Review" @bind-Value:after="NotifyChangedAsync">
-            <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
-        </Select>
-        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.IncludesUnorganizedOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
-        <Label For="media-filter" Class="mt-4 mb-2 block">Media type</Label>
-        <Select Disabled="@Disabled" id="media-filter" @bind-Value="draft.Media" @bind-Value:after="NotifyChangedAsync">
-            <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
-        </Select>
-        <Label For="search" Class="mt-4 mb-2 block">Search everything</Label>
-        <Input Disabled="@Disabled" id="search" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
-        <Label For="tag" Class="mt-4 mb-2 block">Tag</Label>
-        <Input Disabled="@Disabled" id="tag" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" Placeholder="Exact tag" list="tags" />
-        <datalist id="tags">@foreach (var tag in Tags) { <option value="@tag"></option> }</datalist>
-        <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
-        <Input Disabled="@Disabled" id="folder" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
-        <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
-        <Input Disabled="@Disabled" id="analysis-model" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
-        <Label For="diffusion-model" Class="mt-4 mb-2 block">Diffusion model</Label>
-        <Input Disabled="@Disabled" id="diffusion-model" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" list="diffusion-models" />
-        <datalist id="diffusion-models">@foreach (var model in DiffusionModels) { <option value="@model"></option> }</datalist>
-        <Label For="orientation" Class="mt-4 mb-2 block">Orientation</Label>
-        <Select Disabled="@Disabled" id="orientation" @bind-Value="draft.Orientation" @bind-Value:after="NotifyChangedAsync">
-            <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
-        </Select>
-        <div class="grid grid-cols-2 gap-3">
-            <div><Label For="width" Class="mt-4 mb-2 block">Min width</Label><input disabled="@Disabled" id="width" type="number" min="0" @bind="draft.MinWidth" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/></div>
-            <div><Label For="height" Class="mt-4 mb-2 block">Min height</Label><input disabled="@Disabled" id="height" type="number" min="0" @bind="draft.MinHeight" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/></div>
+<div class="filter-drawer @(Open ? "open" : "")" inert="@(!Open)" aria-hidden="@(Open ? null : "true")">
+    <div class="filter-drawer-backdrop" aria-hidden="true" @onclick="CloseAsync"></div>
+    <div tabindex="@(Open ? 0 : -1)" class="filter-drawer-sentinel" @onfocus="FocusPanelAsync"></div>
+    <aside @ref="panel" id="@PanelId" class="filter-drawer-panel" tabindex="-1" role="@(Open ? "dialog" : null)"
+           aria-modal="@(Open ? "true" : null)" aria-labelledby="filter-drawer-title" @onkeydown="OnKeyDownAsync">
+        <header class="filter-drawer-header">
+            <div class="min-w-0">
+                <h2 id="filter-drawer-title">Filters</h2>
+                <p class="text-muted-foreground" aria-live="polite">@ResultCount of @Images.Count images match</p>
+            </div>
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" OnClick="CloseAsync" aria-label="Close filters" data-filter-navigation><XIcon aria-hidden="true" /></Button>
+        </header>
+
+        <div class="filter-drawer-body">
+            <div class="filter-primary">
+                <Label For="search" Class="mb-2 block">Search</Label>
+                <Input Disabled="@Disabled" id="search" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
+                <Label For="diffusion-model" Class="mt-4 mb-2 block">Diffusion model</Label>
+                <Input Disabled="@Disabled" id="diffusion-model" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" Placeholder="Any diffusion model" list="diffusion-models" />
+                <datalist id="diffusion-models">@foreach (var model in DiffusionModels) { <option value="@model"></option> }</datalist>
+            </div>
+
+            @foreach (var section in Sections)
+            {
+                var isExpanded = expanded.Contains(section.Id);
+                var count = section.ActiveCount(Filter);
+                <section class="filter-section">
+                    <h3>
+                        <button type="button" class="filter-section-toggle" data-filter-navigation aria-expanded="@(isExpanded ? "true" : "false")" aria-controls="@($"filter-section-{section.Id}")" @onclick="() => ToggleSection(section.Id)">
+                            <span>@section.Title</span>
+                            @if (count > 0)
+                            {
+                                <span class="filter-count" aria-label="@($"{count} active")">@count</span>
+                            }
+                            <ChevronDownIcon Size="16" ClassName="filter-section-chevron" aria-hidden="true" />
+                        </button>
+                    </h3>
+                    <div id="@($"filter-section-{section.Id}")" class="filter-section-body" hidden="@(!isExpanded)">
+                        @switch (section.Id)
+                        {
+                            case "organization":
+                                <Label For="collection-filter" Class="mb-2 block">Collection</Label>
+                                <Select Disabled="@Disabled" id="collection-filter" @bind-Value="draft.Collection" @bind-Value:after="NotifyChangedAsync">
+                                    <option value="">All collections</option>
+                                    @foreach (var name in Collections)
+                                    { <option value="@name">@name</option> }
+                                </Select>
+                                <div class="mt-3 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.IncludesUnorganizedOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
+                                <Label For="tag" Class="mt-4 mb-2 block">Tag</Label>
+                                <Input Disabled="@Disabled" id="tag" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" Placeholder="Exact tag" list="tags" />
+                                <datalist id="tags">@foreach (var tag in Tags) { <option value="@tag"></option> }</datalist>
+                                <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
+                                <Input Disabled="@Disabled" id="folder" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <Label For="rating-filter" Class="mt-4 mb-2 block">Minimum rating</Label>
+                                        <select disabled="@Disabled" id="rating-filter" @bind="draft.MinRating" @bind:after="NotifyChangedAsync" class="@NativeInputClass">
+                                            <option value="0">Any rating</option>@for (var score = 1; score <= 5; score++) { <option value="@score">@score / 5</option> }
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <Label For="review-filter" Class="mt-4 mb-2 block">Review</Label>
+                                        <Select Disabled="@Disabled" id="review-filter" @bind-Value="draft.Review" @bind-Value:after="NotifyChangedAsync">
+                                            <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
+                                        </Select>
+                                    </div>
+                                </div>
+                                <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-favoritesonly" Class="mt-0.5" @bind-Checked="draft.IncludesFavoritesOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-favoritesonly" Class="text-sm leading-relaxed">Favorites only</Label></div>
+                                <Label For="deletion" Class="mt-4 mb-2 block">Deletion status</Label>
+                                <Select Disabled="@Disabled" id="deletion" @bind-Value="draft.Deletion" @bind-Value:after="NotifyChangedAsync">
+                                    <option value="active">Active images</option><option value="marked">Marked for deletion</option><option value="all">All images</option>
+                                </Select>
+                                break;
+                            case "media":
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <Label For="media-filter" Class="mb-2 block">Media type</Label>
+                                        <Select Disabled="@Disabled" id="media-filter" @bind-Value="draft.Media" @bind-Value:after="NotifyChangedAsync">
+                                            <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
+                                        </Select>
+                                    </div>
+                                    <div>
+                                        <Label For="orientation" Class="mb-2 block">Orientation</Label>
+                                        <Select Disabled="@Disabled" id="orientation" @bind-Value="draft.Orientation" @bind-Value:after="NotifyChangedAsync">
+                                            <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
+                                        </Select>
+                                    </div>
+                                    <div><Label For="width" Class="mt-1 mb-2 block">Min width</Label><input disabled="@Disabled" id="width" type="number" min="0" @bind="draft.MinWidth" @bind:after="NotifyChangedAsync" class="@NativeInputClass" /></div>
+                                    <div><Label For="height" Class="mt-1 mb-2 block">Min height</Label><input disabled="@Disabled" id="height" type="number" min="0" @bind="draft.MinHeight" @bind:after="NotifyChangedAsync" class="@NativeInputClass" /></div>
+                                </div>
+                                break;
+                            case "vision":
+                                <Label For="analysis" Class="mb-2 block">Analysis status</Label>
+                                <Select Disabled="@Disabled" id="analysis" @bind-Value="draft.Analysis" @bind-Value:after="NotifyChangedAsync">
+                                    <option value="all">All images</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
+                                </Select>
+                                <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
+                                <Input Disabled="@Disabled" id="analysis-model" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
+                                break;
+                            case "imported":
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div><Label For="from" Class="mb-2 block">From</Label><input disabled="@Disabled" id="from" type="date" @bind="draft.From" @bind:after="NotifyChangedAsync" class="@NativeInputClass" /></div>
+                                    <div><Label For="to" Class="mb-2 block">Through</Label><input disabled="@Disabled" id="to" type="date" @bind="draft.To" @bind:after="NotifyChangedAsync" class="@NativeInputClass" /></div>
+                                </div>
+                                break;
+                        }
+                    </div>
+                </section>
+            }
+
+            <p class="filter-drawer-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked, and results update as you change them.</p>
         </div>
-        <Label For="analysis" Class="mt-4 mb-2 block">Vision analysis</Label>
-        <Select Disabled="@Disabled" id="analysis" @bind-Value="draft.Analysis" @bind-Value:after="NotifyChangedAsync">
-            <option value="all">All images</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
-        </Select>
-        <Label For="deletion" Class="mt-4 mb-2 block">Deletion status</Label>
-        <Select Disabled="@Disabled" id="deletion" @bind-Value="draft.Deletion" @bind-Value:after="NotifyChangedAsync">
-            <option value="active">Active images</option><option value="marked">Marked for deletion</option><option value="all">All images</option>
-        </Select>
-        <Label For="from" Class="mt-4 mb-2 block">Imported from</Label><input disabled="@Disabled" id="from" type="date" @bind="draft.From" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
-        <Label For="to" Class="mt-4 mb-2 block">Imported through</Label><input disabled="@Disabled" id="to" type="date" @bind="draft.To" @bind:after="NotifyChangedAsync"  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
-        <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-favoritesonly" Class="mt-0.5" @bind-Checked="draft.IncludesFavoritesOnly" @bind-Checked:after="NotifyChangedAsync"  /><Label For="check-draft-favoritesonly" Class="text-sm leading-relaxed">Favorites only</Label></div>
-        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked.</div>
-    </details>
-</Card>
+
+        <footer class="filter-drawer-footer">
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="Reset" Disabled="@Disabled">Reset filters</Button>
+            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" OnClick="CloseAsync" data-filter-navigation>Show @ResultCount @(ResultCount == 1 ? "image" : "images")</Button>
+        </footer>
+    </aside>
+    <div tabindex="@(Open ? 0 : -1)" class="filter-drawer-sentinel" @onfocus="FocusPanelAsync"></div>
+</div>
 
 @code {
+    public const string PanelId = "gallery-filters";
+    private const string NativeInputClass = "h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+
     [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
     [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public int ResultCount { get; set; }
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback<bool> OpenChanged { get; set; }
     [Parameter] public EventCallback<GalleryFilter> Changed { get; set; }
     [Parameter] public EventCallback Reset { get; set; }
     [Parameter] public bool Disabled { get; set; }
 
+    private sealed record FilterSection(string Id, string Title, Func<GalleryFilter, int> ActiveCount);
+
+    private static readonly FilterSection[] Sections =
+    [
+        new("organization", "Organization", filter => Count(
+            filter.Collection.Length > 0, filter.IncludesUnorganizedOnly, filter.Tag.Length > 0, filter.Folder.Length > 0,
+            filter.MinRating > 0, filter.Review != GalleryFilter.AnyValue, filter.IncludesFavoritesOnly,
+            filter.Deletion != GalleryFilter.AnyValue)),
+        new("media", "Media & dimensions", filter => Count(
+            filter.Media != GalleryFilter.AnyValue, filter.Orientation != GalleryFilter.AnyValue, filter.MinWidth > 0, filter.MinHeight > 0)),
+        new("vision", "Vision analysis", filter => Count(filter.Analysis != GalleryFilter.AnyValue, filter.Model.Length > 0)),
+        new("imported", "Imported date", filter => Count(filter.From is not null, filter.To is not null))
+    ];
+
+    private static int Count(params bool[] conditions) => conditions.Count(condition => condition);
+
     private FilterDraft draft = new();
-    protected override void OnParametersSet() => draft = FilterDraft.CreateFrom(Filter);
+    private readonly HashSet<string> expanded = [];
+    private ElementReference panel;
+    private bool wasOpen;
+    private bool focusPending;
+
+    protected override void OnParametersSet()
+    {
+        draft = FilterDraft.CreateFrom(Filter);
+        if (Open && !wasOpen)
+        {
+            expanded.Clear();
+            foreach (var section in Sections.Where(section => section.ActiveCount(Filter) > 0)) expanded.Add(section.Id);
+            focusPending = true;
+        }
+        wasOpen = Open;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!focusPending) return;
+        focusPending = false;
+        await FocusPanelAsync();
+    }
 
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections)
         .Distinct(StringComparer.OrdinalIgnoreCase).Order();
@@ -75,6 +184,29 @@
         .Where(model => model.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
 
     private Task NotifyChangedAsync() => Changed.InvokeAsync(draft.ToFilter());
+
+    private void ToggleSection(string id)
+    {
+        if (!expanded.Remove(id)) expanded.Add(id);
+    }
+
+    private async Task FocusPanelAsync()
+    {
+        try { await panel.FocusAsync(); }
+        catch (JSException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    private async Task OnKeyDownAsync(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") await CloseAsync();
+    }
+
+    private async Task CloseAsync()
+    {
+        if (!Open) return;
+        await OpenChanged.InvokeAsync(false);
+    }
 
     private sealed class FilterDraft
     {

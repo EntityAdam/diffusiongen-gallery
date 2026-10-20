@@ -245,16 +245,24 @@ group you partly marked earlier restores those choices. Shortcuts: Left/Right
 copies, Up/Down groups, `K` toggle keep, `A` apply, `S` skip, `O` 100%, `P` fit,
 `Esc` close.
 Only tools for the current workflow are shown. Image workflows reuse the same
-grid, sort and collapsible **Filter images** controls. Filters carry across
+grid, sort and **Filters** drawer. The **Filters** button in the gallery toolbar
+shows how many filters are active and opens the drawer: a slide-out panel from the
+right on desktop and a full-screen sheet on small screens. **Search** and
+**Diffusion model** sit at the top. The remaining controls are grouped into
+collapsible **Organization**, **Media & dimensions**, **Vision analysis** and
+**Imported date** sections. Each section shows its active-filter count and opens
+automatically when it contains active criteria. Results update as you change a
+field. **Show N images** closes the drawer, as do the close button, `Esc` and
+clicking outside it; **Reset filters** clears everything. Filters carry across
 workflows; removal temporarily resets filters to show all marked images, and leaving
 removal restores your previous browsing filters. Active-filter chips remain visible
-above results even when filters are collapsed. Remove individual chips or clear all
+above results while the drawer is closed. Remove individual chips or clear all
 filters (the removal workflow keeps its marked-image default). The Library dashboard opens queues for all images, pending review,
 favorites and images without a collection.
 
 **Quick filters** above the grid toggle the most common views with one click:
 **Unreviewed**, **5★**, **Favorites** and **Not analyzed**, each with a live count.
-They combine with each other and with the full filter panel, and appear in the
+They combine with each other and with the Filters drawer, and appear in the
 active-filter chips like any other filter.
 
 **Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
@@ -330,7 +338,7 @@ a failed next-image load reports the error without undoing an already saved deci
 Closing early preserves completed decisions, and untouched images remain pending.
 Review uses the fast viewer's fit/full-size controls and bounded preloading.
 
-**Explore & saved views** stores named snapshots of all sidebar filters in
+**Explore & saved views** stores named snapshots of all drawer filters in
 encrypted SQLite settings. Saving the same name replaces that view. Loading a
 view restores its filters, not its old results. The local LLM can interpret a
 natural-language search into explicit filters; review and apply the suggestion.

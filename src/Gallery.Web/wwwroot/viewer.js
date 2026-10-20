@@ -13,6 +13,10 @@ document.addEventListener("dragover", preventImageDrop, true);
 document.addEventListener("drop", preventImageDrop, true);
 
 // Keyboard curation for the focused or hovered gallery card.
+window.galleryFocus = {
+    byId: function (id) { document.getElementById(id)?.focus(); }
+};
+
 window.galleryGrid = {
     keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
     attach: function (reference, doc) {
