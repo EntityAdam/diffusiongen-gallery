@@ -104,6 +104,7 @@ public sealed partial class GalleryService
     public const long MaxFileBytes = 50 * 1024 * 1024;
     public const long MaxVideoBytes = 256 * 1024 * 1024;
     public static readonly string[] Extensions = [".png", ".jpg", ".jpeg", ".webp", Mp4Extension];
+    public bool VideoToolsAvailable => videoTools?.IsAvailable == true;
 
     public static bool IsVideoName(string name) => string.Equals(Path.GetExtension(name), Mp4Extension, StringComparison.OrdinalIgnoreCase);
 

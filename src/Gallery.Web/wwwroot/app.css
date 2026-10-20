@@ -1,3 +1,6 @@
+.ingest-tool-available { background: #166534; color: #fff; border-color: #22c55e; }
+.ingest-tool-unavailable { background: #991b1b; color: #fff; border-color: #ef4444; }
+
 :root.dark {
     color-scheme: dark;
     --background: 222 27.778% 7.059%;

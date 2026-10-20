@@ -397,6 +397,15 @@ library, use a complete separate backup; stored image paths are absolute, so
 pointing at a copied database alone still references original image files.
 
 - **Ingest images** accepts a local folder path with optional recursive ingestion.
+  **Supported Media** lists supported formats and limits. The **3rd party** section
+  explains that external tools must be installed separately and shows a green/red
+  FFMPEG availability badge under **Video encoding** (MP4 ingestion requires both
+  ffmpeg and ffprobe).
+  **Include subfolders** defaults on; **Delete original media** and
+  **Save performance information** default off. Source deletion still requires
+  explicit confirmation. The collapsed **Advanced** section offers HDD (default),
+  SSD and Custom profiles, shows active worker/batch settings, and saves them per
+  gallery. Only Custom exposes worker and batch-size inputs.
   Browser folder/file uploads are not supported. PNG, JPEG,
   and WebP images (and MP4 videos, below) are supported; images up to 50 MiB, 40 megapixels, and 16384 pixels per
   dimension. Animated images are rejected. Imports are copies; originals

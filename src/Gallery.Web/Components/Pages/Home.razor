@@ -228,34 +228,56 @@ else
     @if (workflow == "ingest")
     {
         <Card Class="mb-6 p-5 md:p-6">
-            <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Bring your images home.</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">PNG / JPEG / WEBP / MP4</Badge></div>
-            <p class="text-muted-foreground">Images (PNG, JPEG, WebP) are encrypted unchanged as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
-            <div class="mt-4 space-y-3">
-                <Label Class="block">Ingestion performance</Label>
-                <div class="flex flex-wrap gap-2">
-                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Hdd)">HDD / NAS: 4 workers</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Ssd)">SSD / NVMe: @IngestionOptions.Ssd.Workers workers</Button>
-                </div>
-                <Label For="ingestion-workers">Parallel workers (1-32)</Label>
-                <input id="ingestion-workers" type="number" min="1" max="32" @bind="ingestionWorkers" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
-                <Label For="ingestion-batch">Files per catalog commit (1-64)</Label>
-                <input id="ingestion-batch" type="number" min="1" max="64" @bind="ingestionBatchSize" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
-                <p class="text-muted-foreground">Both suggested profiles commit 16 files at a time. Increase workers cautiously for large images or videos: decoding uses memory per worker. Sources are never deleted until their batch is committed and verified. Use a batch size at least as large as the worker count.</p>
-                <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="SaveIngestionOptionsAsync">Save performance settings</Button>
-            </div>
+            <p class="text-muted-foreground">Load images and videos into your secure library. Media are encrypted with your passphrase and you can optionally delete the originals.</p>
+            <section class="mt-4 space-y-3" aria-labelledby="supported-media-heading">
+                <h3 id="supported-media-heading">Supported Media</h3>
+                <div class="flex flex-wrap items-center gap-2"><span>Images</span><Badge Variant="BadgeVariant.Secondary">PNG</Badge><Badge Variant="BadgeVariant.Secondary">JPEG</Badge><Badge Variant="BadgeVariant.Secondary">WEBP</Badge><span>Up to 50MB</span></div>
+                <div class="flex flex-wrap items-center gap-2"><span>Videos</span><Badge Variant="BadgeVariant.Secondary">MP4</Badge><span>Up to 256MB</span></div>
+            </section>
+            <section class="mt-6 space-y-3" aria-labelledby="third-party-heading">
+                <h3 id="third-party-heading">3rd party</h3>
+                <p class="text-muted-foreground">3rd Party tools are required for certain features and are not bundled with the application. You will need to install them separately.</p>
+                <h4>Video encoding</h4>
+                <div class="flex items-center gap-2"><strong>FFMPEG</strong><Badge Class="@(Gallery.VideoToolsAvailable ? "ingest-tool-available" : "ingest-tool-unavailable")">@(Gallery.VideoToolsAvailable ? "available" : "not available")</Badge></div>
+            </section>
+            <h3 class="mt-6">Ingest</h3>
                 <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
-                    <Label For="source" Class="mt-4 mb-2 block">Local folder path</Label>
+                    <Label For="source" Class="mt-4 mb-2 block">Ingest Images From</Label>
                     <Input id="source" @bind-Value="importPath" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
-                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recursive" Class="mt-0.5" @bind-Checked="recursive" Disabled="@busy"  /><Label For="check-recursive" Class="text-sm leading-relaxed">Include subfolders</Label></div>
-                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recordtimings" Class="mt-0.5" @bind-Checked="recordTimings" Disabled="@busy"  /><Label For="check-recordtimings" Class="text-sm leading-relaxed">Record performance timings (logged without file or folder names)</Label></div>
-                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-deletesources" Class="mt-0.5" @bind-Checked="deleteSources" Disabled="@busy"  /><Label For="check-deletesources" Class="text-sm leading-relaxed">Delete originals after verified import</Label></div>
+                    <div class="mt-4 flex items-center gap-3"><button id="check-recursive" type="button" role="switch" class="review-random-toggle" aria-checked="@(recursive ? "true" : "false")" aria-labelledby="recursive-label" disabled="@busy" @onclick="() => recursive = !recursive"><span></span></button><Label id="recursive-label" For="check-recursive">Include subfolders</Label></div>
+                    <div class="mt-4 flex items-center gap-3"><button id="check-deletesources" type="button" role="switch" class="review-random-toggle" aria-checked="@(deleteSources ? "true" : "false")" aria-labelledby="delete-sources-label" disabled="@busy" @onclick="() => deleteSources = !deleteSources"><span></span></button><Label id="delete-sources-label" For="check-deletesources">Delete original media</Label></div>
+                    <div class="mt-4 flex items-center gap-3"><button id="check-recordtimings" type="button" role="switch" class="review-random-toggle" aria-checked="@(recordTimings ? "true" : "false")" aria-labelledby="record-timings-label" disabled="@busy" @onclick="() => recordTimings = !recordTimings"><span></span></button><Label id="record-timings-label" For="check-recordtimings">Save performance information</Label></div>
                     @if (deleteSources)
                     {
                         <Alert Variant="AlertVariant.Destructive">Originals will be deleted without the Recycle Bin after the saved image, catalog and thumbnail are verified. This is not secure shredding: SSD/NVMe remnants, backups and snapshots may remain recoverable.</Alert>
                         <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmsourcedeletion" Class="mt-0.5" @bind-Checked="confirmSourceDeletion" Disabled="@busy"  /><Label For="check-confirmsourcedeletion" Class="text-sm leading-relaxed">I understand this permanently removes successfully imported source files, not their forensic remnants.</Label></div>
                     }
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" Type="submit">Ingest this folder <ArrowRightIcon aria-hidden="true" /></Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Class="mt-4" Disabled="@busy" Type="submit">Ingest <ArrowRightIcon aria-hidden="true" /></Button>
                 </form>
+            <details class="mt-6">
+                <summary>Advanced</summary>
+                <div class="mt-4 space-y-3">
+                    <h3>Ingestion performance</h3>
+                    <Label Class="block">Performance profile</Label>
+                    <div class="flex flex-wrap gap-2" role="group" aria-label="Performance profile">
+                        <Button Variant="@(ingestionProfile == "hdd" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "hdd" ? "true" : "false")" Disabled="@busy" OnClick='() => ApplyIngestionProfile(IngestionOptions.Hdd, "hdd")'>HDD</Button>
+                        <Button Variant="@(ingestionProfile == "ssd" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "ssd" ? "true" : "false")" Disabled="@busy" OnClick='() => ApplyIngestionProfile(IngestionOptions.Ssd, "ssd")'>SSD</Button>
+                        <Button Variant="@(ingestionProfile == "custom" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "custom" ? "true" : "false")" Disabled="@busy" OnClick='() => ingestionProfile = "custom"'>Custom</Button>
+                    </div>
+                    <p class="text-muted-foreground">Active settings: @ingestionWorkers workers, batch size @ingestionBatchSize.</p>
+                    @if (ingestionProfile == "custom")
+                    {
+                        <div class="space-y-3">
+                            <Label For="ingestion-workers">Workers</Label>
+                            <input id="ingestion-workers" type="number" min="1" max="32" @bind="ingestionWorkers" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                            <Label For="ingestion-batch">Batch Size</Label>
+                            <input id="ingestion-batch" type="number" min="1" max="64" @bind="ingestionBatchSize" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                            <p class="text-muted-foreground">Use 1-32 workers and a batch size of 1-64, at least as large as the worker count. More workers use more memory.</p>
+                        </div>
+                    }
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="SaveIngestionOptionsAsync">Save</Button>
+                </div>
+            </details>
             @if (importProgress is not null)
             {
                 <div class="mt-5 space-y-2" aria-busy="@(busy ? "true" : "false")">
@@ -758,6 +780,7 @@ else
     private string existingGalleryDirectory = "", newGalleryName = "", newGalleryDirectory = "";
     private string newMediaDirectory = "", mediaDirectory = "", catalogDirectory = "";
     private int ingestionWorkers = IngestionOptions.Hdd.Workers, ingestionBatchSize = IngestionOptions.Hdd.CatalogBatchSize;
+    private string ingestionProfile = "hdd";
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
     private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
     private string restoreArchive = "", restoreCredential = "";
@@ -825,10 +848,11 @@ else
         message = "Gallery renamed.";
     });
 
-    private void ApplyIngestionProfile(IngestionOptions options)
+    private void ApplyIngestionProfile(IngestionOptions options, string? profile = null)
     {
         ingestionWorkers = options.Workers;
         ingestionBatchSize = options.CatalogBatchSize;
+        ingestionProfile = profile ?? (options == IngestionOptions.Hdd ? "hdd" : options == IngestionOptions.Ssd ? "ssd" : "custom");
     }
 
     private Task SaveIngestionOptionsAsync() => RunAsync("Saving ingestion settings...", async () =>
@@ -910,7 +934,8 @@ else
     private string? projectedGrouping;
     private IReadOnlyDictionary<string, PromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
     private IReadOnlyDictionary<string, DiffusionModelGroup> diffusionModelGroupOf => Browsing.DiffusionModelGroupsByImageId;
-    private bool useRecovery, recoverySaved, busy, recursive;
+    private bool useRecovery, recoverySaved, busy;
+    private bool recursive = true;
     private string workflow = "library";
     private bool filtersOpen;
     private bool sidebarCollapsed;

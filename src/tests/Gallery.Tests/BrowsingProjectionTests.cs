@@ -12,6 +12,30 @@ namespace Gallery.Tests;
 public sealed class BrowsingProjectionTests
 {
     [Fact]
+    public void Home_IngestionDefaultsAndProfiles_PreserveExpectedSettings()
+    {
+        var home = new Home();
+        Assert.True(GetField<bool>(home, "recursive"));
+        Assert.False(GetField<bool>(home, "deleteSources"));
+        Assert.False(GetField<bool>(home, "recordTimings"));
+        Assert.Equal("hdd", GetField<string>(home, "ingestionProfile"));
+        Assert.Equal(IngestionOptions.Hdd.Workers, GetField<int>(home, "ingestionWorkers"));
+        Assert.Equal(IngestionOptions.Hdd.CatalogBatchSize, GetField<int>(home, "ingestionBatchSize"));
+
+        Invoke(home, "ApplyIngestionProfile", IngestionOptions.Ssd, "ssd");
+        Assert.Equal("ssd", GetField<string>(home, "ingestionProfile"));
+        Assert.Equal(IngestionOptions.Ssd.Workers, GetField<int>(home, "ingestionWorkers"));
+
+        Invoke(home, "ApplyIngestionProfile", new IngestionOptions { Workers = 7, CatalogBatchSize = 21 }, null);
+        Assert.Equal("custom", GetField<string>(home, "ingestionProfile"));
+        Assert.Equal(7, GetField<int>(home, "ingestionWorkers"));
+        Assert.Equal(21, GetField<int>(home, "ingestionBatchSize"));
+
+        Invoke(home, "ApplyIngestionProfile", IngestionOptions.Hdd, null);
+        Assert.Equal("hdd", GetField<string>(home, "ingestionProfile"));
+    }
+
+    [Fact]
     public void Projection_WhenCalledWithIndependentInputs_ThenProducesIndependentImmutableSnapshots()
     {
         // Arrange
@@ -269,7 +293,7 @@ public sealed class BrowsingProjectionTests
     private static T GetProperty<T>(Home home, string name) =>
         (T)typeof(Home).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
 
-    private static object? Invoke(Home home, string name, params object[] args) =>
+    private static object? Invoke(Home home, string name, params object?[] args) =>
         typeof(Home).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, args);
 
     private sealed class NoOpJsRuntime : IJSRuntime
