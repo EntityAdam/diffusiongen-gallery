@@ -9,6 +9,40 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class ReviewTests
 {
+    [Fact]
+    public async Task Organize_ColumnActionsPreserveOtherMetadata()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "organize.png", "folder");
+        image = await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        {
+            Description = "preserve", Tags = "existing", Rating = 3, IsFavorite = true
+        });
+        var workbench = new Gallery.Web.Components.LibraryWorkbench();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = workbench.GetType();
+        type.GetProperty("Gallery", flags)!.SetValue(workbench, fixture.Service);
+        type.GetProperty("Logger", flags)!.SetValue(workbench,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.LibraryWorkbench>.Instance);
+        type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { image.Id });
+        type.GetField("collection", flags)!.SetValue(workbench, "new collection");
+        type.GetField("tags", flags)!.SetValue(workbench, "new tag");
+        await (Task)type.GetMethod("ApplyCollectionAsync", flags)!.Invoke(workbench, null)!;
+        var collected = Assert.Single(await fixture.Service.ListAsync());
+        Assert.Contains("new collection", collected.Collections);
+        Assert.Equal("existing", collected.Tags);
+        await (Task)type.GetMethod("ApplyTagsAsync", flags)!.Invoke(workbench, null)!;
+        var tagged = Assert.Single(await fixture.Service.ListAsync());
+        Assert.Contains("existing", tagged.Tags);
+        Assert.Contains("new tag", tagged.Tags);
+        Assert.Equal(collected.Collections.ToArray(), tagged.Collections.ToArray());
+        Assert.Equal(image.Description, tagged.Description);
+        Assert.Equal(image.Rating, tagged.Rating);
+        Assert.Equal(image.IsReviewed, tagged.IsReviewed);
+        Assert.Equal(image.IsFavorite, tagged.IsFavorite);
+    }
+
     [Theory]
     [InlineData(false, 2, 1)]
     [InlineData(true, 2, 0)]

@@ -305,14 +305,20 @@ that rating, or click the current rating again to clear it. Assigning a nonzero
 rating or marking an image for deletion also marks it reviewed; clearing a rating
 or removing a deletion mark does not change review status.
 
-**Organize** adds/removes collection membership, merges tags without
-discarding existing tags, and applies 0-5 ratings and reviewed/pending status.
-Rating and review status default to **Leave unchanged**. Assigning a nonzero
-rating marks the images reviewed; an explicit pending status does not override
-that rule.
-Select exactly two images for side-by-side comparison, with independent rating
-buttons that also mark each image reviewed. Filters support collections,
-minimum ratings, review status and unorganized images; sort by highest rating.
+**Organize** shows the selected count and **Clear selection (ESC)**, followed by
+independent Collections and Tags columns. Each has a labeled select for existing
+values, with a **Create new** option for text entry. **Apply**, **Clear**, and
+**Suggest (AI Vision)** share one row. Clear resets only that selection/input; Apply adds collection
+membership or merges tags without discarding existing metadata. Vision suggestions
+support up to 24 selected images and require individual approval. Applying a
+collection suggestion changes only collections; applying a tag suggestion changes
+only tags. Ratings and review status are edited in the other workflows.
+
+**Unexposed features:** the workbench retains its side-by-side two-image comparison
+code (including independent ratings), combined collection/tag application,
+collection removal, and rating/review-status operations, but Organize does not
+expose controls for them. Filters still support collections, minimum ratings,
+review status and unorganized images.
 
 In **Guided review**, set a **Goal** (default 10) and click **Start Review** to
 review that many pending, unmarked images from the current filtered results across

@@ -516,7 +516,7 @@ else
             </div>
         </Card>
     }
-    <LibraryWorkbench @ref="workbench" Visible="@(workflow is "organize" or "explore" or "ai")" Workflow="@workflow" Images="images" SelectedIds="librarySelection" Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" JobChanged="LibraryJobChanged" />
+    <LibraryWorkbench @ref="workbench" Visible="@(workflow is "organize" or "explore" or "ai")" Workflow="@workflow" Images="images" SelectedIds="librarySelection" Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged" />
     @if (ShowsGallery)
     {
     <GalleryFilterPanel Filter="filter" Images="images" ResultCount="Filtered.Count" Open="filtersOpen" OpenChanged="SetFiltersOpenAsync" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
@@ -1473,7 +1473,7 @@ else
         message = "Gallery overview refreshed.";
     });
     private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
-    private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.IsRunning ? "ai" : libraryJob.Workflow);
+    private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.IsRunning && libraryJob.Workflow != "organize" ? "ai" : libraryJob.Workflow);
     private void DismissLibraryJob() => libraryJob = new(false, "", "", 0, false);
     private Task StopLibraryJobAsync() => workbench?.StopAnalysisAsync() ?? Task.CompletedTask;
     private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); selectionAnchor = null; }
