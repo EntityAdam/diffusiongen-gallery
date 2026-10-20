@@ -180,6 +180,11 @@ previews and metadata; trust the server and use HTTPS when available, since HTTP
 does not encrypt traffic in transit. The gallery web application itself still binds
 only to loopback.
 
+The workspace uses ShadCn **AppLayout** with a collapsible sidebar and independently
+scrollable workflow content. The sidebar toggle switches between labeled navigation
+and an icon rail; workflow tooltips and the panic-lock button remain available
+when collapsed. Primary views have no footer; full-screen viewers retain theirs.
+
 The left navigation separates Library, Guided review, Organize, Explore & saved
 views, Local intelligence, Duplicate finder, Trash, Ingest images and Settings.
 **Settings** opens on a **Gallery overview** with tabs for **Backups**,

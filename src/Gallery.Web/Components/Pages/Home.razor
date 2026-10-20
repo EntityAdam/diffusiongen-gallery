@@ -147,14 +147,19 @@ else if (recoveryPhrase.Length > 0)
 }
 else
 {
-    <div class="grid grid-cols-1 items-start gap-6 md:grid-cols-[210px_minmax(0,1fr)]">
-    <Card Class="mb-6 flex flex-wrap gap-2 p-4 md:sticky md:top-5 md:flex-col" aria-label="Gallery workflows" role="navigation">
-        <span class="eyebrow">YOUR WORKSPACE</span>
+    <AppLayout Class="workspace-layout">
+    <Sidebar Collapsible="true" @bind-Collapsed="sidebarCollapsed" ExpandedWidth="250px" CollapsedWidth="64px" Class="@($"workspace-sidebar {(sidebarCollapsed ? "is-collapsed" : "")}")" aria-label="Gallery workflows">
+        <div class="workspace-sidebar-heading">
+            <span class="eyebrow sidebar-label">YOUR WORKSPACE</span>
+            <SidebarTrigger aria-expanded="@(sidebarCollapsed ? "false" : "true")" aria-label="@(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")" />
+        </div>
+        <nav class="workspace-navigation" aria-label="Gallery workflows">
         @foreach (var item in Workflows)
         {
-            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || libraryJob.IsRunning && item.Id is "remove" or "ingest" or "settings")" Class="h-auto min-h-10 justify-start px-3 py-2 text-left text-sm whitespace-normal" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" />@item.Name</Button>
+            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || libraryJob.IsRunning && item.Id is "remove" or "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name</span></Button>
         }
-        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground"><strong>@images.Count images</strong><span data-testid="pending-count">@PendingReviewCount awaiting review</span></div>
+        </nav>
+        <div class="workspace-sidebar-details" hidden="@sidebarCollapsed">
         @if (libraryJob.IsRunning || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
         {
             <div class="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs break-words" role="status">
@@ -203,11 +208,13 @@ else
                 </div>
             </div>
         }
-        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="w-full justify-between" Disabled="@busy" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
-            <span class="inline-flex items-center gap-2"><ShieldAlertIcon Size="16" aria-hidden="true" /> Panic</span> <kbd>Ctrl+Shift+L</kbd>
+        </div>
+        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="workspace-panic" Disabled="@busy" aria-label="Panic lock gallery (Ctrl+Shift+L)" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
+            <ShieldAlertIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Panic <kbd>Ctrl+Shift+L</kbd></span>
         </Button>
-    </Card>
-    <div class="min-w-0">
+    </Sidebar>
+    <AppLayoutMain Class="workspace-main">
+    <AppLayoutBody Class="workspace-body">
     <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2></div></div>
         <div class="flex flex-wrap items-center gap-2">
@@ -631,8 +638,9 @@ else
         </section>
     </div>
     }
-    </div>
-    </div>
+    </AppLayoutBody>
+    </AppLayoutMain>
+    </AppLayout>
 
     @if (selected is not null)
     {
@@ -905,6 +913,7 @@ else
     private bool useRecovery, recoverySaved, busy, recursive;
     private string workflow = "library";
     private bool filtersOpen;
+    private bool sidebarCollapsed;
     private LibraryWorkbench? workbench;
     private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
     private GalleryFilter? browsingFilter;

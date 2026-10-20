@@ -11,6 +11,25 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class UiComponentTests
 {
+    [Fact]
+    public async Task MainLayout_RetainsBrandAndBodyWithoutPrimaryFooter()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var renderer = fixture.HtmlRenderer;
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await renderer.RenderComponentAsync<Gallery.Web.Components.Layout.MainLayout>(
+                ParameterView.FromDictionary(new Dictionary<string, object?>
+                {
+                    ["Body"] = (RenderFragment)(builder => builder.AddContent(0, "Workflow content"))
+                }));
+            return root.ToHtmlString();
+        });
+        Assert.Contains("DiffusionGen Gallery home", html);
+        Assert.Contains("Workflow content", html);
+        Assert.DoesNotContain("<footer", html);
+    }
+
     [Theory]
     [InlineData(typeof(LibraryQuickEdit), "Favorite", "Not Reviewed", 11)]
     [InlineData(typeof(ReviewQuickEdit), "Not Reviewed", "Favorite", 9)]
