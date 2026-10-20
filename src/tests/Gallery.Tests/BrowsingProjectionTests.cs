@@ -36,6 +36,42 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
+    public void Home_IngestionScanGatesIngest_AndClearsOnSourceScopeChanges()
+    {
+        var home = new Home();
+        var scan = new IngestionScan("source", FolderSearchScope.Descendants, "catalog", "media",
+            [new IngestionScanFile("source.png", 100, DateTime.UtcNow, false)]);
+        var space = Gallery.Core.Services.GalleryService.CalculateIngestionSpace(1, 100,
+            long.MaxValue, long.MaxValue, true);
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        SetField(home, "ingestionScan", scan);
+        SetField(home, "ingestionSpace", space);
+        Assert.True(GetProperty<bool>(home, "CanIngestScan"));
+
+        SetField(home, "busy", true);
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        SetField(home, "busy", false);
+        Assert.Equal(space.EstimatedBytes, GetProperty<long>(home, "EstimatedIngestionChangeBytes"));
+        Invoke(home, "ToggleSourceDeletion");
+        Assert.True(GetProperty<bool>(home, "CanIngestScan"));
+        Assert.Equal(space.EstimatedBytes - space.SelectedSourceBytes, GetProperty<long>(home, "EstimatedIngestionChangeBytes"));
+        Invoke(home, "ToggleSourceDeletion");
+        Assert.Equal(space.EstimatedBytes, GetProperty<long>(home, "EstimatedIngestionChangeBytes"));
+
+        SetField(home, "ingestionSpace", space with { MediaAvailableBytes = 0 });
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        Invoke(home, "ToggleSourceDeletion");
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        SetField(home, "ingestionSpace", space with { FileCount = 0 });
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        Invoke(home, "ToggleImportRecursion");
+        Assert.False(GetField<bool>(home, "recursive"));
+        Assert.Null(GetField<IngestionScan?>(home, "ingestionScan"));
+        Assert.Null(GetField<IngestionSpaceEstimate?>(home, "ingestionSpace"));
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+    }
+
+    [Fact]
     public void Projection_WhenCalledWithIndependentInputs_ThenProducesIndependentImmutableSnapshots()
     {
         // Arrange

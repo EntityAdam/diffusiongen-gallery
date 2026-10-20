@@ -10,7 +10,7 @@ internal static class VaultCrypto
     private const int NonceSizeBytes = 12;
     private const int AuthenticationTagSizeBytes = 16;
     private const int MagicSizeBytes = 8;
-    private const int EnvelopeHeaderSizeBytes = MagicSizeBytes + NonceSizeBytes + AuthenticationTagSizeBytes;
+    internal const int EnvelopeHeaderSizeBytes = MagicSizeBytes + NonceSizeBytes + AuthenticationTagSizeBytes;
     private static readonly byte[] Magic = "DPNG0001"u8.ToArray();
 
     public static byte[] Derive(string secret, ReadOnlySpan<byte> salt) =>

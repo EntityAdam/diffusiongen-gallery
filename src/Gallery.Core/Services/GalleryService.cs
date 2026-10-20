@@ -940,7 +940,8 @@ public sealed partial class GalleryService
 
     public async Task ImportFolderAsync(string folder, FolderSearchScope searchScope, Action<string>? progress = null,
         SourceRetention sourceRetention = SourceRetention.Retain, Func<ImportProgress, Task>? reportProgress = null,
-        Action<IngestionTimingReport>? reportTimings = null, IngestionOptions? options = null)
+        Action<IngestionTimingReport>? reportTimings = null, IngestionOptions? options = null,
+        IngestionScan? scan = null, bool includeImages = true, bool includeVideos = true)
     {
         ValidateOperationChoice(searchScope);
         ValidateOperationChoice(sourceRetention);
@@ -951,6 +952,7 @@ public sealed partial class GalleryService
         var mediaRoot = await MediaDirectoryWithKeyAsync(key.Bytes);
         folder = Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing local folder.");
+        if (scan is not null) ValidateIngestionScan(scan, folder, searchScope, mediaRoot);
         var measurementStart = reportTimings is null ? null : IngestionTimingReports.Start(folder, mediaRoot, VaultRoot);
         var observations = reportTimings is null ? null : new System.Collections.Concurrent.ConcurrentQueue<IngestionTimingObservation>();
         var timings = observations is null ? null : new IngestionTimings(observations.Enqueue);
@@ -959,11 +961,25 @@ public sealed partial class GalleryService
             if (reportProgress is not null)
             {
                 var reportStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                try { await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder...")); }
+                try { await reportProgress(new ImportProgress(null, 0, 0, 0,
+                    scan is null ? "Scanning selected folder..." : "Checking scanned files and disk space...")); }
                 finally { timings?.Record(IngestionStage.ReportProgress, reportStart); }
             }
             var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            var imagePaths = await Task.Run(() => DiscoverImagePaths(folder, searchScope));
+            var imagePaths = await Task.Run(() =>
+            {
+                if (scan is null)
+                    return DiscoverImagePaths(folder, searchScope)
+                        .Where(path => IsVideoName(path) ? includeVideos : includeImages).ToArray();
+                var files = scan.SelectFiles(includeImages, includeVideos);
+                if (files.IsEmpty) throw new InvalidOperationException("Select at least one media type with files to ingest.");
+                if (files.Any(file => file.IsVideo) && !VideoToolsAvailable)
+                    throw new InvalidOperationException("Install ffmpeg and ffprobe, or disable Include Videos.");
+                ValidateScannedFiles(files);
+                if (!MeasureIngestionSpace(scan, files).HasEnoughSpace)
+                    throw new IOException("There is not enough available disk space for the selected media and catalog growth.");
+                return files.Select(file => file.Path).ToArray();
+            });
             timings?.Record(IngestionStage.Discover, stageStart);
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
             await galleryStore.Gate.WaitAsync();

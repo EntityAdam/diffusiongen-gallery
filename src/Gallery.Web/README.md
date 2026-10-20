@@ -402,10 +402,32 @@ pointing at a copied database alone still references original image files.
   FFMPEG availability badge under **Video encoding** (MP4 ingestion requires both
   ffmpeg and ffprobe).
   **Include subfolders** defaults on; **Delete original media** and
-  **Save performance information** default off. Source deletion still requires
-  explicit confirmation. The collapsed **Advanced** section offers HDD (default),
+  **Save performance information** default off. Enabling deletion displays a
+  permanent-deletion warning without an additional confirmation checkbox.
+  The collapsed **Advanced** section offers HDD (default),
   SSD and Custom profiles, shows active worker/batch settings, and saves them per
   gallery. Only Custom exposes worker and batch-size inputs.
+  Enter a source path and select **Scan** before ingesting. The scan caches supported
+  file paths, sizes and modification times in memory, and reports image/video counts
+  and total source size. **Include Images** and **Include Videos** recalculate the
+  selected count and destination-space estimate without enumerating again. Videos
+  are disabled when ffmpeg/ffprobe are unavailable. Changing the source or recursion,
+  locking, or finishing an ingest discards the scan; newly added files require a
+  new scan. Changed/missing selected files stop ingestion and require a rescan.
+  **Ingest** is disabled for an empty selection or insufficient disk space.
+  Free space is checked again immediately before
+  ingestion on both media and catalog destinations. The conservative estimate
+  allows 64 bytes per encrypted media file, 4 MiB per file for thumbnails/metadata
+  and catalog/WAL growth, plus 16 MiB for catalog overhead. It is not an exact size
+  prediction: duplicates may reduce usage and concurrent writes can consume space.
+  The displayed estimated change is separate from that safety allowance: it uses
+  source bytes plus the actual encryption envelope size (36 bytes each for media
+  and thumbnail), a typical 128 KiB thumbnail allowance and 4 KiB catalog-entry
+  allowance per file. These thumbnail/catalog allowances are estimates, not measured
+  sizes; compression and metadata vary, and duplicates can reduce actual growth.
+  There is no fixed catalog reserve in the displayed estimate. Selected source bytes
+  are subtracted when deletion is enabled. Original deletion is not credited as
+  available space for the safety check before verification.
   Browser folder/file uploads are not supported. PNG, JPEG,
   and WebP images (and MP4 videos, below) are supported; images up to 50 MiB, 40 megapixels, and 16384 pixels per
   dimension. Animated images are rejected. Imports are copies; originals
@@ -431,8 +453,8 @@ pointing at a copied database alone still references original image files.
   once per folder job. Thumbnails are encrypted once and inserted as ciphertext.
   Progress callbacks are awaited and serialized but throttled to 100 ms, with
   errors and the final counts always reported.
-- Local folder-path ingestion supports **Delete originals after verified import**,
-  off by default, with an explicit acknowledgement. The saved encrypted image,
+- Local folder-path ingestion supports **Delete original media**,
+  off by default, with a permanent-deletion warning. The saved encrypted image,
   catalog and thumbnail are reread and authenticated after the batch commits,
   using one catalog query on the existing import connection. The saved plaintext
   hash and image header dimensions are checked without a second pixel decode.

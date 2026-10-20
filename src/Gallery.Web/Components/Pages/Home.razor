@@ -241,19 +241,47 @@ else
                 <div class="flex items-center gap-2"><strong>FFMPEG</strong><Badge Class="@(Gallery.VideoToolsAvailable ? "ingest-tool-available" : "ingest-tool-unavailable")">@(Gallery.VideoToolsAvailable ? "available" : "not available")</Badge></div>
             </section>
             <h3 class="mt-6">Ingest</h3>
-                <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
+                <form @onsubmit="ScanImportFolderAsync" @onsubmit:preventDefault>
                     <Label For="source" Class="mt-4 mb-2 block">Ingest Images From</Label>
-                    <Input id="source" @bind-Value="importPath" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
-                    <div class="mt-4 flex items-center gap-3"><button id="check-recursive" type="button" role="switch" class="review-random-toggle" aria-checked="@(recursive ? "true" : "false")" aria-labelledby="recursive-label" disabled="@busy" @onclick="() => recursive = !recursive"><span></span></button><Label id="recursive-label" For="check-recursive">Include subfolders</Label></div>
-                    <div class="mt-4 flex items-center gap-3"><button id="check-deletesources" type="button" role="switch" class="review-random-toggle" aria-checked="@(deleteSources ? "true" : "false")" aria-labelledby="delete-sources-label" disabled="@busy" @onclick="() => deleteSources = !deleteSources"><span></span></button><Label id="delete-sources-label" For="check-deletesources">Delete original media</Label></div>
+                    <Input id="source" @bind-Value="importPath" @bind-Value:after="ClearIngestionScan" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
+                    <div class="mt-4 flex items-center gap-3"><button id="check-recursive" type="button" role="switch" class="review-random-toggle" aria-checked="@(recursive ? "true" : "false")" aria-labelledby="recursive-label" disabled="@busy" @onclick="ToggleImportRecursion"><span></span></button><Label id="recursive-label" For="check-recursive">Include subfolders</Label></div>
                     <div class="mt-4 flex items-center gap-3"><button id="check-recordtimings" type="button" role="switch" class="review-random-toggle" aria-checked="@(recordTimings ? "true" : "false")" aria-labelledby="record-timings-label" disabled="@busy" @onclick="() => recordTimings = !recordTimings"><span></span></button><Label id="record-timings-label" For="check-recordtimings">Save performance information</Label></div>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Class="mt-4" Disabled="@(busy || string.IsNullOrWhiteSpace(importPath))" Type="submit">Scan</Button>
+                </form>
+                @if (ingestionScan is not null)
+                {
+                    <section class="mt-4 space-y-3" aria-labelledby="ingestion-scan-heading" aria-live="polite">
+                    <h4 id="ingestion-scan-heading">Scan results</h4>
+                    <p>@ingestionScan.ImageCount images &middot; @ingestionScan.VideoCount videos &middot; Source file size total: @FormatIngestionBytes(ingestionScan.SourceBytes)</p>
+                    <div class="flex items-center gap-3"><button id="include-images" type="button" role="switch" class="review-random-toggle" aria-checked="@(includeImages ? "true" : "false")" aria-labelledby="include-images-label" disabled="@busy" @onclick="ToggleIncludeImagesAsync"><span></span></button><Label id="include-images-label" For="include-images">Include Images</Label></div>
+                    <div class="flex items-center gap-3"><button id="include-videos" type="button" role="switch" class="review-random-toggle" aria-checked="@(includeVideos ? "true" : "false")" aria-labelledby="include-videos-label" disabled="@(busy || !Gallery.VideoToolsAvailable)" @onclick="ToggleIncludeVideosAsync"><span></span></button><Label id="include-videos-label" For="include-videos">Include Videos</Label></div>
+                    @if (!Gallery.VideoToolsAvailable && ingestionScan.VideoCount > 0)
+                    {
+                        <p class="text-muted-foreground">Install ffmpeg and ffprobe to include videos.</p>
+                    }
+                    <div class="flex items-center gap-3"><button id="check-deletesources" type="button" role="switch" class="review-random-toggle" aria-checked="@(deleteSources ? "true" : "false")" aria-labelledby="delete-sources-label" disabled="@busy" @onclick="ToggleSourceDeletion"><span></span></button><Label id="delete-sources-label" For="check-deletesources">Delete original media</Label></div>
                     @if (deleteSources)
                     {
-                        <Alert Variant="AlertVariant.Destructive">Originals will be deleted without the Recycle Bin after the saved image, catalog and thumbnail are verified. This is not secure shredding: SSD/NVMe remnants, backups and snapshots may remain recoverable.</Alert>
-                        <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmsourcedeletion" Class="mt-0.5" @bind-Checked="confirmSourceDeletion" Disabled="@busy"  /><Label For="check-confirmsourcedeletion" Class="text-sm leading-relaxed">I understand this permanently removes successfully imported source files, not their forensic remnants.</Label></div>
+                        <Alert Variant="AlertVariant.Destructive"><LucideIcon Name="triangle-alert" Size="16" aria-hidden="true" /><span>Originals will be <strong>permanently</strong> deleted after the import is verified.</span></Alert>
                     }
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Class="mt-4" Disabled="@busy" Type="submit">Ingest <ArrowRightIcon aria-hidden="true" /></Button>
-                </form>
+                    @if (ingestionSpace is not null)
+                    {
+                        <p>@ingestionSpace.FileCount files selected &middot; @FormatIngestionBytes(ingestionSpace.SelectedSourceBytes) source media</p>
+                        <p>Available disk space: @FormatIngestionBytes(ingestionSpace.MediaAvailableBytes)</p>
+                        <p>Estimated change: @FormatIngestionBytes(EstimatedIngestionChangeBytes)</p>
+                        <p class="text-muted-foreground" title="Uses the encryption envelope size plus an allowance of 128 KiB per thumbnail and 4 KiB per catalog entry. Actual growth varies; duplicates may reduce it. The free-space safety check uses a separate, larger allowance before deleting originals.">Includes an <strong>estimate</strong> for encryption and thumbnails.</p>
+                        @if (ingestionSpace.FileCount == 0)
+                        {
+                            <p role="status">No files selected. Enable a media type with scanned files, or scan another folder.</p>
+                        }
+                        else if (!ingestionSpace.HasEnoughSpace)
+                        {
+                            <Alert Variant="AlertVariant.Destructive">Not enough available disk space for the selected media and catalog growth.</Alert>
+                        }
+                    }
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(!CanIngestScan)" OnClick="ImportFolderAsync">Ingest <ArrowRightIcon aria-hidden="true" /></Button>
+                    </section>
+                }
             <details class="mt-6">
                 <summary>Advanced</summary>
                 <div class="mt-4 space-y-3">
@@ -925,6 +953,12 @@ else
 
     private string secret = "", confirm = "", recoveryPhrase = "", error = "", message = "", progress = "";
     private string importPath = "", newPassphrase = "", newConfirm = "";
+    private IngestionScan? ingestionScan;
+    private IngestionSpaceEstimate? ingestionSpace;
+    private bool includeImages = true, includeVideos = true;
+    private bool CanIngestScan => !busy && ingestionScan is not null && ingestionSpace?.HasEnoughSpace == true;
+    private long EstimatedIngestionChangeBytes => ingestionSpace is { } space
+        ? space.EstimatedBytes - (deleteSources ? space.SelectedSourceBytes : 0) : 0;
     private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
     private string videoUrl = "";
     private string grouping = "none";
@@ -977,7 +1011,7 @@ else
             : backupAzureContainer.Trim().Length > 0 && backupOptions.HasAzureCredentials);
     private bool ShowsGallery => workflow is not ("ingest" or "settings" or "duplicates");
     private int PendingReviewCount => images.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion);
-    private bool deleteSources, confirmSourceDeletion;
+    private bool deleteSources;
     private readonly HashSet<string> removalSelection = [];
     private List<RemovalItem> removalPlan = [];
     private List<RemovalResult> removalResults = [];
@@ -1632,16 +1666,77 @@ else
     private Task PreviousAsync() => RunAsync("Loading previews...", async () => { page--; await LoadThumbnailsAsync(); });
     private Task NextAsync() => RunAsync("Loading previews...", async () => { page++; await LoadThumbnailsAsync(); });
 
-    private Task ImportFolderAsync() => RunAsync("Scanning selected folder...", async () =>
+    private void ClearIngestionScan()
+    {
+        ingestionScan = null;
+        ingestionSpace = null;
+        deleteSources = false;
+    }
+
+    private void ToggleImportRecursion()
+    {
+        recursive = !recursive;
+        ClearIngestionScan();
+    }
+
+    private void ToggleSourceDeletion()
+    {
+        deleteSources = !deleteSources;
+    }
+
+    private Task ScanImportFolderAsync() => RunAsync("Scanning selected folder...", async () =>
     {
         EnsureNoLibraryJob();
-        if (deleteSources && !confirmSourceDeletion)
-            throw new InvalidOperationException("Confirm source deletion before importing, or disable it to keep originals.");
+        ClearIngestionScan();
+        importProgress = null;
+        importFailures = [];
+        timingReport = null;
+        var scan = await Gallery.ScanFolderAsync(importPath,
+            recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder);
+        if (disposed || !Gallery.IsUnlocked) return;
+        includeImages = true;
+        includeVideos = Gallery.VideoToolsAvailable;
+        var space = await Gallery.EstimateIngestionSpaceAsync(scan, includeImages, includeVideos);
+        if (disposed || !Gallery.IsUnlocked) return;
+        ingestionScan = scan;
+        ingestionSpace = space;
+    });
+
+    private Task ToggleIncludeImagesAsync() => RunAsync("Updating disk space estimate...", async () =>
+    {
+        includeImages = !includeImages;
+        await RefreshIngestionSpaceAsync();
+    });
+
+    private Task ToggleIncludeVideosAsync() => RunAsync("Updating disk space estimate...", async () =>
+    {
+        includeVideos = !includeVideos;
+        await RefreshIngestionSpaceAsync();
+    });
+
+    private async Task RefreshIngestionSpaceAsync()
+    {
+        ingestionSpace = null;
+        if (ingestionScan is not { } scan) throw new InvalidOperationException("Scan the source folder first.");
+        var space = await Gallery.EstimateIngestionSpaceAsync(scan, includeImages, includeVideos);
+        if (!disposed && Gallery.IsUnlocked && ReferenceEquals(scan, ingestionScan)) ingestionSpace = space;
+    }
+
+    private static string FormatIngestionBytes(long bytes) => bytes < 1024L * 1024
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes / (1024d * 1024):0.######} MB")
+        : GalleryService.FormatBytes(bytes);
+
+    private Task ImportFolderAsync() => RunAsync("Ingesting scanned media...", async () =>
+    {
+        EnsureNoLibraryJob();
+        var scan = ingestionScan ?? throw new InvalidOperationException("Scan the source folder before ingesting.");
+        if (ingestionSpace?.HasEnoughSpace != true)
+            throw new InvalidOperationException("Select media and check available disk space before ingesting.");
         var deletingSources = deleteSources;
         importFailures = [];
         timingReport = null;
         IngestionTimingReport? completedTimingReport = null;
-        importProgress = new ImportProgress(null, 0, 0, 0, "Scanning selected folder...");
+        importProgress = new ImportProgress(ingestionSpace.FileCount, 0, 0, 0, "Checking scanned files and disk space...");
         importRunning = true;
         await InvokeAsync(StateHasChanged);
         var lastProgressRender = System.Diagnostics.Stopwatch.StartNew();
@@ -1661,7 +1756,9 @@ else
                             StateHasChanged();
                             lastProgressRender.Restart();
                         }
-                    }), reportTimings: recordTimings ? report => completedTimingReport = report : null, options: new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
+                    }), reportTimings: recordTimings ? report => completedTimingReport = report : null,
+                    options: new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize },
+                    scan: scan, includeImages: includeImages, includeVideos: includeVideos);
             }
             catch (ImportFolderException exception)
             {
@@ -1687,13 +1784,14 @@ else
         finally
         {
             importRunning = false;
+            ClearIngestionScan();
             if (completedTimingReport is not null)
             {
                 timingReport = completedTimingReport.ToString();
                 Logger.LogInformation("{IngestionTimings}", timingReport);
             }
         }
-        deleteSources = confirmSourceDeletion = false;
+        deleteSources = false;
     });
 
     private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
@@ -1955,6 +2053,7 @@ else
         thumbnailFailures.Clear();
         CloseDetail();
         secret = confirm = recoveryPhrase = newPassphrase = newConfirm = error = message = importPath = "";
+        ClearIngestionScan();
         if (!importRunning)
         {
             importFailures.Clear();
@@ -1975,7 +2074,7 @@ else
         restoreCredential = restoreSasUrl = purgeConfirmation = "";
         browsingFilter = null;
         libraryJob = new(false, "", "", 0, false);
-        deleteSources = confirmSourceDeletion = false;
+        deleteSources = false;
         removalSelection.Clear();
         removalPlan.Clear();
         removalResults.Clear();
@@ -1997,6 +2096,7 @@ else
 
     public void Dispose()
     {
+        ClearIngestionScan();
         disposed = true;
         Gallery.OnAutoLocked -= HandleAutoLocked;
         Gallery.DriveQueueChanged -= HandleDriveQueueChanged;
