@@ -228,6 +228,28 @@ public sealed class BrowsingProjectionTests
         Assert.Empty(GetField<List<ImageRecord>>(home, "viewerImages"));
     }
 
+    [Fact]
+    public void Trash_UsesStandardSelectionAndRangeWithoutChangingLibrarySelection()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 4).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), Name = index.ToString(), IsMarkedForDeletion = true
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "workflow", "remove");
+        SetField(home, "filter", new GalleryFilter { Deletion = "marked", Sort = "name" });
+        Invoke(home, "SelectCard", "0", false);
+        Invoke(home, "SelectCard", "2", true);
+
+        Assert.Equal(["0", "1", "2"], GetField<HashSet<string>>(home, "removalSelection").Order());
+        Assert.Empty(GetField<HashSet<string>>(home, "librarySelection"));
+        Invoke(home, "SelectCard", "1", false);
+        Assert.DoesNotContain("1", GetField<HashSet<string>>(home, "removalSelection"));
+        Invoke(home, "ClearSelection");
+        Assert.Empty(GetField<HashSet<string>>(home, "removalSelection"));
+    }
+
     private static Home CreateHome(TestVault fixture, List<ImageRecord> records)
     {
         var home = new Home();

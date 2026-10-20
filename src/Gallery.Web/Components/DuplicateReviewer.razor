@@ -22,7 +22,7 @@
     <div class="max-h-[35vh] shrink-0 space-y-3 overflow-auto border-b border-border bg-primary/5 px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-4">
         <div>
             <strong>@(applied.Contains(groupIndex) ? "Saved. Change your picks and apply again, or move on." : Keep.Count == 0 ? "Keep at least one copy." : "Choose one or more copies to keep.")</strong>
-            <p class="text-muted-foreground">Keeping @Keep.Count of @members.Count. Applying marks the other @(members.Count - Keep.Count) for deletion and clears marks on kept copies. @(Group.IsExact ? "Exact copies." : $"Similar images (difference {Group.MaxDistance}/64).") Nothing is deleted until you use Remove marked images.</p>
+            <p class="text-muted-foreground">Keeping @Keep.Count of @members.Count. Applying marks the other @(members.Count - Keep.Count) for deletion and clears marks on kept copies. @(Group.IsExact ? "Exact copies." : $"Similar images (difference {Group.MaxDistance}/64).") Nothing is deleted until you use Trash.</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
             <Button Variant="@(Keep.Contains(Current.Id) ? ButtonVariant.Secondary : ButtonVariant.Outline)" Disabled="@busy" aria-pressed="@(Keep.Contains(Current.Id) ? "true" : "false")" OnClick="() => ToggleKeep(Current.Id)"><CheckIcon aria-hidden="true" />@(Keep.Contains(Current.Id) ? "Keeping this copy" : "Keep this copy") (K)</Button>
@@ -256,7 +256,7 @@
         if (preload is not null) await preload;
         await ReleaseUrlsAsync();
         await OnClose.InvokeAsync(applied.Count == 0 ? "" :
-            $"Duplicate review: {applied.Count} group(s) applied, {appliedMarks} cop{(appliedMarks == 1 ? "y" : "ies")} marked for deletion. Remove them from Remove marked images.");
+            $"Duplicate review: {applied.Count} group(s) applied, {appliedMarks} cop{(appliedMarks == 1 ? "y" : "ies")} marked for deletion. Remove them from Trash.");
     }
 
     [JSInvokable]

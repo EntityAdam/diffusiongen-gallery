@@ -1,0 +1,19 @@
+<aside class="bulk-bar quick-edit" aria-label="Trash Quick Edit">
+    <h3>Quick Edit</h3>
+    <div class="quick-edit-row">
+        <strong>@SelectedCount Selected</strong>
+        <Button Variant="ButtonVariant.Ghost" Disabled="@Busy" OnClick="Clear">Clear Selection <kbd>ESC</kbd></Button>
+    </div>
+    <div class="quick-edit-pair">
+        <Button Variant="ButtonVariant.Destructive" Disabled="@Busy" OnClick="DeleteForever">Delete Forever</Button>
+        <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Restore">Restore</Button>
+    </div>
+</aside>
+
+@code {
+    [Parameter] public int SelectedCount { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback Clear { get; set; }
+    [Parameter] public EventCallback DeleteForever { get; set; }
+    [Parameter] public EventCallback Restore { get; set; }
+}

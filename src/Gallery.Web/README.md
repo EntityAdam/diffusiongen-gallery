@@ -181,7 +181,7 @@ does not encrypt traffic in transit. The gallery web application itself still bi
 only to loopback.
 
 The left navigation separates Library, Guided review, Organize, Explore & saved
-views, Local intelligence, Duplicate finder, Remove marked images, Ingest images and Settings.
+views, Local intelligence, Duplicate finder, Trash, Ingest images and Settings.
 **Settings** opens on a **Gallery overview** with tabs for **Backups**,
 **Manage gallery**, **LLM endpoints** and **Gallery security**. The overview shows database size (`gallery.db` plus its WAL/SHM
 files, which include encrypted thumbnails), total file count (catalogued encrypted
@@ -233,7 +233,7 @@ thumbnails, sizes and approximate reclaimable space, and recommends a keeper:
 unmarked first, then highest rating, favorite, most pixels, largest original and
 oldest import. **Mark other(s) for deletion** (per group) or **Mark all extra
 copies** only sets reversible deletion marks; permanently remove them from
-**Remove marked images**.
+**Trash**.
 
 **Review in full screen** (or **Review & choose keepers** on a group) opens a
 full screen duplicate review. Step through each copy at full size, see its
@@ -275,15 +275,19 @@ controls for videos). Rating stars, favorite and Trash controls sit below the pr
 Click the current rating again to clear it. Workflow export is no longer a separate
 modal action; downloaded copies retain embedded ComfyUI metadata.
 
-Every gallery workflow except removal has a select button on each card. Click it to
+Every gallery workflow, including Trash, has a select button on each card. Click it to
 toggle an image, or Shift+click to select the range from the last selected image
 (across pages, in the current sort order).
 Selections remain across pages until cleared with `Esc`, and switching workflows clears them.
-While images are selected, a floating **bulk action bar** rates (1-5★ or clear),
-favorites/unfavorites, marks reviewed, marks/unmarks deletion, merges tags,
-adds the selection to a collection, or runs **Find duplicates**. Find duplicates
-compares the selected images against the whole library, reusing cached
-fingerprints, and opens every matching group in the full screen duplicate review.
+While images are selected, a workflow-specific **Quick Edit** panel offers:
+
+- **Library:** ratings 1-5 or Clear Rating, Favorite/Unfavorite, and Trash/Restore.
+- **Guided review:** ratings 1-5 or Clear Rating, and Reviewed/Not Reviewed.
+- **Trash:** Delete Forever/Restore, operating on the removal selection.
+
+Each panel shows the selected count and **Clear Selection (ESC)**. Trash marks
+images for deletion; Restore clears the deletion mark, without deleting files.
+Organize and Local intelligence do not show Quick Edit. Duplicate Finder is unchanged.
 Removal keeps its own separate deletion
 selection. Virtual collections do not change file locations.
 
@@ -521,9 +525,10 @@ pointing at a copied database alone still references original image files.
   URLs are revoked on eviction/close; no plaintext disk cache is created by the app.
 - Favorites and deletion marks persist. **Marking alone never deletes an image**;
   marks can be reversed. Only marked images can be permanently removed.
-  Use **Remove this image** in details, or select marked cards and **Remove selected**.
-  **Select filtered marked images** selects all matching marked images across pages,
-  not just the visible page. Review the preview and explicitly confirm removal.
+  Use **Remove this image** in details, or select marked cards in **Trash** using
+  the standard card selection button or `X` (`Shift+X` selects a range), then choose
+  **Delete Forever** in Quick Edit. Review the preview and explicitly confirm removal.
+  **Restore** clears the deletion mark and returns images to the active library.
   Choose separate policies for accessible originals (retain or delete) and missing
   originals (restore PNG or discard without restoration). Bulk operations report
   each failure and continue with other images; they are not all-or-nothing.

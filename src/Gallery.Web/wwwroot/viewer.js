@@ -51,7 +51,7 @@ window.galleryGrid = {
                 next.scrollIntoView?.({ block: "nearest" });
                 return;
             }
-            if (key === "escape" ? doc.querySelector(".bulk-bar") === null : !id) return;
+            if (key === "escape" ? doc.querySelector(".bulk-bar, [data-has-selection=true]") === null : !id) return;
             event.preventDefault();
             const invocation = queue.then(() => reference.invokeMethodAsync("HandleGridKey", key, id ?? "", event.shiftKey === true));
             queue = invocation.catch(error => console.error("Gallery shortcut failed", error));

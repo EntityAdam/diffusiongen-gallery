@@ -23,7 +23,7 @@ function setup({ dialog = false, selection = false } = {}) {
         },
         removeEventListener(name) { listeners.delete(name); },
         querySelector(selector) {
-            return (selector.startsWith("[role=dialog]") && dialog) || (selector === ".bulk-bar" && selection) ? {} : null;
+            return (selector.startsWith("[role=dialog]") && dialog) || (selector === ".bulk-bar, [data-has-selection=true]" && selection) ? {} : null;
         },
         querySelectorAll() { return []; }
     };

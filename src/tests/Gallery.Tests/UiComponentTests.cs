@@ -11,6 +11,34 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class UiComponentTests
 {
+    [Theory]
+    [InlineData(typeof(LibraryQuickEdit), "Favorite", "Not Reviewed", 11)]
+    [InlineData(typeof(ReviewQuickEdit), "Not Reviewed", "Favorite", 9)]
+    [InlineData(typeof(RemovalQuickEdit), "Delete Forever", "Clear Rating", 3)]
+    public async Task QuickEdit_ShowsOnlyItsWorkflowActions(Type componentType, string expected, string excluded, int buttonCount)
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var renderer = fixture.HtmlRenderer;
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await renderer.RenderComponentAsync(componentType, ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                ["SelectedCount"] = 3,
+                ["Busy"] = true
+            }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+
+        Assert.Contains("3 Selected", html);
+        Assert.Contains("Clear Selection", html);
+        Assert.Contains("ESC", html);
+        Assert.Contains(expected, html);
+        Assert.DoesNotContain(excluded, html);
+        var buttons = Regex.Matches(html, @"<button\b[^>]*>");
+        Assert.Equal(buttonCount, buttons.Count);
+        foreach (Match button in buttons) Assert.Matches(@"\sdisabled(?:=|\s|/?>)", button.Value);
+    }
+
     [Fact]
     public async Task ImageCard_WhenSelectedAndRated_ThenRetainsKeyboardHooksAndAccessibleLibraryControls()
     {

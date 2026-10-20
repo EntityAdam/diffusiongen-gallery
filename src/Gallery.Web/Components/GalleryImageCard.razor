@@ -41,10 +41,6 @@
             <TrashIcon Size="16" aria-hidden="true" /><span class="action-label">@(Image.IsMarkedForDeletion ? "Unmark" : "Trash")</span>
         </Button>
     </div>
-    @if (RemovalMode && Image.IsMarkedForDeletion)
-    {
-        <div class="flex items-start gap-3 px-4 pb-4"><Checkbox id="@("removal-" + Image.Id)" Class="mt-0.5" Checked="@RemovalSelected" Disabled="@Busy" CheckedChanged="RemovalSelectionChanged" /><Label For="@("removal-" + Image.Id)" Class="text-sm leading-relaxed">Select for removal</Label></div>
-    }
 </Card>
 
 @code {
@@ -54,12 +50,9 @@
     [Parameter] public bool Busy { get; set; }
     [Parameter] public bool Selected { get; set; }
     [Parameter] public bool ShowSelection { get; set; }
-    [Parameter] public bool RemovalMode { get; set; }
-    [Parameter] public bool RemovalSelected { get; set; }
     [Parameter] public EventCallback<MouseEventArgs> Select { get; set; }
     [Parameter] public EventCallback Open { get; set; }
     [Parameter] public EventCallback<int> Rate { get; set; }
     [Parameter] public EventCallback Favorite { get; set; }
     [Parameter] public EventCallback Mark { get; set; }
-    [Parameter] public EventCallback<bool> RemovalSelectionChanged { get; set; }
 }

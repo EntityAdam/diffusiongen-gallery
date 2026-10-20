@@ -369,7 +369,7 @@ else
                 <h3 id="duplicates-title">Duplicate finder</h3>
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ScanDuplicatesAsync">@(duplicateScan is null ? "Scan for duplicates" : "Scan again")</Button>
             </div>
-            <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Remove marked images</em>.</p>
+            <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Trash</em>.</p>
             @if (busy && progress.StartsWith("Scanning")) { <p class="flex items-center gap-2 pb-4 text-primary" role="status"><span class="status-dot"></span> @progress</p> }
             @if (duplicateScan is not null)
             {
@@ -381,7 +381,7 @@ else
                     <div class="flex flex-wrap items-center gap-2">
                         <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(busy || groups.Count == 0)" OnClick="() => OpenDuplicateReview(groups, 0)">Review in full screen</Button>
                         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || pendingMarks == 0)" OnClick="() => MarkDuplicatesAsync(groups)">Mark all extra copies (@pendingMarks)</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick='() => SwitchWorkflowAsync("remove")'>Go to Remove marked images</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick='() => SwitchWorkflowAsync("remove")'>Go to Trash</Button>
                     </div>
                 </div>
                 @if (groups.Count == 0) { <p class="text-muted-foreground">No likely duplicates found.</p> }
@@ -520,7 +520,7 @@ else
     @if (ShowsGallery)
     {
     <GalleryFilterPanel Filter="filter" Images="images" ResultCount="Filtered.Count" Open="filtersOpen" OpenChanged="SetFiltersOpenAsync" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
-    <div class="gallery-layout grid min-w-0 grid-cols-1">
+    <div class="gallery-layout grid min-w-0 grid-cols-1" data-has-selection="@((librarySelection.Count > 0 || removalSelection.Count > 0) ? "true" : "false")">
         <section>
             <ActiveFilters Filter="filter" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
             <div class="mb-5 flex flex-wrap items-center gap-4 text-sm">
@@ -551,44 +551,17 @@ else
                     </Select>
                 </div>
             </div>
-            @if (workflow == "remove")
+            @if (workflow == "library" && librarySelection.Count > 0)
             {
-                <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SelectFilteredMarked">Select filtered marked images</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || removalSelection.Count == 0)" OnClick="PrepareBulkRemovalAsync">Remove selected (@removalSelection.Count)</Button>
-                </div>
+                <LibraryQuickEdit SelectedCount="librarySelection.Count" Busy="busy" Clear="ClearSelection" Rate="BulkRateAsync" Favorite="BulkFavoriteAsync" Trash="BulkMarkAsync" />
             }
-            @if (workflow != "remove" && librarySelection.Count > 0)
+            @if (workflow == "review" && librarySelection.Count > 0)
             {
-                <div class="bulk-bar fixed bottom-4 left-1/2 z-10 flex max-h-[45vh] w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2 flex-wrap items-center gap-3 overflow-auto rounded-xl border border-primary/30 bg-card/95 p-3 shadow-2xl backdrop-blur-sm [&>strong]:text-primary" role="region" aria-label="Bulk actions for selected images">
-                    <strong>@librarySelection.Count selected</strong>
-                    <div class="flex flex-wrap items-center gap-2 [&>input]:w-44" role="group" aria-label="Rate selected images">
-                        @for (var score = 1; score <= 5; score++)
-                        {
-                            var value = score;
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Class="text-primary" Disabled="@busy" title="@($"Rate selected {value} stars")" aria-label="@($"Rate selected {value} out of 5 stars")" OnClick="() => BulkRateAsync(value)">@value<StarIcon Size="16" aria-hidden="true" /></Button>
-                        }
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkRateAsync(0)">Clear rating</Button>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2 [&>input]:w-44">
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkFavoriteAsync(true)"><HeartIcon Size="16" aria-hidden="true" />Favorite</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkFavoriteAsync(false)">Unfavorite</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkReviewedAsync(true)">Mark reviewed</Button>
-                        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkMarkAsync(true)">Mark for deletion</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkMarkAsync(false)">Unmark</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" title="Compare the selected images against the whole library and review matches in full screen" OnClick="FindSelectedDuplicatesAsync">Find duplicates</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" title="Download decrypted copies of the selected images and videos as a zip file" OnClick="ExportSelectedAsync">Save copies (zip)</Button>
-                    </div>
-                    <form class="flex flex-wrap items-center gap-2 [&>input]:w-44" @onsubmit="BulkTagAsync" @onsubmit:preventDefault>
-                        <Input aria-label="Tags to add to selected images" Placeholder="Add tags, comma-separated" @bind-Value="bulkTags" list="tags" Disabled="@busy" />
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@(busy || string.IsNullOrWhiteSpace(bulkTags))">Add tags</Button>
-                    </form>
-                    <form class="flex flex-wrap items-center gap-2 [&>input]:w-44" @onsubmit="BulkCollectAsync" @onsubmit:preventDefault>
-                        <Input aria-label="Collection for selected images" Placeholder="Collection name" @bind-Value="bulkCollection" list="collections" maxlength="80" Disabled="@busy" />
-                        <datalist id="collections">@foreach (var name in AllCollections) { <option value="@name"></option> }</datalist>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@(busy || string.IsNullOrWhiteSpace(bulkCollection))">Add to collection</Button>
-                    </form>
-                </div>
+                <ReviewQuickEdit SelectedCount="librarySelection.Count" Busy="busy" Clear="ClearSelection" Rate="BulkRateAsync" Reviewed="BulkReviewedAsync" />
+            }
+            @if (workflow == "remove" && removalSelection.Count > 0)
+            {
+                <RemovalQuickEdit SelectedCount="removalSelection.Count" Busy="busy" Clear="ClearSelection" DeleteForever="PrepareBulkRemovalAsync" Restore="() => MarkRemovalSelectionAsync(false)" />
             }
             @if (removalResults.Count > 0)
             {
@@ -610,7 +583,7 @@ else
                     @{ PromptGroup? previousGroup = null; DiffusionModelGroup? previousModelGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
                     {
-                        var isSelected = workflow != "remove" && librarySelection.Contains(image.Id);
+                        var isSelected = (workflow == "remove" ? removalSelection : librarySelection).Contains(image.Id);
                         if (grouping == "prompt" && promptGroupOf.TryGetValue(image.Id, out var group) && !ReferenceEquals(group, previousGroup))
                         {
                             var continued = firstOnPage && group.Images[0].Id != image.Id;
@@ -642,12 +615,11 @@ else
                         }
                         firstOnPage = false;
                         <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)" ThumbnailFailed="@thumbnailFailures.Contains(image.Id)"
-                                          Busy="busy" Selected="isSelected" ShowSelection="@(workflow != "remove")"
-                                          RemovalMode="@(workflow == "remove")" RemovalSelected="@removalSelection.Contains(image.Id)"
+                                          Busy="busy" Selected="isSelected" ShowSelection="true"
                                           Select="args => SelectCard(image.Id, args.ShiftKey)" Open="() => OpenAsync(image)"
                                           Rate="value => RateImageAsync(image, value)" Favorite="() => FavoriteAsync(image)"
                                           Mark="() => MarkAsync(image)"
-                                          RemovalSelectionChanged="value => ToggleRemovalSelection(image.Id, value)" />
+                                          />
                     }
                 </div>
                 <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
@@ -941,7 +913,7 @@ else
         ("library", "Library"), ("review", "Guided review"), ("organize", "Organize"),
         ("explore", "Explore & saved views"), ("ai", "Local intelligence"),
         ("duplicates", "Duplicate finder"),
-        ("remove", "Remove marked images"), ("ingest", "Ingest images"),
+        ("remove", "Trash"), ("ingest", "Ingest images"),
         ("settings", "Settings")
     ];
     private static string WorkflowIcon(string workflow) => workflow switch
@@ -1451,7 +1423,7 @@ else
         }).ToList();
         try { await Gallery.UpdateManyAsync(ids, image => Gallery.SetDeletionMark(image, true)); }
         finally { await ReloadAsync(); }
-        message = $"Marked {ids.Count} extra cop{(ids.Count == 1 ? "y" : "ies")} for deletion. Review and remove them from Remove marked images.";
+        message = $"Marked {ids.Count} extra cop{(ids.Count == 1 ? "y" : "ies")} for deletion. Review and remove them from Trash.";
     });
     private sealed class InlineProgress<T>(Func<T, Task> report) : IProgress<T>
     {
@@ -1519,15 +1491,16 @@ else
     }
     private void SelectCard(string id, bool range)
     {
+        var selection = workflow == "remove" ? removalSelection : librarySelection;
         var ordered = Filtered.Select(image => image.Id).ToList();
         var anchor = selectionAnchor is null ? -1 : ordered.IndexOf(selectionAnchor);
         var target = ordered.IndexOf(id);
         if (range && anchor >= 0 && target >= 0)
         {
             var (from, to) = anchor <= target ? (anchor, target) : (target, anchor);
-            librarySelection.UnionWith(ordered.Skip(from).Take(to - from + 1));
+            selection.UnionWith(ordered.Skip(from).Take(to - from + 1));
         }
-        else ToggleLibrarySelection(id, !librarySelection.Contains(id));
+        else if (!selection.Remove(id)) selection.Add(id);
         selectionAnchor = id;
     }
 
@@ -1563,6 +1536,9 @@ else
     private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image with { IsFavorite = value }, value ? "Added to favorites" : "Removed from favorites");
     private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image with { IsReviewed = value }, "Marked reviewed");
     private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => Gallery.SetDeletionMark(image, value), value ? "Marked for deletion" : "Deletion marks cleared");
+    private Task MarkRemovalSelectionAsync(bool value) =>
+        RunAsync("Updating deletion marks...", () => CurateAsync(removalSelection.ToList(),
+            image => Gallery.SetDeletionMark(image, value), value ? "Marked for deletion" : "Deletion marks cleared"));
     private Task BulkTagAsync()
     {
         var tags = bulkTags.Trim();
@@ -1586,7 +1562,6 @@ else
         if (!imagesById.TryGetValue(id, out var image)) return;
         if (key == "x")
         {
-            if (workflow == "remove") return;
             SelectCard(id, shift);
             StateHasChanged();
             return;
@@ -1705,18 +1680,6 @@ else
         await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.IsMarkedForDeletion));
         await ReloadAsync();
     });
-
-    private void ToggleRemovalSelection(string id, bool value)
-    {
-        if (value) removalSelection.Add(id);
-        else removalSelection.Remove(id);
-    }
-
-    private void SelectFilteredMarked()
-    {
-        removalSelection.Clear();
-        removalSelection.UnionWith(Filtered.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
-    }
 
     private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(removalSelection.ToArray());
     private Task PrepareRemovalAsync(IEnumerable<string> ids) => RunAsync("Checking originals...", async () =>
