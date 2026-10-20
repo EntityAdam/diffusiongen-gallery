@@ -1,0 +1,16 @@
+@using System.Reflection
+
+<footer class="workspace-sidebar-footer">
+    <a class="brand workspace-sidebar-brand" href="/" aria-label="DiffusionGen Gallery home" title="DiffusionGen Gallery">
+        <AsteriskIcon Size="24" ClassName="brand-mark" aria-hidden="true" />
+        <span class="sidebar-label">Diffusion<span class="brand-light">Gen</span><span class="brand-product">Gallery</span></span>
+    </a>
+    <small class="workspace-sidebar-version" aria-label="@($"Application version {AppVersion}")">@($"V{AppVersion}")</small>
+</footer>
+
+@code {
+    internal static string AppVersion { get; } =
+        (typeof(WorkspaceSidebarFooter).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?? throw new InvalidOperationException("The application build is missing version metadata."))
+        .InformationalVersion.Split('+')[0];
+}

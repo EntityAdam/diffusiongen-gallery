@@ -183,7 +183,10 @@ only to loopback.
 The workspace uses ShadCn **AppLayout** with a collapsible sidebar and independently
 scrollable workflow content. The sidebar toggle switches between labeled navigation
 and an icon rail; workflow tooltips and the panic-lock button remain available
-when collapsed. Primary views have no footer; full-screen viewers retain theirs.
+when collapsed. There is no app header. A sidebar footer shows DiffusionGen Gallery
+branding and the application's semantic build version (without commit metadata);
+the icon rail retains the brand icon and version. Primary content views have no
+footer; full-screen viewers retain theirs.
 
 The left navigation separates Library, Guided review, Organize, Explore & saved
 views, Local intelligence, Duplicate finder, Trash, Ingest images and Settings.

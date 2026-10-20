@@ -46,14 +46,12 @@
 }
 
 .app-shell { min-height: 100vh; background: radial-gradient(ellipse at 73% 0%, #2e6b5b1f, transparent 28rem), hsl(var(--background)); }
-.topbar { min-height: 72px; padding: 18px clamp(20px, 5.1vw, 84px); }
 .brand { color: hsl(var(--foreground)); font-size: 17px; font-weight: 670; letter-spacing: -.7px; }
 .brand-light { color: #7d8a91; font-weight: 450; }
 .brand-product { margin-left: 9px; color: hsl(var(--muted-foreground)); font-size: 13px; font-weight: 400; letter-spacing: 0; }
 .brand-mark { color: hsl(var(--primary)); }
 .main-content { width: min(1400px, calc(100% - 64px)); margin: 0 auto; padding: 50px 0 74px; }
 .app-shell:has(.workspace-layout) { height: 100dvh; min-height: 0; overflow: hidden; }
-.app-shell:has(.workspace-layout) > .topbar { flex-shrink: 0; }
 .main-content:has(.workspace-layout) { display: flex; flex: 1; flex-direction: column; min-height: 0; width: 100%; margin: 0; padding: 0; overflow: auto; }
 .workspace-layout { display: flex; flex: 1; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .workspace-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
@@ -68,6 +66,13 @@
 .workspace-sidebar.is-collapsed .workspace-sidebar-heading { justify-content: center; }
 .workspace-sidebar-details { min-width: 0; }
 .workspace-panic { width: 100%; flex-shrink: 0; margin-top: auto; }
+.workspace-sidebar-footer { flex-shrink: 0; padding-top: 12px; border-top: 1px solid hsl(var(--border)); }
+.workspace-sidebar-brand { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.workspace-sidebar-brand > svg { flex-shrink: 0; }
+.workspace-sidebar-brand .brand-product { margin-left: 5px; font-size: 12px; }
+.workspace-sidebar-version { display: block; margin-top: 4px; color: hsl(var(--muted-foreground)); overflow-wrap: anywhere; }
+.workspace-sidebar.is-collapsed .workspace-sidebar-brand { justify-content: center; }
+.workspace-sidebar.is-collapsed .workspace-sidebar-version { text-align: center; font-size: 10px; }
 .workspace-body { min-height: 0; flex: 1; overflow: auto; padding: 28px; }
 @media (max-width: 760px) {
     .workspace-sidebar:not(.is-collapsed) { width: min(250px, 65vw); }

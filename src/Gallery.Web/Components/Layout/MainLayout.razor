@@ -1,11 +1,4 @@
 @inherits LayoutComponentBase
 <div class="app-shell flex min-h-screen flex-col">
-    <header class="topbar flex flex-wrap items-center justify-between gap-4 border-b border-border">
-        <a class="brand inline-flex items-center gap-3" href="/" aria-label="DiffusionGen Gallery home">
-            <AsteriskIcon Size="28" ClassName="brand-mark shrink-0" aria-hidden="true" />
-            <span>Diffusion<span class="brand-light">Gen</span><span class="brand-product">Gallery</span></span>
-        </a>
-        <Badge Variant="BadgeVariant.Outline" Class="gap-2 text-[10px] tracking-wider text-muted-foreground"><span class="status-dot"></span> LOCAL &amp; PRIVATE</Badge>
-    </header>
     <main class="main-content flex-1">@Body</main>
 </div>

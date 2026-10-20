@@ -12,7 +12,7 @@ namespace Gallery.Tests;
 public sealed class UiComponentTests
 {
     [Fact]
-    public async Task MainLayout_RetainsBrandAndBodyWithoutPrimaryFooter()
+    public async Task MainLayout_RetainsBodyWithoutAppHeaderOrPrimaryFooter()
     {
         await using var fixture = ComponentRenderFixture.Create();
         var renderer = fixture.HtmlRenderer;
@@ -25,9 +25,29 @@ public sealed class UiComponentTests
                 }));
             return root.ToHtmlString();
         });
-        Assert.Contains("DiffusionGen Gallery home", html);
+        Assert.DoesNotContain("<header", html);
+        Assert.DoesNotContain("LOCAL &amp; PRIVATE", html);
+        Assert.DoesNotContain("DiffusionGen Gallery home", html);
         Assert.Contains("Workflow content", html);
         Assert.DoesNotContain("<footer", html);
+    }
+
+    [Fact]
+    public async Task SidebarFooter_ShowsBrandAndActualSemanticBuildVersion()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await fixture.HtmlRenderer.RenderComponentAsync<WorkspaceSidebarFooter>();
+            return root.ToHtmlString();
+        });
+        var expectedVersion = System.Reflection.CustomAttributeExtensions
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(WorkspaceSidebarFooter).Assembly)!
+            .InformationalVersion.Split('+')[0];
+        Assert.Contains("<footer", html);
+        Assert.Contains("DiffusionGen Gallery home", html);
+        Assert.Contains($"V{expectedVersion}", html);
+        Assert.Matches(@"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$", WorkspaceSidebarFooter.AppVersion);
     }
 
     [Theory]
