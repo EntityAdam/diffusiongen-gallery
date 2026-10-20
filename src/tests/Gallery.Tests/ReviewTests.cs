@@ -9,6 +9,76 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class ReviewTests
 {
+    [Theory]
+    [InlineData(false, 2, 1)]
+    [InlineData(true, 2, 0)]
+    [InlineData(false, 1, 0)]
+    public async Task Viewer_CelebratesOnceOnlyForAnEntirelyReviewedSession(bool hasSkipped, int reviewed, int expectedBursts)
+    {
+        var viewer = new Gallery.Web.Components.FullscreenViewer();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = viewer.GetType();
+        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
+        {
+            new() { Id = "first" }, new() { Id = "last" }
+        });
+        type.GetProperty(nameof(viewer.ReviewMode))!.SetValue(viewer, true);
+        type.GetField("reviewComplete", flags)!.SetValue(viewer, true);
+        type.GetField("hasSkipped", flags)!.SetValue(viewer, hasSkipped);
+        var decisions = (HashSet<string>)type.GetField("decisions", flags)!.GetValue(viewer)!;
+        decisions.UnionWith(new[] { "first", "last" }.Take(reviewed));
+        var js = new CelebrationJsRuntime();
+        type.GetProperty("JS", flags)!.SetValue(viewer, js);
+
+        for (var render = 0; render < 2; render++)
+            await (Task)type.GetMethod("OnAfterRenderAsync", flags)!.Invoke(viewer, [false])!;
+
+        Assert.Equal(expectedBursts, js.Calls);
+    }
+
+    private sealed class CelebrationJsRuntime : Microsoft.JSInterop.IJSRuntime
+    {
+        public int Calls { get; private set; }
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
+        {
+            Assert.Equal("galleryViewer.celebrate", identifier);
+            Calls++;
+            return ValueTask.FromResult(default(TValue)!);
+        }
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) =>
+            InvokeAsync<TValue>(identifier, args);
+    }
+
+    [Fact]
+    public async Task Viewer_ProgressCountsSkippedImagesAndOnlyCompletesWhenTheGoalIsReached()
+    {
+        var viewer = new Gallery.Web.Components.FullscreenViewer();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = viewer.GetType();
+        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
+        {
+            new() { Id = "first" }, new() { Id = "last" }
+        });
+        type.GetField("index", flags)!.SetValue(viewer, 1);
+        var cache = (Dictionary<string, (string Url, long Bytes)>)type.GetField("fitCache", flags)!.GetValue(viewer)!;
+        cache["first"] = ("first-url", 0);
+        cache["last"] = ("last-url", 0);
+        Task Skip() => (Task)type.GetMethod("SkipAsync", flags)!.Invoke(viewer, null)!;
+
+        await Skip();
+
+        Assert.False((bool)type.GetField("reviewComplete", flags)!.GetValue(viewer)!);
+        Assert.Equal(0, type.GetField("index", flags)!.GetValue(viewer));
+        Assert.Equal("0 Reviewed + 1 Skipped / 2", type.GetProperty("ReviewProgressText", flags)!.GetValue(viewer));
+        Assert.True((bool)type.GetField("hasSkipped", flags)!.GetValue(viewer)!);
+
+        await Skip();
+
+        Assert.True((bool)type.GetField("reviewComplete", flags)!.GetValue(viewer)!);
+        Assert.Equal("0 Reviewed + 2 Skipped / 2", type.GetProperty("ReviewProgressText", flags)!.GetValue(viewer));
+    }
+
     [Fact]
     public async Task Viewer_UsesSavedToggleResultsAndCapturesUndoFromTheLatestPersistedRecord()
     {

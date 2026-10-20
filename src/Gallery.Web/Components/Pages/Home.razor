@@ -502,9 +502,18 @@ else
     @if (workflow == "review")
     {
         <Card Class="mb-6 p-5 md:p-6 review-intro">
-            <h3>One image. One decision.</h3>
-            <p class="text-muted-foreground">Keep, favorite, rate or mark for deletion to finish reviewing an image. Skip leaves it pending. The session includes pending, unmarked images matching your filters across all pages.</p>
-            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(busy || !Filtered.Any(image => !image.IsReviewed && !image.IsMarkedForDeletion))" OnClick="StartReview">Start guided review (@Filtered.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion))</Button>
+            <p>Review images one by one. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
+            <div class="mb-4 flex items-center gap-3">
+                <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(reviewRandomOrder ? "true" : "false")"
+                        aria-labelledby="review-random-order-label" disabled="@busy" @onclick="() => reviewRandomOrder = !reviewRandomOrder"><span></span></button>
+                <Label id="review-random-order-label" For="review-random-order">Random order</Label>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+                <Label For="review-goal">Goal:</Label>
+                <input id="review-goal" type="number" min="@(ReviewPoolCount > 0 ? 1 : 0)" max="@ReviewPoolCount" step="1"
+                       class="review-goal-input" disabled="@(busy || ReviewPoolCount == 0)" @bind="ReviewGoal" />
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(busy || ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
+            </div>
         </Card>
     }
     <LibraryWorkbench @ref="workbench" Visible="@(workflow is "organize" or "explore" or "ai")" Workflow="@workflow" Images="images" SelectedIds="librarySelection" Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" JobChanged="LibraryJobChanged" />
@@ -974,6 +983,15 @@ else
     private List<ImageRecord> viewerImages = [];
     private string viewerInitialId = "";
     private bool reviewMode;
+    private bool reviewRandomOrder;
+    private int reviewGoal = 10;
+    private IEnumerable<ImageRecord> ReviewPool => Filtered.Where(image => !image.IsReviewed && !image.IsMarkedForDeletion);
+    private int ReviewPoolCount => ReviewPool.Count();
+    private int ReviewGoal
+    {
+        get => Math.Clamp(reviewGoal, ReviewPoolCount > 0 ? 1 : 0, ReviewPoolCount);
+        set => reviewGoal = Math.Clamp(value, ReviewPoolCount > 0 ? 1 : 0, ReviewPoolCount);
+    }
     private int page;
     private int PageSize => density switch { "compact" => 49, "large" => 12, _ => 24 };
     private string density = "comfortable";
@@ -1823,8 +1841,9 @@ else
 
     private void StartReview()
     {
-        viewerImages = Filtered.Where(image => !image.IsReviewed && !image.IsMarkedForDeletion)
-            .Select(image => image with { }).ToList();
+        var pool = ReviewPool.ToArray();
+        if (reviewRandomOrder) Random.Shared.Shuffle(pool);
+        viewerImages = pool.Take(ReviewGoal).Select(image => image with { }).ToList();
         viewerInitialId = viewerImages.FirstOrDefault()?.Id ?? "";
         reviewMode = true;
         CloseDetail();

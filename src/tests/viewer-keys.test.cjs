@@ -43,6 +43,41 @@ function setup({ dialog = false, selection = false } = {}) {
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+test("review confetti bursts left then right after 80ms and cleans up", async () => {
+    const layers = [];
+    const delays = [];
+    const document = {
+        addEventListener() {},
+        createElement() {
+            return {
+                style: {}, children: [], setAttribute() {},
+                appendChild(child) { this.children.push(child); },
+                animate() { return { finished: Promise.resolve() }; },
+                remove() { this.removed = true; }
+            };
+        }
+    };
+    const window = { matchMedia: () => ({ matches: false }) };
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, document, Element: class {},
+        setTimeout(resolve, delay) { delays.push(delay); resolve(); }
+    });
+    await window.galleryViewer.celebrate({
+        isConnected: true, clientWidth: 1000,
+        appendChild(layer) { layers.push(layer); }
+    });
+    await flush();
+    assert.deepEqual(delays, [80]);
+    assert.equal(layers.length, 2);
+    assert.equal(layers[0].children.length, 36);
+    assert.equal(layers[0].children[0].style.left, "0");
+    assert.equal(layers[1].children[0].style.right, "0");
+    assert.ok(layers.every(layer => layer.removed));
+    window.matchMedia = () => ({ matches: true });
+    await window.galleryViewer.celebrate({ appendChild() { assert.fail("Reduced motion must not animate"); } });
+    assert.equal(layers.length, 2);
+});
+
 test("Escape forwards clear selection without a hovered or focused card", async () => {
     const { calls, key } = setup({ selection: true });
     assert.equal(key("Escape", {}).defaultPrevented, true);

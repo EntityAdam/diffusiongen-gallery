@@ -196,6 +196,36 @@ window.gallerySecurity = {
 };
 
 window.galleryViewer = {
+    celebrate: async function (element) {
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+        const burst = side => {
+            if (!element.isConnected) return;
+            const layer = document.createElement("div");
+            layer.className = "review-confetti";
+            layer.setAttribute("aria-hidden", "true");
+            element.appendChild(layer);
+            const colors = ["#75e0b1", "#ffd166", "#ef8bbd", "#8bbcf6"];
+            const animations = [];
+            for (let i = 0; i < 36; i++) {
+                const piece = document.createElement("i");
+                piece.style.background = colors[i % colors.length];
+                piece.style[side] = "0";
+                piece.style.top = "55%";
+                layer.appendChild(piece);
+                const x = (side === "left" ? 1 : -1) * (80 + Math.random() * element.clientWidth * .65);
+                const y = -80 - Math.random() * 220;
+                animations.push(piece.animate([
+                    { transform: "translate(0, 0) rotate(0deg)", opacity: 1 },
+                    { transform: `translate(${x * .6}px, ${y}px) rotate(180deg)`, opacity: 1, offset: .45 },
+                    { transform: `translate(${x}px, 260px) rotate(${360 + Math.random() * 360}deg)`, opacity: 0 }
+                ], { duration: 1100 + Math.random() * 400, easing: "ease-out" }).finished);
+            }
+            Promise.allSettled(animations).then(() => layer.remove());
+        };
+        burst("left");
+        await new Promise(resolve => setTimeout(resolve, 80));
+        burst("right");
+    },
     createImageUrl: function (data) {
         const comma = data.indexOf(",");
         const binary = atob(data.slice(comma + 1));

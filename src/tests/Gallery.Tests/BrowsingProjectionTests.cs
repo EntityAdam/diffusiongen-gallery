@@ -133,6 +133,101 @@ public sealed class BrowsingProjectionTests
         Assert.Equal(JsonSerializer.Serialize(stored), JsonSerializer.Serialize(displayed));
     }
 
+    [Fact]
+    public void GuidedReview_DefaultGoal_SelectsTenEligibleImagesInSortOrderAcrossPages()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 30).Select(index => new ImageRecord
+        {
+            Id = index.ToString("D2"), Name = index.ToString("D2"),
+            IsReviewed = index == 0, IsMarkedForDeletion = index == 1
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "filter", new GalleryFilter { Sort = "name" });
+        SetField(home, "density", "large");
+        SetField(home, "page", 1);
+
+        Assert.Equal(10, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+
+        var session = GetField<List<ImageRecord>>(home, "viewerImages");
+        Assert.Equal(records.Skip(2).Take(10).Select(image => image.Id), session.Select(image => image.Id));
+        Assert.Equal(session[0].Id, GetField<string>(home, "viewerInitialId"));
+        Assert.True(GetField<bool>(home, "reviewMode"));
+        Assert.NotSame(records[2], session[0]);
+    }
+
+    [Theory]
+    [InlineData(100, 6)]
+    [InlineData(3, 3)]
+    [InlineData(0, 1)]
+    [InlineData(-5, 1)]
+    public void GuidedReview_GoalIsClampedToEligibleFilteredPool(int requested, int expected)
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 20).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), IsFavorite = index < 8,
+            IsReviewed = index == 0, IsMarkedForDeletion = index == 1
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        typeof(Home).GetProperty("ReviewGoal", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, requested);
+
+        Assert.Equal(expected, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+        var session = GetField<List<ImageRecord>>(home, "viewerImages");
+        Assert.Equal(expected, session.Count);
+        Assert.All(session, image => Assert.True(image.IsFavorite && !image.IsReviewed && !image.IsMarkedForDeletion));
+    }
+
+    [Fact]
+    public void GuidedReview_RandomOrder_SelectsGoalWithoutDuplicatesOrChangingTheLibrary()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 80).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), IsFavorite = index % 2 == 0,
+            IsReviewed = index < 10, IsMarkedForDeletion = index > 70
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        SetField(home, "reviewRandomOrder", true);
+        SetField(home, "reviewGoal", 7);
+        var originalOrder = records.Select(image => image.Id).ToArray();
+        var eligible = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered")
+            .Where(image => !image.IsReviewed && !image.IsMarkedForDeletion).Select(image => image.Id).ToHashSet();
+
+        Invoke(home, "StartReview");
+
+        var session = GetField<List<ImageRecord>>(home, "viewerImages");
+        Assert.Equal(7, session.Count);
+        Assert.Equal(7, session.Select(image => image.Id).Distinct().Count());
+        Assert.All(session, image => Assert.Contains(image.Id, eligible));
+        Assert.Equal(originalOrder, records.Select(image => image.Id));
+    }
+
+    [Fact]
+    public void GuidedReview_WhenEligiblePoolShrinks_ThenDisplayedGoalAndSessionAreCapped()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 20).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), IsFavorite = index < 3
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        Assert.Equal(10, GetProperty<int>(home, "ReviewGoal"));
+        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        Assert.Equal(3, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+        Assert.Equal(3, GetField<List<ImageRecord>>(home, "viewerImages").Count);
+
+        SetField(home, "filter", new GalleryFilter { MinRating = 5 });
+        Assert.Equal(0, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+        Assert.Empty(GetField<List<ImageRecord>>(home, "viewerImages"));
+    }
+
     private static Home CreateHome(TestVault fixture, List<ImageRecord> records)
     {
         var home = new Home();

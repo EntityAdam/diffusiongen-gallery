@@ -310,12 +310,20 @@ Select exactly two images for side-by-side comparison, with independent rating
 buttons that also mark each image reviewed. Filters support collections,
 minimum ratings, review status and unorganized images; sort by highest rating.
 
-In **Guided review**, **Start guided review** opens the pending, unmarked images in the current filtered
-results across all pages, in the current sort order. The count on the button is
-the session size. Use the Awaiting review dashboard queue for the whole pending
-library, or narrow filters first. The session sequence stays fixed until closed.
+In **Guided review**, set a **Goal** (default 10) and click **Start Review** to
+review that many pending, unmarked images from the current filtered results across
+all pages. The goal is capped at the number of eligible images; review is disabled
+when none are available. Enable **Random order** to select a random sample without
+duplicates and review it in shuffled order. Otherwise, the session takes the first
+images in the current sort order. Use the Awaiting review dashboard queue for the
+whole pending library, or narrow filters first. The session sequence stays fixed
+until closed.
 
-The review panel shows progress with **Skip** and **Undo last decision** buttons.
+The review panel centers a progress bar with **Skip** and **Undo** on one row.
+Progress shows reviewed plus skipped images out of the session goal. On completion,
+only progress and Undo remain, with an Escape-to-return message. Completing every
+image without skipping triggers one confetti burst from each side, 80ms apart
+(disabled when reduced motion is preferred).
 Decision actions use keyboard shortcuts:
 
 - K marks reviewed and clears any deletion mark, preserving rating/favorite.
@@ -331,7 +339,7 @@ At the end, the summary reports reviewed, skipped and untouched counts. Reaching
 the last image does not imply you reviewed images bypassed with the arrows:
 use the Previous/Next controls to revisit untouched images. **Session complete**
 means every image has a decision or explicit skip; skips remain pending in the library.
-**Undo last decision** restores the previous review status, rating, favorite and
+**Undo** restores the previous review status, rating, favorite and
 deletion mark, and returns to that image. Multiple decisions can be undone in reverse
 order while the session is open; skips are not undo entries, and permanent removal
 is never undone. Escape/Close ends
