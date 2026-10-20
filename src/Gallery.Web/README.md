@@ -258,12 +258,11 @@ workflows; removal temporarily resets filters to show all marked images, and lea
 removal restores your previous browsing filters. Active-filter chips remain visible
 above results while the drawer is closed. Remove individual chips or clear all
 filters (the removal workflow keeps its marked-image default). The Library dashboard opens queues for all images, pending review,
-favorites and images without a collection.
+favorites and images without a collection. **Awaiting review** opens Guided review;
+**Without a collection** opens Organize with the unorganized-images filter applied.
 
-**Quick filters** above the grid toggle the most common views with one click:
-**Unreviewed**, **5★**, **Favorites** and **Not analyzed**, each with a live count.
-They combine with each other and with the Filters drawer, and appear in the
-active-filter chips like any other filter.
+Use the **Filters** drawer to filter by review status, minimum rating, favorites,
+analysis status or media type.
 
 **Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
 Compact shows 49 smaller cards per page, Comfortable shows
@@ -278,8 +277,8 @@ modal action; downloaded copies retain embedded ComfyUI metadata.
 
 Every gallery workflow except removal has a select button on each card. Click it to
 toggle an image, or Shift+click to select the range from the last selected image
-(across pages, in the current sort order). **Select page** adds the current page.
-Selections remain across pages until cleared, and switching workflows clears them.
+(across pages, in the current sort order).
+Selections remain across pages until cleared with `Esc`, and switching workflows clears them.
 While images are selected, a floating **bulk action bar** rates (1-5★ or clear),
 favorites/unfavorites, marks reviewed, marks/unmarks deletion, merges tags,
 adds the selection to a collection, or runs **Find duplicates**. Find duplicates
@@ -316,9 +315,12 @@ results across all pages, in the current sort order. The count on the button is
 the session size. Use the Awaiting review dashboard queue for the whole pending
 library, or narrow filters first. The session sequence stays fixed until closed.
 
-- K / **Keep** marks reviewed and clears any deletion mark, preserving rating/favorite.
-- F / **Favorite** marks reviewed, favorites the image and clears deletion marks.
-- D / **Mark deletion** marks reviewed and marks for later removal; it never deletes.
+The review panel shows progress with **Skip** and **Undo last decision** buttons.
+Decision actions use keyboard shortcuts:
+
+- K marks reviewed and clears any deletion mark, preserving rating/favorite.
+- F marks reviewed, favorites the image and clears deletion marks.
+- D marks reviewed and marks for later removal; it never deletes.
 - 1-5 assigns that rating, marks reviewed and clears deletion marks.
 - S / **Skip** advances without changing the image; skipped pending images stay pending.
 
@@ -327,7 +329,7 @@ and automatically advance. Arrows browse without
 making decisions; go back to revise one. Rating or keep does not remove a favorite.
 At the end, the summary reports reviewed, skipped and untouched counts. Reaching
 the last image does not imply you reviewed images bypassed with the arrows:
-**Continue remaining** returns to the first untouched image. **Session complete**
+use the Previous/Next controls to revisit untouched images. **Session complete**
 means every image has a decision or explicit skip; skips remain pending in the library.
 **Undo last decision** restores the previous review status, rating, favorite and
 deletion mark, and returns to that image. Multiple decisions can be undone in reverse
@@ -452,7 +454,7 @@ pointing at a copied database alone still references original image files.
   **Group by diffusion model** groups images by their embedded checkpoint/model
   name, with images missing model metadata in a separate group. The **Diffusion
   model** filter supports partial, case-insensitive model-name searches. The
-  **Media type** filter and **Videos** quick filter limit the grid to videos.
+  **Media type** filter can limit the grid to videos.
 - The **Download a copy** preview icon downloads a decrypted, cleaned copy in the stored format, without
   decoding pixels or transcoding video. Images keep standard image data plus EXIF,
   ICC, XMP and PNG text (compressed PNG text is written uncompressed as `tEXt`, so

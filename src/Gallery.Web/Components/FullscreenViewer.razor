@@ -22,31 +22,22 @@
     @if (ReviewMode)
     {
         <div class="max-h-[35vh] shrink-0 space-y-3 overflow-auto border-b border-border bg-primary/5 px-4 py-3 text-sm">
-            <div><strong>@(reviewComplete ? UntouchedCount > 0 ? "End reached. Images still need a decision." : "Session complete." : "Make a decision, then move on.")</strong>
-                <p class="text-muted-foreground">@decisions.Count reviewed / @skipped.Count skipped / @UntouchedCount untouched / @Images.Count in session. Decisions save immediately. Skip leaves an image pending; marking never deletes files.</p>
+            <div>
+                @if (reviewComplete)
+                {
+                    <strong>@(UntouchedCount > 0 ? "End reached. Images still need a decision." : "Session complete.")</strong>
+                }
+                <p class="text-muted-foreground">@decisions.Count reviewed / @skipped.Count skipped / @UntouchedCount untouched / @Images.Count in session.</p>
             </div>
             @if (!reviewComplete)
             {
                 <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Keep)">Keep (K)</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Favorite)">Favorite (F)</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.MarkDeletion)">Mark deletion (D)</Button>
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SkipAsync">Skip (S)</Button>
-                    @for (var score = 1; score <= 5; score++)
-                    {
-                        var value = score;
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Rate, value)" title="Rate, mark reviewed and advance">@value / 5</Button>
-                    }
                 </div>
             }
             else
             {
                 <p role="status">Your decisions are saved. Skipped images remain in the pending queue. Close to refresh the library, or go back to revise a decision.</p>
-                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => NavigateAsync(0)">Revisit last image</Button>
-                @if (UntouchedCount > 0)
-                {
-                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="ContinueRemainingAsync">Continue remaining (@UntouchedCount)</Button>
-                }
             }
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || undo.Count == 0)" OnClick="UndoAsync">Undo last decision</Button>
         </div>

@@ -209,7 +209,7 @@ else
     </Card>
     <div class="min-w-0">
     <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2><Badge Variant="BadgeVariant.Secondary" Class="bg-primary/10 text-primary">@images.Count</Badge></div></div>
+        <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2></div></div>
         <div class="flex flex-wrap items-center gap-2">
             @if (ShowsGallery)
             {
@@ -490,12 +490,12 @@ else
         </Card>
     }
 
-    @if (workflow == "library")
+    @if (workflow is "library" or "review")
     {
     <div class="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4 [&>button]:h-auto [&>button]:flex-col [&>button]:items-start [&>button]:p-5 [&_strong]:text-3xl [&_strong]:text-primary [&_span]:text-xs [&_span]:text-muted-foreground">
         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("all")'><strong>@images.Count</strong><span>In your library</span></Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion)</strong><span>Awaiting review</span></Button>
         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("favorites")'><strong>@images.Count(image => image.IsFavorite && !image.IsMarkedForDeletion)</strong><span>Favorites</span></Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion)</strong><span>Awaiting review</span></Button>
         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("unorganized")'><strong>@images.Count(image => image.Collections.IsEmpty && !image.IsMarkedForDeletion)</strong><span>Without a collection</span></Button>
     </div>
     }
@@ -513,17 +513,8 @@ else
     <GalleryFilterPanel Filter="filter" Images="images" ResultCount="Filtered.Count" Open="filtersOpen" OpenChanged="SetFiltersOpenAsync" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
     <div class="gallery-layout grid min-w-0 grid-cols-1">
         <section>
-            <div class="mb-3 flex flex-wrap gap-2" role="group" aria-label="Quick filters">
-                @foreach (var chip in QuickFilters)
-                {
-                    var active = chip.IsActive(filter);
-                    <Button Variant="@(active ? ButtonVariant.Secondary : ButtonVariant.Outline)" Type="button" Class="rounded-full!" aria-pressed="@(active ? "true" : "false")" Disabled="@busy" OnClick="() => ToggleQuickFilterAsync(chip)">
-                        @chip.Label <span class="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">@chip.Count(images)</span>
-                    </Button>
-                }
-            </div>
             <ActiveFilters Filter="filter" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
-            <div class="mb-5 flex flex-wrap items-center justify-between gap-4 text-sm"><span><strong>@Filtered.Count</strong> images <span class="text-muted-foreground">/ @images.Count in gallery</span></span>
+            <div class="mb-5 flex flex-wrap items-center gap-4 text-sm">
                 <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto [&>select]:w-full sm:[&>select]:w-auto">
                     @{ var activeFilterCount = ActiveFilters.CountActive(filter); }
                     <Button id="filter-toggle" Variant="@(filtersOpen ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Default" Type="button" OnClick="() => SetFiltersOpenAsync(!filtersOpen)"
@@ -551,21 +542,13 @@ else
                     </Select>
                 </div>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
-                @if (workflow != "remove")
-                {
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SelectLibraryPage">Select page</Button>
-                }
-                @if (workflow == "remove")
-                {
+            @if (workflow == "remove")
+            {
+                <div class="flex flex-wrap items-center gap-2">
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SelectFilteredMarked">Select filtered marked images</Button>
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || removalSelection.Count == 0)" OnClick="PrepareBulkRemovalAsync">Remove selected (@removalSelection.Count)</Button>
-                }
-                @if (librarySelection.Count > 0 || removalSelection.Count > 0)
-                {
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="ClearSelection">Clear selection (@(librarySelection.Count + removalSelection.Count))</Button>
-                }
-            </div>
+                </div>
+            }
             @if (workflow != "remove" && librarySelection.Count > 0)
             {
                 <div class="bulk-bar fixed bottom-4 left-1/2 z-10 flex max-h-[45vh] w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2 flex-wrap items-center gap-3 overflow-auto rounded-xl border border-primary/30 bg-card/95 p-3 shadow-2xl backdrop-blur-sm [&>strong]:text-primary" role="region" aria-label="Bulk actions for selected images">
@@ -614,7 +597,6 @@ else
             }
             else
             {
-                <p class="mb-3 hidden text-xs md:block text-muted-foreground">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>D</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
                 <div class="image-grid density-@density">
                     @{ PromptGroup? previousGroup = null; DiffusionModelGroup? previousModelGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
@@ -1005,15 +987,6 @@ else
     private DotNetObjectReference<Home>? gridReference;
     private DotNetObjectReference<Home>? securityReference;
     private int autoLockMinutes = UiPreferences.DefaultAutoLockMinutes;
-    private sealed record QuickFilter(string Label, Func<GalleryFilter, bool> IsActive, Func<GalleryFilter, bool, GalleryFilter> Toggle, Func<IEnumerable<ImageRecord>, int> Count);
-    private static readonly QuickFilter[] QuickFilters =
-    [
-        new("Unreviewed", f => f.Review == "pending", (f, on) => f with { Review = on ? "pending" : GalleryFilter.AnyValue }, all => all.Count(i => !i.IsReviewed && !i.IsMarkedForDeletion)),
-        new("5\u2605", f => f.MinRating == 5, (f, on) => f with { MinRating = on ? 5 : 0 }, all => all.Count(i => i.Rating == 5 && !i.IsMarkedForDeletion)),
-        new("Favorites", f => f.IncludesFavoritesOnly, (f, on) => f with { IncludesFavoritesOnly = on }, all => all.Count(i => i.IsFavorite && !i.IsMarkedForDeletion)),
-        new("Not analyzed", f => f.Analysis == "pending", (f, on) => f with { Analysis = on ? "pending" : GalleryFilter.AnyValue }, all => all.Count(i => i.Description.Length == 0 && !i.IsMarkedForDeletion)),
-        new("Videos", f => f.Media == "video", (f, on) => f with { Media = on ? "video" : GalleryFilter.AnyValue }, all => all.Count(i => i.IsVideo && !i.IsMarkedForDeletion)),
-    ];
     private IEnumerable<string> AllCollections => images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
     private ImageRecord? ImageById(string id) => imagesById.GetValueOrDefault(id);
     private Dictionary<string, ImageRecord> imagesById = [];
@@ -1327,7 +1300,12 @@ else
     private Task SetQueueAsync(string queue)
     {
         browsingFilter = null;
-        workflow = queue == "pending" ? "review" : "library";
+        workflow = queue switch
+        {
+            "pending" => "review",
+            "unorganized" => "organize",
+            _ => "library"
+        };
         filter = new();
         if (queue == "all") filter = filter with { Deletion = GalleryFilter.AnyValue };
         if (queue == "pending") filter = filter with { Review = "pending" };
@@ -1517,7 +1495,6 @@ else
         if (selected?.Id == updated.Id) selected = updated;
         browsingSource = null;
     }
-    private void SelectLibraryPage() { librarySelection.UnionWith(PageImages.Select(image => image.Id)); }
     private void ToggleLibrarySelection(string id, bool value)
     {
         if (value) librarySelection.Add(id); else librarySelection.Remove(id);
@@ -1534,12 +1511,6 @@ else
         }
         else ToggleLibrarySelection(id, !librarySelection.Contains(id));
         selectionAnchor = id;
-    }
-
-    private Task ToggleQuickFilterAsync(QuickFilter chip)
-    {
-        filter = chip.Toggle(filter, !chip.IsActive(filter));
-        return FilterChangedAsync();
     }
 
     private Task SetDensityAsync(string value) => RunAsync("Saving thumbnail size...", async () =>

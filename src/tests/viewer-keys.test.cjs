@@ -4,7 +4,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 const vm = require("node:vm");
 
-function setup({ dialog = false } = {}) {
+function setup({ dialog = false, selection = false } = {}) {
     const listeners = new Map();
     const calls = [];
     const card = id => {
@@ -22,7 +22,9 @@ function setup({ dialog = false } = {}) {
             listeners.set(name, handler);
         },
         removeEventListener(name) { listeners.delete(name); },
-        querySelector(selector) { return selector.startsWith("[role=dialog]") && dialog ? {} : null; },
+        querySelector(selector) {
+            return (selector.startsWith("[role=dialog]") && dialog) || (selector === ".bulk-bar" && selection) ? {} : null;
+        },
         querySelectorAll() { return []; }
     };
     const window = {};
@@ -40,6 +42,13 @@ function setup({ dialog = false } = {}) {
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test("Escape forwards clear selection without a hovered or focused card", async () => {
+    const { calls, key } = setup({ selection: true });
+    assert.equal(key("Escape", {}).defaultPrevented, true);
+    await flush();
+    assert.deepEqual(calls, [["HandleGridKey", "escape", "", false]]);
+});
 
 test("rating, favorite and deletion keys act on the hovered or focused card", async () => {
     const { doc, calls, card, key, hover } = setup();
