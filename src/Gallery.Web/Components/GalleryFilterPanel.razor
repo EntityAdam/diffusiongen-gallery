@@ -1,17 +1,6 @@
-<div class="filter-drawer @(Open ? "open" : "")" inert="@(!Open)" aria-hidden="@(Open ? null : "true")">
-    <div class="filter-drawer-backdrop" aria-hidden="true" @onclick="CloseAsync"></div>
-    <div tabindex="@(Open ? 0 : -1)" class="filter-drawer-sentinel" @onfocus="FocusPanelAsync"></div>
-    <aside @ref="panel" id="@PanelId" class="filter-drawer-panel" tabindex="-1" role="@(Open ? "dialog" : null)"
-           aria-modal="@(Open ? "true" : null)" aria-labelledby="filter-drawer-title" @onkeydown="OnKeyDownAsync">
-        <header class="filter-drawer-header">
-            <div class="min-w-0">
-                <h2 id="filter-drawer-title">Filters</h2>
-                <p class="text-muted-foreground" aria-live="polite">@ResultCount of @Images.Count images match</p>
-            </div>
-            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" OnClick="CloseAsync" aria-label="Close filters" data-filter-navigation><XIcon aria-hidden="true" /></Button>
-        </header>
-
-        <div class="filter-drawer-body">
+<div class="filter-panel">
+        <p class="text-muted-foreground text-sm" aria-live="polite">@ResultCount of @Images.Count images match</p>
+        <div class="filter-panel-body">
             <div class="filter-primary">
                 <Label For="search" Class="mb-2 block">Search</Label>
                 <Input Disabled="@Disabled" id="search" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
@@ -108,26 +97,20 @@
                 </section>
             }
 
-            <p class="filter-drawer-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked, and results update as you change them.</p>
+            <p class="filter-panel-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked, and results update as you change them.</p>
         </div>
 
-        <footer class="filter-drawer-footer">
-            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="Reset" Disabled="@Disabled">Reset filters</Button>
-            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" OnClick="CloseAsync" data-filter-navigation>Show @ResultCount @(ResultCount == 1 ? "image" : "images")</Button>
-        </footer>
-    </aside>
-    <div tabindex="@(Open ? 0 : -1)" class="filter-drawer-sentinel" @onfocus="FocusPanelAsync"></div>
+        <div class="filter-panel-footer">
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" OnClick="Reset" Disabled="@Disabled">Reset filters</Button>
+        </div>
 </div>
 
 @code {
-    public const string PanelId = "gallery-filters";
     private const string NativeInputClass = "h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
     [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
     [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
     [Parameter] public int ResultCount { get; set; }
-    [Parameter] public bool Open { get; set; }
-    [Parameter] public EventCallback<bool> OpenChanged { get; set; }
     [Parameter] public EventCallback<GalleryFilter> Changed { get; set; }
     [Parameter] public EventCallback Reset { get; set; }
     [Parameter] public bool Disabled { get; set; }
@@ -150,27 +133,22 @@
 
     private FilterDraft draft = new();
     private readonly HashSet<string> expanded = [];
-    private ElementReference panel;
-    private bool wasOpen;
-    private bool focusPending;
+
+    public static int CountActive(GalleryFilter filter) => Sections.Sum(section => section.ActiveCount(filter))
+        + Count(filter.Search.Length > 0, filter.DiffusionModel.Length > 0, filter.Prompt.Length > 0);
+
+    // Counts criteria that differ from a new filter, so the default deletion view is not reported as a filter.
+    public static int CountChanged(GalleryFilter filter) =>
+        CountActive(filter with { Deletion = GalleryFilter.AnyValue }) + Count(filter.Deletion != new GalleryFilter().Deletion);
+
+    protected override void OnInitialized()
+    {
+        foreach (var section in Sections.Where(section => section.ActiveCount(Filter) > 0)) expanded.Add(section.Id);
+    }
 
     protected override void OnParametersSet()
     {
         draft = FilterDraft.CreateFrom(Filter);
-        if (Open && !wasOpen)
-        {
-            expanded.Clear();
-            foreach (var section in Sections.Where(section => section.ActiveCount(Filter) > 0)) expanded.Add(section.Id);
-            focusPending = true;
-        }
-        wasOpen = Open;
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (!focusPending) return;
-        focusPending = false;
-        await FocusPanelAsync();
     }
 
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections)
@@ -188,24 +166,6 @@
     private void ToggleSection(string id)
     {
         if (!expanded.Remove(id)) expanded.Add(id);
-    }
-
-    private async Task FocusPanelAsync()
-    {
-        try { await panel.FocusAsync(); }
-        catch (JSException) { }
-        catch (InvalidOperationException) { }
-    }
-
-    private async Task OnKeyDownAsync(KeyboardEventArgs args)
-    {
-        if (args.Key == "Escape") await CloseAsync();
-    }
-
-    private async Task CloseAsync()
-    {
-        if (!Open) return;
-        await OpenChanged.InvokeAsync(false);
     }
 
     private sealed class FilterDraft

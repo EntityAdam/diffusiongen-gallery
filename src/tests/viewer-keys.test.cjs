@@ -23,7 +23,7 @@ function setup({ dialog = false, selection = false } = {}) {
         },
         removeEventListener(name) { listeners.delete(name); },
         querySelector(selector) {
-            return (selector.startsWith("[role=dialog]") && dialog) || (selector === ".bulk-bar, [data-has-selection=true]" && selection) ? {} : null;
+            return (selector.startsWith("[role=dialog]") && dialog) || (selector === "[data-has-selection=true]" && selection) ? {} : null;
         },
         querySelectorAll() { return []; }
     };
@@ -118,6 +118,46 @@ test("detach removes the document listeners", () => {
     const { window, listeners } = setup();
     window.galleryGrid.detach();
     assert.equal(listeners.size, 0);
+});
+
+test("backtick toggles the toolbox without a card and Shift+backtick is forwarded by physical key", async () => {
+    const { calls, key, input } = setup();
+    assert.equal(key("`", {}, { code: "Backquote" }).defaultPrevented, true);
+    assert.equal(key("~", {}, { code: "Backquote", shiftKey: true }).defaultPrevented, true);
+    assert.equal(key("`", input, { code: "Backquote" }).defaultPrevented, false);
+    await flush();
+    assert.deepEqual(calls, [["HandleGridKey", "`", "", false], ["HandleGridKey", "`", "", true]]);
+});
+
+test("toolbox stays inside the viewport and can be reset to its default position", async () => {
+    const handlers = new Map();
+    const element = {
+        style: {}, offsetLeft: 0, offsetTop: 0, offsetWidth: 300, offsetHeight: 60,
+        querySelector: () => handle
+    };
+    const handle = {
+        addEventListener(name, handler) { handlers.set(name, handler); },
+        removeEventListener(name) { handlers.delete(name); }
+    };
+    const window = { innerWidth: 800, innerHeight: 600, addEventListener() {}, removeEventListener() {} };
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, Element: class { },
+        document: { addEventListener() { }, querySelector: () => ({ getBoundingClientRect: () => ({ left: 250, top: 0 }) }) }
+    });
+    const calls = [];
+    const reference = { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } };
+    const sync = () => { element.offsetLeft = parseFloat(element.style.left); element.offsetTop = parseFloat(element.style.top); };
+    window.galleryToolbox.attach(element, reference, 4000, 3000);
+    sync();
+    assert.ok(element.offsetLeft + element.offsetWidth <= 800 && element.offsetTop + element.offsetHeight <= 600);
+    window.galleryToolbox.reset(element);
+    sync();
+    assert.deepEqual([element.offsetLeft, element.offsetTop], [266, 16]);
+    await flush();
+    assert.deepEqual(calls.at(-1), ["ToolboxReset"]);
+    assert.ok(handlers.has("dblclick"));
+    window.galleryToolbox.detach(element);
+    assert.equal(handlers.size, 0);
 });
 
 test("full screen viewer forwards declared extra keys only", async () => {

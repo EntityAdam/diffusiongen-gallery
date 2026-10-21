@@ -188,9 +188,8 @@ branding and the application's semantic build version (without commit metadata);
 the icon rail retains the brand icon and version. Primary content views have no
 footer; full-screen viewers retain theirs.
 
-The left navigation separates Library, Guided review, Organize, Explore & saved
-views, Local intelligence, Duplicate finder, Trash, Ingest images and Settings.
-**Settings** opens on a **Gallery overview** with tabs for **Backups**,
+The left navigation contains **Gallery**, **Duplicate finder**, **Ingest images**
+and **Settings**, plus a **Toolbox** toggle. Gallery opens by default after unlock.**Settings** opens on a **Gallery overview** with tabs for **Backups**,
 **Manage gallery**, **LLM endpoints** and **Gallery security**. The overview shows database size (`gallery.db` plus its WAL/SHM
 files, which include encrypted thumbnails), total file count (catalogued encrypted
 image files plus gallery header/database files) and total size on disk, auto-scaled
@@ -252,27 +251,39 @@ and moves to the next group; **Skip group** leaves a group unchanged. Reopening 
 group you partly marked earlier restores those choices. Shortcuts: Left/Right
 copies, Up/Down groups, `K` toggle keep, `A` apply, `S` skip, `O` 100%, `P` fit,
 `Esc` close.
-Only tools for the current workflow are shown. Image workflows reuse the same
-grid, sort and **Filters** drawer. The **Filters** button in the gallery toolbar
-shows how many filters are active and opens the drawer: a slide-out panel from the
-right on desktop and a full-screen sheet on small screens. **Search** and
-**Diffusion model** sit at the top. The remaining controls are grouped into
-collapsible **Organization**, **Media & dimensions**, **Vision analysis** and
-**Imported date** sections. Each section shows its active-filter count and opens
-automatically when it contains active criteria. Results update as you change a
-field. **Show N images** closes the drawer, as do the close button, `Esc` and
-clicking outside it; **Reset filters** clears everything. Filters carry across
-workflows; removal temporarily resets filters to show all marked images, and leaving
-removal restores your previous browsing filters. Active-filter chips remain visible
-above results while the drawer is closed. Remove individual chips or clear all
-filters (the removal workflow keeps its marked-image default). The Library dashboard opens queues for all images, pending review,
-favorites and images without a collection. **Awaiting review** opens Guided review;
-**Without a collection** opens Organize with the unorganized-images filter applied.
 
-Use the **Filters** drawer to filter by review status, minimum rating, favorites,
-analysis status or media type.
+**Gallery** is a single view: the main content shows only image cards, group
+headers and paging controls. All tools live in a floating, movable, compact
+**toolbox**. Toggle it from the sidebar or with the backtick key (`` ` ``). The
+toolbox starts as a row of icons with tooltips. Activating a tool highlights it and
+expands its panel below the icons; only one panel is open at a time, and activating
+the same tool again collapses the toolbox back to icons only:
 
-**Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
+- **Change view** (grid icon): thumbnail size, grouping, sorting, **Full screen view**
+  and **Reset toolbox position**.
+- **Filter images** (funnel): **Search** and **Diffusion model**, then collapsible
+  **Organization**, **Media & dimensions**, **Vision analysis** and **Imported date**
+  sections. Each section shows its active-filter count and opens automatically when
+  it contains active criteria. Results update as you change a field; **Reset filters**
+  clears everything. The tool icon shows the number of active filters.
+- **Review images one by one** (circle check): guided review.
+- **Organize media** (folder): collections and tags.
+- **Search** (magnifying glass): converts natural language into filters.
+- **Use AI to describe and tag your images** (sparkles): local intelligence.
+- **Trash** (trash can): shows images marked for deletion.
+
+Drag the toolbox by its grip handle (or focus the handle and use the arrow keys).
+Its position, visibility and active tool are saved encrypted per gallery. The
+toolbox is always kept inside the visible content area: if the window shrinks or
+the gallery opens on a smaller display, it is clamped back into view without
+overwriting the saved position. To return it to its default place (top-left of the
+content area), double-click the grip handle, press ``Shift+` ``, or use **Reset
+toolbox position** in the view tool. ``Shift+` `` also shows a hidden toolbox.
+
+Busy, status and error messages appear as toast notifications in the bottom-right
+corner.
+
+**Thumbnail size** (Compact, Comfortable, Large) is in the view tool.
 Compact shows 49 smaller cards per page, Comfortable shows
 24 and Large shows 12. The choice is saved encrypted per gallery and restored on
 unlock.
@@ -283,21 +294,12 @@ controls for videos). Rating stars, favorite and Trash controls sit below the pr
 Click the current rating again to clear it. Workflow export is no longer a separate
 modal action; downloaded copies retain embedded ComfyUI metadata.
 
-Every gallery workflow, including Trash, has a select button on each card. Click it to
-toggle an image, or Shift+click to select the range from the last selected image
-(across pages, in the current sort order).
-Selections remain across pages until cleared with `Esc`, and switching workflows clears them.
-While images are selected, a workflow-specific **Quick Edit** panel offers:
-
-- **Library:** ratings 1-5 or Clear Rating, Favorite/Unfavorite, and Trash/Restore.
-- **Guided review:** ratings 1-5 or Clear Rating, and Reviewed/Not Reviewed.
-- **Trash:** Delete Forever/Restore, operating on the removal selection.
-
-Each panel shows the selected count and **Clear Selection (ESC)**. Trash marks
-images for deletion; Restore clears the deletion mark, without deleting files.
-Organize and Local intelligence do not show Quick Edit. Duplicate Finder is unchanged.
-Removal keeps its own separate deletion
-selection. Virtual collections do not change file locations.
+Every card, including in Trash, has a select button. Click it to toggle an image,
+or Shift+click to select the range from the last selected image (across pages, in
+the current sort order). Selections remain across pages until cleared with `Esc`.
+There is no Quick Edit panel; curate with the keyboard shortcuts below, the
+Organize tool and the Trash tool. Trash keeps its own separate deletion selection.
+Virtual collections do not change file locations.
 
 **Keyboard curation** works on the focused card, or the card under the pointer:
 `1`-`5` rate, `0` clears the rating, `F` toggles favorite, `D` toggles the
@@ -313,28 +315,29 @@ that rating, or click the current rating again to clear it. Assigning a nonzero
 rating or marking an image for deletion also marks it reviewed; clearing a rating
 or removing a deletion mark does not change review status.
 
-**Organize** shows the selected count and **Clear selection (ESC)**, followed by
+The **Organize** tool shows the selected count and **Clear selection (ESC)**, followed by
 independent Collections and Tags columns. Each has a labeled select for existing
 values, with a **Create new** option for text entry. **Apply**, **Clear**, and
 **Suggest (AI Vision)** share one row. Clear resets only that selection/input; Apply adds collection
 membership or merges tags without discarding existing metadata. Vision suggestions
 support up to 24 selected images and require individual approval. Applying a
 collection suggestion changes only collections; applying a tag suggestion changes
-only tags. Ratings and review status are edited in the other workflows.
+only tags. Ratings and review status are edited with keyboard shortcuts and guided review.
 
 **Unexposed features:** the workbench retains its side-by-side two-image comparison
 code (including independent ratings), combined collection/tag application,
-collection removal, and rating/review-status operations, but Organize does not
-expose controls for them. Filters still support collections, minimum ratings,
-review status and unorganized images.
+collection removal, and rating/review-status operations, but no tool exposes
+controls for them. Saved views (named filter snapshots stored in encrypted SQLite
+settings; saving the same name replaces a view, loading restores filters rather
+than old results) are also retained in code but not shown in the UI. Filters still
+support collections, minimum ratings, review status and unorganized images.
 
-In **Guided review**, set a **Goal** (default 10) and click **Start Review** to
+In the **Review** tool, set a **Goal** (default 10) and click **Start Review** to
 review that many pending, unmarked images from the current filtered results across
 all pages. The goal is capped at the number of eligible images; review is disabled
 when none are available. Enable **Random order** to select a random sample without
 duplicates and review it in shuffled order. Otherwise, the session takes the first
-images in the current sort order. Use the Awaiting review dashboard queue for the
-whole pending library, or narrow filters first. The session sequence stays fixed
+images in the current sort order. Narrow filters first to review a subset. The session sequence stays fixed
 until closed.
 
 The review panel centers a progress bar with **Skip** and **Undo** on one row.
@@ -366,13 +369,13 @@ a failed next-image load reports the error without undoing an already saved deci
 Closing early preserves completed decisions, and untouched images remain pending.
 Review uses the fast viewer's fit/full-size controls and bounded preloading.
 
-**Explore & saved views** stores named snapshots of all drawer filters in
-encrypted SQLite settings. Saving the same name replaces that view. Loading a
-view restores its filters, not its old results. The local LLM can interpret a
-natural-language search into explicit filters; review and apply the suggestion.
-This is filter interpretation, **not semantic embeddings/vector search**.
+The **Search** tool uses the local LLM to interpret a natural-language search into
+explicit filters; review and apply the suggestion. This is filter interpretation,
+**not semantic embeddings/vector search**.
 
-**Local intelligence** analyzes at most 24 selected images sequentially with
+The **Local intelligence** tool has **Play**/**Stop** and **Analyze selected**.
+Play analyzes every image without a description or pending suggestion, one at a
+time, until finished or stopped. Analyze selected handles at most 24 selected images with
 the configured local vision model. Description, tags and collection name are
 requested together in one vision request per image, without a second text-only call.
 If only the collection field is missing or invalid, valid descriptions and tags
@@ -381,9 +384,10 @@ Invalid description/tag fields reject the suggestion with a field-specific error
 It sends metadata-free previews plus descriptions/tags and existing collection
 names to the configured loopback or private LAN endpoint. Stop takes effect after the current image.
 Descriptions, tags and collection suggestions remain temporary until approved
-individually; dismissing or locking discards them. Approval replaces the
+individually: cards with a suggestion show a sparkles badge that opens the full
+screen viewer, where **Approve & save** or **Dismiss** decide each one. Dismissing or locking discards them. Approval replaces the
 description, merges tags and adds collection membership. AI never changes
-ratings, review state, deletion marks, or files. No automatic background jobs.
+ratings, review state, deletion marks, or files. Analysis only runs when you start it.
 Bulk failures are reported per image rather than silently skipped.
 The navigation job indicator stays visible when you change workflows, including
 image progress, a stop-after-current-image control and an **Open job** link.
@@ -572,7 +576,7 @@ pointing at a copied database alone still references original image files.
   marks can be reversed. Only marked images can be permanently removed.
   Use **Remove this image** in details, or select marked cards in **Trash** using
   the standard card selection button or `X` (`Shift+X` selects a range), then choose
-  **Delete Forever** in Quick Edit. Review the preview and explicitly confirm removal.
+  **Delete Forever** in the Trash tool. Review the preview and explicitly confirm removal.
   **Restore** clears the deletion mark and returns images to the active library.
   Choose separate policies for accessible originals (retain or delete) and missing
   originals (restore PNG or discard without restoration). Bulk operations report

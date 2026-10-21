@@ -50,34 +50,41 @@ public sealed class UiComponentTests
         Assert.Matches(@"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$", WorkspaceSidebarFooter.AppVersion);
     }
 
-    [Theory]
-    [InlineData(typeof(LibraryQuickEdit), "Favorite", "Not Reviewed", 11)]
-    [InlineData(typeof(ReviewQuickEdit), "Not Reviewed", "Favorite", 9)]
-    [InlineData(typeof(RemovalQuickEdit), "Delete Forever", "Clear Rating", 3)]
-    public async Task QuickEdit_ShowsOnlyItsWorkflowActions(Type componentType, string expected, string excluded, int buttonCount)
+    [Fact]
+    public async Task Toolbox_ShowsIconToolsWithTooltipsAndExpandsOnlyTheActivePanel()
     {
         await using var fixture = ComponentRenderFixture.Create();
         var renderer = fixture.HtmlRenderer;
-        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        async Task<string> RenderAsync(string activeTool) => await renderer.Dispatcher.InvokeAsync(async () =>
         {
-            var root = await renderer.RenderComponentAsync(componentType, ParameterView.FromDictionary(new Dictionary<string, object?>
+            var root = await renderer.RenderComponentAsync<GalleryToolbox>(ParameterView.FromDictionary(new Dictionary<string, object?>
             {
-                ["SelectedCount"] = 3,
-                ["Busy"] = true
+                [nameof(GalleryToolbox.ActiveTool)] = activeTool,
+                [nameof(GalleryToolbox.Badge)] = (Func<string, string>)(tool => tool == "trash" ? "4" : ""),
+                [nameof(GalleryToolbox.ChildContent)] = (RenderFragment)(builder => builder.AddContent(0, "panel body"))
             }));
             return WebUtility.HtmlDecode(root.ToHtmlString());
         });
 
-        Assert.Contains("3 Selected", html);
-        Assert.Contains("Clear Selection", html);
-        Assert.Contains("ESC", html);
-        Assert.Contains(expected, html);
-        Assert.DoesNotContain(excluded, html);
-        var buttons = Regex.Matches(html, @"<button\b[^>]*>");
-        Assert.Equal(buttonCount, buttons.Count);
-        foreach (Match button in buttons) Assert.Matches(@"\sdisabled(?:=|\s|/?>)", button.Value);
-    }
+        var collapsed = await RenderAsync("");
+        var expanded = await RenderAsync("organize");
 
+        foreach (var tool in GalleryToolbox.Tools)
+        {
+            Assert.Contains($"data-tool=\"{tool.Id}\"", collapsed);
+            Assert.Contains($"data-tooltip=\"{tool.Tooltip}\"", collapsed);
+        }
+        Assert.Contains("Change view", collapsed);
+        Assert.Contains("Use AI to describe and tag your images", collapsed);
+        Assert.Contains("double-click to reset", collapsed);
+        Assert.Matches(@"class=""gallery-toolbox-panel""[^>]*hidden", collapsed);
+        Assert.DoesNotContain("aria-pressed=\"true\"", collapsed);
+        Assert.Contains("gallery-toolbox-badge", collapsed);
+        Assert.Contains("is-expanded", expanded);
+        Assert.Single(Regex.Matches(expanded, @"aria-pressed=""true"""));
+        Assert.Matches(@"data-tool=""organize""[^>]*aria-pressed=""true""", expanded);
+        Assert.Contains(">Organize</h3>", expanded);
+    }
     [Fact]
     public async Task ImageCard_WhenSelectedAndRated_ThenRetainsKeyboardHooksAndAccessibleLibraryControls()
     {
@@ -288,40 +295,35 @@ public sealed class UiComponentTests
     }
 
     [Fact]
-    public async Task FilterDrawer_WhenClosed_ThenIsNotModalAndWhenOpen_ThenExpandsActiveSectionsOnly()
+    public async Task FilterPanel_RendersInlineAndExpandsActiveSectionsOnly()
     {
         // Arrange
         await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
         HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
         GalleryFilter activeFilter = new() { Deletion = GalleryFilter.AnyValue, Orientation = "portrait" };
 
-        async Task<string> RenderAsync(bool open) => await htmlRenderer.Dispatcher.InvokeAsync(async () =>
+        // Act
+        string html = await htmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             HtmlRootComponent root = await htmlRenderer.RenderComponentAsync<GalleryFilterPanel>(ParameterView.FromDictionary(new Dictionary<string, object?>
             {
                 [nameof(GalleryFilterPanel.Filter)] = activeFilter,
-                [nameof(GalleryFilterPanel.Open)] = open,
                 [nameof(GalleryFilterPanel.ResultCount)] = 7
             }));
             return WebUtility.HtmlDecode(root.ToHtmlString());
         });
 
-        // Act
-        string closedHtml = await RenderAsync(false);
-        string openHtml = await RenderAsync(true);
-
         // Assert
-        Assert.DoesNotContain("aria-modal", closedHtml);
-        Assert.DoesNotContain("role=\"dialog\"", closedHtml);
-        Assert.Contains("inert", closedHtml);
-        Assert.Contains("role=\"dialog\"", openHtml);
-        Assert.Contains("aria-modal=\"true\"", openHtml);
-        Assert.Contains("Show 7 images", openHtml);
-        Assert.Matches(@"aria-expanded=""true"" aria-controls=""filter-section-media""", openHtml);
-        Assert.Matches(@"aria-expanded=""false"" aria-controls=""filter-section-organization""", openHtml);
-        Assert.Matches(@"id=""filter-section-organization"" class=""filter-section-body"" hidden", openHtml);
+        Assert.DoesNotContain("role=\"dialog\"", html);
+        Assert.DoesNotContain("aria-modal", html);
+        Assert.Contains("7 of 0 images match", html);
+        Assert.Equal(1, GalleryFilterPanel.CountActive(activeFilter));
+        Assert.Equal(0, GalleryFilterPanel.CountChanged(new GalleryFilter()));
+        Assert.Equal(2, GalleryFilterPanel.CountChanged(activeFilter));
+        Assert.Matches(@"aria-expanded=""true"" aria-controls=""filter-section-media""", html);
+        Assert.Matches(@"aria-expanded=""false"" aria-controls=""filter-section-organization""", html);
+        Assert.Matches(@"id=""filter-section-organization"" class=""filter-section-body"" hidden", html);
     }
-
     [Fact]
     public async Task BackupDestination_WhenAzureSelected_ThenPreservesPasswordAndSavedCredentialHint()
     {

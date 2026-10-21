@@ -37,6 +37,12 @@ public sealed record UiPreferences
     public const int DefaultAutoLockMinutes = 15;
     public string GridDensity { get; init; } = ComfortableDensity;
     public int AutoLockMinutes { get; init; } = DefaultAutoLockMinutes;
+    public static readonly ImmutableArray<string> ToolboxTools = ["views", "filters", "review", "organize", "search", "intelligence", "trash"];
+    public bool ToolboxVisible { get; init; } = true;
+    // Null coordinates place the toolbox at the top-left of the main content.
+    public double? ToolboxX { get; init; }
+    public double? ToolboxY { get; init; }
+    public string ToolboxTool { get; init; } = "";
 }
 
 public sealed record StorageOverview(

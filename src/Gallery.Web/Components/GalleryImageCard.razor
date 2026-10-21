@@ -5,6 +5,12 @@
                 aria-label="@($"Select {Image.Name}")" title="Select (Shift+click selects a range)"
                 OnClick="Select"><CheckIcon Size="16" ClassName="@(Selected ? "" : "opacity-40")" aria-hidden="true" /></Button>
     }
+    @if (HasSuggestion)
+    {
+        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Icon" Class="absolute top-2 right-2 z-10 h-7! w-7! rounded-full! shadow-sm" Disabled="@Busy"
+                aria-label="@($"Review AI suggestion for {Image.Name}")" title="Review AI suggestion"
+                OnClick="ReviewSuggestion"><SparklesIcon Size="16" aria-hidden="true" /></Button>
+    }
     <button class="image-open relative block aspect-square w-full overflow-hidden bg-background p-0 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 [&_img]:h-full [&_img]:w-full [&_img]:object-contain" disabled="@Busy" @onclick="Open">
         @if (Thumbnail is not null)
         { <img src="@Thumbnail" alt="@Image.Name" loading="lazy" draggable="false" /> }
@@ -55,4 +61,6 @@
     [Parameter] public EventCallback<int> Rate { get; set; }
     [Parameter] public EventCallback Favorite { get; set; }
     [Parameter] public EventCallback Mark { get; set; }
+    [Parameter] public bool HasSuggestion { get; set; }
+    [Parameter] public EventCallback ReviewSuggestion { get; set; }
 }

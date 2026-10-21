@@ -297,7 +297,7 @@ public sealed class BrowsingProjectionTests
             Id = index.ToString(), Name = index.ToString(), IsMarkedForDeletion = true
         }).ToList();
         var home = CreateHome(fixture, records);
-        SetField(home, "workflow", "remove");
+        SetField(home, "activeTool", "trash");
         SetField(home, "filter", new GalleryFilter { Deletion = "marked", Sort = "name" });
         Invoke(home, "SelectCard", "0", false);
         Invoke(home, "SelectCard", "2", true);
@@ -310,6 +310,27 @@ public sealed class BrowsingProjectionTests
         Assert.Empty(GetField<HashSet<string>>(home, "removalSelection"));
     }
 
+    [Fact]
+    public async Task TrashTool_SwapsToMarkedImagesAndRestoresTheBrowsingFilter()
+    {
+        using var fixture = new TestVault();
+        var records = new List<ImageRecord>
+        {
+            new() { Id = "kept", Name = "kept" },
+            new() { Id = "marked", Name = "marked", IsMarkedForDeletion = true }
+        };
+        var home = CreateHome(fixture, records);
+        var browsing = new GalleryFilter { Search = "kept" };
+        SetField(home, "filter", browsing);
+
+        await InvokeAsync(home, "SetActiveToolAsync", "trash");
+        Assert.Equal("marked", GetField<GalleryFilter>(home, "filter").Deletion);
+        Assert.Equal(["marked"], GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered").Select(image => image.Id));
+
+        await InvokeAsync(home, "SetActiveToolAsync", "views");
+        Assert.Equal(browsing, GetField<GalleryFilter>(home, "filter"));
+        Assert.Null(GetField<GalleryFilter?>(home, "browsingFilter"));
+    }
     private static Home CreateHome(TestVault fixture, List<ImageRecord> records)
     {
         var home = new Home();
@@ -331,6 +352,8 @@ public sealed class BrowsingProjectionTests
 
     private static object? Invoke(Home home, string name, params object?[] args) =>
         typeof(Home).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, args);
+
+    private static Task InvokeAsync(Home home, string name, params object?[] args) => (Task)Invoke(home, name, args)!;
 
     private sealed class NoOpJsRuntime : IJSRuntime
     {

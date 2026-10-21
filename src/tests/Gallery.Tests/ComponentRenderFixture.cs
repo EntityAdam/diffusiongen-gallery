@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.JSInterop;
 using ShadCn.Blazor.Components;
 
 namespace Gallery.Tests;
@@ -22,6 +23,7 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddLogging();
         serviceCollection.AddShadCnBlazorComponents();
+        serviceCollection.AddSingleton<IJSRuntime, NoOpJsRuntime>();
         ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
         try
         {
@@ -39,5 +41,11 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
     {
         try { await HtmlRenderer.DisposeAsync(); }
         finally { await serviceProvider.DisposeAsync(); }
+    }
+
+    private sealed class NoOpJsRuntime : IJSRuntime
+    {
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => ValueTask.FromResult(default(TValue)!);
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) => ValueTask.FromResult(default(TValue)!);
     }
 }

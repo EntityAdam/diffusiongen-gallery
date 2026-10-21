@@ -184,6 +184,33 @@ public sealed class CurationTests
     }
 
     [Fact]
+    public async Task Preferences_ToolboxState_RoundTripsAndNormalizesUnknownToolsAndPositions()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+
+        // Act
+        var initial = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { ToolboxVisible = false, ToolboxX = 120.5, ToolboxY = 64, ToolboxTool = "trash" });
+        var saved = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { ToolboxX = double.NaN, ToolboxY = -10, ToolboxTool = "explore" });
+        var normalized = await fixture.Service.LoadPreferencesAsync();
+
+        // Assert
+        Assert.True(initial.ToolboxVisible);
+        Assert.Null(initial.ToolboxX);
+        Assert.Equal("", initial.ToolboxTool);
+        Assert.False(saved.ToolboxVisible);
+        Assert.Equal(120.5, saved.ToolboxX);
+        Assert.Equal(64, saved.ToolboxY);
+        Assert.Equal("trash", saved.ToolboxTool);
+        Assert.Null(normalized.ToolboxX);
+        Assert.Equal(0, normalized.ToolboxY);
+        Assert.Equal("", normalized.ToolboxTool);
+    }
+
+    [Fact]
     public async Task BulkUpdate_WhenSomeIdsAreMissing_UpdatesExistingImagesAndReportsFailedIds()
     {
         // Arrange
