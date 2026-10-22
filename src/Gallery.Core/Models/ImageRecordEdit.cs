@@ -8,6 +8,7 @@ public sealed record ImageRecordEdit
     {
         Id = imageRecord.Id;
         Description = imageRecord.Description;
+        UserDescription = imageRecord.UserDescription;
         Tags = imageRecord.Tags;
         AnalysisModel = imageRecord.AnalysisModel;
         IsFavorite = imageRecord.IsFavorite;
@@ -19,6 +20,7 @@ public sealed record ImageRecordEdit
 
     public string Id { get; }
     public string Description { get; init; }
+    public string UserDescription { get; init; }
     public string Tags { get; init; }
     public string AnalysisModel { get; init; }
     [System.Text.Json.Serialization.JsonPropertyName("Favorite")]

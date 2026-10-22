@@ -19,6 +19,7 @@ public sealed record ImageRecord
     public string PngSha256 { get; init; } = "";
     public string Metadata { get; init; } = "";
     public string Description { get; init; } = "";
+    public string UserDescription { get; init; } = "";
     public string Tags { get; init; } = "";
     public string AnalysisModel { get; init; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("Favorite")]

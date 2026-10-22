@@ -13,6 +13,8 @@ internal static class ImageRecordEditValidator
         ValidateRating(imageRecordEdit.Rating);
         if (imageRecordEdit.Description is null)
             throw new InvalidOperationException("Image description 'null' is invalid; provide a non-null description.");
+        if (imageRecordEdit.UserDescription is null)
+            throw new InvalidOperationException("Image user description 'null' is invalid; provide a non-null user description.");
         if (imageRecordEdit.Tags is null)
             throw new InvalidOperationException("Image tags 'null' is invalid; provide non-null tags.");
         if (imageRecordEdit.AnalysisModel is null)

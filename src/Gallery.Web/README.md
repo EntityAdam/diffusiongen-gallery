@@ -294,12 +294,18 @@ controls for videos). Rating stars, favorite and Trash controls sit below the pr
 Click the current rating again to clear it.
 
 Details are organized into Shadcn cards for file information, ComfyUI generation,
-and editable vision notes/tags. Desktop uses File, Generation, and Notes & tags
+and editable notes. Desktop uses File, Generation, and Notes
 tabs instead of stacking every section beside the preview. The dialog is vertically
 centered and portrait/landscape previews scale proportionally to the available
 viewport height. The card has no internal scrolling or fixed header.
-Mobile retains the stacked layout without tabs. File information shows dimensions, size, video
-duration, original source path, collections, import date, and the source file's
+Mobile retains the stacked layout without tabs. Collections and tags are managed
+through the existing organization tools, not the image details dialog. Notes contains a
+Description textbox for user-entered notes and a separate editable Vision notes
+textbox. Save notes persists both fields. Local analysis updates vision notes
+without overwriting the user description; existing vision notes remain unchanged
+when opening older records. User descriptions are included in text search.
+File information shows dimensions, size, video
+duration, original source path, import date, and the source file's
 creation date captured during ingestion. Existing records without a captured
 creation date display **Unknown**; the import date is not substituted. File creation
 timestamps reflect the source filesystem and may differ from the media's generation
@@ -309,9 +315,7 @@ ComfyUI details show the model filename without `.safetensors`, steps, CFG,
 sampler/scheduler, positive prompt and a negative prompt when present. **Download
 workflow** exports the embedded workflow (or API prompt when no UI workflow exists).
 Other tools' metadata and raw JSON are not displayed. Existing ComfyUI records are
-re-parsed on load to populate sampler/scheduler fields. Notes remain user-editable;
-tags are removable chips, with an **Add tags** field. **Save notes & tags** persists
-both notes and tag edits. The details view no longer exposes encrypted storage
+re-parsed on load to populate sampler/scheduler fields. The details view no longer exposes encrypted storage
 paths or move/rename controls; the underlying move operation remains available.
 
 Every card, including in Trash, has a select button. Click it to toggle an image,

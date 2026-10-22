@@ -707,8 +707,7 @@ else
                                         Rate="value => RateImageAsync(selected, value)" Favorite="() => FavoriteAsync(selected)"
                                         Mark="() => MarkAsync(selected)" />
                     <div class="min-w-0 space-y-4">
-                        <ImageDetailFields @key="selected.Id" Image="selected" Busy="busy" @bind-Description="editDescription" Tags="@editTags"
-                                           AddTags="value => editTags = Gallery.MergeTags(editTags, value)" RemoveTag="value => editTags = Gallery.RemoveTag(editTags, value)"
+                        <ImageDetailFields @key="selected.Id" Image="selected" Busy="busy" @bind-Description="editDescription" @bind-UserDescription="editUserDescription"
                                            Save="SaveNotesAsync" Analyze="AnalyzeAsync" DownloadWorkflow="() => ExportWorkflowAsync(selected)"
                                            ShowPrompt="() => ShowPromptAsync(selected.Prompt)" Remove="() => PrepareRemovalAsync(new[] { selected.Id })" />
                         @if (busy) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@progress</p> }
@@ -928,7 +927,7 @@ else
     private bool CanIngestScan => !busy && ingestionScan is not null && ingestionSpace?.HasEnoughSpace == true;
     private long EstimatedIngestionChangeBytes => ingestionSpace is { } space
         ? space.EstimatedBytes - (deleteSources ? space.SelectedSourceBytes : 0) : 0;
-    private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
+    private string preview = "", editDescription = "", editUserDescription = "", destination = "", rename = "";
     private string videoUrl = "";
     private string grouping = "none";
     private GalleryBrowsingProjection browsingProjection = GalleryBrowsingProjection.Empty;
@@ -1891,7 +1890,7 @@ else
         selected = image;
         preview = data;
         editDescription = image.Description;
-        editTags = image.Tags;
+        editUserDescription = image.UserDescription;
         destination = Path.GetDirectoryName(image.StoredPath)!;
         rename = image.Name;
     });
@@ -1899,7 +1898,7 @@ else
     private void CloseDetail()
     {
         selected = null;
-        preview = editDescription = editTags = destination = rename = "";
+        preview = editDescription = editUserDescription = destination = rename = "";
         _ = ReleaseVideoAsync();
     }
 
@@ -1985,9 +1984,9 @@ else
     private Task SaveNotesAsync() => RunAsync("Saving notes...", async () =>
     {
         if (selected is null) return;
-        await Gallery.UpdateAsync(selected.Id, image => image with { Description = editDescription.Trim(), Tags = editTags.Trim() });
+        await Gallery.UpdateAsync(selected.Id, image => image with { Description = editDescription.Trim(), UserDescription = editUserDescription.Trim() });
         await ReloadAsync();
-        message = "Notes and tags saved.";
+        message = "Notes saved.";
     });
 
     private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
@@ -2005,11 +2004,10 @@ else
         var result = await Gallery.AnalyzeImageAsync(settings, preview);
         await Gallery.UpdateAsync(selected.Id, image =>
         {
-            return image with { Description = result.Description, Tags = result.Tags, AnalysisModel = settings.Model };
+            return image with { Description = result.Description, UserDescription = editUserDescription.Trim(), Tags = result.Tags, AnalysisModel = settings.Model };
         });
         await ReloadAsync();
         editDescription = selected!.Description;
-        editTags = selected.Tags;
         message = "Vision analysis saved.";
     });
 

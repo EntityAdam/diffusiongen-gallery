@@ -4,7 +4,7 @@
             <TabsList aria-label="Image detail sections">
                 <TabsTrigger Value="file">File</TabsTrigger>
                 @if (Image.Generation is not null) { <TabsTrigger Value="generation">Generation</TabsTrigger> }
-                <TabsTrigger Value="notes">Notes &amp; tags</TabsTrigger>
+                <TabsTrigger Value="notes">Notes</TabsTrigger>
             </TabsList>
         </Tabs>
     </div>
@@ -20,12 +20,6 @@
         </dl>
         <Label Class="block">Original source file path</Label>
         <p class="break-all text-muted-foreground">@OriginalSourcePath</p>
-        <Label Class="block">Collection</Label>
-        <div class="flex flex-wrap gap-1">
-            @if (Image.Collections.IsEmpty) { <span class="text-muted-foreground">No collection</span> }
-            @foreach (var collection in Image.Collections)
-            { <Badge Variant="BadgeVariant.Secondary" Class="max-w-full whitespace-normal break-words">@collection</Badge> }
-        </div>
         @if (Image.IsMarkedForDeletion)
         { <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Remove">Remove this image</Button> }
     </Card>
@@ -52,25 +46,13 @@
         </Card>
     }
     <Card Class="@($"detail-section p-4 space-y-3 {(section == "notes" ? "detail-section-active" : "")}")">
-        <h3>Vision notes &amp; tags</h3>
-        <Label For="description">Vision notes</Label>
-        <Textarea id="description" Rows="5" Value="@Description" ValueChanged="DescriptionChanged" Disabled="@Busy" />
-        <Label Class="block">Tags</Label>
-        <div class="flex flex-wrap gap-1" role="group" aria-label="Image tags">
-            @foreach (var tag in Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                <Badge Variant="BadgeVariant.Secondary" Class="max-w-full gap-1 whitespace-normal break-words">
-                    @tag
-                    <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Class="h-6! w-6! shrink-0" Disabled="@Busy" aria-label="@($"Remove tag {tag}")" OnClick="() => RemoveTag.InvokeAsync(tag)"><XIcon Size="12" aria-hidden="true" /></Button>
-                </Badge>
-            }
-        </div>
-        <form @onsubmit="AddTagsAsync" @onsubmit:preventDefault>
-            <Label For="new-detail-tags">Add tags</Label>
-            <div class="flex gap-2"><Input id="new-detail-tags" @bind-Value="newTags" Disabled="@Busy" Placeholder="landscape, sunset" /><Button Variant="ButtonVariant.Outline" Type="submit" Disabled="@(Busy || string.IsNullOrWhiteSpace(newTags))">Add</Button></div>
-        </form>
+        <h3>Notes</h3>
+        <Label For="description">Description</Label>
+        <Textarea id="description" Rows="3" Value="@UserDescription" ValueChanged="UserDescriptionChanged" Disabled="@Busy" />
+        <Label For="vision-notes">Vision notes</Label>
+        <Textarea id="vision-notes" Rows="3" Value="@Description" ValueChanged="DescriptionChanged" Disabled="@Busy" />
         <div class="flex flex-wrap gap-2">
-            <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Save">Save notes &amp; tags</Button>
+            <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Save">Save notes</Button>
             <Button Disabled="@Busy" OnClick="Analyze">Analyze locally</Button>
         </div>
         @if (Image.AnalysisModel.Length > 0) { <p class="text-xs text-muted-foreground">Analyzed by @Image.AnalysisModel</p> }
@@ -82,15 +64,13 @@
     [Parameter] public bool Busy { get; set; }
     [Parameter] public string Description { get; set; } = "";
     [Parameter] public EventCallback<string> DescriptionChanged { get; set; }
-    [Parameter] public string Tags { get; set; } = "";
-    [Parameter] public EventCallback<string> RemoveTag { get; set; }
-    [Parameter] public EventCallback<string> AddTags { get; set; }
+    [Parameter] public string UserDescription { get; set; } = "";
+    [Parameter] public EventCallback<string> UserDescriptionChanged { get; set; }
     [Parameter] public EventCallback Save { get; set; }
     [Parameter] public EventCallback Analyze { get; set; }
     [Parameter] public EventCallback Remove { get; set; }
     [Parameter] public EventCallback DownloadWorkflow { get; set; }
     [Parameter] public EventCallback ShowPrompt { get; set; }
-    private string newTags = "";
     private string section = "file";
     private string OriginalSourcePath => Image.SourcePath.Length > 0 ? Image.SourcePath
         : Image.SourceFolder.Length > 0 ? Path.Combine(Image.SourceFolder, Image.OriginalName) : "Unknown";
@@ -98,10 +78,5 @@
     {
         var filename = model.Replace('\\', '/').Split('/')[^1];
         return filename.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) ? filename[..^12] : filename;
-    }
-    private async Task AddTagsAsync()
-    {
-        await AddTags.InvokeAsync(newTags);
-        newTags = "";
     }
 }

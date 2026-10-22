@@ -39,7 +39,7 @@ public sealed class UiComponentTests
                 {
                     [nameof(ImageDetailFields.Image)] = record,
                     [nameof(ImageDetailFields.Description)] = "Editable vision notes",
-                    [nameof(ImageDetailFields.Tags)] = "cat, landscape"
+                    [nameof(ImageDetailFields.UserDescription)] = "My user entered notes",
                 }));
             return WebUtility.HtmlDecode(root.ToHtmlString());
         });
@@ -50,7 +50,7 @@ public sealed class UiComponentTests
         Assert.Contains("detail-section-active", html);
         Assert.Contains(record.SourcePath, html);
         Assert.Contains(created.ToLocalTime().ToString("g"), html);
-        Assert.Contains("Cats", html);
+        Assert.DoesNotContain("Cats", html);
         Assert.Contains("<dd>cat</dd>", html);
         Assert.Contains("<dd>1</dd>", html);
         Assert.Contains("<dd>3.0</dd>", html);
@@ -61,8 +61,21 @@ public sealed class UiComponentTests
         Assert.Contains("Download workflow", html);
         Assert.Contains("<textarea", html);
         Assert.Contains("Editable vision notes", html);
-        Assert.Contains("aria-label=\"Remove tag cat\"", html);
-        Assert.Contains("aria-label=\"Remove tag landscape\"", html);
+        Assert.Contains("My user entered notes", html);
+        Assert.DoesNotContain("Organize", html);
+        Assert.Contains(">Notes</button>", html);
+        Assert.Contains("for=\"description\"", html);
+        Assert.Contains("for=\"vision-notes\"", html);
+        var sections = Regex.Matches(html, @"<div class=""[^""]*detail-section[\s\S]*?(?=<div class=""[^""]*detail-section|$)")
+            .Select(match => match.Value).ToArray();
+        var fileSection = Assert.Single(sections, section => section.Contains("File information"));
+        Assert.DoesNotContain("Cats", fileSection);
+        var notesSection = Assert.Single(sections, section => section.Contains("<h3>Notes</h3>"));
+        Assert.Contains("My user entered notes", notesSection);
+        Assert.Contains("Editable vision notes", notesSection);
+        Assert.DoesNotContain("Remove tag", notesSection);
+        Assert.DoesNotContain("Image tags", html);
+        Assert.DoesNotContain("Save tags", html);
         Assert.DoesNotContain(record.StoredPath, html);
         Assert.DoesNotContain("RAW_JSON_SENTINEL", html);
         Assert.DoesNotContain(".safetensors", html);
@@ -82,7 +95,7 @@ public sealed class UiComponentTests
             return WebUtility.HtmlDecode(root.ToHtmlString());
         });
         Assert.Contains("Unknown (not captured)", html);
-        Assert.Contains("No collection", html);
+        Assert.DoesNotContain("No collection", html);
         Assert.DoesNotContain("Download workflow", html);
         Assert.DoesNotContain("Negative prompt", html);
         Assert.DoesNotContain("Embedded generation metadata", html);

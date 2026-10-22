@@ -52,6 +52,7 @@ internal static class LibraryRules
     private static ImageRecord ApplyFields(ImageRecord imageRecord, ImageRecordEdit edit) => imageRecord with
     {
         Description = edit.Description,
+        UserDescription = edit.UserDescription,
         Tags = edit.Tags,
         AnalysisModel = edit.AnalysisModel,
         IsFavorite = edit.IsFavorite,
