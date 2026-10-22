@@ -32,10 +32,10 @@ public sealed record ImportProgress(int? Total, int Completed, int Imported, int
 
 public sealed record UiPreferences
 {
-    public const string ComfortableDensity = "comfortable";
-    public static readonly ImmutableArray<string> Densities = ["compact", ComfortableDensity, "large"];
+    public const string DetailDensity = "detail";
+    public static readonly ImmutableArray<string> Densities = ["compact", DetailDensity];
     public const int DefaultAutoLockMinutes = 15;
-    public string GridDensity { get; init; } = ComfortableDensity;
+    public string GridDensity { get; init; } = DetailDensity;
     public int AutoLockMinutes { get; init; } = DefaultAutoLockMinutes;
     public static readonly ImmutableArray<string> ToolboxTools = ["views", "filters", "review", "organize", "search", "intelligence", "trash"];
     public bool ToolboxVisible { get; init; } = true;

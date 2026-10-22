@@ -204,7 +204,7 @@ public sealed class BrowsingProjectionTests
         }).ToList();
         var home = CreateHome(fixture, records);
         SetField(home, "filter", new GalleryFilter { Sort = "name" });
-        SetField(home, "density", "large");
+        SetField(home, "density", "detail");
         SetField(home, "page", 1);
 
         Assert.Equal(10, GetProperty<int>(home, "ReviewGoal"));

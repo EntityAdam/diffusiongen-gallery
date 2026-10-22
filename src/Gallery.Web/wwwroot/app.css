@@ -148,7 +148,7 @@
 .review-random-toggle:disabled, .review-goal-input:disabled { opacity: .5; }
 .image-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .image-grid.density-compact { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.image-grid.density-large { grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
+.image-grid.density-detail { grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
 .image-grid.density-compact .card-info { padding: 8px 10px; }
 .image-grid.density-compact .card-info > h3, .image-grid.density-compact .card-meta, .image-grid.density-compact .card-actions .action-label { display: none; }
 .image-card:hover, .image-card:focus-within { border-color: #75e0b155; }

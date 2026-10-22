@@ -8,7 +8,7 @@ internal static class PreferencesNormalizer
     {
         var density = UiPreferences.Densities.Contains(preferences.GridDensity)
             ? preferences.GridDensity
-            : UiPreferences.ComfortableDensity;
+            : UiPreferences.DetailDensity;
         var autoLock = preferences.AutoLockMinutes switch
         {
             < 0 => UiPreferences.DefaultAutoLockMinutes,

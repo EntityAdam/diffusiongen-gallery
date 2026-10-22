@@ -283,9 +283,10 @@ toolbox position** in the view tool. ``Shift+` `` also shows a hidden toolbox.
 Busy, status and error messages appear as toast notifications in the bottom-right
 corner.
 
-**Thumbnail size** (Compact, Comfortable, Large) is in the view tool.
-Compact shows 49 smaller cards per page, Comfortable shows
-24 and Large shows 12. The choice is saved encrypted per gallery and restored on
+**Thumbnail size** (Compact, Detail) is in the view tool.
+Compact shows 49 smaller cards per page; Detail retains the former Large layout
+with 12 cards per page and is the default. Existing Comfortable and Large preferences
+load as Detail. The choice is saved encrypted per gallery and restored on
 unlock.
 
 Image details have a **Download a copy** icon over the top-right corner of the
