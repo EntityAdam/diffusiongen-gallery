@@ -22,6 +22,7 @@ public sealed class IngestionPerformanceTests
         Directory.CreateDirectory(sourceFolder);
         var sourcePath = Path.Combine(sourceFolder, "original.png");
         await File.WriteAllBytesAsync(sourcePath, GalleryTests.MakePng());
+        var sourceCreatedAt = File.GetCreationTimeUtc(sourcePath);
 
         await fixture.Service.ImportFolderAsync(sourceRoot, FolderSearchScope.Descendants,
             sourceRetention: sourceRetention);
@@ -30,6 +31,7 @@ public sealed class IngestionPerformanceTests
         var record = Assert.Single(await fixture.Service.ListAsync());
 
         Assert.Equal(sourcePath, record.SourcePath);
+        Assert.Equal(new DateTimeOffset(sourceCreatedAt), record.SourceCreatedAt);
         Assert.Equal(sourceFolder, record.SourceFolder);
         Assert.Equal("original.png", record.OriginalName);
         Assert.NotEqual(sourcePath, record.StoredPath);

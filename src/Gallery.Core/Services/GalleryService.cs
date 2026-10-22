@@ -430,9 +430,12 @@ public sealed partial class GalleryService
             var sourceHash = Convert.ToHexString(SHA256.HashData(bytes.Span));
             timings?.Record(IngestionStage.HashSource, stageStart);
             await RejectDuplicateImportAsync(sourceHash, name, key, timings);
-            return isVideo
+            var prepared = isVideo
                 ? await PrepareVideoAsync(bytes, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot)
                 : await PrepareImageAsync(original, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot);
+            if (input is FileStream sourceFile)
+                prepared.Record = prepared.Record with { SourceCreatedAt = File.GetCreationTimeUtc(sourceFile.SafeFileHandle) };
+            return prepared;
         }
         finally { CryptographicOperations.ZeroMemory(original.GetBuffer()); }
     }

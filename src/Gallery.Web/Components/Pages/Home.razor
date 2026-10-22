@@ -610,7 +610,7 @@ else
     </AppLayoutMain>
     </AppLayout>
 
-    <GalleryToolbox @ref="toolbox" Visible="@(toolboxVisible && workflow == "gallery")" ActiveTool="@activeTool" ActiveToolChanged="SetActiveToolAsync"
+    <GalleryToolbox @ref="toolbox" Visible="@(toolboxVisible && workflow == "gallery" && selected is null && removalPlan.Count == 0)" ActiveTool="@activeTool" ActiveToolChanged="SetActiveToolAsync"
                     Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="toolboxX" Y="toolboxY" Badge="ToolBadge">
         @if (activeTool == "views")
         {
@@ -698,55 +698,19 @@ else
 
     @if (selected is not null)
     {
-        <div class="fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
-            <Card Class="mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+        <div class="image-detail-overlay fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
+            <Card Class="image-detail-dialog mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close image details"><XIcon aria-hidden="true" /></Button></div>
                 <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
                     <ImageDetailPreview Image="selected" Preview="@preview" VideoUrl="@videoUrl" Busy="busy"
                                         Download="() => ExportAsync(selected)" Fullscreen="() => OpenViewer(selected.Id)"
                                         Rate="value => RateImageAsync(selected, value)" Favorite="() => FavoriteAsync(selected)"
                                         Mark="() => MarkAsync(selected)" />
-                    <div class="min-w-0 space-y-4 text-sm">
-                        <div class="eyebrow">ENCRYPTED ORIGINAL@(selected.IsVideo ? " · MP4 VIDEO" : "")</div>
-                        <p>@selected.Width &times; @selected.Height@(selected.IsVideo ? $" · {GalleryService.FormatDuration(selected)}" : "") &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
-                        <p class="text-muted-foreground">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
-                        @if (selected.IsMarkedForDeletion)
-                        {
-                            <div class="flex flex-wrap items-center gap-2">
-                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</Button>
-                            </div>
-                        }
-                        @if (selected.Generation is { } generation)
-                        {
-                            <h3>ComfyUI generation</h3>
-                            <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 [&_dt]:text-muted-foreground [&_dd]:min-w-0 [&_dd]:break-words">
-                                @if (generation.Prompt.Length > 0) { <dt>Prompt</dt><dd class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words">@generation.Prompt</dd> }
-                                @if (generation.NegativePrompt.Length > 0) { <dt>Negative prompt</dt><dd class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words">@generation.NegativePrompt</dd> }
-                                @if (generation.Model.Length > 0) { <dt>@(generation.ModelKind.Length > 0 ? generation.ModelKind : "Model")</dt><dd>@generation.Model</dd> }
-                                @if (generation.Steps is int steps) { <dt>Steps</dt><dd>@steps</dd> }
-                                @if (generation.Cfg is double cfg) { <dt>CFG</dt><dd>@cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)</dd> }
-                            </dl>
-                            @if (!generation.HasApiPrompt) { <p class="text-muted-foreground">Only a UI workflow was embedded; download a copy to inspect the graph in ComfyUI.</p> }
-                            @if (generation.Prompt.Length > 0)
-                            {
-                                var count = images.Count(image => image.Prompt == generation.Prompt);
-                                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Class="h-auto px-0" Disabled="@busy" OnClick="() => ShowPromptAsync(generation.Prompt)">Show all @count with this exact prompt</Button>
-                            }
-                        }
-                        <h3>Vision notes</h3>
-                        <Label For="description" Class="mt-4 mb-2 block">Description</Label><Textarea id="description" Rows="4" @bind-Value="editDescription"></Textarea>
-                        <Label For="edit-tags" Class="mt-4 mb-2 block">Tags, comma-separated</Label><Input id="edit-tags" @bind-Value="editTags" Placeholder="landscape, sunset, cinematic" />
-                        <div class="flex flex-wrap items-center gap-2"><Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SaveNotesAsync">Save notes</Button><Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="AnalyzeAsync">Analyze locally</Button></div>
-                        @if (selected.AnalysisModel.Length > 0) { <small class="text-muted-foreground">Analyzed by @selected.AnalysisModel</small> }
-                        <h3>Move &amp; rename</h3>
-                        <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
-                            <Label For="destination" Class="mt-4 mb-2 block">Existing destination folder</Label><Input id="destination" @bind-Value="destination" required />
-                            <Label For="rename" Class="mt-4 mb-2 block">Filename</Label><div class="flex min-w-0 items-center gap-2 [&>span]:text-muted-foreground"><Input id="rename" @bind-Value="rename" required /><span>@(selected.IsVideo ? ".dmp4" : ".dpng")</span></div>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@busy">Move encrypted image <ArrowRightIcon aria-hidden="true" /></Button>
-                        </form>
-                        <small class="text-muted-foreground">No overwrite. The file remains encrypted. Deletion marks are reversible; permanent removal requires a separate confirmation.</small>
-                        <details><summary>Embedded generation metadata</summary><pre>@selected.Metadata</pre></details>
-                        <details><summary>File locations</summary><p class="break-all text-muted-foreground">@selected.StoredPath</p><p class="break-all text-muted-foreground">Source: @selected.SourceFolder</p></details>
+                    <div class="min-w-0 space-y-4">
+                        <ImageDetailFields @key="selected.Id" Image="selected" Busy="busy" @bind-Description="editDescription" Tags="@editTags"
+                                           AddTags="value => editTags = Gallery.MergeTags(editTags, value)" RemoveTag="value => editTags = Gallery.RemoveTag(editTags, value)"
+                                           Save="SaveNotesAsync" Analyze="AnalyzeAsync" DownloadWorkflow="() => ExportWorkflowAsync(selected)"
+                                           ShowPrompt="() => ShowPromptAsync(selected.Prompt)" Remove="() => PrepareRemovalAsync(new[] { selected.Id })" />
                         @if (busy) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@progress</p> }
                         @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                     </div>
@@ -2023,7 +1987,16 @@ else
         if (selected is null) return;
         await Gallery.UpdateAsync(selected.Id, image => image with { Description = editDescription.Trim(), Tags = editTags.Trim() });
         await ReloadAsync();
-        message = "Notes saved.";
+        message = "Notes and tags saved.";
+    });
+
+    private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
+    {
+        var file = await Gallery.WorkflowAsync(image.Id)
+            ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
+        try { await DownloadAsync(file); }
+        finally { GalleryService.ClearExportContent(file); }
+        message = $"Saved the ComfyUI workflow as {file.FileName}.";
     });
 
     private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>

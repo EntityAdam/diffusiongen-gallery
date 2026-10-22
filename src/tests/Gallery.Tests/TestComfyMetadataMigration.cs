@@ -43,6 +43,8 @@ public sealed class TestComfyMetadataMigration
         Assert.Equal("blurry, lowres", info.NegativePrompt);
         Assert.Equal(30, info.Steps);
         Assert.Equal(6.5, info.Cfg);
+        Assert.Equal("dpmpp_2m", info.Sampler);
+        Assert.Equal("karras", info.Scheduler);
         Assert.Equal("sdxl/juggernautXL_v9.safetensors", info.Model);
         Assert.Equal("Checkpoint", info.ModelKind);
         Assert.True(info.HasWorkflow);
@@ -68,6 +70,8 @@ public sealed class TestComfyMetadataMigration
         Assert.Equal("static, watermark", info.NegativePrompt);
         Assert.Equal(25, info.Steps);
         Assert.Equal(5, info.Cfg);
+        Assert.Equal("euler", info.Sampler);
+        Assert.Equal("simple", info.Scheduler);
         Assert.Equal("wan2.1_t2v_14B_fp8.safetensors", info.Model);
         Assert.Equal("Diffusion model", info.ModelKind);
     }

@@ -10,6 +10,7 @@ public sealed record ImageRecord
     public string StoredPath { get; init; } = "";
     public string SourceFolder { get; init; } = "";
     public string SourcePath { get; init; } = "";
+    public DateTimeOffset? SourceCreatedAt { get; init; }
     public DateTimeOffset ImportedAt { get; init; } = DateTimeOffset.UtcNow;
     public int Width { get; init; }
     public int Height { get; init; }
@@ -46,6 +47,8 @@ public sealed record GenerationInfo
     public int? Steps { get; init; }
     public string Model { get; init; } = "";
     public string ModelKind { get; init; } = "";
+    public string Sampler { get; init; } = "";
+    public string Scheduler { get; init; } = "";
     public bool HasWorkflow { get; init; }
     public bool HasApiPrompt { get; init; }
 }

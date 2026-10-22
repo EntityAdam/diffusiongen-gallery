@@ -11,6 +11,104 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class UiComponentTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ImageDetails_ShowsOrganizedFieldsWithoutPrivateStoragePathOrRawMetadata(bool isVideo)
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var renderer = fixture.HtmlRenderer;
+        var created = new DateTimeOffset(2020, 2, 3, 4, 5, 0, TimeSpan.Zero);
+        var record = new ImageRecord
+        {
+            OriginalName = "original.png", SourcePath = @"C:\originals\original.png",
+            StoredPath = @"C:\private\encrypted.dpng", SourceCreatedAt = created,
+            MediaType = isVideo ? "video" : "image", DurationSeconds = 65,
+            Collections = ["Cats"], Metadata = "RAW_JSON_SENTINEL",
+            Generation = new GenerationInfo
+            {
+                Model = @"models\cat.safetensors", Steps = 1, Cfg = 3,
+                Sampler = "euler", Scheduler = "normal", Prompt = "a cat",
+                NegativePrompt = "watermark", HasWorkflow = true
+            }
+        };
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await renderer.RenderComponentAsync<ImageDetailFields>(
+                ParameterView.FromDictionary(new Dictionary<string, object?>
+                {
+                    [nameof(ImageDetailFields.Image)] = record,
+                    [nameof(ImageDetailFields.Description)] = "Editable vision notes",
+                    [nameof(ImageDetailFields.Tags)] = "cat, landscape"
+                }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Contains("File information", html);
+        Assert.Contains("aria-label=\"Image detail sections\"", html);
+        Assert.Contains("role=\"tab\"", html);
+        Assert.Contains(">Generation</button>", html);
+        Assert.Contains("detail-section-active", html);
+        Assert.Contains(record.SourcePath, html);
+        Assert.Contains(created.ToLocalTime().ToString("g"), html);
+        Assert.Contains("Cats", html);
+        Assert.Contains("<dd>cat</dd>", html);
+        Assert.Contains("<dd>1</dd>", html);
+        Assert.Contains("<dd>3.0</dd>", html);
+        Assert.Contains("euler / normal", html);
+        Assert.Contains("Positive prompt", html);
+        Assert.Contains("Negative prompt", html);
+        Assert.Contains("watermark", html);
+        Assert.Contains("Download workflow", html);
+        Assert.Contains("<textarea", html);
+        Assert.Contains("Editable vision notes", html);
+        Assert.Contains("aria-label=\"Remove tag cat\"", html);
+        Assert.Contains("aria-label=\"Remove tag landscape\"", html);
+        Assert.DoesNotContain(record.StoredPath, html);
+        Assert.DoesNotContain("RAW_JSON_SENTINEL", html);
+        Assert.DoesNotContain(".safetensors", html);
+        Assert.DoesNotContain("Move", html);
+        if (isVideo) Assert.Contains("1:05", html);
+        else Assert.DoesNotContain("Video duration", html);
+    }
+
+    [Fact]
+    public async Task ImageDetails_WhenLegacyRecordHasNoGenerationOrCreationDate_ThenShowsHonestMissingFields()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var renderer = fixture.HtmlRenderer;
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await renderer.RenderComponentAsync<ImageDetailFields>(ParameterView.Empty);
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Contains("Unknown (not captured)", html);
+        Assert.Contains("No collection", html);
+        Assert.DoesNotContain("Download workflow", html);
+        Assert.DoesNotContain("Negative prompt", html);
+        Assert.DoesNotContain("Embedded generation metadata", html);
+        Assert.DoesNotContain(">Generation</button>", html);
+    }
+
+    [Fact]
+    public async Task ImageDetails_WhenComfyMetadataLacksNegativePrompt_ThenOmitsNegativePromptAndWorkflowWithoutDocuments()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var renderer = fixture.HtmlRenderer;
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await renderer.RenderComponentAsync<ImageDetailFields>(
+                ParameterView.FromDictionary(new Dictionary<string, object?>
+                {
+                    [nameof(ImageDetailFields.Image)] = new ImageRecord
+                    { Generation = new GenerationInfo { Prompt = "a cat" } }
+                }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Contains("Positive prompt", html);
+        Assert.DoesNotContain("Negative prompt", html);
+        Assert.DoesNotContain("Download workflow", html);
+    }
+
     [Fact]
     public async Task MainLayout_RetainsBodyWithoutAppHeaderOrPrimaryFooter()
     {

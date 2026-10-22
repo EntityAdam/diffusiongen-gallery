@@ -1,0 +1,107 @@
+<div class="image-detail-fields min-w-0 space-y-4 text-sm">
+    <div class="image-detail-tabs">
+        <Tabs Value="@section" ValueChanged="value => section = value">
+            <TabsList aria-label="Image detail sections">
+                <TabsTrigger Value="file">File</TabsTrigger>
+                @if (Image.Generation is not null) { <TabsTrigger Value="generation">Generation</TabsTrigger> }
+                <TabsTrigger Value="notes">Notes &amp; tags</TabsTrigger>
+            </TabsList>
+        </Tabs>
+    </div>
+    <Card Class="@($"detail-section p-4 space-y-3 {(section == "file" ? "detail-section-active" : "")}")">
+        <h3>File information</h3>
+        <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 [&_dt]:text-muted-foreground [&_dd]:min-w-0 [&_dd]:break-words">
+            <dt>Original filename</dt><dd>@Image.OriginalName</dd>
+            <dt>Dimensions</dt><dd>@Image.Width &times; @Image.Height</dd>
+            <dt>Size</dt><dd>@((Image.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</dd>
+            @if (Image.IsVideo) { <dt>Video duration</dt><dd>@GalleryService.FormatDuration(Image)</dd> }
+            <dt>Created</dt><dd>@(Image.SourceCreatedAt?.ToLocalTime().ToString("g") ?? "Unknown (not captured)")</dd>
+            <dt>Imported</dt><dd>@Image.ImportedAt.ToLocalTime().ToString("g")</dd>
+        </dl>
+        <Label Class="block">Original source file path</Label>
+        <p class="break-all text-muted-foreground">@OriginalSourcePath</p>
+        <Label Class="block">Collection</Label>
+        <div class="flex flex-wrap gap-1">
+            @if (Image.Collections.IsEmpty) { <span class="text-muted-foreground">No collection</span> }
+            @foreach (var collection in Image.Collections)
+            { <Badge Variant="BadgeVariant.Secondary" Class="max-w-full whitespace-normal break-words">@collection</Badge> }
+        </div>
+        @if (Image.IsMarkedForDeletion)
+        { <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Remove">Remove this image</Button> }
+    </Card>
+    @if (Image.Generation is { } generation)
+    {
+        <Card Class="@($"detail-section p-4 space-y-3 {(section == "generation" ? "detail-section-active" : "")}")">
+            <h3>Embedded generation metadata</h3>
+            <Badge Variant="BadgeVariant.Secondary">ComfyUI</Badge>
+            <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 [&_dt]:text-muted-foreground [&_dd]:min-w-0 [&_dd]:break-words">
+                @if (generation.Model.Length > 0) { <dt>Model</dt><dd>@ModelFilename(generation.Model)</dd> }
+                @if (generation.Steps is int steps) { <dt>Steps</dt><dd>@steps</dd> }
+                @if (generation.Cfg is double cfg) { <dt>CFG</dt><dd>@cfg.ToString("0.0###############", System.Globalization.CultureInfo.InvariantCulture)</dd> }
+                @if (generation.Sampler.Length > 0 || generation.Scheduler.Length > 0)
+                { <dt>Sampler / scheduler</dt><dd>@(generation.Sampler.Length > 0 ? generation.Sampler : "Unknown") / @(generation.Scheduler.Length > 0 ? generation.Scheduler : "Unknown")</dd> }
+            </dl>
+            @if (generation.Prompt.Length > 0)
+            { <Label Class="block">Positive prompt</Label><p class="max-h-48 overflow-auto whitespace-pre-wrap break-words">@generation.Prompt</p> }
+            @if (generation.NegativePrompt.Length > 0)
+            { <Label Class="block">Negative prompt</Label><p class="max-h-48 overflow-auto whitespace-pre-wrap break-words">@generation.NegativePrompt</p> }
+            @if (generation.HasWorkflow || generation.HasApiPrompt)
+            { <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="DownloadWorkflow"><DownloadIcon Size="16" aria-hidden="true" />Download workflow</Button> }
+            @if (generation.Prompt.Length > 0)
+            { <Button Variant="ButtonVariant.Ghost" Disabled="@Busy" OnClick="ShowPrompt">Show images with this prompt</Button> }
+        </Card>
+    }
+    <Card Class="@($"detail-section p-4 space-y-3 {(section == "notes" ? "detail-section-active" : "")}")">
+        <h3>Vision notes &amp; tags</h3>
+        <Label For="description">Vision notes</Label>
+        <Textarea id="description" Rows="5" Value="@Description" ValueChanged="DescriptionChanged" Disabled="@Busy" />
+        <Label Class="block">Tags</Label>
+        <div class="flex flex-wrap gap-1" role="group" aria-label="Image tags">
+            @foreach (var tag in Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                <Badge Variant="BadgeVariant.Secondary" Class="max-w-full gap-1 whitespace-normal break-words">
+                    @tag
+                    <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Class="h-6! w-6! shrink-0" Disabled="@Busy" aria-label="@($"Remove tag {tag}")" OnClick="() => RemoveTag.InvokeAsync(tag)"><XIcon Size="12" aria-hidden="true" /></Button>
+                </Badge>
+            }
+        </div>
+        <form @onsubmit="AddTagsAsync" @onsubmit:preventDefault>
+            <Label For="new-detail-tags">Add tags</Label>
+            <div class="flex gap-2"><Input id="new-detail-tags" @bind-Value="newTags" Disabled="@Busy" Placeholder="landscape, sunset" /><Button Variant="ButtonVariant.Outline" Type="submit" Disabled="@(Busy || string.IsNullOrWhiteSpace(newTags))">Add</Button></div>
+        </form>
+        <div class="flex flex-wrap gap-2">
+            <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Save">Save notes &amp; tags</Button>
+            <Button Disabled="@Busy" OnClick="Analyze">Analyze locally</Button>
+        </div>
+        @if (Image.AnalysisModel.Length > 0) { <p class="text-xs text-muted-foreground">Analyzed by @Image.AnalysisModel</p> }
+    </Card>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string Description { get; set; } = "";
+    [Parameter] public EventCallback<string> DescriptionChanged { get; set; }
+    [Parameter] public string Tags { get; set; } = "";
+    [Parameter] public EventCallback<string> RemoveTag { get; set; }
+    [Parameter] public EventCallback<string> AddTags { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    [Parameter] public EventCallback Analyze { get; set; }
+    [Parameter] public EventCallback Remove { get; set; }
+    [Parameter] public EventCallback DownloadWorkflow { get; set; }
+    [Parameter] public EventCallback ShowPrompt { get; set; }
+    private string newTags = "";
+    private string section = "file";
+    private string OriginalSourcePath => Image.SourcePath.Length > 0 ? Image.SourcePath
+        : Image.SourceFolder.Length > 0 ? Path.Combine(Image.SourceFolder, Image.OriginalName) : "Unknown";
+    private static string ModelFilename(string model)
+    {
+        var filename = model.Replace('\\', '/').Split('/')[^1];
+        return filename.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) ? filename[..^12] : filename;
+    }
+    private async Task AddTagsAsync()
+    {
+        await AddTags.InvokeAsync(newTags);
+        newTags = "";
+    }
+}
