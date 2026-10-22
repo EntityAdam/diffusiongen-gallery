@@ -43,6 +43,37 @@ public sealed class ReviewTests
         Assert.Equal(image.IsFavorite, tagged.IsFavorite);
     }
 
+    [Fact]
+    public async Task Organize_TagChipsListSelectedTagsAndRemoveOnlyThatTagFromSelectedImages()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(9, 9)), "second.png", "folder");
+        var other = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(11, 11)), "other.png", "folder");
+        first = await fixture.Service.UpdateAsync(first.Id, edit => edit with { Tags = "warm, Portrait", Rating = 4 });
+        second = await fixture.Service.UpdateAsync(second.Id, edit => edit with { Tags = "portrait" });
+        other = await fixture.Service.UpdateAsync(other.Id, edit => edit with { Tags = "warm" });
+        var workbench = new Gallery.Web.Components.LibraryWorkbench();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = workbench.GetType();
+        type.GetProperty("Gallery", flags)!.SetValue(workbench, fixture.Service);
+        type.GetProperty("Logger", flags)!.SetValue(workbench,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.LibraryWorkbench>.Instance);
+        type.GetProperty(nameof(workbench.Images))!.SetValue(workbench, new List<ImageRecord> { first, second, other });
+        type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { first.Id, second.Id });
+
+        var chips = ((IReadOnlyList<(string Tag, int Count)>)type.GetProperty("SelectedTags", flags)!.GetValue(workbench)!).ToArray();
+        Assert.Equal([("Portrait", 2), ("warm", 1)], chips);
+
+        await (Task)type.GetMethod("RemoveTagAsync", flags)!.Invoke(workbench, ["warm"])!;
+        var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
+        Assert.Equal("Portrait", stored[first.Id].Tags);
+        Assert.Equal(4, stored[first.Id].Rating);
+        Assert.Equal("portrait", stored[second.Id].Tags);
+        Assert.Equal("warm", stored[other.Id].Tags);
+    }
+
     [Theory]
     [InlineData(false, 2, 1)]
     [InlineData(true, 2, 0)]

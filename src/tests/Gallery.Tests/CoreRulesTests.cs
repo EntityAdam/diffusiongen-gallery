@@ -46,6 +46,8 @@ public sealed class CoreRulesTests
         Assert.Empty(LibraryRules.RemoveCollection(repeated, " COLLECTION ").Collections);
         Assert.Equal(edit, restored);
         Assert.Equal("first, Second", LibraryRules.MergeTags("first", "Second, FIRST"));
+        Assert.Equal("first, third", LibraryRules.RemoveTag("first, SECOND ,third", " second "));
+        Assert.Equal("", LibraryRules.RemoveTag("only", "ONLY"));
         Assert.False(original.IsReviewed);
     }
 

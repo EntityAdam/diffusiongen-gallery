@@ -6,6 +6,30 @@
     @if (Workflow == "organize")
     {
         <p class="text-muted-foreground">Organize your media into collections and use tags to filter.</p>
+        <Separator />
+        <section class="space-y-2" aria-labelledby="selected-tags-heading">
+            <h4 id="selected-tags-heading">Tags</h4>
+            @if (SelectedTags.Count == 0)
+            {
+                <p class="text-muted-foreground text-sm">@(SelectedIds.Count == 0 ? "Select images to see their tags." : "The selected images have no tags.")</p>
+            }
+            else
+            {
+                <ul class="tag-chips" aria-label="Tags on selected images">
+                    @foreach (var (tag, count) in SelectedTags)
+                    {
+                        <li class="tag-chip" title="@($"On {count} of {SelectedIds.Count} selected")">
+                            <span>@tag</span>
+                            @if (count < SelectedIds.Count) { <span class="tag-chip-count">@count</span> }
+                            <button type="button" aria-label="@($"Remove tag {tag} from selected images")" disabled="@working" @onclick="() => RemoveTagAsync(tag)">
+                                <XIcon Size="12" aria-hidden="true" />
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+        <Separator />
         <div class="flex flex-wrap items-center gap-3">
             <strong>@SelectedIds.Count selected</strong>
             <Button Variant="ButtonVariant.Ghost" Disabled="@(working || SelectedIds.Count == 0)" OnClick="ClearSelection">Clear selection <kbd>ESC</kbd></Button>
@@ -158,6 +182,12 @@
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
     private IEnumerable<string> Tags => Images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         .Distinct(StringComparer.OrdinalIgnoreCase).Order();
+    private static string[] TagsOf(ImageRecord image) => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private IReadOnlyList<(string Tag, int Count)> SelectedTags => Images.Where(image => SelectedIds.Contains(image.Id))
+        .SelectMany(image => TagsOf(image).Distinct(StringComparer.OrdinalIgnoreCase))
+        .GroupBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+        .Select(group => (group.First(), group.Count()))
+        .OrderBy(item => item.Item1, StringComparer.OrdinalIgnoreCase).ToList();
     private IEnumerable<ImageRecord> UnanalyzedImages => Images.Where(image => image.Description.Length == 0 && !image.IsMarkedForDeletion
         && !suggestions.Any(suggestion => suggestion.Id == image.Id));
     private int UnanalyzedCount => UnanalyzedImages.Count();
@@ -257,6 +287,25 @@
             return collection.Trim().Length > 0
                 ? Gallery.SetOrganization(updated, updated.Rating, updated.IsReviewed, collection) : updated;
         });
+    });
+
+    private Task RemoveTagAsync(string tag) => RunAsync($"Removing tag {tag}...", async () =>
+    {
+        var failures = new List<string>();
+        var ids = Images.Where(image => SelectedIds.Contains(image.Id) && TagsOf(image).Contains(tag, StringComparer.OrdinalIgnoreCase))
+            .Select(image => image.Id).ToArray();
+        foreach (var id in ids)
+        {
+            try { await Gallery.UpdateAsync(id, image => image with { Tags = Gallery.RemoveTag(image.Tags, tag) }); }
+            catch (Exception exception)
+            {
+                Logger.LogError(exception, "Tag removal failed for {ImageId}", id);
+                failures.Add($"{id}: {exception.Message}");
+            }
+        }
+        await Changed.InvokeAsync();
+        notice = $"Removed \"{tag}\" from {ids.Length - failures.Count} image(s).";
+        error = string.Join(" / ", failures);
     });
 
     private Task RemoveCollectionAsync() => RunAsync("Updating collections...", () => ApplyBulkAsync(image =>

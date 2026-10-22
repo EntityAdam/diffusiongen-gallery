@@ -17,6 +17,10 @@ internal static class LibraryRules
         string.Join(", ", (existing + "," + additions).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase));
 
+    public static string RemoveTag(string existing, string tag) =>
+        string.Join(", ", existing.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Where(item => !item.Equals(tag.Trim(), StringComparison.OrdinalIgnoreCase)));
+
     public static ImageRecordEdit SetOrganization(ImageRecordEdit imageRecordEdit, int rating, bool imageIsReviewed, string? collection)
     {
         var organized = collection is null ? imageRecordEdit : AddCollection(imageRecordEdit, collection);

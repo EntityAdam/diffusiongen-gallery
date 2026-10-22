@@ -250,6 +250,8 @@ public sealed partial class GalleryService
 
     public string MergeTags(string existing, string additions) => LibraryRules.MergeTags(existing, additions);
 
+    public string RemoveTag(string existing, string tag) => LibraryRules.RemoveTag(existing, tag);
+
     public async Task<List<SavedView>> LoadViewsAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();

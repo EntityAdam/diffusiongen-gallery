@@ -315,7 +315,10 @@ that rating, or click the current rating again to clear it. Assigning a nonzero
 rating or marking an image for deletion also marks it reviewed; clearing a rating
 or removing a deletion mark does not change review status.
 
-The **Organize** tool shows the selected count and **Clear selection (ESC)**, followed by
+The **Organize** tool starts with a **Tags** section listing every tag on the selected
+images as chips. A small count on a chip means only that many of the selected images
+carry the tag. Click a chip's **x** to remove that tag from every selected image that
+has it; other metadata is unchanged. Below it are the selected count and **Clear selection (ESC)**, followed by
 independent Collections and Tags columns. Each has a labeled select for existing
 values, with a **Create new** option for text entry. **Apply**, **Clear**, and
 **Suggest (AI Vision)** share one row. Clear resets only that selection/input; Apply adds collection

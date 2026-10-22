@@ -118,6 +118,14 @@
 .gallery-toolbox-panel { max-height: calc(100vh - 120px); overflow: auto; overscroll-behavior: contain; padding: 12px 14px 16px; border-top: 1px solid hsl(var(--border)); }
 .gallery-toolbox-panel[hidden] { display: none; }
 .gallery-toolbox-title { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.tag-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 10px; border: 1px solid hsl(var(--border)); border-radius: 999px; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground)); font-size: 12px; line-height: 20px; }
+.tag-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-chip-count { color: hsl(var(--muted-foreground)); font-size: 11px; }
+.tag-chip button { display: inline-grid; width: 18px; height: 18px; flex-shrink: 0; place-items: center; padding: 0; border: 0; border-radius: 999px; background: none; color: hsl(var(--muted-foreground)); }
+.tag-chip button:hover { background: hsl(var(--destructive) / .2); color: hsl(var(--destructive)); }
+.tag-chip button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
+.tag-chip button:disabled { opacity: .5; }
 .viewer-suggestion { position: absolute; right: 16px; bottom: 64px; display: grid; gap: 8px; font-size: 13px; z-index: 5; width: min(360px, calc(100% - 32px)); max-height: 60%; overflow: auto; padding: 14px; border: 1px solid hsl(var(--primary) / .4); border-radius: 12px; background: hsl(var(--card) / .96); box-shadow: 0 16px 40px #0008; }
 .viewer-suggestion h3 { display: flex; align-items: center; gap: 6px; margin: 0; color: hsl(var(--primary)); font-size: 14px; }
 .viewer-suggestion p { margin: 0; }
