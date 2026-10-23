@@ -12,6 +12,66 @@ namespace Gallery.Tests;
 public sealed class BrowsingProjectionTests
 {
     [Fact]
+    public void Home_IngestionDefaultsAndProfiles_PreserveExpectedSettings()
+    {
+        var home = new Home();
+        Assert.True(GetField<bool>(home, "recursive"));
+        Assert.False(GetField<bool>(home, "deleteSources"));
+        Assert.False(GetField<bool>(home, "recordTimings"));
+        Assert.Equal("hdd", GetField<string>(home, "ingestionProfile"));
+        Assert.Equal(IngestionOptions.Hdd.Workers, GetField<int>(home, "ingestionWorkers"));
+        Assert.Equal(IngestionOptions.Hdd.CatalogBatchSize, GetField<int>(home, "ingestionBatchSize"));
+
+        Invoke(home, "ApplyIngestionProfile", IngestionOptions.Ssd, "ssd");
+        Assert.Equal("ssd", GetField<string>(home, "ingestionProfile"));
+        Assert.Equal(IngestionOptions.Ssd.Workers, GetField<int>(home, "ingestionWorkers"));
+
+        Invoke(home, "ApplyIngestionProfile", new IngestionOptions { Workers = 7, CatalogBatchSize = 21 }, null);
+        Assert.Equal("custom", GetField<string>(home, "ingestionProfile"));
+        Assert.Equal(7, GetField<int>(home, "ingestionWorkers"));
+        Assert.Equal(21, GetField<int>(home, "ingestionBatchSize"));
+
+        Invoke(home, "ApplyIngestionProfile", IngestionOptions.Hdd, null);
+        Assert.Equal("hdd", GetField<string>(home, "ingestionProfile"));
+    }
+
+    [Fact]
+    public void Home_IngestionScanGatesIngest_AndClearsOnSourceScopeChanges()
+    {
+        var home = new Home();
+        var scan = new IngestionScan("source", FolderSearchScope.Descendants, "catalog", "media",
+            [new IngestionScanFile("source.png", 100, DateTime.UtcNow, false)]);
+        var space = Gallery.Core.Services.GalleryService.CalculateIngestionSpace(1, 100,
+            long.MaxValue, long.MaxValue, true);
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        SetField(home, "ingestionScan", scan);
+        SetField(home, "ingestionSpace", space);
+        Assert.True(GetProperty<bool>(home, "CanIngestScan"));
+
+        SetField(home, "busy", true);
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        SetField(home, "busy", false);
+        Assert.Equal(space.EstimatedBytes, GetProperty<long>(home, "EstimatedIngestionChangeBytes"));
+        Invoke(home, "ToggleSourceDeletion");
+        Assert.True(GetProperty<bool>(home, "CanIngestScan"));
+        Assert.Equal(space.EstimatedBytes - space.SelectedSourceBytes, GetProperty<long>(home, "EstimatedIngestionChangeBytes"));
+        Invoke(home, "ToggleSourceDeletion");
+        Assert.Equal(space.EstimatedBytes, GetProperty<long>(home, "EstimatedIngestionChangeBytes"));
+
+        SetField(home, "ingestionSpace", space with { MediaAvailableBytes = 0 });
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        Invoke(home, "ToggleSourceDeletion");
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        SetField(home, "ingestionSpace", space with { FileCount = 0 });
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+        Invoke(home, "ToggleImportRecursion");
+        Assert.False(GetField<bool>(home, "recursive"));
+        Assert.Null(GetField<IngestionScan?>(home, "ingestionScan"));
+        Assert.Null(GetField<IngestionSpaceEstimate?>(home, "ingestionSpace"));
+        Assert.False(GetProperty<bool>(home, "CanIngestScan"));
+    }
+
+    [Fact]
     public void Projection_WhenCalledWithIndependentInputs_ThenProducesIndependentImmutableSnapshots()
     {
         // Arrange
@@ -52,6 +112,9 @@ public sealed class BrowsingProjectionTests
         var sortedProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter, false);
         var filteredProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter with { MinRating = 3 }, false);
         var groupedProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter, true);
+        records[0] = records[0] with { Generation = new() { Prompt = "shared", Model = "Flux" } };
+        records[1] = records[1] with { Generation = new() { Prompt = "shared", Model = "SDXL" } };
+        var modelGroupedProjection = GalleryBrowsingProjector.Create(fixture.Service, records, filter, "model");
 
         // Assert
         Assert.Equal(["high", "low"], sortedProjection.Images.Select(image => image.Id));
@@ -59,6 +122,9 @@ public sealed class BrowsingProjectionTests
         Assert.Equal("high", filteredProjection.Images[0].Id);
         Assert.Equal(2, groupedProjection.PromptGroupsByImageId["high"].Images.Length);
         Assert.True(sortedProjection.PromptGroupsByImageId.Count == 0, $"Expected 0 groups for ungrouped projection; Actual: {sortedProjection.PromptGroupsByImageId.Count} groups.");
+        Assert.Equal(["high", "low"], modelGroupedProjection.Images.Select(image => image.Id));
+        Assert.Equal("SDXL", modelGroupedProjection.DiffusionModelGroupsByImageId["high"].Model);
+        Assert.Equal("Flux", modelGroupedProjection.DiffusionModelGroupsByImageId["low"].Model);
     }
 
     [Fact]
@@ -127,6 +193,144 @@ public sealed class BrowsingProjectionTests
         Assert.Equal(JsonSerializer.Serialize(stored), JsonSerializer.Serialize(displayed));
     }
 
+    [Fact]
+    public void GuidedReview_DefaultGoal_SelectsTenEligibleImagesInSortOrderAcrossPages()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 30).Select(index => new ImageRecord
+        {
+            Id = index.ToString("D2"), Name = index.ToString("D2"),
+            IsReviewed = index == 0, IsMarkedForDeletion = index == 1
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "filter", new GalleryFilter { Sort = "name" });
+        SetField(home, "density", "detail");
+        SetField(home, "page", 1);
+
+        Assert.Equal(10, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+
+        var session = GetField<List<ImageRecord>>(home, "viewerImages");
+        Assert.Equal(records.Skip(2).Take(10).Select(image => image.Id), session.Select(image => image.Id));
+        Assert.Equal(session[0].Id, GetField<string>(home, "viewerInitialId"));
+        Assert.True(GetField<bool>(home, "reviewMode"));
+        Assert.NotSame(records[2], session[0]);
+    }
+
+    [Theory]
+    [InlineData(100, 6)]
+    [InlineData(3, 3)]
+    [InlineData(0, 1)]
+    [InlineData(-5, 1)]
+    public void GuidedReview_GoalIsClampedToEligibleFilteredPool(int requested, int expected)
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 20).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), IsFavorite = index < 8,
+            IsReviewed = index == 0, IsMarkedForDeletion = index == 1
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        typeof(Home).GetProperty("ReviewGoal", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, requested);
+
+        Assert.Equal(expected, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+        var session = GetField<List<ImageRecord>>(home, "viewerImages");
+        Assert.Equal(expected, session.Count);
+        Assert.All(session, image => Assert.True(image.IsFavorite && !image.IsReviewed && !image.IsMarkedForDeletion));
+    }
+
+    [Fact]
+    public void GuidedReview_RandomOrder_SelectsGoalWithoutDuplicatesOrChangingTheLibrary()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 80).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), IsFavorite = index % 2 == 0,
+            IsReviewed = index < 10, IsMarkedForDeletion = index > 70
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        SetField(home, "reviewRandomOrder", true);
+        SetField(home, "reviewGoal", 7);
+        var originalOrder = records.Select(image => image.Id).ToArray();
+        var eligible = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered")
+            .Where(image => !image.IsReviewed && !image.IsMarkedForDeletion).Select(image => image.Id).ToHashSet();
+
+        Invoke(home, "StartReview");
+
+        var session = GetField<List<ImageRecord>>(home, "viewerImages");
+        Assert.Equal(7, session.Count);
+        Assert.Equal(7, session.Select(image => image.Id).Distinct().Count());
+        Assert.All(session, image => Assert.Contains(image.Id, eligible));
+        Assert.Equal(originalOrder, records.Select(image => image.Id));
+    }
+
+    [Fact]
+    public void GuidedReview_WhenEligiblePoolShrinks_ThenDisplayedGoalAndSessionAreCapped()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 20).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), IsFavorite = index < 3
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        Assert.Equal(10, GetProperty<int>(home, "ReviewGoal"));
+        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        Assert.Equal(3, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+        Assert.Equal(3, GetField<List<ImageRecord>>(home, "viewerImages").Count);
+
+        SetField(home, "filter", new GalleryFilter { MinRating = 5 });
+        Assert.Equal(0, GetProperty<int>(home, "ReviewGoal"));
+        Invoke(home, "StartReview");
+        Assert.Empty(GetField<List<ImageRecord>>(home, "viewerImages"));
+    }
+
+    [Fact]
+    public void Trash_UsesStandardSelectionAndRangeWithoutChangingLibrarySelection()
+    {
+        using var fixture = new TestVault();
+        var records = Enumerable.Range(0, 4).Select(index => new ImageRecord
+        {
+            Id = index.ToString(), Name = index.ToString(), IsMarkedForDeletion = true
+        }).ToList();
+        var home = CreateHome(fixture, records);
+        SetField(home, "activeTool", "trash");
+        SetField(home, "filter", new GalleryFilter { Deletion = "marked", Sort = "name" });
+        Invoke(home, "SelectCard", "0", false);
+        Invoke(home, "SelectCard", "2", true);
+
+        Assert.Equal(["0", "1", "2"], GetField<HashSet<string>>(home, "removalSelection").Order());
+        Assert.Empty(GetField<HashSet<string>>(home, "librarySelection"));
+        Invoke(home, "SelectCard", "1", false);
+        Assert.DoesNotContain("1", GetField<HashSet<string>>(home, "removalSelection"));
+        Invoke(home, "ClearSelection");
+        Assert.Empty(GetField<HashSet<string>>(home, "removalSelection"));
+    }
+
+    [Fact]
+    public async Task TrashTool_SwapsToMarkedImagesAndRestoresTheBrowsingFilter()
+    {
+        using var fixture = new TestVault();
+        var records = new List<ImageRecord>
+        {
+            new() { Id = "kept", Name = "kept" },
+            new() { Id = "marked", Name = "marked", IsMarkedForDeletion = true }
+        };
+        var home = CreateHome(fixture, records);
+        var browsing = new GalleryFilter { Search = "kept" };
+        SetField(home, "filter", browsing);
+
+        await InvokeAsync(home, "SetActiveToolAsync", "trash");
+        Assert.Equal("marked", GetField<GalleryFilter>(home, "filter").Deletion);
+        Assert.Equal(["marked"], GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered").Select(image => image.Id));
+
+        await InvokeAsync(home, "SetActiveToolAsync", "views");
+        Assert.Equal(browsing, GetField<GalleryFilter>(home, "filter"));
+        Assert.Null(GetField<GalleryFilter?>(home, "browsingFilter"));
+    }
     private static Home CreateHome(TestVault fixture, List<ImageRecord> records)
     {
         var home = new Home();
@@ -146,8 +350,10 @@ public sealed class BrowsingProjectionTests
     private static T GetProperty<T>(Home home, string name) =>
         (T)typeof(Home).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
 
-    private static object? Invoke(Home home, string name, params object[] args) =>
+    private static object? Invoke(Home home, string name, params object?[] args) =>
         typeof(Home).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, args);
+
+    private static Task InvokeAsync(Home home, string name, params object?[] args) => (Task)Invoke(home, name, args)!;
 
     private sealed class NoOpJsRuntime : IJSRuntime
     {

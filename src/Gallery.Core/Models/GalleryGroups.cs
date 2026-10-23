@@ -7,6 +7,8 @@ public sealed record PromptGroup(string Kind, string Prompt, ImmutableArray<Imag
     public const string Shared = "shared", Unique = "unique", None = "none";
 }
 
+public sealed record DiffusionModelGroup(string Model, ImmutableArray<ImageRecord> Images);
+
 public sealed record DuplicateGroup(
     string KeepId,
     [property: System.Text.Json.Serialization.JsonPropertyName("Ids")] ImmutableArray<string> ImageIds,

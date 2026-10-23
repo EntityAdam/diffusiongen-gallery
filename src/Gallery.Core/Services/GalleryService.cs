@@ -104,6 +104,7 @@ public sealed partial class GalleryService
     public const long MaxFileBytes = 50 * 1024 * 1024;
     public const long MaxVideoBytes = 256 * 1024 * 1024;
     public static readonly string[] Extensions = [".png", ".jpg", ".jpeg", ".webp", Mp4Extension];
+    public bool VideoToolsAvailable => videoTools?.IsAvailable == true;
 
     public static bool IsVideoName(string name) => string.Equals(Path.GetExtension(name), Mp4Extension, StringComparison.OrdinalIgnoreCase);
 
@@ -120,6 +121,12 @@ public sealed partial class GalleryService
         ArgumentNullException.ThrowIfNull(records);
         return PromptRules.GroupByPrompt(records)
             .ToList();
+    }
+
+    public List<DiffusionModelGroup> GroupByDiffusionModel(IEnumerable<ImageRecord> records)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        return DiffusionModelRules.GroupByDiffusionModel(records);
     }
 
     public ImageRecord PickDuplicateKeeper(IEnumerable<ImageRecord> records)
@@ -243,6 +250,8 @@ public sealed partial class GalleryService
 
     public string MergeTags(string existing, string additions) => LibraryRules.MergeTags(existing, additions);
 
+    public string RemoveTag(string existing, string tag) => LibraryRules.RemoveTag(existing, tag);
+
     public async Task<List<SavedView>> LoadViewsAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
@@ -285,6 +294,7 @@ public sealed partial class GalleryService
     }
 
     public static string FormatBytes(long bytes) => GalleryDisplayFormatter.FormatBytes(bytes);
+    public static string FormatModelFilename(string model) => GalleryDisplayFormatter.FormatModelFilename(model);
 
     public async Task<List<ImageRecord>> ListAsync()
     {
@@ -421,9 +431,12 @@ public sealed partial class GalleryService
             var sourceHash = Convert.ToHexString(SHA256.HashData(bytes.Span));
             timings?.Record(IngestionStage.HashSource, stageStart);
             await RejectDuplicateImportAsync(sourceHash, name, key, timings);
-            return isVideo
+            var prepared = isVideo
                 ? await PrepareVideoAsync(bytes, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot)
                 : await PrepareImageAsync(original, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot);
+            if (input is FileStream sourceFile)
+                prepared.Record = prepared.Record with { SourceCreatedAt = File.GetCreationTimeUtc(sourceFile.SafeFileHandle) };
+            return prepared;
         }
         finally { CryptographicOperations.ZeroMemory(original.GetBuffer()); }
     }
@@ -933,7 +946,8 @@ public sealed partial class GalleryService
 
     public async Task ImportFolderAsync(string folder, FolderSearchScope searchScope, Action<string>? progress = null,
         SourceRetention sourceRetention = SourceRetention.Retain, Func<ImportProgress, Task>? reportProgress = null,
-        Action<IngestionTimingReport>? reportTimings = null, IngestionOptions? options = null)
+        Action<IngestionTimingReport>? reportTimings = null, IngestionOptions? options = null,
+        IngestionScan? scan = null, bool includeImages = true, bool includeVideos = true)
     {
         ValidateOperationChoice(searchScope);
         ValidateOperationChoice(sourceRetention);
@@ -944,6 +958,7 @@ public sealed partial class GalleryService
         var mediaRoot = await MediaDirectoryWithKeyAsync(key.Bytes);
         folder = Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing local folder.");
+        if (scan is not null) ValidateIngestionScan(scan, folder, searchScope, mediaRoot);
         var measurementStart = reportTimings is null ? null : IngestionTimingReports.Start(folder, mediaRoot, VaultRoot);
         var observations = reportTimings is null ? null : new System.Collections.Concurrent.ConcurrentQueue<IngestionTimingObservation>();
         var timings = observations is null ? null : new IngestionTimings(observations.Enqueue);
@@ -952,11 +967,25 @@ public sealed partial class GalleryService
             if (reportProgress is not null)
             {
                 var reportStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                try { await reportProgress(new ImportProgress(null, 0, 0, 0, "Scanning selected folder...")); }
+                try { await reportProgress(new ImportProgress(null, 0, 0, 0,
+                    scan is null ? "Scanning selected folder..." : "Checking scanned files and disk space...")); }
                 finally { timings?.Record(IngestionStage.ReportProgress, reportStart); }
             }
             var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            var imagePaths = await Task.Run(() => DiscoverImagePaths(folder, searchScope));
+            var imagePaths = await Task.Run(() =>
+            {
+                if (scan is null)
+                    return DiscoverImagePaths(folder, searchScope)
+                        .Where(path => IsVideoName(path) ? includeVideos : includeImages).ToArray();
+                var files = scan.SelectFiles(includeImages, includeVideos);
+                if (files.IsEmpty) throw new InvalidOperationException("Select at least one media type with files to ingest.");
+                if (files.Any(file => file.IsVideo) && !VideoToolsAvailable)
+                    throw new InvalidOperationException("Install ffmpeg and ffprobe, or disable Include Videos.");
+                ValidateScannedFiles(files);
+                if (!MeasureIngestionSpace(scan, files).HasEnoughSpace)
+                    throw new IOException("There is not enough available disk space for the selected media and catalog growth.");
+                return files.Select(file => file.Path).ToArray();
+            });
             timings?.Record(IngestionStage.Discover, stageStart);
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
             await galleryStore.Gate.WaitAsync();

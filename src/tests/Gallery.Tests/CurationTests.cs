@@ -172,15 +172,60 @@ public sealed class CurationTests
         var clampedHigh = await fixture.Service.LoadPreferencesAsync();
 
         // Assert
-        Assert.Equal("comfortable", defaultDensity);
+        Assert.Equal("detail", defaultDensity);
         Assert.Equal(15, defaultAutoLock);
         Assert.Equal("compact", savedPreferences.GridDensity);
         Assert.Equal(30, savedPreferences.AutoLockMinutes);
         Assert.DoesNotContain("compact", Encoding.UTF8.GetString(storedPreferences!));
-        Assert.Equal("comfortable", invalidFallback.GridDensity);
+        Assert.Equal("detail", invalidFallback.GridDensity);
         Assert.Equal(15, invalidFallback.AutoLockMinutes);
         Assert.Equal(0, disabledAutoLock.AutoLockMinutes);
         Assert.Equal(1440, clampedHigh.AutoLockMinutes);
+        Assert.Equal("detail", clampedHigh.GridDensity);
+    }
+
+    [Theory]
+    [InlineData("compact", "compact")]
+    [InlineData("detail", "detail")]
+    [InlineData("large", "detail")]
+    [InlineData("comfortable", "detail")]
+    public async Task Preferences_ViewNames_NormalizeToCompactOrDetail(string savedDensity, string expectedDensity)
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var legacyPreferences = new UiPreferences { GridDensity = savedDensity };
+        await fixture.Store.SaveSettingsAsync(legacyPreferences, "ui-preferences",
+            "ui-preferences:v1", fixture.Session.Key);
+
+        Assert.Equal(expectedDensity, (await fixture.Service.LoadPreferencesAsync()).GridDensity);
+        Assert.Equal(new[] { "compact", "detail" }, UiPreferences.Densities.ToArray());
+    }
+
+    [Fact]
+    public async Task Preferences_ToolboxState_RoundTripsAndNormalizesUnknownToolsAndPositions()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+
+        // Act
+        var initial = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { ToolboxVisible = false, ToolboxX = 120.5, ToolboxY = 64, ToolboxTool = "trash" });
+        var saved = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Service.SavePreferencesAsync(new UiPreferences { ToolboxX = double.NaN, ToolboxY = -10, ToolboxTool = "explore" });
+        var normalized = await fixture.Service.LoadPreferencesAsync();
+
+        // Assert
+        Assert.True(initial.ToolboxVisible);
+        Assert.Null(initial.ToolboxX);
+        Assert.Equal("", initial.ToolboxTool);
+        Assert.False(saved.ToolboxVisible);
+        Assert.Equal(120.5, saved.ToolboxX);
+        Assert.Equal(64, saved.ToolboxY);
+        Assert.Equal("trash", saved.ToolboxTool);
+        Assert.Null(normalized.ToolboxX);
+        Assert.Equal(0, normalized.ToolboxY);
+        Assert.Equal("", normalized.ToolboxTool);
     }
 
     [Fact]

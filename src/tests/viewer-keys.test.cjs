@@ -4,7 +4,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 const vm = require("node:vm");
 
-function setup({ dialog = false } = {}) {
+function setup({ dialog = false, selection = false } = {}) {
     const listeners = new Map();
     const calls = [];
     const card = id => {
@@ -22,7 +22,9 @@ function setup({ dialog = false } = {}) {
             listeners.set(name, handler);
         },
         removeEventListener(name) { listeners.delete(name); },
-        querySelector(selector) { return selector.startsWith("[role=dialog]") && dialog ? {} : null; },
+        querySelector(selector) {
+            return (selector.startsWith("[role=dialog]") && dialog) || (selector === "[data-has-selection=true]" && selection) ? {} : null;
+        },
         querySelectorAll() { return []; }
     };
     const window = {};
@@ -40,6 +42,48 @@ function setup({ dialog = false } = {}) {
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test("review confetti bursts left then right after 80ms and cleans up", async () => {
+    const layers = [];
+    const delays = [];
+    const document = {
+        addEventListener() {},
+        createElement() {
+            return {
+                style: {}, children: [], setAttribute() {},
+                appendChild(child) { this.children.push(child); },
+                animate() { return { finished: Promise.resolve() }; },
+                remove() { this.removed = true; }
+            };
+        }
+    };
+    const window = { matchMedia: () => ({ matches: false }) };
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, document, Element: class {},
+        setTimeout(resolve, delay) { delays.push(delay); resolve(); }
+    });
+    await window.galleryViewer.celebrate({
+        isConnected: true, clientWidth: 1000,
+        appendChild(layer) { layers.push(layer); }
+    });
+    await flush();
+    assert.deepEqual(delays, [80]);
+    assert.equal(layers.length, 2);
+    assert.equal(layers[0].children.length, 36);
+    assert.equal(layers[0].children[0].style.left, "0");
+    assert.equal(layers[1].children[0].style.right, "0");
+    assert.ok(layers.every(layer => layer.removed));
+    window.matchMedia = () => ({ matches: true });
+    await window.galleryViewer.celebrate({ appendChild() { assert.fail("Reduced motion must not animate"); } });
+    assert.equal(layers.length, 2);
+});
+
+test("Escape forwards clear selection without a hovered or focused card", async () => {
+    const { calls, key } = setup({ selection: true });
+    assert.equal(key("Escape", {}).defaultPrevented, true);
+    await flush();
+    assert.deepEqual(calls, [["HandleGridKey", "escape", "", false]]);
+});
 
 test("rating, favorite and deletion keys act on the hovered or focused card", async () => {
     const { doc, calls, card, key, hover } = setup();
@@ -74,6 +118,46 @@ test("detach removes the document listeners", () => {
     const { window, listeners } = setup();
     window.galleryGrid.detach();
     assert.equal(listeners.size, 0);
+});
+
+test("backtick toggles the toolbox without a card and Shift+backtick is forwarded by physical key", async () => {
+    const { calls, key, input } = setup();
+    assert.equal(key("`", {}, { code: "Backquote" }).defaultPrevented, true);
+    assert.equal(key("~", {}, { code: "Backquote", shiftKey: true }).defaultPrevented, true);
+    assert.equal(key("`", input, { code: "Backquote" }).defaultPrevented, false);
+    await flush();
+    assert.deepEqual(calls, [["HandleGridKey", "`", "", false], ["HandleGridKey", "`", "", true]]);
+});
+
+test("toolbox stays inside the viewport and can be reset to its default position", async () => {
+    const handlers = new Map();
+    const element = {
+        style: {}, offsetLeft: 0, offsetTop: 0, offsetWidth: 300, offsetHeight: 60,
+        querySelector: () => handle
+    };
+    const handle = {
+        addEventListener(name, handler) { handlers.set(name, handler); },
+        removeEventListener(name) { handlers.delete(name); }
+    };
+    const window = { innerWidth: 800, innerHeight: 600, addEventListener() {}, removeEventListener() {} };
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, Element: class { },
+        document: { addEventListener() { }, querySelector: () => ({ getBoundingClientRect: () => ({ left: 250, top: 0 }) }) }
+    });
+    const calls = [];
+    const reference = { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } };
+    const sync = () => { element.offsetLeft = parseFloat(element.style.left); element.offsetTop = parseFloat(element.style.top); };
+    window.galleryToolbox.attach(element, reference, 4000, 3000);
+    sync();
+    assert.ok(element.offsetLeft + element.offsetWidth <= 800 && element.offsetTop + element.offsetHeight <= 600);
+    window.galleryToolbox.reset(element);
+    sync();
+    assert.deepEqual([element.offsetLeft, element.offsetTop], [266, 16]);
+    await flush();
+    assert.deepEqual(calls.at(-1), ["ToolboxReset"]);
+    assert.ok(handlers.has("dblclick"));
+    window.galleryToolbox.detach(element);
+    assert.equal(handlers.size, 0);
 });
 
 test("full screen viewer forwards declared extra keys only", async () => {

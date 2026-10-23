@@ -1,9 +1,15 @@
-<Card Class="@($"image-card relative min-w-0 overflow-hidden {(Image.IsMarkedForDeletion ? "marked" : "")} {(Selected ? "selected" : "")}")" data-image-id="@Image.Id">
+<Card Class="@($"image-card relative flex min-w-0 flex-col overflow-hidden {(Image.IsMarkedForDeletion ? "marked" : "")} {(Selected ? "selected" : "")}")" data-image-id="@Image.Id">
     @if (ShowSelection)
     {
         <Button Variant="@(Selected ? ButtonVariant.Default : ButtonVariant.Outline)" Size="ButtonSize.Icon" Class="absolute top-2 left-2 z-10 h-7! w-7! rounded-full! shadow-sm" Disabled="@Busy" aria-pressed="@(Selected ? "true" : "false")"
                 aria-label="@($"Select {Image.Name}")" title="Select (Shift+click selects a range)"
                 OnClick="Select"><CheckIcon Size="16" ClassName="@(Selected ? "" : "opacity-40")" aria-hidden="true" /></Button>
+    }
+    @if (HasSuggestion)
+    {
+        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Icon" Class="absolute top-2 right-2 z-10 h-7! w-7! rounded-full! shadow-sm" Disabled="@Busy"
+                aria-label="@($"Review AI suggestion for {Image.Name}")" title="Review AI suggestion"
+                OnClick="ReviewSuggestion"><LucideIcon Name="eye-dashed" Size="16" aria-hidden="true" /></Button>
     }
     <button class="image-open relative block aspect-square w-full overflow-hidden bg-background p-0 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 [&_img]:h-full [&_img]:w-full [&_img]:object-contain" disabled="@Busy" @onclick="Open">
         @if (Thumbnail is not null)
@@ -11,15 +17,38 @@
         else { <div class="grid h-full place-items-center text-xs text-muted-foreground" aria-busy="@(ThumbnailFailed ? "false" : "true")">@(ThumbnailFailed ? "Preview unavailable" : "Loading preview...")</div> }
         @if (Image.IsVideo) { <span class="pointer-events-none absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/80 px-2 py-1 text-xs text-white" aria-label="@($"Video, {GalleryService.FormatDuration(Image)}")"><PlayIcon Size="12" aria-hidden="true" /> @GalleryService.FormatDuration(Image)</span> }
     </button>
-    <div class="card-info p-4 [&>h3]:truncate [&>h3]:text-sm"><h3 title="@Image.Name">@Image.Name</h3>
-        <div class="card-meta flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>@Image.Width &times; @Image.Height</span>
-            <span class="inline-flex items-center gap-2">
-                @if (Image.Description.Length > 0) { <span>Analyzed</span> }
-                <ShieldCheckIcon Size="16" ClassName="text-primary" role="img" aria-label="Encrypted" />
-            </span>
+    <div class="card-info p-4">
+        <div class="card-heading flex min-w-0 items-center justify-between gap-2">
+            <h3 class="mb-0! min-w-0 truncate text-sm" title="@Filename">@Filename</h3>
+            <div class="inline-flex shrink-0 items-center gap-2" aria-label="Media status">
+                <span class="card-status card-status-positive" role="img" tabindex="0" aria-label="@(Image.IsVideo ? "Video" : "Image")" data-tooltip="@(Image.IsVideo ? "Video" : "Image")">
+                    <LucideIcon Name="@(Image.IsVideo ? "video" : "image")" Size="16" aria-hidden="true" />
+                </span>
+                <span class="card-status @(HasSuggestion || !HasAnalysis ? "text-muted-foreground" : "card-status-positive")" role="img" tabindex="0" aria-label="@VisionLabel" data-tooltip="@VisionLabel">
+                    <LucideIcon Name="@(HasSuggestion ? "eye-dashed" : HasAnalysis ? "eye" : "eye-off")" Size="16" aria-hidden="true" />
+                </span>
+                <span class="card-status @(Image.IsReviewed ? "card-status-positive" : "text-muted-foreground")" role="img" tabindex="0" aria-label="@(Image.IsReviewed ? "Reviewed" : "Not reviewed")" data-tooltip="@(Image.IsReviewed ? "Reviewed" : "Not reviewed")">
+                    <LucideIcon Name="@(Image.IsReviewed ? "circle-check" : "circle-dashed-check")" Size="16" aria-hidden="true" />
+                </span>
+                @if (Image.Generation is not null)
+                {
+                    <span class="card-status card-status-positive" role="img" tabindex="0" aria-label="AI generated: ComfyUI metadata detected" data-tooltip="AI generated: ComfyUI metadata detected"><SparklesIcon Size="16" aria-hidden="true" /></span>
+                }
+            </div>
         </div>
-        <div class="card-rating-row mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div class="card-meta mt-2 text-xs text-muted-foreground">
+            @Image.Width &times; @Image.Height &middot; @(Image.IsVideo ? VideoDuration : $"{Megapixels}MP") &middot; @((Image.OriginalBytes / 1048576d).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)) MiB
+        </div>
+        @if (Image.Generation is { } generation)
+        {
+            <div class="card-generation mt-2 space-y-1 text-xs text-muted-foreground">
+                @if (generation.Model.Length > 0) { <p class="mb-0! truncate" title="@generation.Model">Model: @GalleryService.FormatModelFilename(generation.Model)</p> }
+                @if (generation.Prompt.Length > 0) { <p class="mb-0! line-clamp-2 break-words" title="@generation.Prompt">@generation.Prompt</p> }
+            </div>
+        }
+    </div>
+    <div class="card-actions mt-auto flex items-center justify-between gap-1 border-t border-border p-2">
+        <div class="card-rating-row min-w-0">
             <div class="inline-flex min-w-0 max-w-full items-center" role="group" aria-label="@($"Rating for {Image.Name}: {Image.Rating} out of 5 stars")">
                 @for (var score = 1; score <= 5; score++)
                 {
@@ -32,37 +61,40 @@
                     </Button>
                 }
             </div>
-            <span class="text-muted-foreground">@(Image.IsReviewed ? "Reviewed" : "Pending")</span>
         </div>
-        @if (!Image.Collections.IsEmpty) { <div class="collection-chips mt-3 flex flex-wrap gap-1">@foreach (var name in Image.Collections) { <Badge Variant="BadgeVariant.Secondary" Class="max-w-full whitespace-normal break-words">@name</Badge> }</div> }
-    </div>
-    <div class="card-actions flex gap-1 border-t border-border p-2">
-        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@Busy" Class="@(Image.IsFavorite ? "min-w-0 flex-1 px-2 text-xs text-primary" : "min-w-0 flex-1 px-2 text-xs")" OnClick="Favorite" aria-label="Toggle favorite" aria-pressed="@Image.IsFavorite">
-            <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" /><span class="action-label">Favorite</span>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" Class="@(Image.IsFavorite ? "h-7! w-7! shrink-0 text-primary" : "h-7! w-7! shrink-0")" OnClick="Favorite" aria-label="Toggle favorite" title="@(Image.IsFavorite ? "Remove favorite" : "Favorite")" aria-pressed="@(Image.IsFavorite ? "true" : "false")">
+            <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" />
         </Button>
-        <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Sm" Disabled="@Busy" Class="min-w-0 flex-1 px-2 text-xs" OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Mark deletion")" aria-pressed="@Image.IsMarkedForDeletion">
-            <TrashIcon Size="16" aria-hidden="true" /><span class="action-label">@(Image.IsMarkedForDeletion ? "Unmark" : "Mark deletion")</span>
+        <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Icon" Disabled="@Busy" Class="h-7! w-7! shrink-0" OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Trash")" title="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Trash")" aria-pressed="@(Image.IsMarkedForDeletion ? "true" : "false")">
+            <TrashIcon Size="16" aria-hidden="true" />
         </Button>
     </div>
-    @if (RemovalMode && Image.IsMarkedForDeletion)
-    {
-        <div class="flex items-start gap-3 px-4 pb-4"><Checkbox id="@("removal-" + Image.Id)" Class="mt-0.5" Checked="@RemovalSelected" Disabled="@Busy" CheckedChanged="RemovalSelectionChanged" /><Label For="@("removal-" + Image.Id)" Class="text-sm leading-relaxed">Select for removal</Label></div>
-    }
 </Card>
 
 @code {
+    private string Filename => Image.OriginalName.Length > 0 ? Image.OriginalName : Image.Name;
+    private bool HasAnalysis => Image.Description.Length > 0 || Image.AnalysisModel.Length > 0;
+    private string VisionLabel => HasSuggestion ? "Vision analysis awaiting acceptance" : HasAnalysis ? "Vision analysis accepted" : "Not analyzed";
+    private long Megapixels => Math.Max(1, (long)Math.Round((double)Image.Width * Image.Height / 1_000_000, MidpointRounding.AwayFromZero));
+    private string VideoDuration
+    {
+        get
+        {
+            var seconds = (long)Math.Max(0, Math.Round(Image.DurationSeconds));
+            return $"{seconds / 3600:00}:{seconds / 60 % 60:00}:{seconds % 60:00}";
+        }
+    }
     [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
     [Parameter] public string? Thumbnail { get; set; }
     [Parameter] public bool ThumbnailFailed { get; set; }
     [Parameter] public bool Busy { get; set; }
     [Parameter] public bool Selected { get; set; }
     [Parameter] public bool ShowSelection { get; set; }
-    [Parameter] public bool RemovalMode { get; set; }
-    [Parameter] public bool RemovalSelected { get; set; }
     [Parameter] public EventCallback<MouseEventArgs> Select { get; set; }
     [Parameter] public EventCallback Open { get; set; }
     [Parameter] public EventCallback<int> Rate { get; set; }
     [Parameter] public EventCallback Favorite { get; set; }
     [Parameter] public EventCallback Mark { get; set; }
-    [Parameter] public EventCallback<bool> RemovalSelectionChanged { get; set; }
+    [Parameter] public bool HasSuggestion { get; set; }
+    [Parameter] public EventCallback ReviewSuggestion { get; set; }
 }

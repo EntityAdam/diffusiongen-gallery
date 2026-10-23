@@ -276,7 +276,7 @@ public sealed partial class GalleryService
             await store.ReplaceDirectoryIndexAsync(VaultCrypto.PathFingerprint(Key, payload.Path), indexed, discovered);
         }
 
-        // Finishes a removal interrupted by an older version that staged ciphertext before deleting the catalog row.
+        // Finishes removal recovery when ciphertext was staged before its catalog row was deleted.
         private async Task RecoverStagedAsync(string stagedPath)
         {
             await store.Gate.WaitAsync();

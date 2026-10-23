@@ -4,8 +4,9 @@
 @inject GalleryService Gallery
 @inject ILogger<Home> Logger
 @inject IJSRuntime JS
+@inject ISonnerService Toasts
 
-<PageTitle>Diffusion Gen Gallery 02</PageTitle>
+<PageTitle>DiffusionGen Gallery</PageTitle>
 
 @if (!Gallery.IsUnlocked)
 {
@@ -19,11 +20,11 @@
 </section>
 }
 
-@if (error.Length > 0)
+@if (error.Length > 0 && !UsesToasts)
 {
     <Alert Variant="AlertVariant.Destructive" Class="mb-6 flex items-center justify-between gap-3">@error <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" OnClick="() => error = string.Empty" aria-label="Dismiss error"><XIcon aria-hidden="true" /></Button></Alert>
 }
-@if (message.Length > 0)
+@if (message.Length > 0 && !UsesToasts)
 {
     <div class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@message</div>
 }
@@ -147,14 +148,21 @@ else if (recoveryPhrase.Length > 0)
 }
 else
 {
-    <div class="grid grid-cols-1 items-start gap-6 md:grid-cols-[210px_minmax(0,1fr)]">
-    <Card Class="mb-6 flex flex-wrap gap-2 p-4 md:sticky md:top-5 md:flex-col" aria-label="Gallery workflows" role="navigation">
-        <span class="eyebrow">YOUR WORKSPACE</span>
+    <AppLayout Class="workspace-layout">
+    <Sidebar Collapsible="true" @bind-Collapsed="sidebarCollapsed" ExpandedWidth="250px" CollapsedWidth="64px" Class="@($"workspace-sidebar {(sidebarCollapsed ? "is-collapsed" : "")}")" aria-label="Gallery workflows">
+        <div class="workspace-sidebar-heading">
+            <span class="eyebrow sidebar-label">YOUR WORKSPACE</span>
+            <SidebarTrigger aria-expanded="@(sidebarCollapsed ? "false" : "true")" aria-label="@(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")" />
+        </div>
+        <nav class="workspace-navigation" aria-label="Gallery workflows">
         @foreach (var item in Workflows)
         {
-            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || libraryJob.IsRunning && item.Id is "remove" or "ingest" or "settings")" Class="h-auto min-h-10 justify-start px-3 py-2 text-left text-sm whitespace-normal" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" />@item.Name</Button>
+            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name</span></Button>
         }
-        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground"><strong>@images.Count images</strong><span data-testid="pending-count">@PendingReviewCount awaiting review</span></div>
+        <Button Variant="@(ToolboxShown ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Class="workspace-nav-button" aria-pressed="@(ToolboxShown ? "true" : "false")"
+                aria-label="Toolbox (`)" title="Show or hide the toolbox (`). Shift+` resets its position." OnClick="ToggleToolboxAsync"><WrenchIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Toolbox <kbd>`</kbd></span></Button>
+        </nav>
+        <div class="workspace-sidebar-details" hidden="@sidebarCollapsed">
         @if (libraryJob.IsRunning || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
         {
             <div class="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs break-words" role="status">
@@ -203,52 +211,102 @@ else
                 </div>
             </div>
         }
-        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="w-full justify-between" Disabled="@busy" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
-            <span class="inline-flex items-center gap-2"><ShieldAlertIcon Size="16" aria-hidden="true" /> Panic</span> <kbd>Ctrl+Shift+L</kbd>
-        </Button>
-    </Card>
-    <div class="min-w-0">
-    <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2><Badge Variant="BadgeVariant.Secondary" Class="bg-primary/10 text-primary">@images.Count</Badge></div></div>
-        <div class="flex flex-wrap items-center gap-2">
-            @if (ShowsGallery)
-            {
-                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || !PageImages.Any())" OnClick="() => OpenViewer()"><MaximizeIcon aria-hidden="true" />Full screen view</Button>
-            }
         </div>
+        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="workspace-panic" Disabled="@busy" aria-label="Panic lock gallery (Ctrl+Shift+L)" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
+            <ShieldAlertIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Panic <kbd>Ctrl+Shift+L</kbd></span>
+        </Button>
+        <WorkspaceSidebarFooter />
+    </Sidebar>
+    <AppLayoutMain Class="workspace-main">
+    <AppLayoutBody Class="workspace-body">
+    @if (workflow != "gallery")
+    {
+    <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2></div></div>
     </div>
+    }
 
     @if (workflow == "ingest")
     {
         <Card Class="mb-6 p-5 md:p-6">
-            <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Bring your images home.</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">PNG / JPEG / WEBP / MP4</Badge></div>
-            <p class="text-muted-foreground">Images (PNG, JPEG, WebP) are encrypted unchanged as .dpng; MP4 videos are encrypted unchanged as .dmp4 (requires ffmpeg). Sources are retained by default. Duplicate files are reported, not reimported or deleted. Maximum 50 MiB / 40 MP per image, 256 MiB per video.</p>
-            <div class="mt-4 space-y-3">
-                <Label Class="block">Ingestion performance</Label>
-                <div class="flex flex-wrap gap-2">
-                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Hdd)">HDD / NAS: 4 workers</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="() => ApplyIngestionProfile(IngestionOptions.Ssd)">SSD / NVMe: @IngestionOptions.Ssd.Workers workers</Button>
-                </div>
-                <Label For="ingestion-workers">Parallel workers (1-32)</Label>
-                <input id="ingestion-workers" type="number" min="1" max="32" @bind="ingestionWorkers" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
-                <Label For="ingestion-batch">Files per catalog commit (1-64)</Label>
-                <input id="ingestion-batch" type="number" min="1" max="64" @bind="ingestionBatchSize" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
-                <p class="text-muted-foreground">Both suggested profiles commit 16 files at a time. Increase workers cautiously for large images or videos: decoding uses memory per worker. Sources are never deleted until their batch is committed and verified. Use a batch size at least as large as the worker count.</p>
-                <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="SaveIngestionOptionsAsync">Save performance settings</Button>
-            </div>
-                <form @onsubmit="ImportFolderAsync" @onsubmit:preventDefault>
-                    <Label For="source" Class="mt-4 mb-2 block">Local folder path</Label>
-                    <Input id="source" @bind-Value="importPath" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
-                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recursive" Class="mt-0.5" @bind-Checked="recursive" Disabled="@busy"  /><Label For="check-recursive" Class="text-sm leading-relaxed">Include subfolders</Label></div>
-                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recordtimings" Class="mt-0.5" @bind-Checked="recordTimings" Disabled="@busy"  /><Label For="check-recordtimings" Class="text-sm leading-relaxed">Record performance timings (logged without file or folder names)</Label></div>
-                    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-deletesources" Class="mt-0.5" @bind-Checked="deleteSources" Disabled="@busy"  /><Label For="check-deletesources" Class="text-sm leading-relaxed">Delete originals after verified import</Label></div>
+            <p class="text-muted-foreground">Load images and videos into your secure library. Media are encrypted with your passphrase and you can optionally delete the originals.</p>
+            <section class="mt-4 space-y-3" aria-labelledby="supported-media-heading">
+                <h3 id="supported-media-heading">Supported Media</h3>
+                <div class="flex flex-wrap items-center gap-2"><span>Images</span><Badge Variant="BadgeVariant.Secondary">PNG</Badge><Badge Variant="BadgeVariant.Secondary">JPEG</Badge><Badge Variant="BadgeVariant.Secondary">WEBP</Badge><span>Up to 50MB</span></div>
+                <div class="flex flex-wrap items-center gap-2"><span>Videos</span><Badge Variant="BadgeVariant.Secondary">MP4</Badge><span>Up to 256MB</span></div>
+            </section>
+            <section class="mt-6 space-y-3" aria-labelledby="third-party-heading">
+                <h3 id="third-party-heading">3rd party</h3>
+                <p class="text-muted-foreground">3rd Party tools are required for certain features and are not bundled with the application. You will need to install them separately.</p>
+                <h4>Video encoding</h4>
+                <div class="flex items-center gap-2"><strong>FFMPEG</strong><Badge Class="@(Gallery.VideoToolsAvailable ? "ingest-tool-available" : "ingest-tool-unavailable")">@(Gallery.VideoToolsAvailable ? "available" : "not available")</Badge></div>
+            </section>
+            <h3 class="mt-6">Ingest</h3>
+                <form @onsubmit="ScanImportFolderAsync" @onsubmit:preventDefault>
+                    <Label For="source" Class="mt-4 mb-2 block">Ingest Images From</Label>
+                    <Input id="source" @bind-Value="importPath" @bind-Value:after="ClearIngestionScan" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
+                    <div class="mt-4 flex items-center gap-3"><button id="check-recursive" type="button" role="switch" class="review-random-toggle" aria-checked="@(recursive ? "true" : "false")" aria-labelledby="recursive-label" disabled="@busy" @onclick="ToggleImportRecursion"><span></span></button><Label id="recursive-label" For="check-recursive">Include subfolders</Label></div>
+                    <div class="mt-4 flex items-center gap-3"><button id="check-recordtimings" type="button" role="switch" class="review-random-toggle" aria-checked="@(recordTimings ? "true" : "false")" aria-labelledby="record-timings-label" disabled="@busy" @onclick="() => recordTimings = !recordTimings"><span></span></button><Label id="record-timings-label" For="check-recordtimings">Save performance information</Label></div>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Class="mt-4" Disabled="@(busy || string.IsNullOrWhiteSpace(importPath))" Type="submit">Scan</Button>
+                </form>
+                @if (ingestionScan is not null)
+                {
+                    <section class="mt-4 space-y-3" aria-labelledby="ingestion-scan-heading" aria-live="polite">
+                    <h4 id="ingestion-scan-heading">Scan results</h4>
+                    <p>@ingestionScan.ImageCount images &middot; @ingestionScan.VideoCount videos &middot; Source file size total: @FormatIngestionBytes(ingestionScan.SourceBytes)</p>
+                    <div class="flex items-center gap-3"><button id="include-images" type="button" role="switch" class="review-random-toggle" aria-checked="@(includeImages ? "true" : "false")" aria-labelledby="include-images-label" disabled="@busy" @onclick="ToggleIncludeImagesAsync"><span></span></button><Label id="include-images-label" For="include-images">Include Images</Label></div>
+                    <div class="flex items-center gap-3"><button id="include-videos" type="button" role="switch" class="review-random-toggle" aria-checked="@(includeVideos ? "true" : "false")" aria-labelledby="include-videos-label" disabled="@(busy || !Gallery.VideoToolsAvailable)" @onclick="ToggleIncludeVideosAsync"><span></span></button><Label id="include-videos-label" For="include-videos">Include Videos</Label></div>
+                    @if (!Gallery.VideoToolsAvailable && ingestionScan.VideoCount > 0)
+                    {
+                        <p class="text-muted-foreground">Install ffmpeg and ffprobe to include videos.</p>
+                    }
+                    <div class="flex items-center gap-3"><button id="check-deletesources" type="button" role="switch" class="review-random-toggle" aria-checked="@(deleteSources ? "true" : "false")" aria-labelledby="delete-sources-label" disabled="@busy" @onclick="ToggleSourceDeletion"><span></span></button><Label id="delete-sources-label" For="check-deletesources">Delete original media</Label></div>
                     @if (deleteSources)
                     {
-                        <Alert Variant="AlertVariant.Destructive">Originals will be deleted without the Recycle Bin after the saved image, catalog and thumbnail are verified. This is not secure shredding: SSD/NVMe remnants, backups and snapshots may remain recoverable.</Alert>
-                        <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmsourcedeletion" Class="mt-0.5" @bind-Checked="confirmSourceDeletion" Disabled="@busy"  /><Label For="check-confirmsourcedeletion" Class="text-sm leading-relaxed">I understand this permanently removes successfully imported source files, not their forensic remnants.</Label></div>
+                        <Alert Variant="AlertVariant.Destructive"><LucideIcon Name="triangle-alert" Size="16" aria-hidden="true" /><span>Originals will be <strong>permanently</strong> deleted after the import is verified.</span></Alert>
                     }
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" Type="submit">Ingest this folder <ArrowRightIcon aria-hidden="true" /></Button>
-                </form>
+                    @if (ingestionSpace is not null)
+                    {
+                        <p>@ingestionSpace.FileCount files selected &middot; @FormatIngestionBytes(ingestionSpace.SelectedSourceBytes) source media</p>
+                        <p>Available disk space: @FormatIngestionBytes(ingestionSpace.MediaAvailableBytes)</p>
+                        <p>Estimated change: @FormatIngestionBytes(EstimatedIngestionChangeBytes)</p>
+                        <p class="text-muted-foreground" title="Uses the encryption envelope size plus an allowance of 128 KiB per thumbnail and 4 KiB per catalog entry. Actual growth varies; duplicates may reduce it. The free-space safety check uses a separate, larger allowance before deleting originals.">Includes an <strong>estimate</strong> for encryption and thumbnails.</p>
+                        @if (ingestionSpace.FileCount == 0)
+                        {
+                            <p role="status">No files selected. Enable a media type with scanned files, or scan another folder.</p>
+                        }
+                        else if (!ingestionSpace.HasEnoughSpace)
+                        {
+                            <Alert Variant="AlertVariant.Destructive">Not enough available disk space for the selected media and catalog growth.</Alert>
+                        }
+                    }
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(!CanIngestScan)" OnClick="ImportFolderAsync">Ingest <ArrowRightIcon aria-hidden="true" /></Button>
+                    </section>
+                }
+            <details class="mt-6">
+                <summary>Advanced</summary>
+                <div class="mt-4 space-y-3">
+                    <h3>Ingestion performance</h3>
+                    <Label Class="block">Performance profile</Label>
+                    <div class="flex flex-wrap gap-2" role="group" aria-label="Performance profile">
+                        <Button Variant="@(ingestionProfile == "hdd" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "hdd" ? "true" : "false")" Disabled="@busy" OnClick='() => ApplyIngestionProfile(IngestionOptions.Hdd, "hdd")'>HDD</Button>
+                        <Button Variant="@(ingestionProfile == "ssd" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "ssd" ? "true" : "false")" Disabled="@busy" OnClick='() => ApplyIngestionProfile(IngestionOptions.Ssd, "ssd")'>SSD</Button>
+                        <Button Variant="@(ingestionProfile == "custom" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "custom" ? "true" : "false")" Disabled="@busy" OnClick='() => ingestionProfile = "custom"'>Custom</Button>
+                    </div>
+                    <p class="text-muted-foreground">Active settings: @ingestionWorkers workers, batch size @ingestionBatchSize.</p>
+                    @if (ingestionProfile == "custom")
+                    {
+                        <div class="space-y-3">
+                            <Label For="ingestion-workers">Workers</Label>
+                            <input id="ingestion-workers" type="number" min="1" max="32" @bind="ingestionWorkers" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                            <Label For="ingestion-batch">Batch Size</Label>
+                            <input id="ingestion-batch" type="number" min="1" max="64" @bind="ingestionBatchSize" disabled="@busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                            <p class="text-muted-foreground">Use 1-32 workers and a batch size of 1-64, at least as large as the worker count. More workers use more memory.</p>
+                        </div>
+                    }
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="SaveIngestionOptionsAsync">Save</Button>
+                </div>
+            </details>
             @if (importProgress is not null)
             {
                 <div class="mt-5 space-y-2" aria-busy="@(busy ? "true" : "false")">
@@ -369,7 +427,7 @@ else
                 <h3 id="duplicates-title">Duplicate finder</h3>
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ScanDuplicatesAsync">@(duplicateScan is null ? "Scan for duplicates" : "Scan again")</Button>
             </div>
-            <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Remove marked images</em>.</p>
+            <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Trash</em>.</p>
             @if (busy && progress.StartsWith("Scanning")) { <p class="flex items-center gap-2 pb-4 text-primary" role="status"><span class="status-dot"></span> @progress</p> }
             @if (duplicateScan is not null)
             {
@@ -381,7 +439,7 @@ else
                     <div class="flex flex-wrap items-center gap-2">
                         <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(busy || groups.Count == 0)" OnClick="() => OpenDuplicateReview(groups, 0)">Review in full screen</Button>
                         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || pendingMarks == 0)" OnClick="() => MarkDuplicatesAsync(groups)">Mark all extra copies (@pendingMarks)</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick='() => SwitchWorkflowAsync("remove")'>Go to Remove marked images</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="OpenTrashAsync">Go to Trash</Button>
                     </div>
                 </div>
                 @if (groups.Count == 0) { <p class="text-muted-foreground">No likely duplicates found.</p> }
@@ -490,126 +548,17 @@ else
         </Card>
     }
 
-    @if (workflow == "library")
+    @if (workflow == "gallery")
     {
-    <div class="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4 [&>button]:h-auto [&>button]:flex-col [&>button]:items-start [&>button]:p-5 [&_strong]:text-3xl [&_strong]:text-primary [&_span]:text-xs [&_span]:text-muted-foreground">
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("all")'><strong>@images.Count</strong><span>In your library</span></Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("pending")'><strong>@images.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion)</strong><span>Awaiting review</span></Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("favorites")'><strong>@images.Count(image => image.IsFavorite && !image.IsMarkedForDeletion)</strong><span>Favorites</span></Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick='() => SetQueueAsync("unorganized")'><strong>@images.Count(image => image.Collections.IsEmpty && !image.IsMarkedForDeletion)</strong><span>Without a collection</span></Button>
-    </div>
-    }
-    @if (workflow == "review")
-    {
-        <Card Class="mb-6 p-5 md:p-6 review-intro">
-            <h3>One image. One decision.</h3>
-            <p class="text-muted-foreground">Keep, favorite, rate or mark for deletion to finish reviewing an image. Skip leaves it pending. The session includes pending, unmarked images matching your filters across all pages.</p>
-            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(busy || !Filtered.Any(image => !image.IsReviewed && !image.IsMarkedForDeletion))" OnClick="StartReview">Start guided review (@Filtered.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion))</Button>
-        </Card>
-    }
-    <LibraryWorkbench @ref="workbench" Visible="@(workflow is "organize" or "explore" or "ai")" Workflow="@workflow" Images="images" SelectedIds="librarySelection" Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" JobChanged="LibraryJobChanged" />
-    @if (ShowsGallery)
-    {
-    <div class="gallery-layout grid min-w-0 grid-cols-1">
-        <GalleryFilterPanel Filter="filter" Images="images" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
-        <section>
-            <div class="mb-3 flex flex-wrap gap-2" role="group" aria-label="Quick filters">
-                @foreach (var chip in QuickFilters)
-                {
-                    var active = chip.IsActive(filter);
-                    <Button Variant="@(active ? ButtonVariant.Secondary : ButtonVariant.Outline)" Type="button" Class="rounded-full!" aria-pressed="@(active ? "true" : "false")" Disabled="@busy" OnClick="() => ToggleQuickFilterAsync(chip)">
-                        @chip.Label <span class="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">@chip.Count(images)</span>
-                    </Button>
-                }
-            </div>
-            <ActiveFilters Filter="filter" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
-            <div class="mb-5 flex flex-wrap items-center justify-between gap-4 text-sm"><span><strong>@Filtered.Count</strong> images <span class="text-muted-foreground">/ @images.Count in gallery</span></span>
-                <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto [&>select]:w-full sm:[&>select]:w-auto">
-                    <Tabs Value="@density" ValueChanged="SetDensityAsync">
-                        <TabsList aria-label="Thumbnail size">
-                            @foreach (var option in UiPreferences.Densities)
-                            {
-                                <TabsTrigger Value="@option" disabled="@busy">@(char.ToUpperInvariant(option[0]) + option[1..])</TabsTrigger>
-                            }
-                        </TabsList>
-                    </Tabs>
-                    <Select Disabled="@busy" Class="min-w-0 sm:w-44" aria-label="Group images" @bind-Value="grouping" @bind-Value:after="FilterChangedAsync">
-                        <option value="none">No grouping</option><option value="prompt">Group by same prompt</option>
-                    </Select>
-                    <Select Disabled="@busy" Class="min-w-0 sm:w-44" aria-label="Sort images" @bind-Value:get="filter.Sort" @bind-Value:set="SetSort">
-                        <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
-                    </Select>
-                </div>
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-                @if (workflow != "remove")
-                {
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SelectLibraryPage">Select page</Button>
-                }
-                @if (workflow == "remove")
-                {
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SelectFilteredMarked">Select filtered marked images</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || removalSelection.Count == 0)" OnClick="PrepareBulkRemovalAsync">Remove selected (@removalSelection.Count)</Button>
-                }
-                @if (librarySelection.Count > 0 || removalSelection.Count > 0)
-                {
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="ClearSelection">Clear selection (@(librarySelection.Count + removalSelection.Count))</Button>
-                }
-            </div>
-            @if (workflow != "remove" && librarySelection.Count > 0)
+    <div class="gallery-layout grid min-w-0 grid-cols-1" data-has-selection="@((librarySelection.Count > 0 || removalSelection.Count > 0) ? "true" : "false")">
+        <section aria-label="@(TrashActive ? "Trash" : "Gallery")">
+            @if (Filtered.Count > 0)
             {
-                <div class="bulk-bar fixed bottom-4 left-1/2 z-10 flex max-h-[45vh] w-[calc(100%-2rem)] max-w-6xl -translate-x-1/2 flex-wrap items-center gap-3 overflow-auto rounded-xl border border-primary/30 bg-card/95 p-3 shadow-2xl backdrop-blur-sm [&>strong]:text-primary" role="region" aria-label="Bulk actions for selected images">
-                    <strong>@librarySelection.Count selected</strong>
-                    <div class="flex flex-wrap items-center gap-2 [&>input]:w-44" role="group" aria-label="Rate selected images">
-                        @for (var score = 1; score <= 5; score++)
-                        {
-                            var value = score;
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Class="text-primary" Disabled="@busy" title="@($"Rate selected {value} stars")" aria-label="@($"Rate selected {value} out of 5 stars")" OnClick="() => BulkRateAsync(value)">@value<StarIcon Size="16" aria-hidden="true" /></Button>
-                        }
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkRateAsync(0)">Clear rating</Button>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2 [&>input]:w-44">
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkFavoriteAsync(true)"><HeartIcon Size="16" aria-hidden="true" />Favorite</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkFavoriteAsync(false)">Unfavorite</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkReviewedAsync(true)">Mark reviewed</Button>
-                        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkMarkAsync(true)">Mark for deletion</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => BulkMarkAsync(false)">Unmark</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" title="Compare the selected images against the whole library and review matches in full screen" OnClick="FindSelectedDuplicatesAsync">Find duplicates</Button>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" title="Download decrypted copies of the selected images and videos as a zip file" OnClick="ExportSelectedAsync">Save copies (zip)</Button>
-                    </div>
-                    <form class="flex flex-wrap items-center gap-2 [&>input]:w-44" @onsubmit="BulkTagAsync" @onsubmit:preventDefault>
-                        <Input aria-label="Tags to add to selected images" Placeholder="Add tags, comma-separated" @bind-Value="bulkTags" list="tags" Disabled="@busy" />
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@(busy || string.IsNullOrWhiteSpace(bulkTags))">Add tags</Button>
-                    </form>
-                    <form class="flex flex-wrap items-center gap-2 [&>input]:w-44" @onsubmit="BulkCollectAsync" @onsubmit:preventDefault>
-                        <Input aria-label="Collection for selected images" Placeholder="Collection name" @bind-Value="bulkCollection" list="collections" maxlength="80" Disabled="@busy" />
-                        <datalist id="collections">@foreach (var name in AllCollections) { <option value="@name"></option> }</datalist>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@(busy || string.IsNullOrWhiteSpace(bulkCollection))">Add to collection</Button>
-                    </form>
-                </div>
-            }
-            @if (removalResults.Count > 0)
-            {
-                <details open><summary>Removal results: @removalResults.Count(result => result.WasRemoved) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
-                    @foreach (var result in removalResults)
-                    {
-                        <p class="break-all text-muted-foreground">@result.Id: @(result.WasRemoved ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
-                    }
-                </details>
-            }
-            @if (busy) { <div class="flex items-center gap-2 pb-4 text-primary" role="status"><span class="status-dot"></span> @progress</div> }
-            @if (Filtered.Count == 0)
-            {
-                <div class="flex min-h-96 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-8 text-center [&_p]:max-w-sm [&_p]:text-muted-foreground"><ImagesIcon Size="42" ClassName="text-primary" aria-hidden="true" /><h3>@(images.Count == 0 ? "A little space for possibility." : "Nothing matches just yet.")</h3><p>@(images.Count == 0 ? "Ingest a folder of images to start your private collection." : "Try another search or reset your filters.")</p></div>
-            }
-            else
-            {
-                <p class="mb-3 hidden text-xs md:block text-muted-foreground">Shortcuts on the hovered or focused image: <kbd>1</kbd>&ndash;<kbd>5</kbd> rate &middot; <kbd>0</kbd> clear rating &middot; <kbd>F</kbd> favorite &middot; <kbd>D</kbd> mark for deletion@(workflow == "remove" ? "" : " · X select (Shift+X range) · Esc clear selection") &middot; arrow keys move.</p>
                 <div class="image-grid density-@density">
-                    @{ PromptGroup? previousGroup = null; var firstOnPage = true; }
+                    @{ PromptGroup? previousGroup = null; DiffusionModelGroup? previousModelGroup = null; var firstOnPage = true; }
                     @foreach (var image in PageImages)
                     {
-                        var isSelected = workflow != "remove" && librarySelection.Contains(image.Id);
+                        var isSelected = (TrashActive ? removalSelection : librarySelection).Contains(image.Id);
                         if (grouping == "prompt" && promptGroupOf.TryGetValue(image.Id, out var group) && !ReferenceEquals(group, previousGroup))
                         {
                             var continued = firstOnPage && group.Images[0].Id != image.Id;
@@ -631,14 +580,21 @@ else
                                 }
                             </div>
                         }
+                        else if (grouping == "model" && diffusionModelGroupOf.TryGetValue(image.Id, out var modelGroup) && !ReferenceEquals(modelGroup, previousModelGroup))
+                        {
+                            var continued = firstOnPage && modelGroup.Images[0].Id != image.Id;
+                            previousModelGroup = modelGroup;
+                            <div class="col-span-full rounded-md border-l-2 border-primary bg-primary/5 px-4 py-3" @key="@("model-group-" + image.Id)">
+                                <strong>@(modelGroup.Model.Length == 0 ? "No diffusion model recorded" : modelGroup.Model) (@modelGroup.Images.Length)@(continued ? " (continued)" : "")</strong>
+                            </div>
+                        }
                         firstOnPage = false;
                         <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)" ThumbnailFailed="@thumbnailFailures.Contains(image.Id)"
-                                          Busy="busy" Selected="isSelected" ShowSelection="@(workflow != "remove")"
-                                          RemovalMode="@(workflow == "remove")" RemovalSelected="@removalSelection.Contains(image.Id)"
+                                          Busy="busy" Selected="isSelected" ShowSelection="true"
                                           Select="args => SelectCard(image.Id, args.ShiftKey)" Open="() => OpenAsync(image)"
                                           Rate="value => RateImageAsync(image, value)" Favorite="() => FavoriteAsync(image)"
                                           Mark="() => MarkAsync(image)"
-                                          RemovalSelectionChanged="value => ToggleRemovalSelection(image.Id, value)" />
+                                          HasSuggestion="@aiSuggestions.ContainsKey(image.Id)" ReviewSuggestion="() => OpenViewer(image.Id)" />
                     }
                 </div>
                 <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
@@ -650,69 +606,110 @@ else
         </section>
     </div>
     }
-    </div>
-    </div>
+    </AppLayoutBody>
+    </AppLayoutMain>
+    </AppLayout>
+
+    <GalleryToolbox @ref="toolbox" Visible="@(toolboxVisible && workflow == "gallery" && selected is null && removalPlan.Count == 0)" ActiveTool="@activeTool" ActiveToolChanged="SetActiveToolAsync"
+                    Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="toolboxX" Y="toolboxY" Badge="ToolBadge">
+        @if (activeTool == "views")
+        {
+            <div class="space-y-4">
+                <div class="space-y-2">
+                    <Label>Thumbnail size</Label>
+                    <Tabs Value="@density" ValueChanged="SetDensityAsync">
+                        <TabsList aria-label="Thumbnail size">
+                            @foreach (var option in UiPreferences.Densities)
+                            {
+                                <TabsTrigger Value="@option" disabled="@busy">@(char.ToUpperInvariant(option[0]) + option[1..])</TabsTrigger>
+                            }
+                        </TabsList>
+                    </Tabs>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="space-y-2">
+                        <Label For="view-grouping">Grouping</Label>
+                        <Select id="view-grouping" Disabled="@busy" Class="w-full" @bind-Value="grouping" @bind-Value:after="FilterChangedAsync">
+                            <option value="none">No grouping</option><option value="prompt">Same prompt</option><option value="model">Diffusion model</option>
+                        </Select>
+                    </div>
+                    <div class="space-y-2">
+                        <Label For="view-sorting">Sorting</Label>
+                        <Select id="view-sorting" Disabled="@busy" Class="w-full" @bind-Value:get="filter.Sort" @bind-Value:set="SetSort">
+                            <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
+                        </Select>
+                    </div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || !PageImages.Any())" OnClick="() => OpenViewer()"><MaximizeIcon aria-hidden="true" />Full screen view</Button>
+                    <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" OnClick="ResetToolboxPositionAsync" title="Move the toolbox back to its default place (Shift+`)"><LocateFixedIcon aria-hidden="true" />Reset toolbox position</Button>
+                </div>
+            </div>
+        }
+        @if (activeTool == "filters")
+        {
+            <GalleryFilterPanel Filter="filter" Images="images" ResultCount="Filtered.Count" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
+        }
+        @if (activeTool == "review")
+        {
+            <div class="review-intro space-y-4">
+                <p class="text-muted-foreground text-sm">Review images one by one. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
+                <div class="flex items-center gap-3">
+                    <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(reviewRandomOrder ? "true" : "false")"
+                            aria-labelledby="review-random-order-label" disabled="@busy" @onclick="() => reviewRandomOrder = !reviewRandomOrder"><span></span></button>
+                    <Label id="review-random-order-label" For="review-random-order">Random order</Label>
+                </div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <Label For="review-goal">Goal:</Label>
+                    <input id="review-goal" type="number" min="@(ReviewPoolCount > 0 ? 1 : 0)" max="@ReviewPoolCount" step="1"
+                           class="review-goal-input" disabled="@(busy || ReviewPoolCount == 0)" @bind="ReviewGoal" />
+                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(busy || ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
+                </div>
+                <p class="text-muted-foreground text-sm">@ReviewPoolCount of the filtered images await review.</p>
+            </div>
+        }
+        @if (activeTool == "trash")
+        {
+            <div class="space-y-3">
+                <p class="text-muted-foreground text-sm">Showing images marked for deletion. Select with X or the check mark, then delete forever or restore.</p>
+                <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <strong>@removalSelection.Count selected</strong>
+                    <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@(busy || removalSelection.Count == 0)" OnClick="ClearSelection">Clear selection <kbd>Esc</kbd></Button>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Sm" Disabled="@(busy || removalSelection.Count == 0)" OnClick="PrepareBulkRemovalAsync"><TrashIcon aria-hidden="true" />Delete Forever</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || removalSelection.Count == 0)" OnClick="() => MarkRemovalSelectionAsync(false)"><RotateCcwIcon aria-hidden="true" />Restore</Button>
+                </div>
+                @if (removalResults.Count > 0)
+                {
+                    <details open><summary>Removal results: @removalResults.Count(result => result.WasRemoved) removed, @removalResults.Count(result => result.Error is not null) reported issues</summary>
+                        @foreach (var result in removalResults)
+                        {
+                            <p class="break-all text-muted-foreground">@result.Id: @(result.WasRemoved ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
+                        }
+                    </details>
+                }
+            </div>
+        }
+        <LibraryWorkbench @ref="workbench" Visible="@(activeTool is "organize" or "search" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
+                          Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
+                          SuggestionsChanged="SuggestionsChanged" />
+    </GalleryToolbox>
 
     @if (selected is not null)
     {
-        <div class="fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
-            <Card Class="mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+        <div class="image-detail-overlay fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
+            <Card Class="image-detail-dialog mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close image details"><XIcon aria-hidden="true" /></Button></div>
                 <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
-                    <div class="preview grid min-h-52 place-items-center self-start rounded-lg bg-black/40 lg:sticky lg:top-0">
-                        @if (selected.IsVideo && videoUrl.Length > 0)
-                        { <video src="@videoUrl" poster="@preview" controls loop playsinline aria-label="@selected.Name"></video> }
-                        else { <img src="@preview" alt="@selected.Name" draggable="false" /> }
-                    </div>
-                    <div class="min-w-0 space-y-4 text-sm">
-                        <div class="eyebrow">ENCRYPTED ORIGINAL@(selected.IsVideo ? " · MP4 VIDEO" : "")</div>
-                        <p>@selected.Width &times; @selected.Height@(selected.IsVideo ? $" · {GalleryService.FormatDuration(selected)}" : "") &middot; @((selected.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</p>
-                        <p class="text-muted-foreground">Imported @selected.ImportedAt.ToLocalTime().ToString("g")<br />Original: @selected.OriginalName</p>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => OpenViewer(selected.Id)">Full screen view</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => FavoriteAsync(selected)">@(selected.IsFavorite ? "Remove favorite" : "Favorite")</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => MarkAsync(selected)">@(selected.IsMarkedForDeletion ? "Unmark deletion" : "Mark for deletion")</Button>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="@(selected.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted copy in its original format, including embedded metadata")" OnClick="() => ExportAsync(selected)">Save a copy</Button>
-                            @if (selected.Generation?.HasWorkflow == true || selected.Generation?.HasApiPrompt == true)
-                            {
-                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" title="Download the embedded ComfyUI workflow as JSON" OnClick="() => ExportWorkflowAsync(selected)">Export workflow</Button>
-                            }
-                            @if (selected.IsMarkedForDeletion)
-                            {
-                                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => PrepareRemovalAsync(new[] { selected.Id })">Remove this image</Button>
-                            }
-                        </div>
-                        @if (selected.Generation is { } generation)
-                        {
-                            <h3>ComfyUI generation</h3>
-                            <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 [&_dt]:text-muted-foreground [&_dd]:min-w-0 [&_dd]:break-words">
-                                @if (generation.Prompt.Length > 0) { <dt>Prompt</dt><dd class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words">@generation.Prompt</dd> }
-                                @if (generation.NegativePrompt.Length > 0) { <dt>Negative prompt</dt><dd class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words">@generation.NegativePrompt</dd> }
-                                @if (generation.Model.Length > 0) { <dt>@(generation.ModelKind.Length > 0 ? generation.ModelKind : "Model")</dt><dd>@generation.Model</dd> }
-                                @if (generation.Steps is int steps) { <dt>Steps</dt><dd>@steps</dd> }
-                                @if (generation.Cfg is double cfg) { <dt>CFG</dt><dd>@cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)</dd> }
-                            </dl>
-                            @if (!generation.HasApiPrompt) { <p class="text-muted-foreground">Only a UI workflow was embedded; export it to inspect the graph in ComfyUI.</p> }
-                            @if (generation.Prompt.Length > 0)
-                            {
-                                var count = images.Count(image => image.Prompt == generation.Prompt);
-                                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Class="h-auto px-0" Disabled="@busy" OnClick="() => ShowPromptAsync(generation.Prompt)">Show all @count with this exact prompt</Button>
-                            }
-                        }
-                        <h3>Vision notes</h3>
-                        <Label For="description" Class="mt-4 mb-2 block">Description</Label><Textarea id="description" Rows="4" @bind-Value="editDescription"></Textarea>
-                        <Label For="edit-tags" Class="mt-4 mb-2 block">Tags, comma-separated</Label><Input id="edit-tags" @bind-Value="editTags" Placeholder="landscape, sunset, cinematic" />
-                        <div class="flex flex-wrap items-center gap-2"><Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SaveNotesAsync">Save notes</Button><Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="AnalyzeAsync">Analyze locally</Button></div>
-                        @if (selected.AnalysisModel.Length > 0) { <small class="text-muted-foreground">Analyzed by @selected.AnalysisModel</small> }
-                        <h3>Move &amp; rename</h3>
-                        <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
-                            <Label For="destination" Class="mt-4 mb-2 block">Existing destination folder</Label><Input id="destination" @bind-Value="destination" required />
-                            <Label For="rename" Class="mt-4 mb-2 block">Filename</Label><div class="flex min-w-0 items-center gap-2 [&>span]:text-muted-foreground"><Input id="rename" @bind-Value="rename" required /><span>@(selected.IsVideo ? ".dmp4" : ".dpng")</span></div>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="submit" Disabled="@busy">Move encrypted image <ArrowRightIcon aria-hidden="true" /></Button>
-                        </form>
-                        <small class="text-muted-foreground">No overwrite. The file remains encrypted. Deletion marks are reversible; permanent removal requires a separate confirmation.</small>
-                        <details><summary>Embedded generation metadata</summary><pre>@selected.Metadata</pre></details>
-                        <details><summary>File locations</summary><p class="break-all text-muted-foreground">@selected.StoredPath</p><p class="break-all text-muted-foreground">Source: @selected.SourceFolder</p></details>
+                    <ImageDetailPreview Image="selected" Preview="@preview" VideoUrl="@videoUrl" Busy="busy"
+                                        Download="() => ExportAsync(selected)" Fullscreen="() => OpenViewer(selected.Id)"
+                                        Rate="value => RateImageAsync(selected, value)" Favorite="() => FavoriteAsync(selected)"
+                                        Mark="() => MarkAsync(selected)" />
+                    <div class="min-w-0 space-y-4">
+                        <ImageDetailFields @key="selected.Id" Image="selected" Busy="busy" @bind-Description="editDescription" @bind-UserDescription="editUserDescription"
+                                           Save="SaveNotesAsync" Analyze="AnalyzeAsync" DownloadWorkflow="() => ExportWorkflowAsync(selected)"
+                                           ShowPrompt="() => ShowPromptAsync(selected.Prompt)" Remove="() => PrepareRemovalAsync(new[] { selected.Id })" />
                         @if (busy) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@progress</p> }
                         @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                     </div>
@@ -766,7 +763,8 @@ else
 
 @if (Gallery.IsUnlocked && viewerImages.Count > 0)
 {
-    <FullscreenViewer Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged" />
+    <FullscreenViewer Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
+                      Suggestions="aiSuggestions" ApproveSuggestion="ApproveSuggestionAsync" DismissSuggestion="DismissSuggestionAsync" />
 }
 @if (Gallery.IsUnlocked && reviewGroups.Count > 0)
 {
@@ -778,6 +776,7 @@ else
     private string existingGalleryDirectory = "", newGalleryName = "", newGalleryDirectory = "";
     private string newMediaDirectory = "", mediaDirectory = "", catalogDirectory = "";
     private int ingestionWorkers = IngestionOptions.Hdd.Workers, ingestionBatchSize = IngestionOptions.Hdd.CatalogBatchSize;
+    private string ingestionProfile = "hdd";
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
     private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
     private string restoreArchive = "", restoreCredential = "";
@@ -845,10 +844,11 @@ else
         message = "Gallery renamed.";
     });
 
-    private void ApplyIngestionProfile(IngestionOptions options)
+    private void ApplyIngestionProfile(IngestionOptions options, string? profile = null)
     {
         ingestionWorkers = options.Workers;
         ingestionBatchSize = options.CatalogBatchSize;
+        ingestionProfile = profile ?? (options == IngestionOptions.Hdd ? "hdd" : options == IngestionOptions.Ssd ? "ssd" : "custom");
     }
 
     private Task SaveIngestionOptionsAsync() => RunAsync("Saving ingestion settings...", async () =>
@@ -921,32 +921,46 @@ else
 
     private string secret = "", confirm = "", recoveryPhrase = "", error = "", message = "", progress = "";
     private string importPath = "", newPassphrase = "", newConfirm = "";
-    private string preview = "", editDescription = "", editTags = "", destination = "", rename = "";
+    private IngestionScan? ingestionScan;
+    private IngestionSpaceEstimate? ingestionSpace;
+    private bool includeImages = true, includeVideos = true;
+    private bool CanIngestScan => !busy && ingestionScan is not null && ingestionSpace?.HasEnoughSpace == true;
+    private long EstimatedIngestionChangeBytes => ingestionSpace is { } space
+        ? space.EstimatedBytes - (deleteSources ? space.SelectedSourceBytes : 0) : 0;
+    private string preview = "", editDescription = "", editUserDescription = "", destination = "", rename = "";
     private string videoUrl = "";
     private string grouping = "none";
     private GalleryBrowsingProjection browsingProjection = GalleryBrowsingProjection.Empty;
     private IReadOnlyList<ImageRecord>? browsingSource;
     private GalleryFilter? projectedFilter;
-    private bool projectedGrouping;
+    private string? projectedGrouping;
     private IReadOnlyDictionary<string, PromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
-    private bool useRecovery, recoverySaved, busy, recursive;
-    private string workflow = "library";
+    private IReadOnlyDictionary<string, DiffusionModelGroup> diffusionModelGroupOf => Browsing.DiffusionModelGroupsByImageId;
+    private bool useRecovery, recoverySaved, busy;
+    private bool recursive = true;
+    private string workflow = "gallery";
+    private bool sidebarCollapsed;
     private LibraryWorkbench? workbench;
+    private GalleryToolbox? toolbox;
+    private string activeTool = "";
+    private bool toolboxVisible = true;
+    private double? toolboxX, toolboxY;
+    private IReadOnlyDictionary<string, OrganizationSuggestion> aiSuggestions = new Dictionary<string, OrganizationSuggestion>();
+    private Guid? progressToast;
+    private bool progressToastScheduled;
+    private bool TrashActive => activeTool == "trash";
+    private bool ToolboxShown => toolboxVisible && workflow == "gallery";
+    // Gallery feedback is shown as toasts so the main content holds only image cards; dialogs keep their inline messages.
+    private bool UsesToasts => Gallery.IsUnlocked && workflow == "gallery" && selected is null && removalPlan.Count == 0;
     private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
     private GalleryFilter? browsingFilter;
     private static readonly (string Id, string Name)[] Workflows =
     [
-        ("library", "Library"), ("review", "Guided review"), ("organize", "Organize"),
-        ("explore", "Explore & saved views"), ("ai", "Local intelligence"),
-        ("duplicates", "Duplicate finder"),
-        ("remove", "Remove marked images"), ("ingest", "Ingest images"),
-        ("settings", "Settings")
+        ("gallery", "Gallery"), ("duplicates", "Duplicate finder"), ("ingest", "Ingest images"), ("settings", "Settings")
     ];
     private static string WorkflowIcon(string workflow) => workflow switch
     {
-        "library" => "images", "review" => "circle-check", "organize" => "folder",
-        "explore" => "search", "ai" => "sparkles", "duplicates" => "copy",
-        "remove" => "trash", "ingest" => "image-plus", "settings" => "settings",
+        "gallery" => "images", "duplicates" => "copy", "ingest" => "image-plus", "settings" => "settings",
         _ => throw new ArgumentOutOfRangeException(nameof(workflow))
     };
     private static readonly (string Id, string Name)[] SettingsTabs =
@@ -967,9 +981,8 @@ else
         && (backupDestinationType == "local"
             ? backupLocalDirectory.Trim().Length > 0
             : backupAzureContainer.Trim().Length > 0 && backupOptions.HasAzureCredentials);
-    private bool ShowsGallery => workflow is not ("ingest" or "settings" or "duplicates");
-    private int PendingReviewCount => images.Count(image => !image.IsReviewed && !image.IsMarkedForDeletion);
-    private bool deleteSources, confirmSourceDeletion;
+    private bool ShowsGallery => workflow == "gallery";
+    private bool deleteSources;
     private readonly HashSet<string> removalSelection = [];
     private List<RemovalItem> removalPlan = [];
     private List<RemovalResult> removalResults = [];
@@ -981,10 +994,18 @@ else
     private List<ImageRecord> viewerImages = [];
     private string viewerInitialId = "";
     private bool reviewMode;
+    private bool reviewRandomOrder;
+    private int reviewGoal = 10;
+    private IEnumerable<ImageRecord> ReviewPool => Filtered.Where(image => !image.IsReviewed && !image.IsMarkedForDeletion);
+    private int ReviewPoolCount => ReviewPool.Count();
+    private int ReviewGoal
+    {
+        get => Math.Clamp(reviewGoal, ReviewPoolCount > 0 ? 1 : 0, ReviewPoolCount);
+        set => reviewGoal = Math.Clamp(value, ReviewPoolCount > 0 ? 1 : 0, ReviewPoolCount);
+    }
     private int page;
-    private int PageSize => density switch { "compact" => 49, "large" => 12, _ => 24 };
-    private string density = "comfortable";
-    private string bulkTags = "", bulkCollection = "";
+    private int PageSize => density == "compact" ? 49 : 12;
+    private string density = UiPreferences.DetailDensity;
     private string? selectionAnchor;
     private DuplicateScan? duplicateScan;
     private readonly Dictionary<string, string> duplicateThumbnails = [];
@@ -994,15 +1015,6 @@ else
     private DotNetObjectReference<Home>? gridReference;
     private DotNetObjectReference<Home>? securityReference;
     private int autoLockMinutes = UiPreferences.DefaultAutoLockMinutes;
-    private sealed record QuickFilter(string Label, Func<GalleryFilter, bool> IsActive, Func<GalleryFilter, bool, GalleryFilter> Toggle, Func<IEnumerable<ImageRecord>, int> Count);
-    private static readonly QuickFilter[] QuickFilters =
-    [
-        new("Unreviewed", f => f.Review == "pending", (f, on) => f with { Review = on ? "pending" : GalleryFilter.AnyValue }, all => all.Count(i => !i.IsReviewed && !i.IsMarkedForDeletion)),
-        new("5\u2605", f => f.MinRating == 5, (f, on) => f with { MinRating = on ? 5 : 0 }, all => all.Count(i => i.Rating == 5 && !i.IsMarkedForDeletion)),
-        new("Favorites", f => f.IncludesFavoritesOnly, (f, on) => f with { IncludesFavoritesOnly = on }, all => all.Count(i => i.IsFavorite && !i.IsMarkedForDeletion)),
-        new("Not analyzed", f => f.Analysis == "pending", (f, on) => f with { Analysis = on ? "pending" : GalleryFilter.AnyValue }, all => all.Count(i => i.Description.Length == 0 && !i.IsMarkedForDeletion)),
-        new("Videos", f => f.Media == "video", (f, on) => f with { Media = on ? "video" : GalleryFilter.AnyValue }, all => all.Count(i => i.IsVideo && !i.IsMarkedForDeletion)),
-    ];
     private IEnumerable<string> AllCollections => images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
     private ImageRecord? ImageById(string id) => imagesById.GetValueOrDefault(id);
     private Dictionary<string, ImageRecord> imagesById = [];
@@ -1030,13 +1042,12 @@ else
     {
         get
         {
-            var groupByPrompt = grouping == "prompt";
-            if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != groupByPrompt)
+            if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != grouping)
             {
-                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, groupByPrompt);
+                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, grouping);
                 browsingSource = images;
                 projectedFilter = filter;
-                projectedGrouping = groupByPrompt;
+                projectedGrouping = grouping;
             }
             return browsingProjection;
         }
@@ -1157,11 +1168,9 @@ else
             {
                 if (useRecovery) await Gallery.UnlockWithRecoveryPhraseAsync(secret);
                 else await Gallery.UnlockWithPassphraseAsync(secret);
-                workflow = importRunning ? "ingest" : "library";
+                workflow = importRunning ? "ingest" : "gallery";
                 settingsTab = "overview";
-                var preferences = await Gallery.LoadPreferencesAsync();
-                density = preferences.GridDensity;
-                autoLockMinutes = preferences.AutoLockMinutes;
+                ApplyPreferences(await Gallery.LoadPreferencesAsync());
                 Gallery.ConfigureAutoLock(autoLockMinutes);
                 try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
                 catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
@@ -1180,9 +1189,7 @@ else
     private Task FinishSetupAsync() => RunAsync("Opening gallery...", async () =>
     {
         if (!recoverySaved) throw new InvalidOperationException("Save your recovery words first.");
-        var preferences = await Gallery.LoadPreferencesAsync();
-        density = preferences.GridDensity;
-        autoLockMinutes = preferences.AutoLockMinutes;
+        ApplyPreferences(await Gallery.LoadPreferencesAsync());
         Gallery.ConfigureAutoLock(autoLockMinutes);
         try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
@@ -1297,36 +1304,92 @@ else
     }
 
     private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
-    private Task ResetFilters() { filter = new() { Deletion = workflow == "remove" ? "marked" : "all" }; return FilterChangedAsync(); }
+    private Task ResetFilters() { filter = new() { Deletion = TrashActive ? "marked" : "all" }; return FilterChangedAsync(); }
     private Task ApplyLibraryFilterAsync(GalleryFilter value) { filter = value; return FilterChangedAsync(); }
     private Task SetSort(string? value)
     {
         filter = filter with { Sort = value ?? "newest" };
         return FilterChangedAsync();
     }
-    private Task SetQueueAsync(string queue)
+    private string ToolBadge(string tool) => tool switch
     {
+        "filters" when !TrashActive && GalleryFilterPanel.CountChanged(filter) is > 0 and var count => count.ToString(),
+        "trash" when images.Count(image => image.IsMarkedForDeletion) is > 0 and var count => count.ToString(),
+        "intelligence" when aiSuggestions.Count > 0 => aiSuggestions.Count.ToString(),
+        _ => ""
+    };
+    private async Task SetActiveToolAsync(string value)
+    {
+        value = UiPreferences.ToolboxTools.Contains(value) ? value : "";
+        if (activeTool == value) return;
+        var wasTrash = TrashActive;
+        activeTool = value;
+        if (TrashActive != wasTrash)
+        {
+            // Trash temporarily swaps the browsing filter for marked images and restores it when another tool is chosen.
+            if (TrashActive) { browsingFilter = filter with { }; filter = new() { Deletion = "marked" }; }
+            else { filter = browsingFilter ?? new(); browsingFilter = null; }
+            ClearSelection();
+            await FilterChangedAsync();
+        }
+        await SaveToolboxStateAsync();
+    }
+    private async Task ToggleToolboxAsync()
+    {
+        if (workflow != "gallery")
+        {
+            toolboxVisible = true;
+            await SwitchWorkflowAsync("gallery");
+        }
+        else toolboxVisible = !toolboxVisible;
+        await SaveToolboxStateAsync();
+    }
+    private Task ToolboxMovedAsync((double? X, double? Y) position)
+    {
+        (toolboxX, toolboxY) = position;
+        return SaveToolboxStateAsync();
+    }
+    private async Task ResetToolboxPositionAsync()
+    {
+        toolboxVisible = true;
+        (toolboxX, toolboxY) = ((double?)null, (double?)null);
+        if (toolbox is not null) await toolbox.ResetPositionAsync();
+        await SaveToolboxStateAsync();
+    }
+    private async Task OpenTrashAsync()
+    {
+        toolboxVisible = true;
+        await SwitchWorkflowAsync("gallery");
+        await SetActiveToolAsync("trash");
+    }
+    private void ApplyPreferences(UiPreferences preferences)
+    {
+        density = preferences.GridDensity;
+        autoLockMinutes = preferences.AutoLockMinutes;
+        toolboxVisible = preferences.ToolboxVisible;
+        (toolboxX, toolboxY) = (preferences.ToolboxX, preferences.ToolboxY);
+        activeTool = preferences.ToolboxTool;
         browsingFilter = null;
-        workflow = queue == "pending" ? "review" : "library";
-        filter = new();
-        if (queue == "all") filter = filter with { Deletion = GalleryFilter.AnyValue };
-        if (queue == "pending") filter = filter with { Review = "pending" };
-        if (queue == "favorites") filter = filter with { IncludesFavoritesOnly = true };
-        if (queue == "unorganized") filter = filter with { IncludesUnorganizedOnly = true };
-        return FilterChangedAsync();
+        filter = TrashActive ? new() { Deletion = "marked" } : new();
+        if (TrashActive) browsingFilter = new();
+    }
+    private Task SavePreferencesAsync() => Gallery.SavePreferencesAsync(new UiPreferences
+    {
+        GridDensity = density, AutoLockMinutes = autoLockMinutes, ToolboxVisible = toolboxVisible,
+        ToolboxX = toolboxX, ToolboxY = toolboxY, ToolboxTool = activeTool
+    });
+    // Toolbox state is a convenience; failing to persist it must not interrupt browsing.
+    private async Task SaveToolboxStateAsync()
+    {
+        if (!Gallery.IsUnlocked) return;
+        try { await SavePreferencesAsync(); }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
+        {
+            Logger.LogWarning(exception, "Toolbox preferences were not saved");
+        }
     }
     private Task SwitchWorkflowAsync(string value)
     {
-        if (value == "remove" && workflow != "remove")
-        {
-            browsingFilter = filter with { };
-            filter = new() { Deletion = "marked" };
-        }
-        else if (workflow == "remove" && value != "remove" && browsingFilter is not null)
-        {
-            filter = browsingFilter;
-            browsingFilter = null;
-        }
         workflow = value;
         ClearSelection();
         if (value == "duplicates")
@@ -1434,7 +1497,7 @@ else
         }).ToList();
         try { await Gallery.UpdateManyAsync(ids, image => Gallery.SetDeletionMark(image, true)); }
         finally { await ReloadAsync(); }
-        message = $"Marked {ids.Count} extra cop{(ids.Count == 1 ? "y" : "ies")} for deletion. Review and remove them from Remove marked images.";
+        message = $"Marked {ids.Count} extra cop{(ids.Count == 1 ? "y" : "ies")} for deletion. Review and remove them from Trash.";
     });
     private sealed class InlineProgress<T>(Func<T, Task> report) : IProgress<T>
     {
@@ -1484,7 +1547,19 @@ else
         message = "Gallery overview refreshed.";
     });
     private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
-    private Task OpenLibraryJobAsync() => SwitchWorkflowAsync(libraryJob.Suggestions > 0 && !libraryJob.IsRunning ? "ai" : libraryJob.Workflow);
+    private async Task OpenLibraryJobAsync()
+    {
+        toolboxVisible = true;
+        if (workflow != "gallery") await SwitchWorkflowAsync("gallery");
+        await SetActiveToolAsync(libraryJob.Workflow is "organize" or "search" && (libraryJob.IsRunning || libraryJob.Suggestions == 0)
+            ? libraryJob.Workflow : "intelligence");
+    }
+    private void SuggestionsChanged(IReadOnlyList<OrganizationSuggestion> suggestions) =>
+        aiSuggestions = suggestions.ToDictionary(suggestion => suggestion.Id);
+    private Task<ImageRecord?> ApproveSuggestionAsync(OrganizationSuggestion suggestion) =>
+        workbench?.ApproveSuggestionAsync(suggestion) ?? Task.FromResult<ImageRecord?>(null);
+    private Task DismissSuggestionAsync(OrganizationSuggestion suggestion) =>
+        workbench?.DismissSuggestionAsync(suggestion) ?? Task.CompletedTask;
     private void DismissLibraryJob() => libraryJob = new(false, "", "", 0, false);
     private Task StopLibraryJobAsync() => workbench?.StopAnalysisAsync() ?? Task.CompletedTask;
     private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); selectionAnchor = null; }
@@ -1496,29 +1571,19 @@ else
         if (selected?.Id == updated.Id) selected = updated;
         browsingSource = null;
     }
-    private void SelectLibraryPage() { librarySelection.UnionWith(PageImages.Select(image => image.Id)); }
-    private void ToggleLibrarySelection(string id, bool value)
-    {
-        if (value) librarySelection.Add(id); else librarySelection.Remove(id);
-    }
     private void SelectCard(string id, bool range)
     {
+        var selection = TrashActive ? removalSelection : librarySelection;
         var ordered = Filtered.Select(image => image.Id).ToList();
         var anchor = selectionAnchor is null ? -1 : ordered.IndexOf(selectionAnchor);
         var target = ordered.IndexOf(id);
         if (range && anchor >= 0 && target >= 0)
         {
             var (from, to) = anchor <= target ? (anchor, target) : (target, anchor);
-            librarySelection.UnionWith(ordered.Skip(from).Take(to - from + 1));
+            selection.UnionWith(ordered.Skip(from).Take(to - from + 1));
         }
-        else ToggleLibrarySelection(id, !librarySelection.Contains(id));
+        else if (!selection.Remove(id)) selection.Add(id);
         selectionAnchor = id;
-    }
-
-    private Task ToggleQuickFilterAsync(QuickFilter chip)
-    {
-        filter = chip.Toggle(filter, !chip.IsActive(filter));
-        return FilterChangedAsync();
     }
 
     private Task SetDensityAsync(string value) => RunAsync("Saving thumbnail size...", async () =>
@@ -1528,7 +1593,7 @@ else
         density = value;
         page = Math.Min(first / PageSize, PageCount - 1);
         await LoadThumbnailsAsync();
-        await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = value, AutoLockMinutes = autoLockMinutes });
+        await SavePreferencesAsync();
     });
 
     private async Task CurateAsync(IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update, string done)
@@ -1547,36 +1612,24 @@ else
         message = done;
     }
 
-    private Task BulkAsync(string status, Func<ImageRecordEdit, ImageRecordEdit> update, string done) =>
-        RunAsync(status, () => CurateAsync(librarySelection.ToList(), update, $"{done} ({librarySelection.Count} images)."));
-    private Task BulkRateAsync(int value) => BulkAsync("Rating selected images...", image => Gallery.SetCuration(image, value, null), value == 0 ? "Ratings cleared" : $"Rated {value} stars");
-    private Task BulkFavoriteAsync(bool value) => BulkAsync("Updating favorites...", image => image with { IsFavorite = value }, value ? "Added to favorites" : "Removed from favorites");
-    private Task BulkReviewedAsync(bool value) => BulkAsync("Updating review status...", image => image with { IsReviewed = value }, "Marked reviewed");
-    private Task BulkMarkAsync(bool value) => BulkAsync("Updating deletion marks...", image => Gallery.SetDeletionMark(image, value), value ? "Marked for deletion" : "Deletion marks cleared");
-    private Task BulkTagAsync()
-    {
-        var tags = bulkTags.Trim();
-        if (tags.Length == 0) return Task.CompletedTask;
-        bulkTags = "";
-        return BulkAsync("Adding tags...", image => image with { Tags = Gallery.MergeTags(image.Tags, tags) }, "Tags added");
-    }
-    private Task BulkCollectAsync()
-    {
-        var name = bulkCollection.Trim();
-        if (name.Length is 0 or > 80) return Task.CompletedTask;
-        bulkCollection = "";
-        return BulkAsync("Adding to collection...", image => Gallery.AddCollection(image, name), $"Added to {name}");
-    }
-
+    private Task MarkRemovalSelectionAsync(bool value) =>
+        RunAsync("Updating deletion marks...", () => CurateAsync(removalSelection.ToList(),
+            image => Gallery.SetDeletionMark(image, value), value ? "Marked for deletion" : "Deletion marks cleared"));
     [JSInvokable]
     public async Task HandleGridKey(string key, string id, bool shift)
     {
+        if (key == "`")
+        {
+            if (!Gallery.IsUnlocked || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
+            if (shift) await ResetToolboxPositionAsync(); else await ToggleToolboxAsync();
+            StateHasChanged();
+            return;
+        }
         if (!Gallery.IsUnlocked || busy || !ShowsGallery || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
         if (key == "escape") { ClearSelection(); selectionAnchor = null; StateHasChanged(); return; }
         if (!imagesById.TryGetValue(id, out var image)) return;
         if (key == "x")
         {
-            if (workflow == "remove") return;
             SelectCard(id, shift);
             StateHasChanged();
             return;
@@ -1604,25 +1657,116 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        PublishToasts();
         if (!firstRender) return;
         gridReference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("galleryGrid.attach", gridReference);
         securityReference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("gallerySecurity.attach", securityReference, autoLockMinutes);
     }
+    private void PublishToasts()
+    {
+        if (!UsesToasts) { DismissProgressToast(); return; }
+        if (error.Length > 0) { Toasts.Show("Something went wrong", error, SonnerToastVariant.Destructive, 8000); error = ""; }
+        if (message.Length > 0) { Toasts.Show(message, "", SonnerToastVariant.Default, 4000); message = ""; }
+        if (!busy) DismissProgressToast();
+        else if (progressToast is null && !progressToastScheduled)
+        {
+            progressToastScheduled = true;
+            _ = ShowProgressToastAsync();
+        }
+    }
+    // Only operations that are still running after a short delay get a progress toast, so quick actions stay quiet.
+    private async Task ShowProgressToastAsync()
+    {
+        await Task.Delay(600);
+        await InvokeAsync(() =>
+        {
+            progressToastScheduled = false;
+            if (!disposed && busy && UsesToasts && progressToast is null)
+                progressToast = Toasts.Show(progress.Length > 0 ? progress : "Working...", "", SonnerToastVariant.Default, 600_000);
+        });
+    }
+    private void DismissProgressToast()
+    {
+        if (progressToast is not { } id) return;
+        progressToast = null;
+        Toasts.Dismiss(id);
+    }
     private Task PreviousAsync() => RunAsync("Loading previews...", async () => { page--; await LoadThumbnailsAsync(); });
     private Task NextAsync() => RunAsync("Loading previews...", async () => { page++; await LoadThumbnailsAsync(); });
 
-    private Task ImportFolderAsync() => RunAsync("Scanning selected folder...", async () =>
+    private void ClearIngestionScan()
+    {
+        ingestionScan = null;
+        ingestionSpace = null;
+        deleteSources = false;
+    }
+
+    private void ToggleImportRecursion()
+    {
+        recursive = !recursive;
+        ClearIngestionScan();
+    }
+
+    private void ToggleSourceDeletion()
+    {
+        deleteSources = !deleteSources;
+    }
+
+    private Task ScanImportFolderAsync() => RunAsync("Scanning selected folder...", async () =>
     {
         EnsureNoLibraryJob();
-        if (deleteSources && !confirmSourceDeletion)
-            throw new InvalidOperationException("Confirm source deletion before importing, or disable it to keep originals.");
+        ClearIngestionScan();
+        importProgress = null;
+        importFailures = [];
+        timingReport = null;
+        var scan = await Gallery.ScanFolderAsync(importPath,
+            recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder);
+        if (disposed || !Gallery.IsUnlocked) return;
+        includeImages = true;
+        includeVideos = Gallery.VideoToolsAvailable;
+        var space = await Gallery.EstimateIngestionSpaceAsync(scan, includeImages, includeVideos);
+        if (disposed || !Gallery.IsUnlocked) return;
+        ingestionScan = scan;
+        ingestionSpace = space;
+    });
+
+    private Task ToggleIncludeImagesAsync() => RunAsync("Updating disk space estimate...", async () =>
+    {
+        includeImages = !includeImages;
+        await RefreshIngestionSpaceAsync();
+    });
+
+    private Task ToggleIncludeVideosAsync() => RunAsync("Updating disk space estimate...", async () =>
+    {
+        includeVideos = !includeVideos;
+        await RefreshIngestionSpaceAsync();
+    });
+
+    private async Task RefreshIngestionSpaceAsync()
+    {
+        ingestionSpace = null;
+        if (ingestionScan is not { } scan) throw new InvalidOperationException("Scan the source folder first.");
+        var space = await Gallery.EstimateIngestionSpaceAsync(scan, includeImages, includeVideos);
+        if (!disposed && Gallery.IsUnlocked && ReferenceEquals(scan, ingestionScan)) ingestionSpace = space;
+    }
+
+    private static string FormatIngestionBytes(long bytes) => bytes < 1024L * 1024
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes / (1024d * 1024):0.######} MB")
+        : GalleryService.FormatBytes(bytes);
+
+    private Task ImportFolderAsync() => RunAsync("Ingesting scanned media...", async () =>
+    {
+        EnsureNoLibraryJob();
+        var scan = ingestionScan ?? throw new InvalidOperationException("Scan the source folder before ingesting.");
+        if (ingestionSpace?.HasEnoughSpace != true)
+            throw new InvalidOperationException("Select media and check available disk space before ingesting.");
         var deletingSources = deleteSources;
         importFailures = [];
         timingReport = null;
         IngestionTimingReport? completedTimingReport = null;
-        importProgress = new ImportProgress(null, 0, 0, 0, "Scanning selected folder...");
+        importProgress = new ImportProgress(ingestionSpace.FileCount, 0, 0, 0, "Checking scanned files and disk space...");
         importRunning = true;
         await InvokeAsync(StateHasChanged);
         var lastProgressRender = System.Diagnostics.Stopwatch.StartNew();
@@ -1642,7 +1786,9 @@ else
                             StateHasChanged();
                             lastProgressRender.Restart();
                         }
-                    }), reportTimings: recordTimings ? report => completedTimingReport = report : null, options: new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
+                    }), reportTimings: recordTimings ? report => completedTimingReport = report : null,
+                    options: new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize },
+                    scan: scan, includeImages: includeImages, includeVideos: includeVideos);
             }
             catch (ImportFolderException exception)
             {
@@ -1668,13 +1814,14 @@ else
         finally
         {
             importRunning = false;
+            ClearIngestionScan();
             if (completedTimingReport is not null)
             {
                 timingReport = completedTimingReport.ToString();
                 Logger.LogInformation("{IngestionTimings}", timingReport);
             }
         }
-        deleteSources = confirmSourceDeletion = false;
+        deleteSources = false;
     });
 
     private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
@@ -1695,18 +1842,6 @@ else
         await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.IsMarkedForDeletion));
         await ReloadAsync();
     });
-
-    private void ToggleRemovalSelection(string id, bool value)
-    {
-        if (value) removalSelection.Add(id);
-        else removalSelection.Remove(id);
-    }
-
-    private void SelectFilteredMarked()
-    {
-        removalSelection.Clear();
-        removalSelection.UnionWith(Filtered.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
-    }
 
     private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(removalSelection.ToArray());
     private Task PrepareRemovalAsync(IEnumerable<string> ids) => RunAsync("Checking originals...", async () =>
@@ -1755,7 +1890,7 @@ else
         selected = image;
         preview = data;
         editDescription = image.Description;
-        editTags = image.Tags;
+        editUserDescription = image.UserDescription;
         destination = Path.GetDirectoryName(image.StoredPath)!;
         rename = image.Name;
     });
@@ -1763,7 +1898,7 @@ else
     private void CloseDetail()
     {
         selected = null;
-        preview = editDescription = editTags = destination = rename = "";
+        preview = editDescription = editUserDescription = destination = rename = "";
         _ = ReleaseVideoAsync();
     }
 
@@ -1811,14 +1946,6 @@ else
         message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the gallery.";
     });
 
-    private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
-    {
-        var file = await Gallery.WorkflowAsync(image.Id) ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
-        try { await DownloadAsync(file); }
-        finally { GalleryService.ClearExportContent(file); }
-        message = $"Saved the ComfyUI workflow as {file.FileName}.";
-    });
-
     private Task ExportSelectedAsync() => RunAsync($"Packing {librarySelection.Count} decrypted copies...", async () =>
     {
         var file = await Gallery.ExportZipAsync(librarySelection.ToList());
@@ -1839,8 +1966,9 @@ else
 
     private void StartReview()
     {
-        viewerImages = Filtered.Where(image => !image.IsReviewed && !image.IsMarkedForDeletion)
-            .Select(image => image with { }).ToList();
+        var pool = ReviewPool.ToArray();
+        if (reviewRandomOrder) Random.Shared.Shuffle(pool);
+        viewerImages = pool.Take(ReviewGoal).Select(image => image with { }).ToList();
         viewerInitialId = viewerImages.FirstOrDefault()?.Id ?? "";
         reviewMode = true;
         CloseDetail();
@@ -1856,9 +1984,18 @@ else
     private Task SaveNotesAsync() => RunAsync("Saving notes...", async () =>
     {
         if (selected is null) return;
-        await Gallery.UpdateAsync(selected.Id, image => image with { Description = editDescription.Trim(), Tags = editTags.Trim() });
+        await Gallery.UpdateAsync(selected.Id, image => image with { Description = editDescription.Trim(), UserDescription = editUserDescription.Trim() });
         await ReloadAsync();
         message = "Notes saved.";
+    });
+
+    private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
+    {
+        var file = await Gallery.WorkflowAsync(image.Id)
+            ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
+        try { await DownloadAsync(file); }
+        finally { GalleryService.ClearExportContent(file); }
+        message = $"Saved the ComfyUI workflow as {file.FileName}.";
     });
 
     private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>
@@ -1867,11 +2004,10 @@ else
         var result = await Gallery.AnalyzeImageAsync(settings, preview);
         await Gallery.UpdateAsync(selected.Id, image =>
         {
-            return image with { Description = result.Description, Tags = result.Tags, AnalysisModel = settings.Model };
+            return image with { Description = result.Description, UserDescription = editUserDescription.Trim(), Tags = result.Tags, AnalysisModel = settings.Model };
         });
         await ReloadAsync();
         editDescription = selected!.Description;
-        editTags = selected.Tags;
         message = "Vision analysis saved.";
     });
 
@@ -1908,7 +2044,7 @@ else
             Gallery.ConfigureAutoLock(autoLockMinutes);
             try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
             catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-            await Gallery.SavePreferencesAsync(new UiPreferences { GridDensity = density, AutoLockMinutes = autoLockMinutes });
+            await SavePreferencesAsync();
         }
     }
 
@@ -1955,6 +2091,7 @@ else
         thumbnailFailures.Clear();
         CloseDetail();
         secret = confirm = recoveryPhrase = newPassphrase = newConfirm = error = message = importPath = "";
+        ClearIngestionScan();
         if (!importRunning)
         {
             importFailures.Clear();
@@ -1965,7 +2102,12 @@ else
         filter = new();
         page = 0;
         useRecovery = recoverySaved = false;
-        workflow = "library";
+        workflow = "gallery";
+        activeTool = "";
+        toolboxVisible = true;
+        (toolboxX, toolboxY) = ((double?)null, (double?)null);
+        aiSuggestions = new Dictionary<string, OrganizationSuggestion>();
+        DismissProgressToast();
         settingsTab = "overview";
         storageOverview = null;
         backupOptions = null;
@@ -1974,7 +2116,7 @@ else
         restoreCredential = restoreSasUrl = purgeConfirmation = "";
         browsingFilter = null;
         libraryJob = new(false, "", "", 0, false);
-        deleteSources = confirmSourceDeletion = false;
+        deleteSources = false;
         removalSelection.Clear();
         removalPlan.Clear();
         removalResults.Clear();
@@ -1984,8 +2126,7 @@ else
         viewerImages.Clear();
         viewerInitialId = "";
         imagesById = [];
-        density = "comfortable";
-        bulkTags = bulkCollection = "";
+        density = UiPreferences.DetailDensity;
         selectionAnchor = null;
         duplicateScan = null;
         duplicateThumbnails.Clear();
@@ -1996,6 +2137,7 @@ else
 
     public void Dispose()
     {
+        ClearIngestionScan();
         disposed = true;
         Gallery.OnAutoLocked -= HandleAutoLocked;
         Gallery.DriveQueueChanged -= HandleDriveQueueChanged;

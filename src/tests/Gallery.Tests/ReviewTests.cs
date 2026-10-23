@@ -10,6 +10,141 @@ namespace Gallery.Tests;
 public sealed class ReviewTests
 {
     [Fact]
+    public async Task Organize_ColumnActionsPreserveOtherMetadata()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "organize.png", "folder");
+        image = await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        {
+            Description = "preserve", Tags = "existing", Rating = 3, IsFavorite = true
+        });
+        var workbench = new Gallery.Web.Components.LibraryWorkbench();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = workbench.GetType();
+        type.GetProperty("Gallery", flags)!.SetValue(workbench, fixture.Service);
+        type.GetProperty("Logger", flags)!.SetValue(workbench,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.LibraryWorkbench>.Instance);
+        type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { image.Id });
+        type.GetField("collection", flags)!.SetValue(workbench, "new collection");
+        type.GetField("tags", flags)!.SetValue(workbench, "new tag");
+        await (Task)type.GetMethod("ApplyCollectionAsync", flags)!.Invoke(workbench, null)!;
+        var collected = Assert.Single(await fixture.Service.ListAsync());
+        Assert.Contains("new collection", collected.Collections);
+        Assert.Equal("existing", collected.Tags);
+        await (Task)type.GetMethod("ApplyTagsAsync", flags)!.Invoke(workbench, null)!;
+        var tagged = Assert.Single(await fixture.Service.ListAsync());
+        Assert.Contains("existing", tagged.Tags);
+        Assert.Contains("new tag", tagged.Tags);
+        Assert.Equal(collected.Collections.ToArray(), tagged.Collections.ToArray());
+        Assert.Equal(image.Description, tagged.Description);
+        Assert.Equal(image.Rating, tagged.Rating);
+        Assert.Equal(image.IsReviewed, tagged.IsReviewed);
+        Assert.Equal(image.IsFavorite, tagged.IsFavorite);
+    }
+
+    [Fact]
+    public async Task Organize_TagChipsListSelectedTagsAndRemoveOnlyThatTagFromSelectedImages()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(9, 9)), "second.png", "folder");
+        var other = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(11, 11)), "other.png", "folder");
+        first = await fixture.Service.UpdateAsync(first.Id, edit => edit with { Tags = "warm, Portrait", Rating = 4 });
+        second = await fixture.Service.UpdateAsync(second.Id, edit => edit with { Tags = "portrait" });
+        other = await fixture.Service.UpdateAsync(other.Id, edit => edit with { Tags = "warm" });
+        var workbench = new Gallery.Web.Components.LibraryWorkbench();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = workbench.GetType();
+        type.GetProperty("Gallery", flags)!.SetValue(workbench, fixture.Service);
+        type.GetProperty("Logger", flags)!.SetValue(workbench,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.LibraryWorkbench>.Instance);
+        type.GetProperty(nameof(workbench.Images))!.SetValue(workbench, new List<ImageRecord> { first, second, other });
+        type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { first.Id, second.Id });
+
+        var chips = ((IReadOnlyList<(string Tag, int Count)>)type.GetProperty("SelectedTags", flags)!.GetValue(workbench)!).ToArray();
+        Assert.Equal([("Portrait", 2), ("warm", 1)], chips);
+
+        await (Task)type.GetMethod("RemoveTagAsync", flags)!.Invoke(workbench, ["warm"])!;
+        var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
+        Assert.Equal("Portrait", stored[first.Id].Tags);
+        Assert.Equal(4, stored[first.Id].Rating);
+        Assert.Equal("portrait", stored[second.Id].Tags);
+        Assert.Equal("warm", stored[other.Id].Tags);
+    }
+
+    [Theory]
+    [InlineData(false, 2, 1)]
+    [InlineData(true, 2, 0)]
+    [InlineData(false, 1, 0)]
+    public async Task Viewer_CelebratesOnceOnlyForAnEntirelyReviewedSession(bool hasSkipped, int reviewed, int expectedBursts)
+    {
+        var viewer = new Gallery.Web.Components.FullscreenViewer();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = viewer.GetType();
+        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
+        {
+            new() { Id = "first" }, new() { Id = "last" }
+        });
+        type.GetProperty(nameof(viewer.ReviewMode))!.SetValue(viewer, true);
+        type.GetField("reviewComplete", flags)!.SetValue(viewer, true);
+        type.GetField("hasSkipped", flags)!.SetValue(viewer, hasSkipped);
+        var decisions = (HashSet<string>)type.GetField("decisions", flags)!.GetValue(viewer)!;
+        decisions.UnionWith(new[] { "first", "last" }.Take(reviewed));
+        var js = new CelebrationJsRuntime();
+        type.GetProperty("JS", flags)!.SetValue(viewer, js);
+
+        for (var render = 0; render < 2; render++)
+            await (Task)type.GetMethod("OnAfterRenderAsync", flags)!.Invoke(viewer, [false])!;
+
+        Assert.Equal(expectedBursts, js.Calls);
+    }
+
+    private sealed class CelebrationJsRuntime : Microsoft.JSInterop.IJSRuntime
+    {
+        public int Calls { get; private set; }
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
+        {
+            Assert.Equal("galleryViewer.celebrate", identifier);
+            Calls++;
+            return ValueTask.FromResult(default(TValue)!);
+        }
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) =>
+            InvokeAsync<TValue>(identifier, args);
+    }
+
+    [Fact]
+    public async Task Viewer_ProgressCountsSkippedImagesAndOnlyCompletesWhenTheGoalIsReached()
+    {
+        var viewer = new Gallery.Web.Components.FullscreenViewer();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = viewer.GetType();
+        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
+        {
+            new() { Id = "first" }, new() { Id = "last" }
+        });
+        type.GetField("index", flags)!.SetValue(viewer, 1);
+        var cache = (Dictionary<string, (string Url, long Bytes)>)type.GetField("fitCache", flags)!.GetValue(viewer)!;
+        cache["first"] = ("first-url", 0);
+        cache["last"] = ("last-url", 0);
+        Task Skip() => (Task)type.GetMethod("SkipAsync", flags)!.Invoke(viewer, null)!;
+
+        await Skip();
+
+        Assert.False((bool)type.GetField("reviewComplete", flags)!.GetValue(viewer)!);
+        Assert.Equal(0, type.GetField("index", flags)!.GetValue(viewer));
+        Assert.Equal("0 Reviewed + 1 Skipped / 2", type.GetProperty("ReviewProgressText", flags)!.GetValue(viewer));
+        Assert.True((bool)type.GetField("hasSkipped", flags)!.GetValue(viewer)!);
+
+        await Skip();
+
+        Assert.True((bool)type.GetField("reviewComplete", flags)!.GetValue(viewer)!);
+        Assert.Equal("0 Reviewed + 2 Skipped / 2", type.GetProperty("ReviewProgressText", flags)!.GetValue(viewer));
+    }
+
+    [Fact]
     public async Task Viewer_UsesSavedToggleResultsAndCapturesUndoFromTheLatestPersistedRecord()
     {
         using var fixture = new TestVault();

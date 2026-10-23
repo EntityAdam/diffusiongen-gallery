@@ -139,7 +139,7 @@ public sealed class MediaAndComfyTests
 
         // Assert
         Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", record.Generation!.Prompt);
-        Assert.Equal(1, record.MetadataVersion);
+        Assert.Equal(ComfyMetadata.Version, record.MetadataVersion);
     }
 
     [Fact]
@@ -210,14 +210,20 @@ public sealed class MediaAndComfyTests
         Assert.Equal(["comfy.png", "plain.png"], archive.Entries.Select(entry => entry.FullName).Order());
     }
 
-    [Fact]
-    public async Task Load_WhenLegacyRecordLacksGeneration_ThenBackfillsGeneration()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task Load_WhenLegacyRecordLacksGeneration_ThenBackfillsGeneration(int metadataVersion)
     {
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
-        var legacy = record with { Generation = null, MetadataVersion = 0 };
+        var legacy = record with
+        {
+            Generation = metadataVersion == 0 ? null : record.Generation! with { Sampler = "", Scheduler = "" },
+            MetadataVersion = metadataVersion
+        };
         await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(
             System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(legacy), fixture.Session.Key, $"record:{record.Id}"));
 
@@ -227,7 +233,9 @@ public sealed class MediaAndComfyTests
         // Assert
         var listed = Assert.Single(records);
         Assert.Equal(30, listed.Generation!.Steps);
-        Assert.Equal(1, listed.MetadataVersion);
+        Assert.Equal("dpmpp_2m", listed.Generation.Sampler);
+        Assert.Equal("karras", listed.Generation.Scheduler);
+        Assert.Equal(ComfyMetadata.Version, listed.MetadataVersion);
     }
 
     [Fact]

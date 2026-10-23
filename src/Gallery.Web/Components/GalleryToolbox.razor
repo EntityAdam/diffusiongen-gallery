@@ -1,0 +1,98 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<section @ref="element" class="gallery-toolbox @(ActiveTool.Length > 0 ? "is-expanded" : "")" hidden="@(!Visible)" aria-label="Toolbox">
+    <div class="gallery-toolbox-bar" role="toolbar" aria-label="Gallery tools">
+        <button type="button" class="gallery-toolbox-handle" aria-label="Move toolbox (drag or arrow keys; double-click to reset position)" data-tooltip="Move (double-click to reset)">
+            <GripVerticalIcon Size="16" aria-hidden="true" />
+        </button>
+        @foreach (var tool in Tools)
+        {
+            var active = ActiveTool == tool.Id;
+            var badge = Badge?.Invoke(tool.Id) ?? "";
+            <button type="button" class="gallery-toolbox-tool" data-tool="@tool.Id" data-tooltip="@tool.Tooltip" aria-label="@tool.Tooltip"
+                    aria-pressed="@(active ? "true" : "false")" aria-controls="@PanelId" @onclick="() => ToggleAsync(tool.Id)">
+                <LucideIcon Name="@tool.Icon" Size="18" aria-hidden="true" />
+                @if (badge.Length > 0) { <span class="gallery-toolbox-badge" aria-hidden="true">@badge</span> }
+            </button>
+        }
+        <button type="button" class="gallery-toolbox-close" data-tooltip="Hide toolbox (`)" aria-label="Hide toolbox" @onclick="Close">
+            <XIcon Size="16" aria-hidden="true" />
+        </button>
+    </div>
+    <div id="@PanelId" class="gallery-toolbox-panel" role="region" aria-label="@ActiveTitle" hidden="@(ActiveTool.Length == 0)">
+        @if (ActiveTool.Length > 0) { <h3 class="gallery-toolbox-title">@ActiveTitle</h3> }
+        @ChildContent
+    </div>
+</section>
+
+@code {
+    public const string PanelId = "gallery-toolbox-panel";
+
+    public sealed record Tool(string Id, string Icon, string Tooltip, string Title);
+
+    public static readonly Tool[] Tools =
+    [
+        new("views", "layout-grid", "Change view", "View"),
+        new("filters", "funnel", "Filter images", "Filters"),
+        new("review", "circle-check", "Review images one by one", "Guided review"),
+        new("organize", "folder", "Organize media", "Organize"),
+        new("search", "search", "Search", "AI search"),
+        new("intelligence", "sparkles", "Use AI to describe and tag your images", "Local intelligence"),
+        new("trash", "trash", "Trash", "Trash")
+    ];
+
+    [Parameter] public bool Visible { get; set; } = true;
+    [Parameter] public string ActiveTool { get; set; } = "";
+    [Parameter] public EventCallback<string> ActiveToolChanged { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+    [Parameter] public EventCallback<(double? X, double? Y)> Moved { get; set; }
+    [Parameter] public double? X { get; set; }
+    [Parameter] public double? Y { get; set; }
+    [Parameter] public Func<string, string>? Badge { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private ElementReference element;
+    private DotNetObjectReference<GalleryToolbox>? reference;
+    private (double? X, double? Y) applied;
+    private string ActiveTitle => Tools.FirstOrDefault(tool => tool.Id == ActiveTool)?.Title ?? "";
+
+    private Task ToggleAsync(string id) => ActiveToolChanged.InvokeAsync(ActiveTool == id ? "" : id);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Re-attach when the saved position arrives after the first render (preferences load asynchronously on unlock).
+        if (!firstRender && (X, Y) == applied) return;
+        applied = (X, Y);
+        reference ??= DotNetObjectReference.Create(this);
+        try { await JS.InvokeVoidAsync("galleryToolbox.attach", element, reference, X, Y); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException or JSException) { }
+    }
+
+    [JSInvokable]
+    public Task ToolboxMoved(double x, double y)
+    {
+        applied = (x, y);
+        return Moved.InvokeAsync((x, y));
+    }
+
+    [JSInvokable]
+    public Task ToolboxReset()
+    {
+        applied = (null, null);
+        return Moved.InvokeAsync((null, null));
+    }
+
+    public async Task ResetPositionAsync()
+    {
+        try { await JS.InvokeVoidAsync("galleryToolbox.reset", element); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException or JSException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("galleryToolbox.detach", element); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException or JSException or InvalidOperationException) { }
+        reference?.Dispose();
+    }
+}

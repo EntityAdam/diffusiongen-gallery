@@ -7,6 +7,7 @@ public sealed record GalleryFilter
     public string Folder { get; init; } = "";
     public string Tag { get; init; } = "";
     public string Model { get; init; } = "";
+    public string DiffusionModel { get; init; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("FavoritesOnly")]
     public bool IncludesFavoritesOnly { get; init; }
     public string Deletion { get; init; } = "active";

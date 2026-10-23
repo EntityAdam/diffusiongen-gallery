@@ -1,0 +1,50 @@
+<div class="min-w-0 self-start lg:sticky lg:top-0">
+    <div class="preview relative grid min-h-52 place-items-center rounded-lg bg-black/40">
+        @if (Image.IsVideo && VideoUrl.Length > 0)
+        { <video src="@VideoUrl" poster="@Preview" controls loop playsinline aria-label="@Image.Name"></video> }
+        else { <img src="@Preview" alt="@Image.Name" draggable="false" /> }
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Class="absolute top-2 right-2 bg-black/80 text-white shadow-sm hover:bg-black hover:text-white" Disabled="@Busy"
+                aria-label="Download a copy" title="@(Image.IsVideo ? "Download a decrypted copy of the MP4" : "Download a decrypted copy in its original format, including embedded metadata")" OnClick="Download">
+            <DownloadIcon aria-hidden="true" />
+        </Button>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Class="@($"absolute right-2 {(Image.IsVideo ? "bottom-14" : "bottom-2")} bg-black/80 text-white shadow-sm hover:bg-black hover:text-white")" Disabled="@Busy"
+                aria-label="Full screen view" title="Full screen view" OnClick="Fullscreen">
+            <MaximizeIcon aria-hidden="true" />
+        </Button>
+    </div>
+    <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div class="inline-flex min-w-0 items-center" role="group" aria-label="@($"Rating for {Image.Name}: {Image.Rating} out of 5 stars")">
+            @for (var score = 1; score <= 5; score++)
+            {
+                var value = score;
+                var label = Image.Rating == value ? "Clear rating" : $"Rate {value} out of 5 stars";
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" Class="@(value <= Image.Rating ? "h-7! w-7! text-primary" : "h-7! w-7! text-muted-foreground")"
+                        aria-label="@label" title="@label" aria-pressed="@(Image.Rating == value ? "true" : "false")" OnClick="() => Rate.InvokeAsync(value)">
+                    <StarIcon Size="16" Fill="@(value <= Image.Rating ? "currentColor" : "none")" aria-hidden="true" />
+                </Button>
+            }
+        </div>
+        <div class="flex flex-wrap items-center gap-1">
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@Busy" Class="@(Image.IsFavorite ? "text-primary" : "")"
+                    OnClick="Favorite" aria-label="Toggle favorite" aria-pressed="@(Image.IsFavorite ? "true" : "false")">
+                <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" />Favorite
+            </Button>
+            <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Sm" Disabled="@Busy"
+                    OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Trash")" aria-pressed="@(Image.IsMarkedForDeletion ? "true" : "false")">
+                <TrashIcon Size="16" aria-hidden="true" />@(Image.IsMarkedForDeletion ? "Unmark" : "Trash")
+            </Button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
+    [Parameter] public string Preview { get; set; } = "";
+    [Parameter] public string VideoUrl { get; set; } = "";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback Download { get; set; }
+    [Parameter] public EventCallback Fullscreen { get; set; }
+    [Parameter] public EventCallback<int> Rate { get; set; }
+    [Parameter] public EventCallback Favorite { get; set; }
+    [Parameter] public EventCallback Mark { get; set; }
+}

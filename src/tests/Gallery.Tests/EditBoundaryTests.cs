@@ -15,6 +15,7 @@ public sealed class EditBoundaryTests
     [InlineData("null-collection")]
     [InlineData("default-collections")]
     [InlineData("null-description")]
+    [InlineData("null-user-description")]
     [InlineData("null-tags")]
     [InlineData("null-model")]
     [InlineData("null-edit")]
@@ -35,6 +36,7 @@ public sealed class EditBoundaryTests
             "null-collection" => edit with { Collections = [null!] },
             "default-collections" => edit with { Collections = default },
             "null-description" => edit with { Description = null! },
+            "null-user-description" => edit with { UserDescription = null! },
             "null-tags" => edit with { Tags = null! },
             "null-model" => edit with { AnalysisModel = null! },
             "null-edit" => null!,
@@ -52,6 +54,7 @@ public sealed class EditBoundaryTests
             "null-collection" => new[] { "null", "1", "80", "collection" },
             "default-collections" => new[] { "collections", "initialized" },
             "null-description" => new[] { "description", "null" },
+            "null-user-description" => new[] { "user description", "null" },
             "null-tags" => new[] { "tags", "null" },
             "null-model" => new[] { "model", "null" },
             "null-edit" => new[] { "edit", "null" },
@@ -74,12 +77,30 @@ public sealed class EditBoundaryTests
     [Fact]
     public void EditContracts_ExposeOnlyUserEditableFields()
     {
-        var expected = new[] { "Id", "Description", "Tags", "AnalysisModel", "IsFavorite",
+        var expected = new[] { "Id", "Description", "UserDescription", "Tags", "AnalysisModel", "IsFavorite",
             "IsMarkedForDeletion", "Collections", "Rating", "IsReviewed" }.Order();
 
         Assert.Equal(expected, typeof(ImageRecordEdit).GetProperties().Select(property => property.Name).Order());
         Assert.Equal(expected, typeof(ImageRecordEdit).GetProperties().Select(property => property.Name).Order());
         Assert.Null(typeof(ImageRecordEdit).GetProperty("Id")!.SetMethod);
+    }
+
+    [Fact]
+    public async Task UserDescription_PersistsSeparatelyAndSurvivesVisionUpdates()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "notes.png", "folder");
+        await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        { UserDescription = "My personal note", Description = "Original vision notes" });
+        await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        { Description = "New vision notes", Tags = "cat", AnalysisModel = "vision-model" });
+        fixture.Session.Lock();
+        fixture.Session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+        var stored = Assert.Single(await fixture.Service.ListAsync());
+        Assert.Equal("My personal note", stored.UserDescription);
+        Assert.Equal("New vision notes", stored.Description);
+        Assert.Single(fixture.Service.Filter([stored], new GalleryFilter { Search = "personal note" }));
     }
 
     [Fact]

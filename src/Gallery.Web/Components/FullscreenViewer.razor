@@ -21,34 +21,23 @@
     </header>
     @if (ReviewMode)
     {
-        <div class="max-h-[35vh] shrink-0 space-y-3 overflow-auto border-b border-border bg-primary/5 px-4 py-3 text-sm">
-            <div><strong>@(reviewComplete ? UntouchedCount > 0 ? "End reached. Images still need a decision." : "Session complete." : "Make a decision, then move on.")</strong>
-                <p class="text-muted-foreground">@decisions.Count reviewed / @skipped.Count skipped / @UntouchedCount untouched / @Images.Count in session. Decisions save immediately. Skip leaves an image pending; marking never deletes files.</p>
-            </div>
-            @if (!reviewComplete)
-            {
-                <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Keep)">Keep (K)</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Favorite)">Favorite (F)</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.MarkDeletion)">Mark deletion (D)</Button>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="SkipAsync">Skip (S)</Button>
-                    @for (var score = 1; score <= 5; score++)
-                    {
-                        var value = score;
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => DecideAsync(ReviewAction.Rate, value)" title="Rate, mark reviewed and advance">@value / 5</Button>
-                    }
+        <div class="review-overlay">
+            <div class="review-progress-row">
+                <div class="review-progress">
+                    <progress max="@Images.Count" value="@(decisions.Count + skipped.Count)" aria-label="Review progress"
+                              aria-valuetext="@ReviewProgressText"></progress>
+                    <span aria-live="polite">@ReviewProgressText</span>
                 </div>
-            }
-            else
-            {
-                <p role="status">Your decisions are saved. Skipped images remain in the pending queue. Close to refresh the library, or go back to revise a decision.</p>
-                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="() => NavigateAsync(0)">Revisit last image</Button>
-                @if (UntouchedCount > 0)
+                @if (!reviewComplete)
                 {
-                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@busy" OnClick="ContinueRemainingAsync">Continue remaining (@UntouchedCount)</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@busy" OnClick="SkipAsync">Skip</Button>
                 }
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || undo.Count == 0)" OnClick="UndoAsync">Undo</Button>
+            </div>
+            @if (reviewComplete)
+            {
+                <p role="status">Session Complete. Your decisions are saved. Press ESC to return.</p>
             }
-            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(busy || undo.Count == 0)" OnClick="UndoAsync">Undo last decision</Button>
         </div>
     }
     <div class="viewer-image-area relative min-h-0 flex-1 overflow-auto [&>p]:absolute [&>p]:top-3 [&>p]:left-4 [&>p]:text-primary @(originalSize ? "original-size" : "fit-window")">
@@ -61,6 +50,20 @@
             { <img @key="Current.Id" src="@imageData" alt="@Current.Name" draggable="false" /> }
         }
     </div>
+    @if (!ReviewMode && Suggestions.TryGetValue(Current.Id, out var suggestion))
+    {
+        <aside class="viewer-suggestion" aria-label="AI suggestion">
+            <h3><SparklesIcon Size="16" aria-hidden="true" />AI suggestion</h3>
+            <p>@suggestion.Description</p>
+            <p class="text-muted-foreground">Tags: @suggestion.Tags</p>
+            @if (suggestion.Collection.Length > 0) { <p class="text-muted-foreground">Collection: @suggestion.Collection</p> }
+            @if (suggestion.Warning.Length > 0) { <Alert Variant="AlertVariant.Destructive">@suggestion.Warning</Alert> }
+            <div class="flex flex-wrap items-center gap-2">
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => ApproveSuggestionAsync(suggestion)">Approve &amp; save</Button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => RunAsync(() => DismissSuggestion.InvokeAsync(suggestion))">Dismiss</Button>
+            </div>
+        </aside>
+    }
     <footer class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-muted-foreground">
         <span>@(Current.IsFavorite ? "Favorite" : "Not favorite") &middot; @(Current.IsMarkedForDeletion ? "Marked for deletion" : "Not marked") &middot; @(Current.IsReviewed ? "Reviewed" : "Pending review") / @Current.Rating out of 5 &middot; @(originalSize ? "100% size (scroll to explore)" : "Fit to window")</span>
         <span>@(ReviewMode ? "K: keep / F: favorite / D: mark deletion / S: skip / 1-5: rate / Arrows: browse / O: 100% / P: fit / Esc: close" : "Left: previous / Right: next / D: deletion mark / F: favorite / O: 100% / P: fit / Esc: close")</span>
@@ -74,6 +77,9 @@
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<ImageRecord> OnImageChanged { get; set; }
     [Parameter] public bool ReviewMode { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, OrganizationSuggestion> Suggestions { get; set; } = new Dictionary<string, OrganizationSuggestion>();
+    [Parameter] public Func<OrganizationSuggestion, Task<ImageRecord?>>? ApproveSuggestion { get; set; }
+    [Parameter] public EventCallback<OrganizationSuggestion> DismissSuggestion { get; set; }
     private ElementReference element;
     private DotNetObjectReference<FullscreenViewer>? reference;
     private int index;
@@ -92,6 +98,8 @@
     private readonly HashSet<string> decisions = [];
     private readonly HashSet<string> skipped = [];
     private int UntouchedCount => Images.Count - decisions.Count - skipped.Count;
+    private string ReviewProgressText => $"{decisions.Count} Reviewed + {skipped.Count} Skipped / {Images.Count}";
+    private bool hasSkipped, celebrated;
     private readonly Stack<(int Index, ReviewState State, bool Decided, bool Skipped)> undo = [];
 
     protected override void OnInitialized()
@@ -101,6 +109,11 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (ReviewMode && reviewComplete && !hasSkipped && !celebrated && Images.Count > 0 && decisions.Count == Images.Count)
+        {
+            celebrated = true;
+            await JS.InvokeVoidAsync("galleryViewer.celebrate", element);
+        }
         if (!firstRender) return;
         reference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("galleryViewer.attach", element, reference);
@@ -252,18 +265,20 @@
     private Task SkipAsync() => RunAsync(async () =>
     {
         if (reviewComplete) return;
+        hasSkipped = true;
         if (!decisions.Contains(Current.Id)) skipped.Add(Current.Id);
         await AdvanceReviewAsync();
     });
 
     private async Task AdvanceReviewAsync()
     {
-        if (index + 1 >= Images.Count)
+        if (UntouchedCount == 0)
         {
             reviewComplete = true;
             return;
         }
-        var next = index + 1;
+        var next = index + 1 < Images.Count ? index + 1
+            : Images.ToList().FindIndex(image => !decisions.Contains(image.Id) && !skipped.Contains(image.Id));
         var data = await LoadImageAsync(Images[next].Id, originalSize);
         index = next;
         imageData = data;
@@ -277,6 +292,12 @@
         latestImagesById[id] = await Gallery.UpdateAsync(id,
             image => Gallery.SetDeletionMark(image, !image.IsMarkedForDeletion));
         await OnImageChanged.InvokeAsync(Current);
+    });
+
+    private Task ApproveSuggestionAsync(OrganizationSuggestion suggestion) => RunAsync(async () =>
+    {
+        if (ApproveSuggestion is null) return;
+        if (await ApproveSuggestion(suggestion) is { } updated) latestImagesById[updated.Id] = updated;
     });
 
     private Task FavoriteAsync() => RunAsync(async () =>

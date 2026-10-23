@@ -10,6 +10,35 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class IngestionPerformanceTests
 {
+    [Theory]
+    [InlineData(SourceRetention.Retain)]
+    [InlineData(SourceRetention.DeleteAfterVerification)]
+    public async Task FolderImport_WhenReopened_ThenRetainsOriginalSourcePathIncludingSubfolders(SourceRetention sourceRetention)
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var sourceRoot = Path.Combine(fixture.Root, "source");
+        var sourceFolder = Path.Combine(sourceRoot, "nested");
+        Directory.CreateDirectory(sourceFolder);
+        var sourcePath = Path.Combine(sourceFolder, "original.png");
+        await File.WriteAllBytesAsync(sourcePath, GalleryTests.MakePng());
+        var sourceCreatedAt = File.GetCreationTimeUtc(sourcePath);
+
+        await fixture.Service.ImportFolderAsync(sourceRoot, FolderSearchScope.Descendants,
+            sourceRetention: sourceRetention);
+        fixture.Session.Lock();
+        fixture.Session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+        var record = Assert.Single(await fixture.Service.ListAsync());
+
+        Assert.Equal(sourcePath, record.SourcePath);
+        Assert.Equal(new DateTimeOffset(sourceCreatedAt), record.SourceCreatedAt);
+        Assert.Equal(sourceFolder, record.SourceFolder);
+        Assert.Equal("original.png", record.OriginalName);
+        Assert.NotEqual(sourcePath, record.StoredPath);
+        Assert.True(File.Exists(record.StoredPath));
+        Assert.Equal(sourceRetention == SourceRetention.Retain, File.Exists(sourcePath));
+    }
+
     [Fact]
     public async Task FolderImport_UsesSavedWorkersAndCommitsBoundedBatches_WithCompleteTimings()
     {

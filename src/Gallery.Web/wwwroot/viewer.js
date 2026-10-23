@@ -13,8 +13,12 @@ document.addEventListener("dragover", preventImageDrop, true);
 document.addEventListener("drop", preventImageDrop, true);
 
 // Keyboard curation for the focused or hovered gallery card.
+window.galleryFocus = {
+    byId: function (id) { document.getElementById(id)?.focus(); }
+};
+
 window.galleryGrid = {
-    keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
+    keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "`", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
     attach: function (reference, doc) {
         const grid = window.galleryGrid;
         grid.detach();
@@ -29,7 +33,7 @@ window.galleryGrid = {
         const onHover = event => { hoveredId = cardOf(event.target)?.dataset.imageId ?? null; };
         const onKey = event => {
             if (event.ctrlKey || event.altKey || event.metaKey || event.defaultPrevented) return;
-            const key = (event.key ?? "").toLowerCase();
+            const key = event.code === "Backquote" ? "`" : (event.key ?? "").toLowerCase();
             if (!grid.keys.includes(key)) return;
             const editing = event.target?.closest?.("input,textarea,select,[contenteditable=true]");
             if (editing && !(editing.type === "checkbox" && cardOf(editing))) return;
@@ -47,7 +51,7 @@ window.galleryGrid = {
                 next.scrollIntoView?.({ block: "nearest" });
                 return;
             }
-            if (key === "escape" ? doc.querySelector(".bulk-bar") === null : !id) return;
+            if (key !== "`" && (key === "escape" ? doc.querySelector("[data-has-selection=true]") === null : !id)) return;
             event.preventDefault();
             const invocation = queue.then(() => reference.invokeMethodAsync("HandleGridKey", key, id ?? "", event.shiftKey === true));
             queue = invocation.catch(error => console.error("Gallery shortcut failed", error));
@@ -61,6 +65,106 @@ window.galleryGrid = {
         };
     },
     detach: function () { }
+};
+
+// Floating gallery toolbox: drag by its handle (or arrow keys) and keep it inside the viewport.
+window.galleryToolbox = {
+    attached: new Map(),
+    attach: function (element, reference, x, y) {
+        if (!element) return;
+        window.galleryToolbox.detach(element);
+        const margin = 8;
+        const handle = element.querySelector(".gallery-toolbox-handle");
+        let placed = typeof x === "number" && typeof y === "number";
+        const clamp = (left, top) => {
+            const width = element.offsetWidth || 0, height = element.querySelector(".gallery-toolbox-bar")?.offsetHeight || element.offsetHeight || 0;
+            return [
+                Math.round(Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin))),
+                Math.round(Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin)))
+            ];
+        };
+        const apply = (left, top) => {
+            const [clampedLeft, clampedTop] = clamp(left, top);
+            element.style.left = `${clampedLeft}px`;
+            element.style.top = `${clampedTop}px`;
+        };
+        const placeDefault = () => {
+            const main = document.querySelector(".workspace-body") ?? document.querySelector(".main-content");
+            const rect = main?.getBoundingClientRect();
+            apply((rect?.left ?? 0) + 16, Math.max(0, rect?.top ?? 0) + 16);
+        };
+        if (placed) apply(x, y); else placeDefault();
+        const save = () => {
+            const left = parseFloat(element.style.left) || 0, top = parseFloat(element.style.top) || 0;
+            placed = true;
+            reference.invokeMethodAsync("ToolboxMoved", left, top).catch(error => console.error("Toolbox position was not saved", error));
+        };
+        let drag = null;
+        const onDown = event => {
+            if (event.button !== 0) return;
+            drag = { id: event.pointerId, dx: event.clientX - element.offsetLeft, dy: event.clientY - element.offsetTop };
+            handle.setPointerCapture?.(event.pointerId);
+            element.classList.add("is-dragging");
+            event.preventDefault();
+        };
+        const onMove = event => {
+            if (!drag || event.pointerId !== drag.id) return;
+            apply(event.clientX - drag.dx, event.clientY - drag.dy);
+        };
+        const onUp = event => {
+            if (!drag || event.pointerId !== drag.id) return;
+            drag = null;
+            element.classList.remove("is-dragging");
+            save();
+        };
+        const onKey = event => {
+            const step = event.shiftKey ? 64 : 16;
+            const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
+            if (!delta) return;
+            event.preventDefault();
+            event.stopPropagation();
+            apply(element.offsetLeft + delta[0], element.offsetTop + delta[1]);
+            save();
+        };
+        const onResize = () => {
+            if (placed) apply(element.offsetLeft, element.offsetTop); else placeDefault();
+        };
+        const reset = () => {
+            placed = false;
+            placeDefault();
+            reference.invokeMethodAsync("ToolboxReset").catch(error => console.error("Toolbox position was not reset", error));
+        };
+        handle?.addEventListener("pointerdown", onDown);
+        handle?.addEventListener("pointermove", onMove);
+        handle?.addEventListener("pointerup", onUp);
+        handle?.addEventListener("pointercancel", onUp);
+        handle?.addEventListener("keydown", onKey);
+        handle?.addEventListener("dblclick", reset);
+        window.addEventListener("resize", onResize);
+        const body = document.querySelector(".workspace-body");
+        const observer = typeof ResizeObserver === "function" && body ? new ResizeObserver(onResize) : null;
+        observer?.observe(body);
+        observer?.observe(element);
+        window.galleryToolbox.attached.set(element, { reset, detach: () => {
+            handle?.removeEventListener("pointerdown", onDown);
+            handle?.removeEventListener("pointermove", onMove);
+            handle?.removeEventListener("pointerup", onUp);
+            handle?.removeEventListener("pointercancel", onUp);
+            handle?.removeEventListener("keydown", onKey);
+            handle?.removeEventListener("dblclick", reset);
+            window.removeEventListener("resize", onResize);
+            observer?.disconnect();
+        } });
+    },
+    reset: function (element) {
+        window.galleryToolbox.attached.get(element)?.reset();
+    },
+    detach: function (element) {
+        const attached = window.galleryToolbox.attached.get(element);
+        if (!attached) return;
+        attached.detach();
+        window.galleryToolbox.attached.delete(element);
+    }
 };
 
 // Security controls: panic purge and inactivity auto-lock
@@ -192,6 +296,36 @@ window.gallerySecurity = {
 };
 
 window.galleryViewer = {
+    celebrate: async function (element) {
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+        const burst = side => {
+            if (!element.isConnected) return;
+            const layer = document.createElement("div");
+            layer.className = "review-confetti";
+            layer.setAttribute("aria-hidden", "true");
+            element.appendChild(layer);
+            const colors = ["#75e0b1", "#ffd166", "#ef8bbd", "#8bbcf6"];
+            const animations = [];
+            for (let i = 0; i < 36; i++) {
+                const piece = document.createElement("i");
+                piece.style.background = colors[i % colors.length];
+                piece.style[side] = "0";
+                piece.style.top = "55%";
+                layer.appendChild(piece);
+                const x = (side === "left" ? 1 : -1) * (80 + Math.random() * element.clientWidth * .65);
+                const y = -80 - Math.random() * 220;
+                animations.push(piece.animate([
+                    { transform: "translate(0, 0) rotate(0deg)", opacity: 1 },
+                    { transform: `translate(${x * .6}px, ${y}px) rotate(180deg)`, opacity: 1, offset: .45 },
+                    { transform: `translate(${x}px, 260px) rotate(${360 + Math.random() * 360}deg)`, opacity: 0 }
+                ], { duration: 1100 + Math.random() * 400, easing: "ease-out" }).finished);
+            }
+            Promise.allSettled(animations).then(() => layer.remove());
+        };
+        burst("left");
+        await new Promise(resolve => setTimeout(resolve, 80));
+        burst("right");
+    },
     createImageUrl: function (data) {
         const comma = data.indexOf(",");
         const binary = atob(data.slice(comma + 1));

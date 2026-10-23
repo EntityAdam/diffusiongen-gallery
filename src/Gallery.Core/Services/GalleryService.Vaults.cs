@@ -14,7 +14,7 @@ public sealed partial class GalleryService
     private VaultHistory? history => galleryLifetime.History;
 
     public static string DefaultApplicationDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiffusionGenGallery02");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiffusionGenGallery");
     public string VaultName => vaultStore.Name;
 
     public static string GenerateVaultName()

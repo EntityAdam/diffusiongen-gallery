@@ -15,7 +15,7 @@ namespace Gallery.Core.Services.Processors;
 internal static partial class ComfyMetadata
 {
     /// <summary>Bump when extraction improves so existing records are re-parsed once.</summary>
-    public const int Version = 1;
+    public const int Version = 2;
     private const int MaxDepth = 32;
 
     internal sealed record Documents(string? ApiPrompt, string? Workflow);
@@ -145,7 +145,9 @@ internal static partial class ComfyMetadata
             Cfg = generationDetails.Cfg,
             Steps = generationDetails.Steps,
             Model = generationDetails.Model,
-            ModelKind = generationDetails.ModelKind
+            ModelKind = generationDetails.ModelKind,
+            Sampler = generationDetails.Sampler,
+            Scheduler = generationDetails.Scheduler
         };
     }
 
@@ -166,7 +168,7 @@ internal static partial class ComfyMetadata
     private static GenerationDetails ResolveGenerationDetails(JsonObject nodesById)
     {
         var sampler = GraphResolver.FindSampler(nodesById);
-        string prompt = "", negativePrompt = "", model = "", kind = "";
+        string prompt = "", negativePrompt = "", model = "", kind = "", samplerName = "", scheduler = "";
         double? cfg = null;
         int? steps = null;
         if (sampler is not null)
@@ -179,14 +181,18 @@ internal static partial class ComfyMetadata
                 ?? GraphResolver.ResolveNumber(nodesById, GraphResolver.Linked(nodesById, sampler.Inputs["sigmas"])?.Inputs["steps"], "steps");
             steps = stepValue is double s ? (int)Math.Round(s) : null;
             (model, kind) = GraphResolver.ResolveModel(nodesById, sampler.Inputs["model"] ?? guider?.Inputs["model"]);
+            samplerName = GraphResolver.ResolveText(nodesById, sampler.Inputs["sampler_name"]
+                ?? GraphResolver.Linked(nodesById, sampler.Inputs["sampler"])?.Inputs["sampler_name"], "sampler_name") ?? "";
+            scheduler = GraphResolver.ResolveText(nodesById, sampler.Inputs["scheduler"]
+                ?? GraphResolver.Linked(nodesById, sampler.Inputs["sigmas"])?.Inputs["scheduler"], "scheduler") ?? "";
         }
         if (prompt.Length == 0) prompt = GraphResolver.FirstText(nodesById) ?? "";
         if (model.Length == 0) (model, kind) = GraphResolver.AnyModel(nodesById);
-        return new(prompt, negativePrompt, cfg, steps, model, kind);
+        return new(prompt, negativePrompt, cfg, steps, model, kind, samplerName, scheduler);
     }
 
     private sealed record GenerationDetails(string Prompt, string NegativePrompt, double? Cfg, int? Steps,
-        string Model, string ModelKind);
+        string Model, string ModelKind, string Sampler, string Scheduler);
 
     private sealed record Node(string Id, string ClassType, JsonObject Inputs);
 

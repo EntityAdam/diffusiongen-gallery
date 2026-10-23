@@ -1,612 +1,461 @@
-# Diffusion Gen Gallery 02
+# DiffusionGen Gallery
 
-A standalone local-only .NET 10 / Blazor Server gallery. It shares `src03`'s
-charcoal, mint, typography, and Diffusion Gen branding, but has no project or
-runtime dependency on it. `gallery01` is frozen; all new development lives here.
-This is an independent source copy, not a shared project.
-There are exactly two production projects: `Gallery.Web` depends on
-`Gallery.Core`, never the reverse. The existing projects under `src/tests` are
-test-only tooling.
+A local-only application for organizing an encrypted image and video library.
+Browse, rate, tag, review duplicates, and optionally describe images with your own
+vision model. No model is bundled.
 
-## Architecture
+The web interface runs on your computer. Media may be stored on local drives or
+NAS/SMB shares, but new catalogs must be on a local drive. This is a single-owner
+application, not a remotely accessible gallery service.
 
-`Gallery.Core` is a standalone .NET class library with no project dependencies.
-It declares the ImageSharp package reference so the assembly-scoped Six Labors
-license is validated against `Gallery.Core`; Web consumes ImageSharp transitively.
-Core owns domain records and the rules for curation, review/undo,
-duplicate grouping and keeper selection, prompt grouping, gallery filtering,
-and removal eligibility/decisions. Its operations work on in-memory domain
-values; they do not access files, databases, HTTP, configuration, or UI services.
-Collection membership changes and the implicit review state of record edits
-also live here. Review undo restores an explicit snapshot without reapplying
-the implicit rules for a new curation decision.
+## Getting started
 
-`Gallery.Web` is the outer application/adapter layer. It owns Blazor and HTTP
-boundaries, application orchestration (`GalleryService`), SQLite and encryption,
-filesystem operations, media decoding/hashing and metadata parsing, vision
-gateways, diagnostics, and dependency injection. With only two production
-projects, these outer-layer roles remain folders within Web rather than
-additional assemblies.
-
-Web uses its own `Web`-prefixed records and enums in `Gallery.Web.Models`.
-`DomainMappings` explicitly translates those values to/from `Gallery.Core.Models`
-when invoking domain rules. Neither UI components nor serialized persistence
-contracts expose Core records. Existing serialized property names, settings IDs,
-and encryption purposes are preserved, so the model type renaming requires no
-catalog migration.
-
-Boundary validation belongs to Web (and to any future adapter), not Core.
-Adapters validate incoming values and choices before mapping to the domain;
-Core applies business rules to those accepted values. Format parsing errors,
-HTTP status codes, logging context, size limits, paths, credentials, and external
-service settings remain outside Core. Domain rules should be added to Core,
-not reimplemented in components or storage adapters.
-
-Image edit callbacks expose only curation and annotation fields. Web validates
-the returned edit (including identity, ratings, initialized collections, and
-collection names) before mapping or persistence. Names/paths change through the
-move workflow; parsed generation metadata changes through import/backfill,
-not user edits. Single and batch updates return the committed records, which
-the UI uses directly rather than replaying callbacks against stale snapshots.
-Batch updates still attempt every selected image and report aggregate failures.
-
-The gallery caches its browsing projection across renders, pagination, density
-changes, and thumbnail updates. Record changes invalidate it; filter/sort and
-prompt-grouping changes rebuild it on demand. Locking clears the cached records
-and prompt groups along with the rest of the unlocked gallery state.
-
-## UI
-
-The UI uses [ShadCn.Blazor](https://www.shadcn-blazor.dev/) components and
-Lucide icons, with the original charcoal/mint palette supplied through Shadcn
-theme tokens. Buttons, fields, cards, tabs, badges and alerts share the library's
-sizing, focus and disabled states. Typed number/date inputs and enum selectors
-retain Blazor's native binding with matching Tailwind utilities.
-
-Application layouts use Tailwind utilities. `wwwroot/utilities.css` is generated
-and checked in, so running the gallery requires only .NET. After editing Razor
-utility classes, rebuild it from `src/Gallery.Web`:
-
-```powershell
-cd .\src\Gallery.Web
-npm ci
-npm run build:css
-```
-
-Use `npm run watch:css` while changing layouts. `wwwroot/app.css` contains the
-palette, branding, and gallery-specific media/density behavior; it does not
-reimplement the component library's control styling.
-
-## Run
-
-Install the .NET 10 SDK, then from the repository root:
+Install the .NET 10 SDK. From the repository root, run:
 
 ```powershell
 dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj
 ```
 
-ImageSharp 4 requires a valid Six Labors license for Release builds. Apply for
-the free Community license at [Six Labors pricing](https://sixlabors.com/pricing/)
-if eligible and save the issued license as `sixlabors.lic` in the repository root.
-The Core project automatically uses this file for Debug and Release builds,
-validating the license against its licensed assembly name, `Gallery.Core`.
-To run a Release build in PowerShell:
+Open **http://127.0.0.1:5189**.
 
-```powershell
-dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Release
-```
+1. Choose **Create** from **Switch gallery**.
+2. Choose a gallery name and a new local catalog directory. An automatically
+   generated name and directory are provided.
+3. Optionally enter a separate encrypted media directory, including a NAS/SMB path.
+   Leave it blank to store media beside the catalog.
+4. Choose a unique passphrase of at least 14 characters.
+5. **Save the 32 recovery words offline before continuing.** They are shown only
+   once. Losing both the passphrase and recovery words makes the gallery
+   unrecoverable.
+6. Open the gallery, then use **Ingest images** to import media.
 
-An explicit `-p:SixLaborsLicenseFile=<absolute-path>` overrides the default location.
-The repository-root license file is not excluded by `.gitignore`.
+The catalog contains the database and encryption header. The app remembers the
+last successfully opened gallery; use **Switch gallery** to open, create, or
+restore another one. Default galleries are beneath
+`%LOCALAPPDATA%\DiffusionGenGallery\galleries` on Windows.
 
-Open **http://127.0.0.1:5189**. Create a gallery with a unique passphrase of at least
-14 characters and **save the 32 recovery words offline before continuing**.
-New galleries get a pseudo-random name and their own folder beneath the OS-specific
-local application data directory (`%LOCALAPPDATA%\DiffusionGenGallery02\galleries`
-on Windows). You can edit the name and directory before creation. The welcome
-screen remembers the last successfully opened gallery and offers **Switch gallery**
-to create, open, or restore another gallery. Enter a fully qualified local directory
-for catalogs, and local or UNC/SMB paths for media and backups (or absolute mounted
-SMB paths on Linux/macOS). Local-drive enforcement detects UNC and mapped network
-drives on Windows; on Linux/macOS, keep catalog directories on local filesystems
-rather than network mounts.
-All directory locations use manual path entry; there are no folder-picker controls.
-To override the initial directory, set `Gallery__DataDirectory`:
+All paths are entered manually and refer to the computer running the application,
+not to a separate browser device. Use fully qualified paths, such as
+`D:\Pictures` or `\\server\share\media`. New catalog, restore, and whole-gallery
+move destinations must be local; UNC and mapped network drives are rejected.
+Existing network catalogs can be opened for migration, but local catalogs are
+recommended.
+
+To override the initial gallery directory:
 
 ```powershell
 $env:Gallery__DataDirectory = 'D:\PrivateGallery'
 dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj
 ```
 
-Gallery names are visible in the header, and the last-used directory is saved in
-`last-vault.json` in the application's local data directory. Media and catalog
-contents remain encrypted.
+Do not expose the application through a proxy, tunnel, or public port. An unlocked
+gallery has an exclusive checkout: another session or process cannot unlock that
+gallery until it is released. Different galleries can run on different loopback
+ports.
 
-The process binds to loopback and rejects non-loopback clients, untrusted Host
-headers, and cross-origin requests. Do not expose it through a proxy, tunnel,
-or public port. This is a single-owner local application, not a network service.
-An unlocked gallery holds an exclusive filesystem checkout. Locking the gallery
-automatically releases its checkout after interrupted operations finish. Another
-browser session or application instance cannot unlock the same gallery concurrently.
-The `.vault-checkout` file is deliberately retained; its presence alone
-does not indicate an active checkout. SMB servers must honor exclusive file sharing.
-Multiple processes can use different galleries; give each a different loopback port,
-for example `dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj -- --urls http://127.0.0.1:5190`.
+## Importing media
 
-**Create gallery** separates the **local catalog directory** (`gallery.db` and
-`vault.json`) from an optional **encrypted media directory** (local or NAS/SMB).
-Leave the media directory blank to store media beside the catalog. Media paths and
-storage settings are encrypted in the catalog. New catalogs, whole-gallery moves
-and restores require local storage, including rejection of mapped network drives.
-Local catalogs use SQLite WAL with `synchronous=FULL`. Existing network catalogs
-remain openable in rollback-journal mode for migration; this is not a guarantee
-against unreliable SMB locking. Keep only one checked-out process per gallery.
+1. Open **Ingest images**, enter a source folder, and select **Scan**.
+2. Choose whether to include subfolders, images, and videos.
+3. Check the selected count, available disk space, and estimated size change.
+4. Leave **Delete original media** off to keep the source files.
+5. Select **Ingest**. Review the final counts and per-file issues.
 
-**Settings > Manage gallery** can **Relocate catalog only** to a new/empty local
-directory, preserving every existing encrypted media path (including NAS media),
-without copying large media files. The database snapshot is checked before publication;
-the old header and database are removed only after publication. Sign in at the new
-catalog location afterward. The current media directory is preserved for future
-imports. **Save media location** changes where future imports go, not existing files.
-Backups still include all catalogued media, regardless of its location. Restore and
-whole-gallery moves reset the media directory to the new local gallery.
+Changing the source or recursion setting requires another scan. Newly added files
+also require rescanning. If a selected file changes or disappears, ingestion stops
+and requires a new scan. Do not edit, rename, or replace source files during import.
+Browser uploads and drag-and-drop imports are not supported.
 
-The same screen renames a gallery without changing its directory, moves
-the entire gallery to a new/empty local folder, or purges it after typing **PURGE**.
-Moving consolidates all catalogued encrypted media (including media previously
-moved outside the gallery) into the new directory and updates the encrypted catalog.
-The source is removed only after verified copies and a database snapshot are
-published. Sign in again after moving. Purge destroys encrypted media, the catalog,
-thumbnails, settings, and the gallery header; original source files, backups, and
-unrelated files are retained. Purge is permanent deletion, not secure disk erasure.
+| Media | Requirements and limits |
+|---|---|
+| PNG, JPEG, WebP | Up to 50 MiB, 40 megapixels, and 16384 pixels per dimension. Animated images are rejected. |
+| MP4 video | Up to 256 MiB and 16384 pixels per dimension. Both ffmpeg and ffprobe are required; browser playback also needs a compatible codec, such as H.264. |
 
-## Workflow
+The **Supported Media** and **3rd party** sections show support and video-tool
+availability. The app finds ffmpeg/ffprobe using `Gallery:FFmpegPath` (a folder or
+executable), then PATH, then Windows WinGet links.
 
-### Smart library, curation and discovery
+New imports preserve the original media bytes without re-encoding. Images use
+encrypted `.dpng` containers regardless of image format; videos use `.dmp4`.
+The encrypted catalog retains the original filename, full source path, containing
+folder, and source creation date when available. Earlier records may not have a
+creation date, and older converted imports retain their stored format.
+Exact source-byte duplicates are reported rather than imported again.
 
-**Settings > LLM endpoints** borrows src03's connection workflow: enter the API base URL,
-an optional bearer API key and a request timeout (10-3600 seconds, default 180).
-**Fetch models** tests the entered connection and populates the model selector
-without saving settings. You can also enter a model ID manually. Discovery does
-not verify vision capabilities; select a vision model for image analysis.
-**Save LLM settings** stores the configuration, including the key, encrypted in
-the gallery. Unsaved form edits are isolated from the active configuration; leaving
-the endpoint workflow discards them. The same saved connection, key and timeout apply to image analysis, collection
-suggestions and natural-language filter interpretation. Literal loopback and RFC 1918
-private LAN addresses are allowed: `10.0.0.0/8`, `172.16.0.0/12` (172.16 through
-172.31), and `192.168.0.0/16`. Use the server's actual IP, not a network base address.
-Hostnames, public addresses, other IPv6 addresses, redirects and proxies remain
-blocked. Use `127.0.0.1` rather than `localhost`. A LAN endpoint receives decrypted
-previews and metadata; trust the server and use HTTPS when available, since HTTP
-does not encrypt traffic in transit. The gallery web application itself still binds
-only to loopback. Gallery02 does not import or share src03's configuration.
+**Delete original media** permanently deletes each source only after the encrypted
+import is committed and verified. Deletion failures are reported even when import
+succeeds. This bypasses the Recycle Bin and is not secure erasure.
+Video import briefly uses a plaintext temporary file; see
+[Privacy and recovery](#privacy-and-recovery).
 
-The left navigation separates Library, Guided review, Organize, Explore & saved
-views, Local intelligence, Duplicate finder, Remove marked images, Ingest images and Settings.
-**Settings** opens on a **Gallery overview** with tabs for **Backups**,
-**Manage gallery**, **LLM endpoints** and **Gallery security**. The overview shows database size (`gallery.db` plus its WAL/SHM
-files, which include encrypted thumbnails), total file count (catalogued encrypted
-image files plus gallery header/database files) and total size on disk, auto-scaled
-from B through PB. Measurements are cached encrypted in the gallery with a "Last
-updated" time and are only recalculated when you select **Refresh**, including the
-first measurement. Imports, moves, removals, catalog edits and file-index rebuilds
-mark existing measurements as **Stale data** beside that timestamp; cached totals
-remain visible until you refresh. Catalogued images missing from disk are reported
-and excluded from the totals. The overview also summarizes the last duplicate scan.
+The size change is an estimate, not a guarantee. A separate, more conservative
+free-space check runs before import and does not count future original deletion
+as available space. Successful earlier batches remain imported if a later batch
+fails.
 
-**Settings > Backups** writes ZIP snapshot archives to one configured destination:
-a local folder/SMB share or an Azure Blob Storage container. The app uses its Windows
-account for SMB access. Azure requires an existing container and a Storage Account
-connection string; that credential is stored encrypted in the gallery and is not shown
-again after saving. Use a dedicated Storage Account for backups. A **full backup**
-contains `vault.json`, a consistent SQLite database snapshot (including encrypted
-thumbnails), an encrypted media manifest, and all catalogued encrypted `.dpng` and
-`.dmp4` files, including media moved outside the gallery folder. An **incremental
-backup** includes a fresh database/header snapshot and only new or changed encrypted
-media. If nothing has changed since the last backup (same media, database content,
-and gallery header), no incremental archive is created and the chain is left as is.
-Each archive has a companion `.manifest` file; manifests are encrypted and
-link each increment to its parent. Keep the full archive, every subsequent incremental
-archive in that chain, and their `.manifest` companions together. A new full backup
-starts a separate chain. Backups are manual; the app does not schedule runs or prune
-older archives. Backup destinations cannot be inside the gallery.
+Under **Advanced**, select HDD, SSD, or Custom performance settings and save them
+per gallery. Custom supports 1-32 workers and batches of 1-64 files. More workers
+use more memory. Optional performance information reports timings without file
+or folder names.
 
-**Switch gallery > Restore** supports a local/SMB backup folder or an Azure Blob
-container-level SAS URL with read and list permissions. **Find backups** lists available archives. Choose a full backup
-or the last incremental you want restored; restore follows its authenticated parent
-links and requires every archive back to the full backup. Companion manifests are
-not needed for restoration because archives contain the same encrypted manifests.
-Enter the backup gallery's passphrase or recovery words, a gallery name, and a new/empty
-destination. Restore verifies the header, database, and encrypted media before
-publishing anything, restores the latest catalog state (including deletions), and
-rewrites media paths into the chosen directory. The existing gallery and backup files
-are never overwritten. Sign in normally after restoration. Move and restore retain
-backup credentials/settings but reset backup chain status and cached storage
-measurements; create a new full backup before the next incremental.
+## Browsing and organizing
 
-**Duplicate finder** finds likely duplicates, including resized or
-re-encoded copies that import's exact-byte check cannot catch. Each image gets a
-64-bit perceptual difference hash computed from its decrypted thumbnail;
-images within 6 of 64 bits and with a similar aspect ratio (or identical PNG
-pixels) are grouped. Fingerprints and the last scan result are cached encrypted
-in the gallery, and rescans only fingerprint new or changed images. Each group shows
-thumbnails, sizes and approximate reclaimable space, and recommends a keeper:
-unmarked first, then highest rating, favorite, most pixels, largest original and
-oldest import. **Mark other(s) for deletion** (per group) or **Mark all extra
-copies** only sets reversible deletion marks; permanently remove them from
-**Remove marked images**.
+The sidebar contains **Gallery**, **Duplicate finder**, **Ingest images**,
+**Settings**, and a **Toolbox** toggle. Collapse it to an icon rail when you need
+more space.
 
-**Review in full screen** (or **Review & choose keepers** on a group) opens a
-full screen duplicate review. Step through each copy at full size, see its
-dimensions, file size, rating and favorite status, and choose **one or more**
-copies to keep from the filmstrip or with `K`. **Keep only this** and **Keep all**
-are quick picks. **Apply** unmarks the kept copies, marks the rest for deletion
-and moves to the next group; **Skip group** leaves a group unchanged. Reopening a
-group you partly marked earlier restores those choices. Shortcuts: Left/Right
-copies, Up/Down groups, `K` toggle keep, `A` apply, `S` skip, `O` 100%, `P` fit,
-`Esc` close.
-Only tools for the current workflow are shown. Image workflows reuse the same
-grid, sort and collapsible **Filter images** controls. Filters carry across
-workflows; removal temporarily resets filters to show all marked images, and leaving
-removal restores your previous browsing filters. Active-filter chips remain visible
-above results even when filters are collapsed. Remove individual chips or clear all
-filters (the removal workflow keeps its marked-image default). The Library dashboard opens queues for all images, pending review,
-favorites and images without a collection.
+### Gallery toolbox
 
-**Quick filters** above the grid toggle the most common views with one click:
-**Unreviewed**, **5★**, **Favorites** and **Not analyzed**, each with a live count.
-They combine with each other and with the full filter panel, and appear in the
-active-filter chips like any other filter.
+The floating toolbox contains:
 
-**Thumbnail size** (Compact, Comfortable, Large) sits next to the sort control.
-Compact shows 49 smaller cards per page with condensed details, Comfortable shows
-24 and Large shows 12. The choice is saved encrypted per gallery and restored on
-unlock.
+| Tool | Purpose |
+|---|---|
+| Change view | Card size, grouping, sorting, full-screen viewer, and toolbox-position reset. |
+| Filter images | Text, model, organization, media/dimensions, vision, and import-date filters. Changes apply immediately; **Reset filters** clears them. |
+| Review images one by one | Guided review of pending items. |
+| Organize media | Add collections/tags and remove tags from selected items. |
+| Search | Ask the configured LLM to suggest explicit filters. |
+| Use AI to describe and tag your images | Generate suggestions for approval. |
+| Trash | Restore marked items or permanently remove them. |
 
-Every gallery workflow except removal has a select button on each card. Click it to
-toggle an image, or Shift+click to select the range from the last selected image
-(across pages, in the current sort order). **Select page** adds the current page.
-Selections remain across pages until cleared, and switching workflows clears them.
-While images are selected, a floating **bulk action bar** rates (1-5★ or clear),
-favorites/unfavorites, marks reviewed, marks/unmarks deletion, merges tags,
-adds the selection to a collection, or runs **Find duplicates**. Find duplicates
-compares the selected images against the whole library, reusing cached
-fingerprints, and opens every matching group in the full screen duplicate review.
-Removal keeps its own separate deletion
-selection. Virtual collections do not change file locations.
+Click a tool to expand its panel; click it again to collapse it. Toggle the toolbox
+with the sidebar button or the backtick key. Drag its grip to reposition it, or
+focus the grip and use arrow keys. Double-click the grip, press Shift+backtick, or
+choose **Reset toolbox position** to return it to the top-left. Shift+backtick also
+shows a hidden toolbox. Position, visibility, and active tool are saved per gallery.
 
-**Keyboard curation** works on the focused card, or the card under the pointer:
-`1`-`5` rate, `0` clears the rating, `F` toggles favorite, `D` toggles the
-deletion mark, `X` toggles selection (`Shift+X` selects a range), `Esc` clears the
-selection and the arrow keys move focus between cards. Shortcuts are ignored while
-typing in a field or while a dialog or the full screen viewer is open. When a marked
-image is hidden by the active filter, the next image moves under the pointer, so
-repeated `D` presses cull images in sequence.
+### Compact and Detail cards
 
-Gallery cards retain filenames and pixel dimensions. A shield icon indicates
-encrypted storage. Five interactive stars show each rating: click a star to save
-that rating, or click the current rating again to clear it. Assigning a nonzero
-rating or marking an image for deletion also marks it reviewed; clearing a rating
-or removing a deletion mark does not change review status.
+Choose **Thumbnail size** in Change view:
 
-**Organize** adds/removes collection membership, merges tags without
-discarding existing tags, and applies 0-5 ratings and reviewed/pending status.
-Rating and review status default to **Leave unchanged**. Assigning a nonzero
-rating marks the images reviewed; an explicit pending status does not override
-that rule.
-Select exactly two images for side-by-side comparison, with independent rating
-buttons that also mark each image reviewed. Filters support collections,
-minimum ratings, review status and unorganized images; sort by highest rating.
+- **Compact:** 49 cards per page, no filenames or metadata; rating stars sit above
+  the favorite and trash-can icons.
+- **Detail:** 12 cards per page, with uncropped previews, filename and status icons
+  on the first line, then dimensions, approximate megapixels or video duration,
+  and original size in MiB. Model names and a two-line positive prompt appear when
+  ComfyUI metadata provides them. Stars, heart, and trash-can icons share the
+  bottom footer row.
 
-In **Guided review**, **Start guided review** opens the pending, unmarked images in the current filtered
-results across all pages, in the current sort order. The count on the button is
-the session size. Use the Awaiting review dashboard queue for the whole pending
-library, or narrow filters first. The session sequence stays fixed until closed.
+Detail is the default. Existing Comfortable/Large preferences load as Detail.
+Megapixels round to the nearest whole MP, with a minimum of 1MP. Video duration
+uses `hh:mm:ss`.
 
-- K / **Keep** marks reviewed and clears any deletion mark, preserving rating/favorite.
-- F / **Favorite** marks reviewed, favorites the image and clears deletion marks.
-- D / **Mark deletion** marks reviewed and marks for later removal; it never deletes.
-- 1-5 assigns that rating, marks reviewed and clears deletion marks.
-- S / **Skip** advances without changing the image; skipped pending images stay pending.
+Detail-card indicators have tooltips on hover or keyboard focus:
 
-Decisions persist immediately, update the awaiting-review count and card status,
-and automatically advance. Arrows browse without
-making decisions; go back to revise one. Rating or keep does not remove a favorite.
-At the end, the summary reports reviewed, skipped and untouched counts. Reaching
-the last image does not imply you reviewed images bypassed with the arrows:
-**Continue remaining** returns to the first untouched image. **Session complete**
-means every image has a decision or explicit skip; skips remain pending in the library.
-**Undo last decision** restores the previous review status, rating, favorite and
-deletion mark, and returns to that image. Multiple decisions can be undone in reverse
-order while the session is open; skips are not undo entries, and permanent removal
-is never undone. Escape/Close ends
-the session and refreshes library queues. A failed save keeps the current image;
-a failed next-image load reports the error without undoing an already saved decision.
-Closing early preserves completed decisions, and untouched images remain pending.
-Review uses the fast viewer's fit/full-size controls and bounded preloading.
+| Indicator | Meaning |
+|---|---|
+| `image` / `video` | Media type; always shown in muted green. |
+| `eye` | Saved vision analysis; muted green. |
+| `eye-dashed` | An AI suggestion awaits acceptance, including when older saved analysis exists. |
+| `eye-off` | No saved vision analysis or pending suggestion. |
+| `circle-check` | Reviewed; muted green. |
+| `circle-dashed-check` | Not reviewed. |
+| `sparkles` | ComfyUI generation metadata detected; muted green. Absent metadata does not prove the item was not generated. |
 
-**Explore & saved views** stores named snapshots of all sidebar filters in
-encrypted SQLite settings. Saving the same name replaces that view. Loading a
-view restores its filters, not its old results. The local LLM can interpret a
-natural-language search into explicit filters; review and apply the suggestion.
-This is filter interpretation, **not semantic embeddings/vector search**.
+**Vision status is currently inferred:** saved vision notes or an analysis model
+produce the `eye` icon. It is not a persisted record of clicking **Approve & save**.
+General review status is separate from vision status.
 
-**Local intelligence** analyzes at most 24 selected images sequentially with
-the configured local vision model. Description, tags and collection name are
-requested together in one vision request per image, without a second text-only call.
-If only the collection field is missing or invalid, valid descriptions and tags
-remain available for approval with an explicit warning; no collection is added.
-Invalid description/tag fields reject the suggestion with a field-specific error.
-It sends metadata-free previews plus descriptions/tags and existing collection
-names to the configured loopback or private LAN endpoint. Stop takes effect after the current image.
-Descriptions, tags and collection suggestions remain temporary until approved
-individually; dismissing or locking discards them. Approval replaces the
-description, merges tags and adds collection membership. AI never changes
-ratings, review state, deletion marks, or files. No automatic background jobs.
-Bulk failures are reported per image rather than silently skipped.
-The navigation job indicator stays visible when you change workflows, including
-image progress, a stop-after-current-image control and an **Open job** link.
-Completed suggestion counts remain visible until approved or dismissed. Stopping
-does not interrupt the current request; its configured timeout still applies.
-While an LLM job is running, locking, ingestion, removal, file moves and gallery
-configuration changes are blocked. Browsing and review remain available. Stop the
-job and wait for the current image to finish before changing files. Suggestions
-for images removed from the current library are discarded.
+Click a star to set a rating; click the current rating to clear it. Setting a
+nonzero rating or marking an item for deletion also marks it reviewed. Clearing a
+rating or unmarking deletion does not reset review status. Trashing only marks
+media; it does not delete files.
 
-The default port and gallery are separate from gallery01. Do not run both apps
-against the same gallery concurrently. No existing gallery is automatically copied
-or modified. For testing an existing library, use a complete separate backup;
-stored image paths are absolute, so pointing at a copied database alone still
-references original image files. Keep gallery01 on its own original gallery.
+### Selection, filters, and organization
 
-- **Ingest images** accepts a local folder path with optional recursive ingestion.
-  Browser folder/file uploads are not supported. PNG, JPEG,
-  and WebP images (and MP4 videos, below) are supported; images up to 50 MiB, 40 megapixels, and 16384 pixels per
-  dimension. Animated images are rejected. Imports are copies; originals
-  remain plaintext and untouched by default. Exact source-byte duplicates are reported.
-- Gallery images are not draggable. Dropping files or browser images into the app
-  is blocked so native browser navigation cannot interrupt the unlocked gallery.
-  Use **Ingest images** with a local folder path instead.
-- Ingestion shows a scanning indicator, then a progress bar with processed/total
-  files, imported images and per-file issues (including duplicates). The final
-  counts remain visible after completion. Workers (1-32) and catalog batch size
-  (1-64) are configurable and saved encrypted per gallery. Suggested **HDD / NAS**
-  profile: 4 workers and 16 files per commit; **SSD / NVMe**:
-  half the logical CPU count, bounded to 2-16 workers, and 16 files per commit.
-  On a 32-CPU host this suggests 16 workers. These are starting points, not
-  measured guarantees; lower workers for large images/videos or limited memory.
-  A batch size below the worker count also limits effective concurrency.
-  Files are read, decoded once, encrypted and written durably outside the catalog
-  gate. Each decode has bounded allocations (256 MiB per allocation, 512 MiB
-  cumulative); dimensions and animation limits remain enforced. Catalog duplicate
-  checks and inserts remain serialized, with one durable transaction per bounded
-  batch. A failed batch rolls back its rows, removes uncommitted ciphertext and
-  retains its sources; earlier committed batches remain. Fingerprint migration runs
-  once per folder job. Thumbnails are encrypted once and inserted as ciphertext.
-  Progress callbacks are awaited and serialized but throttled to 100 ms, with
-  errors and the final counts always reported.
-- Local folder-path ingestion supports **Delete originals after verified import**,
-  off by default, with an explicit acknowledgement. The saved encrypted image,
-  catalog and thumbnail are reread and authenticated after the batch commits,
-  using one catalog query on the existing import connection. The saved plaintext
-  hash and image header dimensions are checked without a second pixel decode.
-  On Windows, sources are opened with read/delete access while denying writes,
-  renames and replacement. After verification, the exact held handle is marked
-  for deletion and closed; there is no second source read or pathname deletion
-  race. SMB servers must honor Windows sharing and handle-deletion semantics;
-  access or deletion failures are reported, never bypassed. Other operating systems
-  retain the conservative rename-and-rehash deletion path.
-  Failed imports, duplicates and verification failures retain their sources.
-  Deletion failures are reported even if the encrypted import succeeded.
-  Do not edit, rename or replace source files during ingestion.
-  Source deletion bypasses the Recycle Bin and is **not secure shredding**.
-  SSD/NVMe wear leveling can leave old physical flash pages even after overwrites;
-  TRIM is not a verifiable forensic-erasure guarantee. Backups, snapshots and
-  synced copies are not deleted. Use full-volume encryption before plaintext
-  is written. Whole-drive vendor-supported sanitize/cryptographic erase is a
-  separate drive-retirement operation, not a gallery feature or per-file guarantee.
-- Optional privacy-safe timings include the source, media and catalog drive kinds
-  (never their paths), separate `DuplicateWait` and `DuplicateCheck`, `OpenSource`,
-  `CloseSource`, `ReportProgress`, and `CatalogCommit`. `PersistWait` and
-  `CatalogCommit` are measured per batch; other stages run on parallel workers.
-  `File` includes time awaiting its batch and progress accounting, so overlapping
-  stage totals are not wall-clock proportions.
-- Images (PNG, JPEG and WebP) are stored as their **original bytes**, unchanged
-  and never re-encoded or converted, in authenticated encrypted `.dpng` files.
-  `.dpng` is the encrypted-image container for every image format; the actual
-  format is recorded in the encrypted catalog. Other formats are rejected even
-  with a supported extension. PNG text and EXIF metadata are extracted into the
-  encrypted catalog. Thumbnails omit embedded metadata. Images imported by
-  earlier versions remain the PNGs they were converted to.
-- **MP4 videos** (MP4/MOV containers up to 256 MiB; browser playback needs a codec such as H.264) are imported
-  when ffmpeg is installed. The gallery finds `ffmpeg`/`ffprobe` via the
-  `Gallery:FFmpegPath` setting (folder or executable), then PATH, then WinGet links.
-  The original bytes are encrypted unchanged as `.dmp4`; the first frame becomes the
-  thumbnail and container metadata (including ComfyUI `prompt`/`workflow` and Video
-  Helper Suite `comment` tags) is extracted into the encrypted catalog. ffprobe and
-  ffmpeg need a file path, so each video is briefly copied as plaintext to
-  `%TEMP%\gallery-<guid>.mp4` and deleted when import finishes (not securely
-  shredded). Playback decrypts into an in-memory browser Blob URL; there is no
-  plaintext server URL. Exact-duplicate grouping never mixes images and videos.
-- **ComfyUI metadata** (PNG `prompt`/`workflow` text chunks, EXIF, and video tags)
-  is parsed into prompt, negative prompt, CFG, steps and the checkpoint, UNet or
-  diffusion model, by following the API prompt graph from the sampler. Results are
-  shown in the image details and are searchable; existing records are backfilled
-  automatically. UI-only workflows are detected but not parsed into fields.
-- **Group by same prompt** (grid controls) groups exact positive-prompt
-  matches, largest groups first, followed by unique and no-prompt images.
-  **Show only these** or **Show all N with this exact prompt** filters to one prompt.
-  The **Media type** filter and **Videos** quick filter limit the grid to videos.
-- **Save a copy** downloads a decrypted, cleaned copy in the stored format, without
-  decoding pixels or transcoding video. Images keep standard image data plus EXIF,
-  ICC, XMP and PNG text (compressed PNG text is written uncompressed as `tEXt`, so
-  ComfyUI can read prompt/workflow); unknown or private chunks/segments and any bytes
-  after the image end are dropped. MP4s keep all standard top-level boxes, including
-  `moov` metadata such as the ComfyUI workflow; unknown top-level boxes (for example
-  `uuid` vendor data) and `free`/`skip` padding are zero-filled in place, keeping
-  sample offsets valid, and bytes after the last box are dropped. Boxes nested
-  inside `moov` are not cleaned. Playback and in-app viewing use the stored bytes.
-  **Export
-  workflow** downloads the embedded ComfyUI workflow (or API prompt) as JSON.
-  **Save copies (zip)** exports a selection (up to 1 GiB). Exports are plaintext
-  once saved; protect them accordingly.
-- New imports use `images\<first two ID characters>\<next two ID characters>\<id>.dpng`
-  beneath the gallery directory. Random IDs avoid filename collisions, and two-level
-  sharding spreads files across directories. Original/display names need not be
-  unique. Existing files and user-selected move destinations are not relocated.
-- Duplicate detection uses a unique SQLite index on a 32-byte keyed fingerprint:
-  HMAC-SHA256 of the binary source SHA-256, with a dedicated key derived from
-  the gallery master key using HKDF-SHA256 and a versioned purpose label.
-  Fingerprints are stable across passphrase changes but differ between galleries.
-  A stolen database does not allow testing suspected content without the key,
-  though fingerprints reveal content equality. Original hashes remain encrypted
-  in image records. Matching is byte-exact, not perceptual.
-  On first unlocked use, old catalogs add the index and transactionally backfill
-  missing fingerprints from encrypted hashes, without reading or moving images.
-  Later imports use indexed lookups rather than decrypting the entire catalog;
-  a unique constraint and serialized insertion also prevent concurrent duplicates.
-  Backfill failures roll back and are surfaced rather than silently skipping records.
-- Filter by prompt/metadata/text, tag, source/current folder, vision model,
-  favorite, deletion mark, orientation, minimum dimensions, analysis status,
-  and import date range. Sort and page results. Encrypted metadata is decrypted
-  and filtered in application memory, not indexed as plaintext in SQLite.
-  This favors privacy over large-library query scalability.
-- Click a thumbnail to edit descriptions/tags, run local vision analysis,
-  or move and rename its encrypted file into an **existing** folder. Files
-  remain `.dpng`; existing destinations are never overwritten. Move copies
-  ciphertext first, updates the catalog, then removes the old ciphertext.
-  An interrupted move can leave an extra encrypted copy, not a lost original.
-  If removal of the old copy fails, the UI reports both locations and the
-  catalog continues to track the new file.
-- **Full screen view** opens a viewport-filling viewer for a snapshot of the current
-  page, also available in image details. Right arrow advances; left arrow goes back.
-  D toggles the deletion mark, F toggles favorite,
-  O displays full-resolution pixels at 100% with scrolling, P fits the image to
-  the window without changing aspect ratio, and Escape closes the viewer.
-  Navigation stops at page boundaries. Marks/favorites persist immediately, but
-  do not remove images from the viewing sequence; filters refresh when it closes.
-  Shortcuts are active only while viewing and ignore held-key repeats/modifiers.
-  The viewer progressively preloads the current page into browser-memory Blob URLs,
-  nearest neighbors first. Fit mode uses metadata-free JPEG previews (quality 85,
-  maximum 1600 pixels per dimension, transparency composited on black). These are
-  viewing copies only; the encrypted original is unchanged. Revisiting a cached image
-  avoids decrypting, encoding, and transferring it again. Original-size mode loads
-  the saved full-resolution image in its stored format on demand without re-encoding, caching at most two
-  originals. Each cache has a 64 MiB encoded-image budget; the current image may
-  exceed that budget. Decoded browser pixels consume additional memory.
-  URLs are revoked on eviction/close; no plaintext disk cache is created by the app.
-- Favorites and deletion marks persist. **Marking alone never deletes an image**;
-  marks can be reversed. Only marked images can be permanently removed.
-  Use **Remove this image** in details, or select marked cards and **Remove selected**.
-  **Select filtered marked images** selects all matching marked images across pages,
-  not just the visible page. Review the preview and explicitly confirm removal.
-  Choose separate policies for accessible originals (retain or delete) and missing
-  originals (restore PNG or discard without restoration). Bulk operations report
-  each failure and continue with other images; they are not all-or-nothing.
-  Original deletion checks its source hash and refuses changed files.
-  Restoration verifies/decrypts the full image, writes and verifies `<id>.png` in an existing
-  folder without overwriting. This restores decoded pixels and retained PNG metadata,
-  not the exact JPEG/WebP source bytes. Previously ingested browser uploads do not expose original local
-  paths, so their originals are considered inaccessible, even if they still exist.
-  Legacy imports with absolute source folder paths are recognized.
-  Removal deletes catalog metadata, thumbnails, fingerprint and encrypted image,
-  allowing subsequent reimport. The catalog row is deleted and a file delete is queued
-  in the same SQLite transaction; the queued delete then runs in the background.
-  Interruptions can leave a restored PNG, or ciphertext that the queue deletes later.
-- **Background file operations.** Slow drive work (deleting removed or moved-away
-  ciphertext, indexing media folders, recovering removals interrupted by older
-  versions) is stored as rows in a `drive_operations` table and played in batches in
-  the background, so browsing stays available on large or network (SMB) galleries.
-  The sidebar shows progress with **Pause**, **Resume**, **Retry failed** and **Cancel**.
-  Pausing or closing the app loses no work. Cancelling discards queued work and leaves
-  the affected files on disk. Opposing operations are pruned; for example, moving an
-  image back to a folder whose delete is still queued reuses the existing file. Drive
-  errors retry with backoff and are then reported as failed without changing files.
-  Queue rows contain only keyed path hashes and encrypted payloads. Like ingestion,
-  queued work continues after the gallery locks.
-- **File index.** The first load after upgrading schedules one scan per directory,
-  instead of a full-tree walk, to build a `media_index` table of encrypted file
-  sizes. The storage overview then reads that index instead of the drive. A missing
-  directory counts as empty; a failing directory retries on its own. Because the
-  gallery owns its media folders, files changed outside it are only noticed after
-  **Rebuild file index** in **Settings > Gallery overview**. The same scans find
-  `.removing-*` residue from older versions. Recovery restores a staged copy only if it
-  authenticates as that image. It deletes identical or orphaned copies, and preserves
-  conflicting copies as failed operations.
-  Gallery loading composes a catalog read, fingerprint backfill, and generation-metadata
-  migration, then schedules this background work. `ListAsync` only reads catalog records.
-  Vault move and purge still enumerate the whole gallery folder.
-  Retained backups/copies are not removed.
-  Permanent removal bypasses the Recycle Bin and is not secure SSD/NVMe erasure.
-- Configure a loaded vision-capable model and a literal loopback or private LAN,
-  OpenAI-compatible endpoint under **Settings > LLM endpoints**. Examples:
-  LM Studio `http://127.0.0.1:1234/v1/`, Ollama
-  `http://127.0.0.1:11434/v1/`. Requests are user-triggered, use a metadata-free
-  preview of at most 1600 pixels per dimension, and store structured descriptions
-  and tags. Redirects, proxies, public IPs, and hostname-based endpoints
-  are not permitted. A running local or private-LAN vision model is required;
-  none is bundled.
+Use the select button on a card, including in Trash. Shift+click selects a range
+across pages in the current sort order; Escape clears selection.
 
-## Encryption and recovery
+The **Organize** tool lists selected items' tags as removable chips. A count means
+only that many selected items have the tag. A chip's **x** removes that tag from
+all selected items that carry it. Collection and tag **Apply** actions add/merge
+values; **Clear** only resets the input. Collections are virtual and never move
+files. AI organization suggestions support up to 24 selected images and apply
+only the requested collection or tags.
 
-Each gallery has a cryptographically random 256-bit master key. AES-256-GCM
-encrypts image files, SQLite record blobs, thumbnail blobs, and vision settings,
-with fresh random 96-bit nonces and 128-bit authentication tags. Authenticated
-context binds each blob to its record ID and purpose, preventing substitution
-between images, metadata, and thumbnails.
+Filters include collections, tags, ratings, review status, favorite/deletion state,
+source/current folders, text/metadata, vision and diffusion models, media type,
+dimensions, orientation, analysis status, and import dates. Text search includes
+user descriptions. **Group by same prompt** groups exact positive-prompt matches;
+**Group by diffusion model** groups embedded model names. Prompt groups can be
+filtered with **Show only these**. Model-name filtering is partial and
+case-insensitive.
 
-The master key is independently wrapped by two keys derived with
-PBKDF2-HMAC-SHA256 (600,000 iterations, independent 256-bit salts): one from the
-passphrase and one from a cryptographically random recovery phrase. The phrase
-contains 32 compound words from a 256-entry vocabulary (256 bits of entropy).
-It is an application-specific recovery format, **not a BIP39 wallet seed**.
-Only salts and authenticated wrapped keys are saved in `vault.json`; neither
-credential nor an unwrapped master key is saved to disk.
+### Image details
 
-Use the recovery-words tab to unlock after forgetting a passphrase, then change
-the passphrase in **Settings > Gallery security** (recovery unlock opens it directly). Recovery words remain valid. They are
-shown only during creation and cannot be displayed again. There is **no
-backdoor, email reset, escrow, or machine-bound bypass**. Losing both credentials
-makes the gallery's encrypted content unrecoverable, assuming strong credentials
-and uncompromised cryptography. Damage or loss of the gallery header is also
-unrecoverable without its backup.
+Click a thumbnail to open details. The preview has a download icon at the top
+right and a full-screen icon at the bottom right. Rating, favorite, and trash
+controls sit below it.
 
-Use **Settings > Backups** to create consistent live snapshots of `vault.json`,
-`gallery.db`, and all catalogued encrypted media. A full backup plus its incremental
-chain is needed to reconstruct the latest snapshot; keep every archive and companion
-manifest. A passphrase change affects only the current header; backups made before
-that change can still be unlocked using the old passphrase.
-Stored file paths are absolute: moving a gallery to another machine/drive is not
-an automatic portable-library migration.
+Desktop uses **File**, **Generation** (when detected), and **Notes** tabs; mobile
+stacks the sections. The preview scales proportionally within the desktop dialog.
 
-Keys remain in memory only for the unlocked browser circuit and in-flight
-operations. Use **Panic** (`Ctrl+Shift+L`), reload, or disconnect to clear the session key.
-Tabs unlock independently; lock every unlocked tab or close the process.
-**Inactivity auto-lock** automatically locks the gallery, releases its checkout after active
-operations finish, and zeroes keys from memory after a period of inactivity (default 15 minutes, configurable in **Settings > Gallery security**
-to 5, 15, 30, 60 minutes or disabled).
-**Panic / Emergency quick-lock** (`Ctrl+Shift+L`, `Alt+Shift+L`, or `Shift+Esc`, or the **Panic** button)
-immediately locks the gallery, releases its checkout after active work finishes, zeroes encryption keys in RAM, revokes all decrypted media blob URLs,
-and blanks all media elements in the browser DOM.
-Plaintext exists in browser/server memory while viewing
-and in the local vision server while analyzing. Browser extensions, malware,
-swap files, process dumps, screenshots, and plaintext source files are outside
-this at-rest encryption guarantee. SQLite reveals opaque IDs and blob sizes;
-the filesystem reveals encrypted file names, locations, sizes, and timestamps.
-Use neutral names if those are sensitive.
+- **File:** original filename, dimensions, size, video duration, source creation
+  date, import date, and original source path. Missing source creation dates show
+  **Unknown (not captured)**, not the import date. Filesystem creation dates are
+  not necessarily generation dates.
+- **Generation:** ComfyUI model filename without `.safetensors`, steps, CFG,
+  sampler/scheduler, positive prompt, and negative prompt when present.
+  **Download workflow** exports the workflow or API prompt. UI-only workflows may
+  be detected without providing parsed fields. Other tools' metadata and raw JSON
+  are not displayed.
+- **Notes:** separate **Description** (your notes) and **Vision notes** textboxes.
+  **Save notes** saves both. **Analyze locally** immediately saves the returned
+  vision notes, replaces tags, records the model, and saves the current user
+  description; it does not wait for the suggestion-approval workflow.
 
-## Checks
+Manage collections/tags through Organize, not this dialog. Current encrypted paths
+and move/rename controls are not exposed here.
+
+### Keyboard shortcuts and full-screen viewing
+
+On a focused gallery card, or the card under the pointer:
+
+| Key | Action |
+|---|---|
+| 1-5 / 0 | Set / clear rating. |
+| F | Toggle favorite. |
+| D | Toggle deletion mark. |
+| X / Shift+X | Toggle selection / select a range. |
+| Escape | Clear selection. |
+| Arrow keys | Move card focus. |
+
+These shortcuts are ignored while typing or while a dialog/viewer is open.
+
+**Full screen view** in Change view opens the current page; the details preview
+also provides access. Left/Right navigate within that page, D toggles deletion,
+F toggles favorite, O shows original size, P fits to the window, and Escape closes.
+Changes save immediately, but the viewing sequence stays fixed until closing.
+Fit mode uses viewing previews; original-size mode loads the stored original.
+Video playback depends on the browser's codec support.
+
+### Guided review
+
+In the Review tool, choose a **Goal** (default 10) and **Start Review**. It selects
+pending, unmarked items from the current filtered results across all pages,
+limited to the number available. **Random order** samples without duplicates;
+otherwise the current sort order applies. The sequence stays fixed for the session.
+
+| Key | Review decision |
+|---|---|
+| K | Mark reviewed and clear deletion; preserve rating/favorite. |
+| F | Mark reviewed, favorite, and clear deletion. |
+| D | Mark reviewed and mark for deletion. |
+| 1-5 | Rate, mark reviewed, and clear deletion. |
+| S / Skip | Advance without changing the item. |
+| Arrows | Browse without a decision. |
+
+Decisions save immediately and advance. **Undo** restores the previous review
+state, rating, favorite, and deletion mark; skips are not undo entries.
+Completion requires a decision or skip for every session item. Skipped items
+remain pending in the library; browsing past an item does not count as reviewing
+it. Closing early retains saved decisions.
+
+### Duplicate finder
+
+Scan for likely duplicates, including resized/re-encoded images. Results are
+recommendations, not proof that files are interchangeable. A keeper is recommended
+using review-related preferences such as rating, favorite, resolution, and size.
+Marking extra copies is reversible; remove them permanently through Trash.
+
+**Review in full screen** or **Review & choose keepers** lets you keep one or more
+copies. **Apply** unmarks kept copies and marks the rest, then advances. **Skip
+group** changes nothing. Shortcuts: Left/Right copies, Up/Down groups, K toggle
+keep, A apply, S skip, O original size, P fit, Escape close.
+
+## AI analysis and search
+
+Under **Settings > LLM endpoints**, configure an OpenAI-compatible endpoint,
+optional bearer API key, loaded vision-capable model, and timeout (10-3600 seconds,
+default 180). **Fetch models** checks the connection without saving settings; model
+discovery does not verify vision capability. Save the settings before analysis.
+
+Examples: LM Studio `http://127.0.0.1:1234/v1/`, Ollama
+`http://127.0.0.1:11434/v1/`. Use a literal loopback or private LAN IP:
+`127.0.0.1`, `::1`, `10.x.x.x`, `172.16.x.x` through `172.31.x.x`, or
+`192.168.x.x`. Hostnames (including `localhost`), public addresses, other IPv6
+addresses, redirects, and proxies are not supported.
+
+**Privacy:** analysis sends decrypted, metadata-free previews and relevant catalog
+text to that server. A private LAN endpoint is still another machine: trust its
+operator and use HTTPS when available. The gallery itself remains loopback-only.
+
+In the AI toolbox panel:
+
+- **Play** analyzes images without vision descriptions or pending suggestions.
+- **Analyze selected** analyzes up to 24 selected images.
+- The eye-dashed badge opens a pending suggestion in the full-screen viewer.
+  **Approve & save** replaces vision notes, merges tags, and adds the suggested
+  collection. **Dismiss** discards it. Locking also discards pending suggestions.
+- **Stop** finishes the current request before stopping; the configured timeout
+  still applies. Per-image failures are reported.
+
+Analysis runs only when requested and does not change rating, review state,
+deletion marks, or media files. The details dialog's **Analyze locally** action
+saves directly, as described above; it is not the same approval workflow.
+
+The navigation job indicator remains visible across workflows. While an LLM job
+runs, browsing/review remain available, but file operations and gallery
+configuration changes are blocked. Stop and wait for it to finish first.
+
+The **Search** tool converts natural language into explicit filters. Review and
+apply the suggested filters; this is not semantic/vector search.
+
+## Trash and permanent removal
+
+The trash-can button only sets a reversible deletion mark. In Trash, **Restore**
+clears that mark; it does not restore a backup or a deleted source file.
+
+To delete permanently, select marked cards and choose **Delete Forever**, or
+choose **Remove this image** in a marked item's File details. Review the removal
+plan and explicitly confirm:
+
+- If the original source is accessible, retain it or delete it too. Source deletion
+  verifies the source hash and refuses changed files.
+- If the source is missing, restore the stored copy to an existing folder first,
+  or discard it without restoration. Restored files use the item ID and stored
+  format's extension, without overwriting existing files. Older converted imports
+  restore their stored format, not their pre-conversion source bytes.
+
+Permanent removal deletes catalog information and queues encrypted-file deletion.
+Bulk removal reports individual failures and continues. Background operations
+may finish later; cancellation can leave encrypted files on disk.
+Removal bypasses the Recycle Bin and is not secure erasure. Restored copies are
+plaintext. Backups and other copies are not deleted.
+
+## Settings, storage, and backups
+
+### Overview and background work
+
+**Settings > Overview** shows cached database/file sizes and counts, the last
+measurement time, and duplicate-scan information. Select **Refresh** to measure;
+changes can mark cached totals **Stale data**. Missing files are reported and
+excluded from totals. **Rebuild file index** detects media-folder changes made
+outside the application.
+
+The sidebar shows background file work with **Pause**, **Resume**, **Retry
+failed**, and **Cancel**. Closing or pausing does not discard the queue. Cancel
+discards queued work and leaves affected files on disk. Locking can leave active
+file work running; checkout is released after operations drain.
+
+### Manage gallery
+
+Under **Settings > Manage gallery**:
+
+- Rename the gallery without changing its directory.
+- **Save media location** changes the destination of future imports only.
+- **Relocate catalog only** moves the database/header to a new/empty local
+  directory, preserving existing encrypted media paths and the future-import
+  location. Sign in at the new catalog location afterward.
+- A whole-gallery move consolidates catalogued media into a new/empty local
+  directory. Restore also consolidates media. Both reset the future-import
+  location and require signing in afterward.
+- Purge requires typing **PURGE**. It permanently removes gallery data and
+  catalogued encrypted media, not original sources, backups, or unrelated files.
+
+Use these workflows rather than moving a database manually: stored media paths
+are absolute. A copied database can still reference the original gallery's files.
+Use a complete separate backup for testing.
+
+### Back up
+
+**Settings > Backups** supports a local/SMB destination or an existing Azure Blob
+container. SMB uses the application's Windows account; Azure uses a saved,
+encrypted Storage Account connection string. Use a dedicated account.
+
+- A **full backup** contains the header, consistent catalog snapshot, thumbnails,
+  and all catalogued encrypted media, including media outside the catalog folder.
+- An **incremental backup** contains a fresh catalog/header snapshot and only new
+  or changed encrypted media. If nothing changed, no archive is created.
+- Keep the full archive, every required increment, and their `.manifest`
+  companions together. A new full backup starts a separate chain.
+
+Backups are manual, are not automatically pruned, and cannot be placed inside the
+gallery. Move/restore resets backup-chain tracking; create a new full backup
+before another incremental.
+
+### Restore a backup
+
+Use **Switch gallery > Restore** with a local/SMB backup folder or an Azure
+container SAS URL with read/list permissions. Select **Find backups**, choose a
+full archive or the last desired incremental, and provide the backup gallery's
+passphrase or recovery words, a name, and a new/empty local destination.
+
+Every archive back to the full backup is required. Companion manifests are not
+required for restoration because the archives include them. Restore verifies
+content before publication, rewrites media paths, and does not overwrite the
+existing gallery or backups. Sign in normally afterward.
+
+## Privacy and recovery
+
+- **Encryption at rest:** media, catalog record/thumbnail blobs, settings, and
+  saved credentials are encrypted with authenticated AES-256-GCM. The header
+  stores wrapped keys, not the passphrase or plaintext master key. SQLite and
+  the filesystem still reveal information such as opaque IDs, sizes, timestamps,
+  and encrypted-file locations. Gallery names and the last-used catalog location
+  are not secret.
+- **Recovery:** the 32 words are application-specific, not a BIP39 wallet seed.
+  Use them to unlock, then change the passphrase in **Gallery security**. They
+  remain valid and cannot be displayed again. There is no password reset or
+  bypass. Losing both credentials, or losing/damaging the header without a
+  backup, can make content unrecoverable.
+- **Backups:** passphrase changes affect the current header, not older backups.
+  Old backups can still use their old passphrase.
+- **Locking:** configure inactivity locking under **Gallery security** (default
+  15 minutes). Panic shortcuts are Ctrl+Shift+L, Alt+Shift+L, and Shift+Escape.
+  Lock clears the active viewing session and decrypted media URLs. In-flight
+  operations can retain keys until they finish; checkout releases afterward.
+  Locking is not a guarantee that all operating-system/browser memory is erased.
+- **Plaintext exposure:** viewing/analysis uses server, browser, and model-server
+  memory. Malware, extensions, screenshots, swap, and process dumps are outside
+  the at-rest guarantee. Originals remain plaintext unless separately deleted.
+  Video import briefly writes `%TEMP%\gallery-<guid>.mp4` and deletes it afterward,
+  without secure erasure.
+- **Exports:** download icons create plaintext copies. Export cleaning preserves
+  standard metadata, including
+  supported EXIF/XMP and ComfyUI information; it is not metadata anonymization.
+  It does not re-encode pixels or transcode videos. Protect exported files and
+  workflows accordingly.
+- **Deletion:** source deletion, permanent removal, and purge are not secure
+  shredding. They do not remove backups, snapshots, synced copies, or old SSD
+  flash pages. Use full-volume encryption before writing sensitive plaintext.
+- **Network:** keep the gallery loopback-only. Only the optional configured
+  model endpoint and storage/backup services should involve another machine.
+
+## Developer notes
+
+There are two production projects: `Gallery.Web` references `Gallery.Core`.
+Core currently contains models, domain rules, application services, SQLite,
+encryption, filesystem/media processing, and external gateways. Web contains
+Blazor components, host/request policies, and dependency-injection composition.
+UI components use Core models directly. Test projects are under `src/tests`.
+
+The UI uses ShadCn.Blazor, Lucide, and Tailwind. Generated CSS is checked in, so
+Node is not needed just to run the app. After changing Razor utility classes,
+run from `src/Gallery.Web`:
 
 ```powershell
+npm ci
+npm run build:css
+```
+
+`npm run watch:css` supports active styling work. Theme and gallery-specific
+rules live in `wwwroot/app.css`.
+
+ImageSharp 4 requires a valid Six Labors license for Release builds. Obtain a
+license from [Six Labors](https://sixlabors.com/pricing/) and place it in
+`sixlabors.lic` at the repository root, or pass
+`-p:SixLaborsLicenseFile=<absolute-path>`. The Core project uses that path for
+Debug and Release. The root license file is not excluded by `.gitignore`;
+do not commit private license material.
+
+```powershell
+dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Release
 dotnet test .\src\Gallery.slnx
 node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
 
-Tests cover credential/recovery rotation, authentication/tampering, encrypted
-image/catalog/thumbnail storage, duplicates, folder ingestion, move/rename
-safety, filtering, local endpoint restrictions, and vision request handling.
-Curation tests cover perceptual near-duplicate grouping, keeper choice, encrypted
-fingerprint/scan/preference caches, bulk updates and grid keyboard shortcuts.
-Storage tests also cover sharded paths, same-name imports, gallery-specific
-fingerprints, legacy-schema backfill and rollback, indexed query plans,
-concurrent duplicate imports, and SQLite uniqueness enforcement.
+Retained but unexposed code includes saved filter views, two-image comparison,
+selection ZIP export, and additional bulk organization/review operations. These are not user-facing
+features. Explicit persisted vision-acceptance tracking is a future change;
+the current card icon is inferred from saved analysis and pending suggestions.

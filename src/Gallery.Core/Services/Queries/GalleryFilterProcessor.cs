@@ -10,13 +10,15 @@ internal static class GalleryFilterProcessor
     private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord) =>
         (galleryFilter.Media == GalleryFilter.AnyValue || imageRecord.MediaType == galleryFilter.Media)
         && (galleryFilter.Prompt.Length == 0 || imageRecord.Prompt == galleryFilter.Prompt)
-        && (galleryFilter.Search.Length == 0 || $"{imageRecord.Name} {imageRecord.OriginalName} {imageRecord.Metadata} {imageRecord.Description} {imageRecord.Tags}"
+        && (galleryFilter.Search.Length == 0 || $"{imageRecord.Name} {imageRecord.OriginalName} {imageRecord.Metadata} {imageRecord.Description} {imageRecord.UserDescription} {imageRecord.Tags}"
             .Contains(galleryFilter.Search, StringComparison.OrdinalIgnoreCase))
         && (galleryFilter.Folder.Length == 0 || imageRecord.SourceFolder.Contains(galleryFilter.Folder, StringComparison.OrdinalIgnoreCase)
             || Path.GetDirectoryName(imageRecord.StoredPath)?.Contains(galleryFilter.Folder, StringComparison.OrdinalIgnoreCase) == true)
         && (galleryFilter.Tag.Length == 0 || imageRecord.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Contains(galleryFilter.Tag, StringComparer.OrdinalIgnoreCase))
         && (galleryFilter.Model.Length == 0 || imageRecord.AnalysisModel.Contains(galleryFilter.Model, StringComparison.OrdinalIgnoreCase))
+        && (string.IsNullOrWhiteSpace(galleryFilter.DiffusionModel) || imageRecord.Generation?.Model.Contains(
+            galleryFilter.DiffusionModel.Trim(), StringComparison.OrdinalIgnoreCase) == true)
         && (!galleryFilter.IncludesFavoritesOnly || imageRecord.IsFavorite)
         && (galleryFilter.Collection.Length == 0 || imageRecord.Collections.Contains(galleryFilter.Collection, StringComparer.OrdinalIgnoreCase))
         && imageRecord.Rating >= galleryFilter.MinRating
