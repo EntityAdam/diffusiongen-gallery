@@ -97,7 +97,11 @@ public sealed partial class GalleryService
         this.vaultSession = vaultSession;
         this.videoTools = videoTools;
         this.visionService = visionService;
-        this.vaultSession.AutoLocked += () => OnAutoLocked?.Invoke();
+        this.vaultSession.AutoLocked += () =>
+        {
+            _ = ReleaseCheckoutAfterOperationsAsync();
+            OnAutoLocked?.Invoke();
+        };
         drivePlayer = CreateDrivePlayer();
     }
 

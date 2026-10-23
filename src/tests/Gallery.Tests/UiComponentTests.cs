@@ -1,10 +1,13 @@
 using System.Net;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Gallery.Web.Components;
+using Gallery.Web.Components.Pages;
 using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gallery.Tests;
 
@@ -196,6 +199,58 @@ public sealed class UiComponentTests
         Assert.Matches(@"data-tool=""organize""[^>]*aria-pressed=""true""", expanded);
         Assert.Contains(">Organize</h3>", expanded);
     }
+
+    [Fact]
+    public async Task Home_WhileImportRuns_ToolboxCannotLeaveIngestionProgress()
+    {
+        var home = new Home();
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        void Set(string name, object value) => typeof(Home).GetField(name, flags)!.SetValue(home, value);
+        T Get<T>(string name) => (T)typeof(Home).GetField(name, flags)!.GetValue(home)!;
+        Task Invoke(string name, params object[] args) =>
+            (Task)typeof(Home).GetMethod(name, flags)!.Invoke(home, args)!;
+
+        Set("workflow", "ingest");
+        Set("toolboxVisible", false);
+        Set("activeTool", "filters");
+        Set("busy", true);
+        Set("importRunning", true);
+
+        await Invoke("ToggleToolboxAsync");
+        await Invoke("SetActiveToolAsync", "trash");
+        await Invoke("SwitchWorkflowAsync", "gallery");
+
+        Assert.Equal("ingest", Get<string>("workflow"));
+        Assert.False(Get<bool>("toolboxVisible"));
+        Assert.Equal("filters", Get<string>("activeTool"));
+
+        Set("importRunning", false);
+        await Invoke("ToggleToolboxAsync");
+        await Invoke("SwitchWorkflowAsync", "gallery");
+        Assert.Equal("ingest", Get<string>("workflow"));
+        Assert.False(Get<bool>("toolboxVisible"));
+    }
+
+    [Fact]
+    public async Task Home_WhenAutoLockPreferenceSaveFails_KeepsExistingTimerAndReportsError()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        fixture.Service.LockVault();
+        var home = new Home();
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+        typeof(Home).GetProperty("Gallery", flags)!.SetValue(home, fixture.Service);
+        typeof(Home).GetProperty("Logger", flags)!.SetValue(home, NullLogger<Home>.Instance);
+        typeof(Home).GetField("autoLockMinutes", flags)!.SetValue(home, 15);
+
+        await (Task)typeof(Home).GetMethod("UpdateAutoLockMinutesAsync", flags)!
+            .Invoke(home, ["30"])!;
+
+        Assert.Equal(15, typeof(Home).GetField("autoLockMinutes", flags)!.GetValue(home));
+        Assert.Contains("previous timer is still active",
+            (string)typeof(Home).GetField("error", flags)!.GetValue(home)!);
+    }
+
     [Fact]
     public async Task ImageCard_WhenSelectedAndRated_ThenRetainsKeyboardHooksAndAccessibleLibraryControls()
     {

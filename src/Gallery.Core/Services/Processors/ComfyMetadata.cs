@@ -179,7 +179,9 @@ internal static partial class ComfyMetadata
             cfg = GraphResolver.ResolveNumber(nodesById, sampler.Inputs["cfg"] ?? guider?.Inputs["cfg"], "cfg");
             var stepValue = GraphResolver.ResolveNumber(nodesById, sampler.Inputs["steps"], "steps")
                 ?? GraphResolver.ResolveNumber(nodesById, GraphResolver.Linked(nodesById, sampler.Inputs["sigmas"])?.Inputs["steps"], "steps");
-            steps = stepValue is double s ? (int)Math.Round(s) : null;
+            var roundedSteps = stepValue is double s ? Math.Round(s) : double.NaN;
+            steps = double.IsFinite(roundedSteps) && roundedSteps >= int.MinValue && roundedSteps <= int.MaxValue
+                ? (int)roundedSteps : null;
             (model, kind) = GraphResolver.ResolveModel(nodesById, sampler.Inputs["model"] ?? guider?.Inputs["model"]);
             samplerName = GraphResolver.ResolveText(nodesById, sampler.Inputs["sampler_name"]
                 ?? GraphResolver.Linked(nodesById, sampler.Inputs["sampler"])?.Inputs["sampler_name"], "sampler_name") ?? "";

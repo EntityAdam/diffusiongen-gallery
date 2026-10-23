@@ -54,30 +54,42 @@ public sealed partial class GalleryService
         }
         // Receipt observers can mutate the caller's plan; capture the complete ordered selection first.
         var selectedRemovalItems = removalItems.DistinctBy(item => item.Id).ToArray();
-        await RemoveBatchUnderGateAsync(selectedRemovalItems, keyLease.Bytes, existingAction, missingAction, restoreFolder, reportRemoval);
+        await RemoveBatchAsync(selectedRemovalItems, keyLease.Bytes, existingAction, missingAction, restoreFolder, reportRemoval);
     }
 
-    private async Task RemoveBatchUnderGateAsync(IReadOnlyList<RemovalItem> removalItems, byte[] key,
+    private async Task RemoveBatchAsync(IReadOnlyList<RemovalItem> removalItems, byte[] key,
         ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
         Action<RemovalResult>? reportRemoval)
     {
         var failures = new List<Exception>();
+        var receipts = new List<RemovalResult>(removalItems.Count);
         await galleryStore.Gate.WaitAsync();
         try
         {
             foreach (var item in removalItems)
-                await AttemptRemovalAsync(item, key, existingAction, missingAction, restoreFolder, reportRemoval, failures);
+                receipts.Add(await AttemptRemovalAsync(item, key, existingAction, missingAction, restoreFolder, failures));
         }
-        finally { galleryStore.Gate.Release(); }
-        drivePlayer.Start();
-        if (failures.Count > 0)
-            throw new AggregateException($"Failed to completely remove {failures.Count} image(s): " +
-                string.Join(", ", failures.Select(failure => failure.Message)), failures);
+        finally
+        {
+            galleryStore.Gate.Release();
+            drivePlayer.Start();
+        }
+        var observerFailures = new List<Exception>();
+        foreach (var receipt in receipts)
+        {
+            try { reportRemoval?.Invoke(receipt); }
+            catch (Exception exception) { observerFailures.Add(exception); }
+        }
+        if (failures.Count > 0 || observerFailures.Count > 0)
+            throw new AggregateException(
+                $"Failed to completely remove {failures.Count} image(s); {observerFailures.Count} receipt observer(s) failed: " +
+                string.Join(", ", failures.Concat(observerFailures).Select(failure => failure.Message)),
+                failures.Concat(observerFailures));
     }
 
-    private async Task AttemptRemovalAsync(RemovalItem item, byte[] key,
+    private async Task<RemovalResult> AttemptRemovalAsync(RemovalItem item, byte[] key,
         ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-        Action<RemovalResult>? reportRemoval, List<Exception> failures)
+        List<Exception> failures)
     {
         string? restoredPath = null;
         RemovalResult receipt;
@@ -92,7 +104,7 @@ public sealed partial class GalleryService
             var catalogRemoved = (bool)exception.ContextualDataByName.ValuesByName["CatalogRemoved"];
             receipt = new(item.Id, catalogRemoved, restoredPath, new(item.Id, exception.Message, exception));
         }
-        reportRemoval?.Invoke(receipt);
+        return receipt;
     }
 
     private async Task RemoveOneAsync(RemovalItem removalItem, byte[] key,

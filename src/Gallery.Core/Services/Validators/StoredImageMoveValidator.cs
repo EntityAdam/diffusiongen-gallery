@@ -14,7 +14,8 @@ internal static class StoredImageMoveValidator
     public static void ValidateName(string name)
     {
         if (name.Length == 0 || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-            || name.EndsWith('.') || name.EndsWith(' ') || name.Contains('/') || name.Contains('\\'))
+            || name.EndsWith('.') || name.EndsWith(' ') || name.Contains('/') || name.Contains('\\')
+            || name.StartsWith('.') && !name[1..].Contains('.'))
             throw new InvalidOperationException($"Invalid filename '{name}'. Enter a valid filename without a path or extension.");
     }
 

@@ -21,9 +21,16 @@ internal static class ImageRecordEditValidator
             throw new InvalidOperationException("Image analysis model 'null' is invalid; provide a non-null model.");
         if (imageRecordEdit.Collections.IsDefault)
             throw new InvalidOperationException("Image collections must be initialized.");
+        var collectionNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in imageRecordEdit.Collections)
+        {
             if (IsInvalidCollectionName(name))
                 throw new InvalidOperationException($"Collection name '{name ?? "null"}' is invalid; collection names must have 1 to 80 characters.");
+            if (name != name.Trim())
+                throw new InvalidOperationException($"Collection name '{name}' is invalid; remove leading or trailing whitespace.");
+            if (!collectionNames.Add(name))
+                throw new InvalidOperationException($"Collection name '{name}' is duplicated; collection names must be unique regardless of case.");
+        }
     }
 
     public static void ValidateRating(int? rating)

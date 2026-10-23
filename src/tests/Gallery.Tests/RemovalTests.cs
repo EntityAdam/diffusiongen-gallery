@@ -237,6 +237,58 @@ public sealed class RemovalTests
         Assert.Empty(remaining);
     }
 
+    [Fact]
+    public async Task Removal_WhenReceiptObserverReadsCatalogAndWaitsForDrive_ThenContinuesInReceiptOrder()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
+        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(21, 10)), "second.png", "folder");
+        await fixture.Service.UpdateManyAsync([first.Id, second.Id], image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Service.PrepareRemovalAsync([first.Id, second.Id]);
+        var receipts = new List<RemovalResult>();
+
+        await Task.Run(() => fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain,
+            MissingOriginalAction.Discard, "", receipt =>
+            {
+                receipts.Add(receipt);
+                fixture.Service.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
+                var remaining = fixture.Service.ListAsync().GetAwaiter().GetResult();
+                Assert.Empty(remaining);
+                Assert.False(File.Exists(receipt.Id == first.Id ? first.StoredPath : second.StoredPath));
+            })).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([first.Id, second.Id], receipts.Select(receipt => receipt.Id));
+        Assert.All(receipts, receipt => Assert.True(receipt.WasRemoved));
+    }
+
+    [Fact]
+    public async Task Removal_WhenReceiptObserverThrows_ThenStartsCommittedDriveWorkAndReportsEntireBatch()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
+        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(21, 10)), "second.png", "folder");
+        await fixture.Service.UpdateManyAsync([first.Id, second.Id], image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Service.PrepareRemovalAsync([first.Id, second.Id]);
+        var observed = new List<string>();
+        var callbackError = new InvalidOperationException("observer failed");
+
+        var thrown = await Assert.ThrowsAsync<AggregateException>(() => fixture.Service.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", receipt =>
+            {
+                observed.Add(receipt.Id);
+                if (receipt.Id == first.Id) throw callbackError;
+            }));
+        await fixture.Service.WaitForDriveOperationsAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Same(callbackError, Assert.Single(thrown.InnerExceptions));
+        Assert.Equal([first.Id, second.Id], observed);
+        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.False(File.Exists(first.StoredPath));
+        Assert.False(File.Exists(second.StoredPath));
+    }
+
     private static async Task<ImageRecord> ImportRecoveryImageAsync(TestVault testVault, bool imageWasMoved)
     {
         var imageRecord = await testVault.Service.ImportAsync(
@@ -417,6 +469,8 @@ public sealed class RemovalTests
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
         var target = Path.Combine(fixture.Root, record.Id + ".png");
         await File.WriteAllTextAsync(target, "existing");
+        var expectedCatalogPayload = await fixture.RawStore.ReadRecordAsync(record.Id);
+        var expectedCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
 
         var removalReceipts = new List<RemovalResult>();
 
@@ -425,6 +479,8 @@ public sealed class RemovalTests
 
         // Assert - gather independent observations and the single removal receipt
         var targetContents = await File.ReadAllTextAsync(target);
+        var catalogPayload = await fixture.RawStore.ReadRecordAsync(record.Id);
+        var ciphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -432,6 +488,8 @@ public sealed class RemovalTests
         Assert.False(result.WasRemoved);
         Assert.Contains("already exists", result.Error!);
         Assert.Equal("existing", targetContents);
+        Assert.Equal(expectedCatalogPayload, catalogPayload);
+        Assert.Equal(expectedCiphertext, ciphertext);
     }
 
     [Fact]
@@ -479,6 +537,8 @@ public sealed class RemovalTests
         await fixture.Service.UpdateAsync(record.Id, image => image with { IsMarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
         await File.WriteAllTextAsync(source, "replacement");
+        var expectedCatalogPayload = await fixture.RawStore.ReadRecordAsync(record.Id);
+        var expectedCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
 
         var removalReceipts = new List<RemovalResult>();
 
@@ -487,6 +547,8 @@ public sealed class RemovalTests
 
         // Assert - gather independent observations and the single removal receipt
         var originalContents = await File.ReadAllTextAsync(source);
+        var catalogPayload = await fixture.RawStore.ReadRecordAsync(record.Id);
+        var ciphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -494,6 +556,8 @@ public sealed class RemovalTests
         Assert.False(result.WasRemoved);
         Assert.Contains("changed since import", result.Error);
         Assert.Equal("replacement", originalContents);
+        Assert.Equal(expectedCatalogPayload, catalogPayload);
+        Assert.Equal(expectedCiphertext, ciphertext);
     }
 
     [Fact]
@@ -509,6 +573,8 @@ public sealed class RemovalTests
         await fixture.Service.UpdateAsync(record.Id, image => image with { IsMarkedForDeletion = true });
         var plan = await fixture.Service.PrepareRemovalAsync([record.Id]);
         File.Delete(source);
+        var expectedCatalogPayload = await fixture.RawStore.ReadRecordAsync(record.Id);
+        var expectedCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
 
         var removalReceipts = new List<RemovalResult>();
 
@@ -517,6 +583,8 @@ public sealed class RemovalTests
 
         // Assert - gather independent observations and the single removal receipt
         var records = await fixture.Service.ListAsync();
+        var catalogPayload = await fixture.RawStore.ReadRecordAsync(record.Id);
+        var ciphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var result = Assert.Single(removalReceipts);
 
         // Assert
@@ -524,6 +592,8 @@ public sealed class RemovalTests
         Assert.False(result.WasRemoved);
         Assert.Contains("status changed", result.Error);
         Assert.Single(records);
+        Assert.Equal(expectedCatalogPayload, catalogPayload);
+        Assert.Equal(expectedCiphertext, ciphertext);
     }
 
     [Fact]

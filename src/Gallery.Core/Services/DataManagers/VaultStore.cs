@@ -170,23 +170,30 @@ internal sealed class VaultStore
             var vaultHeader = await ReadHeaderAsync();
             var keySlot = keySlotSelector(vaultHeader);
             var normalizedSecret = normalizeSecret(secret);
-            return UnwrapVaultKey(keySlot, normalizedSecret, purpose);
+            return UnwrapVaultKey(vaultHeader, keySlot, normalizedSecret, purpose);
         }
         finally { gate.Release(); }
     }
 
-    private static byte[] UnwrapVaultKey(KeySlot keySlot, string secret, string purpose)
+    private static byte[] UnwrapVaultKey(VaultHeader vaultHeader, KeySlot keySlot, string secret, string purpose)
     {
         var derivedKey = VaultCrypto.Derive(secret, keySlot.Salt.AsSpan());
         try
         {
             var vaultKey = VaultCrypto.Decrypt(keySlot.WrappedKey.AsSpan(), derivedKey, purpose);
-            if (vaultKey.Length != VaultKeySizeBytes)
+            try
+            {
+                if (vaultKey.Length != VaultKeySizeBytes)
+                    throw new CryptographicException("Invalid gallery key.");
+                var keyCheckPlaintext = VaultCrypto.Decrypt(vaultHeader.KeyCheck.AsSpan(), vaultKey, VaultCheckPurpose);
+                CryptographicOperations.ZeroMemory(keyCheckPlaintext);
+                return vaultKey;
+            }
+            catch
             {
                 CryptographicOperations.ZeroMemory(vaultKey);
-                throw new CryptographicException("Invalid gallery key.");
+                throw;
             }
-            return vaultKey;
         }
         finally { CryptographicOperations.ZeroMemory(derivedKey); }
     }
