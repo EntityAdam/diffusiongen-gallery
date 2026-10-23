@@ -229,12 +229,110 @@ public sealed class UiComponentTests
         Assert.Contains("aria-label=\"Trash\"", actualHtml);
         Assert.DoesNotContain("Mark deletion", actualHtml);
         Assert.DoesNotContain("Encrypted", actualHtml);
-        Assert.DoesNotContain("Reviewed", actualHtml);
+        Assert.Contains("aria-label=\"Not reviewed\"", actualHtml);
         Assert.DoesNotContain(">Pending<", actualHtml);
         Assert.DoesNotContain("collection-chips", actualHtml);
         Assert.DoesNotContain("Hidden collection", actualHtml);
         Assert.Contains("<svg", actualHtml);
         Assert.DoesNotContain("<Trash", actualHtml);
+        var footer = actualHtml[actualHtml.IndexOf("class=\"card-actions", StringComparison.Ordinal)..];
+        Assert.Contains("card-rating-row", footer);
+        Assert.Contains("aria-label=\"Clear rating\"", footer);
+        Assert.Contains("aria-label=\"Toggle favorite\"", footer);
+        Assert.Contains("aria-label=\"Trash\"", footer);
+        Assert.True(footer.IndexOf("card-rating-row", StringComparison.Ordinal) < footer.IndexOf("aria-label=\"Toggle favorite\"", StringComparison.Ordinal));
+        Assert.True(footer.IndexOf("aria-label=\"Toggle favorite\"", StringComparison.Ordinal) < footer.IndexOf("aria-label=\"Trash\"", StringComparison.Ordinal));
+        Assert.DoesNotContain("action-label", footer);
+        Assert.DoesNotContain(">Trash<", footer);
+        Assert.DoesNotContain(">Favorite<", footer);
+    }
+
+    [Theory]
+    [InlineData(640, 480, 0, false, "1MP")]
+    [InlineData(1499, 1000, 0, false, "1MP")]
+    [InlineData(1500, 1000, 0, false, "2MP")]
+    [InlineData(2000, 2000, 0, false, "4MP")]
+    [InlineData(100000, 100000, 0, false, "10000MP")]
+    [InlineData(1920, 1080, 65, true, "00:01:05")]
+    [InlineData(1920, 1080, 90061, true, "25:01:01")]
+    public async Task DetailCard_FormatsMegapixelThresholdsAndTotalVideoHours(int width, int height,
+        double seconds, bool video, string expected)
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var renderer = fixture.HtmlRenderer;
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await renderer.RenderComponentAsync<GalleryImageCard>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(GalleryImageCard.Image)] = new ImageRecord
+                { Width = width, Height = height, DurationSeconds = seconds, MediaType = video ? "video" : "image" }
+            }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Contains($"· {expected} · 0.0 MiB", html);
+    }
+
+    [Theory]
+    [InlineData(false, false, false, false, false, "Not analyzed", "eye-off", "circle-dashed-check")]
+    [InlineData(false, true, false, true, true, "Vision analysis accepted", "eye", "circle-check")]
+    [InlineData(true, false, true, false, false, "Vision analysis awaiting acceptance", "eye-dashed", "circle-dashed-check")]
+    [InlineData(true, true, true, true, true, "Vision analysis awaiting acceptance", "eye-dashed", "circle-check")]
+    public async Task DetailCard_ShowsFilenameMediaSummaryAndIndependentIconStates(bool video, bool analyzed,
+        bool pending, bool reviewed, bool generated, string visionLabel, string visionIcon, string reviewIcon)
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var renderer = fixture.HtmlRenderer;
+        var html = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await renderer.RenderComponentAsync<GalleryImageCard>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(GalleryImageCard.Image)] = new ImageRecord
+                {
+                    Name = "display name", OriginalName = video ? "original.mp4" : "original.png",
+                    Width = 1536, Height = 1024, OriginalBytes = 2516582,
+                    MediaType = video ? "video" : "image", DurationSeconds = 3665,
+                    Description = analyzed ? "vision result" : "", IsReviewed = reviewed,
+                    Generation = generated ? new GenerationInfo { Model = @"models\cat.safetensors", Prompt = "a cat in sunlight" } : null
+                },
+                [nameof(GalleryImageCard.HasSuggestion)] = pending
+            }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Contains(video ? "original.mp4" : "original.png", html);
+        Assert.Contains("1536 × 1024", html);
+        Assert.Contains(video ? "01:01:05" : "2MP", html);
+        Assert.Contains("2.4 MiB", html);
+        Assert.Contains($"aria-label=\"{(video ? "Video" : "Image")}\"", html);
+        Assert.Contains($"aria-label=\"{visionLabel}\"", html);
+        Assert.Contains($"aria-label=\"{(reviewed ? "Reviewed" : "Not reviewed")}\"", html);
+        foreach (var label in new[] { video ? "Video" : "Image", visionLabel, reviewed ? "Reviewed" : "Not reviewed" }
+            .Concat(generated ? ["AI generated: ComfyUI metadata detected"] : Array.Empty<string>()))
+        {
+            var indicator = Regex.Matches(html, "<span[^>]*>").Select(match => match.Value)
+                .Single(span => span.Contains($"aria-label=\"{label}\""));
+            Assert.Contains($"data-tooltip=\"{label}\"", indicator);
+            Assert.Contains("tabindex=\"0\"", indicator);
+            Assert.Contains("card-status", indicator);
+        }
+        foreach (var icon in new[] { visionIcon, reviewIcon })
+        {
+            var expectedSvg = await renderer.Dispatcher.InvokeAsync(async () =>
+            {
+                var root = await renderer.RenderComponentAsync<LucideBlazor.LucideIcon>(ParameterView.FromDictionary(new Dictionary<string, object?>
+                { ["Name"] = icon, ["Size"] = 16, ["aria-hidden"] = "true" }));
+                return WebUtility.HtmlDecode(root.ToHtmlString());
+            });
+            Assert.Contains("<path", expectedSvg);
+            Assert.Contains(expectedSvg, html);
+        }
+        Assert.Equal(generated, html.Contains("AI generated: ComfyUI metadata detected"));
+        if (generated)
+        {
+            Assert.Contains("Model: cat", html);
+            Assert.DoesNotContain("cat.safetensors", Regex.Replace(html, "title=\"[^\"]*\"", ""));
+            Assert.Contains("a cat in sunlight", html);
+            Assert.Contains("line-clamp-2", html);
+        }
     }
 
     [Theory]

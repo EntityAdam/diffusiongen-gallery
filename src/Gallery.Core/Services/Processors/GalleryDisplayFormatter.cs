@@ -4,6 +4,12 @@ namespace Gallery.Core.Services.Processors;
 
 internal static class GalleryDisplayFormatter
 {
+    public static string FormatModelFilename(string model)
+    {
+        var filename = model.Replace('\\', '/').Split('/')[^1];
+        return filename.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) ? filename[..^12] : filename;
+    }
+
     public static string FormatDuration(ImageRecord image) => RenderDuration(NormalizeDuration(image.DurationSeconds));
 
     private static TimeSpan NormalizeDuration(double seconds) => TimeSpan.FromSeconds(Math.Max(0, Math.Round(seconds)));

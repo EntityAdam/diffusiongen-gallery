@@ -74,9 +74,5 @@
     private string section = "file";
     private string OriginalSourcePath => Image.SourcePath.Length > 0 ? Image.SourcePath
         : Image.SourceFolder.Length > 0 ? Path.Combine(Image.SourceFolder, Image.OriginalName) : "Unknown";
-    private static string ModelFilename(string model)
-    {
-        var filename = model.Replace('\\', '/').Split('/')[^1];
-        return filename.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) ? filename[..^12] : filename;
-    }
+    private static string ModelFilename(string model) => GalleryService.FormatModelFilename(model);
 }

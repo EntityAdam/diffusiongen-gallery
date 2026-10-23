@@ -294,6 +294,7 @@ public sealed partial class GalleryService
     }
 
     public static string FormatBytes(long bytes) => GalleryDisplayFormatter.FormatBytes(bytes);
+    public static string FormatModelFilename(string model) => GalleryDisplayFormatter.FormatModelFilename(model);
 
     public async Task<List<ImageRecord>> ListAsync()
     {

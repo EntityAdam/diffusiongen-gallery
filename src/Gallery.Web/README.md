@@ -289,6 +289,23 @@ with 12 cards per page and is the default. Existing Comfortable and Large prefer
 load as Detail. The choice is saved encrypted per gallery and restored on
 unlock.
 
+Detail cards keep the preview uncropped. The first line pairs the original filename
+with media, vision, review and (when detected) AI-generation icons. Image/video,
+accepted vision (`eye`), reviewed (`circle-check`) and detected ComfyUI generation
+(`sparkles`) use muted green strokes. Pending vision suggestions use `eye-dashed`
+and take precedence over saved analysis; records without analysis use `eye-off`.
+Saved vision notes or an analysis model count as accepted analysis, matching the
+existing approval/save flow. Unreviewed items use `circle-dashed-check`, independently
+of vision status. Icons have accessible labels and hover descriptions.
+
+The second line shows dimensions, approximate megapixels (rounded to the nearest
+whole MP, minimum 1MP) for images or `hh:mm:ss` duration for videos, and original
+size in MiB to one decimal place. When available, ComfyUI model filenames omit
+`.safetensors` and positive prompts are limited to two lines. Rating, favorite and
+Trash share one footer row as stars, a heart icon and a trash-can icon. Status
+tooltips appear on hover or keyboard focus. Compact hides the additional metadata
+and keeps its rating above the favorite/trash icons.
+
 Image details have a **Download a copy** icon over the top-right corner of the
 preview and a **Full screen view** icon over the bottom-right corner (above playback
 controls for videos). Rating stars, favorite and Trash controls sit below the preview.

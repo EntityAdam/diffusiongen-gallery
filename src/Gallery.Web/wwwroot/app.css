@@ -149,8 +149,14 @@
 .image-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .image-grid.density-compact { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .image-grid.density-detail { grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
-.image-grid.density-compact .card-info { padding: 8px 10px; }
-.image-grid.density-compact .card-info > h3, .image-grid.density-compact .card-meta, .image-grid.density-compact .card-actions .action-label { display: none; }
+.image-grid.density-compact .card-heading, .image-grid.density-compact .card-meta, .image-grid.density-compact .card-generation { display: none; }
+.image-grid.density-compact .card-info { display: none; }
+.image-grid.density-compact .card-actions { flex-wrap: wrap; }
+.image-grid.density-compact .card-rating-row { flex-basis: 100%; }
+.card-status { position: relative; display: inline-flex; }
+.card-status:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 3px; border-radius: 2px; }
+.card-status:hover::after, .card-status:focus-visible::after { content: attr(data-tooltip); position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 20; width: max-content; max-width: 240px; padding: 4px 8px; border: 1px solid hsl(var(--border)); border-radius: 6px; background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); font-size: 12px; line-height: 1.5; white-space: normal; pointer-events: none; }
+.card-status-positive { color: hsl(var(--primary) / .7); }
 .image-card:hover, .image-card:focus-within { border-color: #75e0b155; }
 .image-card.marked { border-color: #795156; }
 .image-card.selected { border-color: hsl(var(--primary)); box-shadow: 0 0 0 2px #75e0b1aa; }
