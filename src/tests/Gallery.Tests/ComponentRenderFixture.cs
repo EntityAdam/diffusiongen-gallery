@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using ShadCn.Blazor.Components;
+using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 
@@ -18,12 +19,13 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         HtmlRenderer = htmlRenderer;
     }
 
-    public static ComponentRenderFixture Create()
+    public static ComponentRenderFixture Create(GalleryService? galleryService = null)
     {
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddLogging();
         serviceCollection.AddShadCnBlazorComponents();
         serviceCollection.AddSingleton<IJSRuntime, NoOpJsRuntime>();
+        if (galleryService is not null) serviceCollection.AddSingleton(galleryService);
         ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
         try
         {

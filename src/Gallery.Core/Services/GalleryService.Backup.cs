@@ -314,25 +314,10 @@ public sealed partial class GalleryService
         var archiveLength = new FileInfo(archivePath).Length;
         var embedded = archive.GetEntry("manifest.enc")
             ?? throw new InvalidDataException("The archive is missing its embedded manifest.");
-        if (embedded.Length > MaximumEncryptedManifestBytes || embedded.Length > archiveLength)
-            throw new InvalidDataException("The embedded manifest is too large.");
-        byte[] encrypted;
-        await using (var entryStream = embedded.Open())
-        {
-            using var buffer = new MemoryStream();
-            var chunk = new byte[81920];
-            int count;
-            while ((count = await entryStream.ReadAsync(chunk)) != 0)
-            {
-                if (buffer.Length + count > embedded.Length)
-                    throw new InvalidDataException("The embedded manifest exceeds its declared length.");
-                buffer.Write(chunk, 0, count);
-            }
-            if (buffer.Length != embedded.Length)
-                throw new InvalidDataException("The embedded manifest is incomplete.");
-            encrypted = buffer.ToArray();
-        }
-        var sidecar = await File.ReadAllBytesAsync(sidecarPath);
+        if (embedded.Length > archiveLength)
+            throw new InvalidDataException("The embedded manifest is larger than its archive.");
+        var encrypted = ReadArchiveManifest(embedded);
+        var sidecar = await ReadEncryptedManifestFileAsync(sidecarPath);
         if (!CryptographicOperations.FixedTimeEquals(encrypted, sidecar))
             throw new InvalidDataException("The sidecar and embedded manifests disagree.");
         _ = ArchiveManifestProcessor.Read<BackupManifest>(encrypted, key);
@@ -410,23 +395,55 @@ public sealed partial class GalleryService
         return true;
     }
 
-    private static byte[] ReadArchiveManifest(string archivePath)
+    internal static byte[] ReadArchiveManifest(string archivePath)
     {
         using var archive = ZipFile.OpenRead(archivePath);
         var entry = archive.GetEntry("manifest.enc")
             ?? throw new InvalidOperationException("The completed backup archive is missing its manifest.");
+        return ReadArchiveManifest(entry);
+    }
+
+    private static byte[] ReadArchiveManifest(ZipArchiveEntry entry)
+    {
+        if (entry.Length > MaximumEncryptedManifestBytes)
+            throw new InvalidDataException("The embedded manifest is too large.");
         using var stream = entry.Open();
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
+        using var buffer = new MemoryStream((int)entry.Length);
+        var chunk = new byte[81920];
+        int count;
+        while ((count = stream.Read(chunk)) != 0)
+        {
+            if (buffer.Length + count > MaximumEncryptedManifestBytes
+                || buffer.Length + count > entry.Length)
+                throw new InvalidDataException("The embedded manifest exceeds its supported size.");
+            buffer.Write(chunk, 0, count);
+        }
+        if (buffer.Length != entry.Length)
+            throw new InvalidDataException("The embedded manifest is incomplete.");
         return buffer.ToArray();
     }
 
     private static async Task<BackupManifest> ReadManifestFileAsync(string manifestPath, byte[] key)
     {
-        if (new FileInfo(manifestPath).Length > MaximumEncryptedManifestBytes)
-            throw new InvalidOperationException("A backup manifest is too large. Create a new full backup.");
-        var encrypted = await File.ReadAllBytesAsync(manifestPath);
+        var encrypted = await ReadEncryptedManifestFileAsync(manifestPath);
         return ArchiveManifestProcessor.Read<BackupManifest>(encrypted, key);
+    }
+
+    internal static async Task<byte[]> ReadEncryptedManifestFileAsync(string manifestPath)
+    {
+        await using var stream = new FileStream(manifestPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (stream.Length > MaximumEncryptedManifestBytes)
+            throw new InvalidOperationException("A backup manifest is too large. Create a new full backup.");
+        using var buffer = new MemoryStream((int)stream.Length);
+        var chunk = new byte[81920];
+        int count;
+        while ((count = await stream.ReadAsync(chunk)) != 0)
+        {
+            if (buffer.Length + count > MaximumEncryptedManifestBytes)
+                throw new InvalidOperationException("A backup manifest is too large. Create a new full backup.");
+            buffer.Write(chunk, 0, count);
+        }
+        return buffer.ToArray();
     }
 
     private static async Task WriteArchiveAsync(
@@ -435,6 +452,8 @@ public sealed partial class GalleryService
         var encryptedManifest = ArchiveManifestProcessor.Protect(manifest, key);
         try
         {
+            if (encryptedManifest.Length > MaximumEncryptedManifestBytes)
+                throw new InvalidOperationException("A backup manifest is too large to publish.");
             await using var archiveStream = new FileStream(archivePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
             using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true);
             AddFile(archive, "vault.json", Path.Combine(Path.GetDirectoryName(archivePath)!, "vault.json"));

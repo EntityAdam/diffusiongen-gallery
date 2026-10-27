@@ -46,7 +46,7 @@ public sealed partial class GalleryService
 
     private DriveOperationPlayer CreateDrivePlayer()
     {
-        var player = new DriveOperationPlayer(OpenDriveSession, () => galleryStore.ReadDriveQueueCountsAsync());
+        var player = new DriveOperationPlayer(OpenDriveSession, ReadDriveQueueCountsAsync);
         player.Changed += () => DriveQueueChanged?.Invoke();
         return player;
     }
@@ -58,21 +58,52 @@ public sealed partial class GalleryService
     /// <summary>Discards queued and failed drive work. Files those operations would have changed stay as they are.</summary>
     public async Task CancelDriveOperationsAsync()
     {
-        await drivePlayer.StopAsync();
-        await galleryStore.CancelUnfinishedDriveOperationsAsync();
-        await drivePlayer.RefreshAsync();
+        await lifecycleGate.WaitAsync();
+        try
+        {
+            EnsureCheckout();
+            var store = galleryStore;
+            await drivePlayer.StopAsync();
+            await store.CancelUnfinishedDriveOperationsAsync();
+            await drivePlayer.RefreshAsync();
+        }
+        finally { lifecycleGate.Release(); }
     }
 
     public async Task RetryFailedDriveOperationsAsync()
     {
-        await galleryStore.RetryFailedDriveOperationsAsync();
-        drivePlayer.Start();
-        await drivePlayer.RefreshAsync();
+        await lifecycleGate.WaitAsync();
+        try
+        {
+            EnsureCheckout();
+            var store = galleryStore;
+            await store.RetryFailedDriveOperationsAsync();
+            drivePlayer.Start();
+            await drivePlayer.RefreshAsync();
+        }
+        finally { lifecycleGate.Release(); }
     }
 
     public Task WaitForDriveOperationsAsync() => drivePlayer.WhenIdleAsync();
 
-    public Task RefreshDriveQueueStatusAsync() => drivePlayer.RefreshAsync();
+    public async Task RefreshDriveQueueStatusAsync()
+    {
+        await lifecycleGate.WaitAsync();
+        try
+        {
+            EnsureActive();
+            await drivePlayer.RefreshAsync();
+        }
+        finally { lifecycleGate.Release(); }
+    }
+
+    private Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
+    {
+        var location = galleryLifetime.Current;
+        return location.VaultStore.Exists
+            ? location.GalleryStore.ReadDriveQueueCountsAsync()
+            : Task.FromResult(new DriveQueueCounts(0, 0, null));
+    }
 
     /// <summary>Discards the cached file index and schedules a fresh background scan of the media folders.</summary>
     public async Task RebuildStorageIndexAsync()
@@ -134,12 +165,14 @@ public sealed partial class GalleryService
     /// Deletes a file queued for deletion unless its image was moved back to that path. Caller holds Gate.
     /// An operation whose path is owned again is obsolete and completes without deleting that path.
     /// </summary>
-    private static async Task DeleteQueuedFileAsync(GalleryStore store, string? imageId, string path, byte[] key)
+    private static async Task DeleteQueuedFileAsync(GalleryStore store, DriveOperation operation, string path, byte[] key)
     {
-        if (!await CanDeleteQueuedFileAsync(store, imageId, path, key)) return;
-        try { File.Delete(path); }
-        catch (DirectoryNotFoundException) { }
-        await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path));
+        if (!await CanDeleteQueuedFileAsync(store, operation.ImageId, path, key)) return;
+        try { await DeleteObsoleteCiphertextAsync(store, operation, path, key); }
+        catch (Exception exception) when (exception is CryptographicException or InvalidOperationException)
+        {
+            throw new DriveOperationConflictException("Queued file is not the expected ciphertext.", exception);
+        }
     }
 
     private static async Task<bool> CanDeleteQueuedFileAsync(GalleryStore store, string? imageId, string path, byte[] key) =>
@@ -248,7 +281,7 @@ public sealed partial class GalleryService
         private async Task DeleteFileAsync(DriveOperation operation, string path)
         {
             await store.Gate.WaitAsync();
-            try { await DeleteQueuedFileAsync(store, operation.ImageId, path, Key); }
+            try { await DeleteQueuedFileAsync(store, operation, path, Key); }
             finally { store.Gate.Release(); }
         }
 

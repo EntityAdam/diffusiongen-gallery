@@ -482,9 +482,15 @@ public sealed partial class GalleryService
                 throw new InvalidOperationException($"'{name}' is already in the gallery.");
             return record;
         }
-        catch
+        catch (Exception importError)
         {
-            File.Delete(record.StoredPath);
+            try { File.Delete(record.StoredPath); }
+            catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException)
+            {
+                throw new AggregateException(
+                    $"Import failed and uncommitted ciphertext remains at '{record.StoredPath}'.",
+                    importError, cleanupError);
+            }
             throw;
         }
     }
@@ -1132,13 +1138,14 @@ public sealed partial class GalleryService
         {
             if (queuedDelete.ImageId == record.Id && File.Exists(target))
             {
+                await VerifyCiphertextAsync(target, record.Id, key);
                 await galleryStore.UpdateImageAndEnqueueAsync(record with { StoredPath = target, Name = newName }, key,
                     deleteOldCopy, queuedDelete.Sequence);
                 return;
             }
             if (await CanDeleteQueuedFileAsync(galleryStore, queuedDelete.ImageId, target, key))
             {
-                await DeleteQueuedFileAsync(galleryStore, queuedDelete.ImageId, target, key);
+                await DeleteQueuedFileAsync(galleryStore, queuedDelete, target, key);
                 await galleryStore.RemoveDriveOperationAsync(queuedDelete.Sequence);
             }
         }

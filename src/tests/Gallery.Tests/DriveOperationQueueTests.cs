@@ -1,5 +1,9 @@
+using System.Security.Cryptography;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services.Gateways;
+using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Tests;
 
@@ -52,6 +56,62 @@ public sealed class DriveOperationQueueTests
         Assert.True(File.Exists(record.StoredPath));
         var remainingRecords = await fixture.Service.ListAsync();
         Assert.True(remainingRecords.Count == 0, $"Expected an empty catalog with 0 records; Actual: {remainingRecords.Count} records.");
+    }
+
+    [Fact]
+    public async Task Cancel_WhenAnotherInstanceOwnsTheGallery_ThenLeavesItsQueuedWorkUntouched()
+    {
+        using var fixture = await LoadedVaultAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await fixture.Service.PauseDriveOperationsAsync();
+        await RemoveAsync(fixture, record.Id);
+        await fixture.Service.CloseVaultAsync();
+
+        using var otherService = new GalleryService(
+            new GalleryStore(Path.Combine(fixture.Root, "gallery.db")),
+            new VaultStore(fixture.Root),
+            new VaultSession());
+        await otherService.OpenExistingVaultAsync(fixture.Root);
+
+        await Assert.ThrowsAsync<IOException>(fixture.Service.CancelDriveOperationsAsync);
+        await Assert.ThrowsAsync<IOException>(fixture.Service.RetryFailedDriveOperationsAsync);
+
+        var counts = await fixture.Store.ReadDriveQueueCountsAsync();
+        Assert.Equal(1, counts.Pending);
+        await otherService.CloseVaultAsync();
+    }
+
+    [Fact]
+    public async Task RefreshQueueStatus_AfterPurge_DoesNotRecreateTheCatalog()
+    {
+        using var fixture = await LoadedVaultAsync();
+        var catalogPath = Path.Combine(fixture.Root, "gallery.db");
+
+        await fixture.Service.PurgeVaultAsync("PURGE");
+        Assert.False(File.Exists(catalogPath));
+
+        await fixture.Service.RefreshDriveQueueStatusAsync();
+
+        Assert.Equal(0, fixture.Service.DriveQueueStatus.Pending);
+        Assert.False(File.Exists(catalogPath));
+    }
+
+    [Fact]
+    public async Task Delete_WhenQueuedCiphertextWasReplaced_ThenRetainsItAndMarksAConflict()
+    {
+        using var fixture = await LoadedVaultAsync();
+        fixture.Service.DriveRetryDelay = TimeSpan.FromMilliseconds(1);
+        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await fixture.Service.PauseDriveOperationsAsync();
+        await RemoveAsync(fixture, record.Id);
+        var replacement = new byte[] { 1, 2, 3, 4, 5 };
+        await File.WriteAllBytesAsync(record.StoredPath, replacement);
+
+        fixture.Service.ResumeDriveOperations();
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        Assert.Equal(replacement, await File.ReadAllBytesAsync(record.StoredPath));
+        Assert.Equal(1, fixture.Service.DriveQueueStatus.Failed);
     }
 
     [WindowsFileSharingFact]
@@ -113,6 +173,33 @@ public sealed class DriveOperationQueueTests
             Assert.Equal(record.StoredPath, actualRecords[0].StoredPath);
             await fixture.Service.VerifyImportedAsync(record.Id);
             Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
+        }
+        finally { if (Directory.Exists(outside)) Directory.Delete(outside, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Move_WhenQueuedPathWasReplaced_ThenRejectsItAsTheImageDestination()
+    {
+        using var fixture = await LoadedVaultAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var originalFolder = Path.GetDirectoryName(record.StoredPath)!;
+        var originalName = Path.GetFileNameWithoutExtension(record.StoredPath);
+        var outside = Path.Combine(Path.GetTempPath(), "gallery-interim-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        var interimPath = Path.Combine(outside, "interim.dpng");
+        var replacement = new byte[] { 9, 8, 7, 6, 5 };
+        try
+        {
+            await fixture.Service.PauseDriveOperationsAsync();
+            await fixture.Service.MoveAsync(record.Id, outside, "interim");
+            await File.WriteAllBytesAsync(record.StoredPath, replacement);
+
+            await Assert.ThrowsAsync<CryptographicException>(
+                () => fixture.Service.MoveAsync(record.Id, originalFolder, originalName));
+
+            Assert.Equal(interimPath, Assert.Single(await fixture.Service.ListAsync()).StoredPath);
+            Assert.Equal(replacement, await File.ReadAllBytesAsync(record.StoredPath));
+            await fixture.Service.CancelDriveOperationsAsync();
         }
         finally { if (Directory.Exists(outside)) Directory.Delete(outside, recursive: true); }
     }

@@ -1,12 +1,14 @@
 using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Collections.Immutable;
 using Gallery.Web.Components;
 using Gallery.Web.Components.Pages;
 using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gallery.Tests;
@@ -461,6 +463,37 @@ public sealed class UiComponentTests
         foreach (Match button in buttons) Assert.Contains("disabled", button.Value);
     }
 
+    [Fact]
+    public async Task DuplicateReviewer_EscapeWhileBusy_ThenClosesWithoutWaitingForLoading()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var first = new ImageRecord { Id = "first", Name = "First", Width = 10, Height = 10, OriginalBytes = 10 };
+        var second = new ImageRecord { Id = "second", Name = "Second", Width = 10, Height = 10, OriginalBytes = 10 };
+        var records = new Dictionary<string, ImageRecord> { [first.Id] = first, [second.Id] = second };
+        var groups = new[] { new DuplicateGroup(first.Id, ImmutableArray.Create(first.Id, second.Id), 0, true, 10) };
+        DuplicateReviewer? component = null;
+        var closeCalled = false;
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<DuplicateReviewerTestHost>(
+            ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(DuplicateReviewerTestHost.Groups)] = groups,
+                [nameof(DuplicateReviewerTestHost.Records)] = records,
+                [nameof(DuplicateReviewerTestHost.Capture)] = (Action<DuplicateReviewer>)(value => component = value),
+                [nameof(DuplicateReviewerTestHost.Closed)] = (Action<string>)(_ => closeCalled = true)
+            })));
+
+        Assert.NotNull(component);
+        var fields = typeof(DuplicateReviewer).GetFields(BindingFlags.Instance | BindingFlags.NonPublic);
+        fields.Single(field => field.Name == "busy").SetValue(component, true);
+        fields.Single(field => field.Name == "loading").SetValue(component, true);
+
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => component!.HandleKey("escape"));
+
+        Assert.True(closeCalled);
+    }
+
     // Every unavailable thumbnail state selects its matching placeholder and hides the image.
     [Theory]
     [InlineData(false, "Loading preview...")]
@@ -681,6 +714,28 @@ public sealed class UiComponentTests
         }
         else
             Assert.DoesNotContain("overview-stale", actualHtml);
+    }
+
+    private sealed class DuplicateReviewerTestHost : ComponentBase
+    {
+        [Parameter] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = [];
+        [Parameter] public IReadOnlyDictionary<string, ImageRecord> Records { get; set; } = new Dictionary<string, ImageRecord>();
+        [Parameter] public Action<DuplicateReviewer>? Capture { get; set; }
+        [Parameter] public Action<string>? Closed { get; set; }
+
+        public DuplicateReviewerTestHost() { }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            builder.OpenComponent<DuplicateReviewer>(0);
+            builder.AddAttribute(1, nameof(DuplicateReviewer.Groups), Groups);
+            builder.AddAttribute(2, nameof(DuplicateReviewer.Lookup), (Func<string, ImageRecord?>)(id =>
+                Records.TryGetValue(id, out var record) ? record : null));
+            builder.AddAttribute(3, nameof(DuplicateReviewer.OnClose), EventCallback.Factory.Create<string>(this,
+                value => Closed?.Invoke(value)));
+            builder.AddComponentReferenceCapture(4, instance => Capture?.Invoke((DuplicateReviewer)instance));
+            builder.CloseComponent();
+        }
     }
 
 }

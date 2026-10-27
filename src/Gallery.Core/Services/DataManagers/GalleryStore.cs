@@ -46,11 +46,12 @@ internal sealed partial class GalleryStore(string databasePath)
         return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync());
     }
 
-    private async Task<SqliteConnection> OpenAsync()
+    private async Task<SqliteConnection> OpenAsync(bool createIfMissing = true)
     {
         var sqliteConnection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
+            Mode = createIfMissing ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadWrite,
             Pooling = false
         }.ToString());
         try

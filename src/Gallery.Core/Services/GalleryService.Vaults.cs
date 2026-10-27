@@ -204,7 +204,8 @@ public sealed partial class GalleryService
                 var path = Path.GetFullPath(payload.Path);
                 if (!DriveOperationProcessor.PathFingerprint(key, path).AsSpan().SequenceEqual(operation.Target.AsSpan()))
                     throw new InvalidOperationException("Queued deletion path does not match its authenticated target.");
-                if (!ownedPaths.Contains(path)) await DeleteObsoleteCiphertextAsync(operation, path, key);
+                if (!ownedPaths.Contains(path))
+                    await DeleteObsoleteCiphertextAsync(galleryStore, operation, path, key);
                 await galleryStore.CompleteDriveOperationsAsync(
                     [new DriveOperationResult(operation.Sequence, operation.Revision, DriveOperationOutcome.Done)]);
             }
@@ -212,18 +213,25 @@ public sealed partial class GalleryService
         finally { galleryStore.Gate.Release(); }
     }
 
-    private async Task DeleteObsoleteCiphertextAsync(DriveOperation operation, string path, byte[] key)
+    private static async Task DeleteObsoleteCiphertextAsync(
+        GalleryStore store, DriveOperation operation, string path, byte[] key)
     {
         if (Directory.Exists(path)) throw new IOException("Queued ciphertext deletion points to a directory.");
         if (File.Exists(path))
         {
             if (operation.ImageId is null || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
                 throw new InvalidOperationException("Queued ciphertext ownership cannot be verified.");
-            var plain = await StoredMediaProcessor.ReadAsync(path, operation.ImageId, key);
-            CryptographicOperations.ZeroMemory(plain);
-            File.Delete(path);
+            await VerifyCiphertextAsync(path, operation.ImageId, key);
+            try { File.Delete(path); }
+            catch (DirectoryNotFoundException) { }
         }
-        await galleryStore.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path));
+        await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path));
+    }
+
+    private static async Task VerifyCiphertextAsync(string path, string imageId, byte[] key)
+    {
+        var plain = await StoredMediaProcessor.ReadAsync(path, imageId, key);
+        CryptographicOperations.ZeroMemory(plain);
     }
 
     private static string NormalizeVaultDirectory(string directory)
