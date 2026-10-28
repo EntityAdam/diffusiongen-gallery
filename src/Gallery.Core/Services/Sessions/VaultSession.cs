@@ -1,5 +1,6 @@
 using Gallery.Core.Exceptions;
 using Gallery.Core.Services.Sessions.Generations;
+using Gallery.Core.Services.Sessions.Generations.Leases;
 using System.Collections.Immutable;
 
 namespace Gallery.Core.Services.Sessions;
@@ -73,12 +74,23 @@ internal sealed class VaultSession : IDisposable
                 vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
                 return vaultLeaseState.UnlockedSession;
             }
+
             var timedOut = vaultLeaseState.UnlockedSession?.HasTimedOut == true;
             throw new VaultLockedException(timedOut
                     ? "The gallery locked automatically due to inactivity."
                     : UnlockRequiredMessage, GalleryLogEvent.AcquireVaultKey,
                 new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", timedOut ? "timed_out" : "locked")));
         }
+    }
+
+    internal KeyLease? TryBorrowUnlockedKey()
+    {
+        CheckInactivityTimeout();
+        KeyLease? keyLease;
+        lock (vaultLeaseState.SyncRoot)
+            keyLease = vaultLeaseState.UnlockedSession?.TryBorrow();
+        if (keyLease is null) CheckInactivityTimeout();
+        return keyLease;
     }
 
     public void Unlock(byte[] suppliedKeyBytes)

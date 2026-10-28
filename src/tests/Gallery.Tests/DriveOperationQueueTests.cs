@@ -1,4 +1,6 @@
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Core.Services.DataManagers;
@@ -114,7 +116,7 @@ public sealed class DriveOperationQueueTests
         Assert.Equal(1, fixture.Service.DriveQueueStatus.Failed);
     }
 
-    [WindowsFileSharingFact]
+    [WindowsFileSystemFact]
     public async Task Delete_WhenFileStaysLocked_ThenFailsAfterRetriesAndSucceedsWhenRetried()
     {
         // Arrange
@@ -225,6 +227,64 @@ public sealed class DriveOperationQueueTests
         Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
         Assert.Equal(1, overview.MissingImageFiles);
         Assert.False(overview.IsIndexPending);
+    }
+
+    [WindowsFileSystemFact]
+    public async Task IndexRebuild_WhenARecordDirectoryIsInaccessible_ThenKeepsIndexPendingUntilRetrySucceeds()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var fixture = await LoadedVaultAsync();
+        fixture.Service.DriveRetryDelay = TimeSpan.FromMilliseconds(5);
+        var record = await fixture.Service.ImportAsync(
+            new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var inaccessibleDirectory = Path.Combine(Path.GetTempPath(), "gallery-index-access-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(inaccessibleDirectory);
+        string? originalSecurityDescriptor = null;
+        try
+        {
+            await fixture.Service.MoveAsync(record.Id, inaccessibleDirectory, "moved");
+            await fixture.Service.WaitForDriveOperationsAsync();
+            var directorySecurity = new DirectoryInfo(inaccessibleDirectory).GetAccessControl();
+            originalSecurityDescriptor = directorySecurity.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+            var currentUser = WindowsIdentity.GetCurrent().User
+                ?? throw new InvalidOperationException("The current Windows identity has no SID.");
+            directorySecurity.AddAccessRule(new FileSystemAccessRule(
+                currentUser, FileSystemRights.ListDirectory, AccessControlType.Deny));
+            new DirectoryInfo(inaccessibleDirectory).SetAccessControl(directorySecurity);
+
+            await fixture.Service.RebuildStorageIndexAsync();
+            await fixture.Service.WaitForDriveOperationsAsync();
+            var blockedOverview = await fixture.Service.RefreshStorageOverviewAsync();
+
+            Assert.True(fixture.Service.DriveQueueStatus.Failed > 0);
+            Assert.True(blockedOverview.IsIndexPending);
+
+            var restoredSecurity = new DirectorySecurity();
+            restoredSecurity.SetSecurityDescriptorSddlForm(originalSecurityDescriptor, AccessControlSections.Access);
+            new DirectoryInfo(inaccessibleDirectory).SetAccessControl(restoredSecurity);
+
+            await fixture.Service.RetryFailedDriveOperationsAsync();
+            await fixture.Service.WaitForDriveOperationsAsync();
+            var rebuiltOverview = await fixture.Service.RefreshStorageOverviewAsync();
+
+            Assert.Equal(0, fixture.Service.DriveQueueStatus.Failed);
+            Assert.False(rebuiltOverview.IsIndexPending);
+        }
+        finally
+        {
+            if (Directory.Exists(inaccessibleDirectory))
+            {
+                if (originalSecurityDescriptor is not null)
+                {
+                    var restoredSecurity = new DirectorySecurity();
+                    restoredSecurity.SetSecurityDescriptorSddlForm(
+                        originalSecurityDescriptor, AccessControlSections.Access);
+                    new DirectoryInfo(inaccessibleDirectory).SetAccessControl(restoredSecurity);
+                }
+                Directory.Delete(inaccessibleDirectory, recursive: true);
+            }
+        }
     }
 
     [Fact]

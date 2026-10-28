@@ -1,6 +1,7 @@
 // Class tests pin raw configuration snapshots and source precedence that cannot be observed through HTTP.
 using System.Security.Cryptography;
 using Gallery.Core.Services;
+using Gallery.Web.Composition;
 using Microsoft.Extensions.Configuration;
 using ConfigurationProvider = Gallery.Core.Services.ConfigurationProviders.ConfigurationProvider;
 
@@ -17,7 +18,7 @@ public sealed class ConfigurationTests
 
         // Act
         var actualArgumentNullException = Assert.Throws<ArgumentNullException>(
-            () => GalleryService.CaptureRuntimeOptions(null!));
+            () => GalleryServiceRegistration.CaptureGalleryRuntimeOptions(null!));
 
         // Assert
         Assert.Equal(ExpectedParameterName, actualArgumentNullException.ParamName);
@@ -40,7 +41,7 @@ public sealed class ConfigurationTests
             new { StateDirectory = expectedStateDirectory, FFmpegPath = (string?)null });
 
         // Act
-        var actualGalleryRuntimeOptions = GalleryService.CaptureRuntimeOptions(configuration);
+        var actualGalleryRuntimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario,
@@ -59,7 +60,7 @@ public sealed class ConfigurationTests
         }).Build();
 
         // Act
-        var actualGalleryRuntimeOptions = GalleryService.CaptureRuntimeOptions(configuration);
+        var actualGalleryRuntimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Assert
         Assert.Equal(expectedStateDirectory, actualGalleryRuntimeOptions.StateDirectory);
@@ -100,7 +101,7 @@ public sealed class ConfigurationTests
         });
 
         // Act
-        var actualGalleryRuntimeOptions = GalleryService.CaptureRuntimeOptions(configuration);
+        var actualGalleryRuntimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -137,7 +138,7 @@ public sealed class ConfigurationTests
         });
 
         // Act
-        var actualGalleryRuntimeOptions = GalleryService.CaptureRuntimeOptions(configuration);
+        var actualGalleryRuntimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Post-capture stimulus
         configuration[settingName] = replacementSetting;

@@ -12,26 +12,41 @@ public sealed partial class GalleryService : IDisposable
 {
     private readonly HttpClient? ownedHttpClient;
 
+    private static VaultHistory CreateVaultHistory(GalleryRuntimeOptions galleryRuntimeOptions) =>
+        new(galleryRuntimeOptions.StateDirectory ?? DefaultApplicationDirectory);
+
+    private static VideoTools CreateVideoTools(GalleryRuntimeOptions galleryRuntimeOptions)
+    {
+        var videoToolsOptions = VideoToolsOptionsNormalizer.Normalize(
+            galleryRuntimeOptions.FFmpegPath, galleryRuntimeOptions.ToolSearchPaths);
+        return new VideoTools(videoToolsOptions.ConfiguredPath, videoToolsOptions.SearchPaths);
+    }
+
+    private static GalleryService CreateGalleryService(
+        VaultHistory vaultHistory, string vaultRoot, VideoTools videoTools, HttpClient ownedHttpClient)
+    {
+        var root = vaultHistory.Read() ?? vaultRoot;
+        return CreateOwnedScope(new GalleryStore(Path.Combine(root, CatalogFileName)),
+            new VaultStore(root), videoTools, ownedHttpClient);
+    }
+
     public bool IsUnlocked => vaultSession.IsUnlocked;
     public bool VaultExists => vaultStore.Exists;
     public string VaultRoot => vaultStore.Root;
 
     /// <summary>Creates an owned gallery scope; the returned service disposes the supplied HTTP client.</summary>
-    public static GalleryService Create(string vaultRoot, GalleryRuntimeOptions options, HttpClient ownedHttpClient)
+    public static GalleryService Create(string vaultRoot, GalleryRuntimeOptions galleryRuntimeOptions, HttpClient ownedHttpClient)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(vaultRoot);
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(galleryRuntimeOptions);
         ArgumentNullException.ThrowIfNull(ownedHttpClient);
         try
         {
-            var history = new VaultHistory(options.StateDirectory ?? DefaultApplicationDirectory);
-            var videoToolsOptions = VideoToolsOptionsNormalizer.Normalize(options.FFmpegPath, options.ToolSearchPaths);
-            var video = new VideoTools(videoToolsOptions.ConfiguredPath, videoToolsOptions.SearchPaths);
-            var root = history.Read() ?? vaultRoot;
-            var service = CreateOwnedScope(new GalleryStore(Path.Combine(root, "gallery.db")),
-                new VaultStore(root), video, ownedHttpClient);
-            service.galleryLifetime.InitializeHistory(history);
-            return service;
+            var vaultHistory = CreateVaultHistory(galleryRuntimeOptions);
+            var videoTools = CreateVideoTools(galleryRuntimeOptions);
+            var galleryService = CreateGalleryService(vaultHistory, vaultRoot, videoTools, ownedHttpClient);
+            galleryService.galleryLifetime.InitializeHistory(vaultHistory);
+            return galleryService;
         }
         catch
         {
@@ -41,93 +56,30 @@ public sealed partial class GalleryService : IDisposable
     }
 
     private GalleryService(
-        GalleryStore galleryStore, VaultStore vaultStore, VaultSession session, VideoTools videoTools, HttpClient httpClient)
-        : this(galleryStore, vaultStore, session, videoTools, new VisionService(httpClient))
+        GalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools videoTools, HttpClient httpClient)
+        : this(galleryStore, vaultStore, vaultSession, videoTools, new VisionManager(httpClient))
     {
         ownedHttpClient = httpClient;
     }
 
     private static GalleryService CreateOwnedScope(
-        GalleryStore galleryStore, VaultStore vaultStore, VideoTools videoTools, HttpClient httpClient)
+     GalleryStore galleryStore, VaultStore vaultStore, VideoTools videoTools, HttpClient httpClient)
     {
-        var session = new VaultSession();
-        try
-        {
-            return new GalleryService(galleryStore, vaultStore, session, videoTools, httpClient);
-        }
-        catch
-        {
-            session.Dispose();
-            throw;
-        }
+     var vaultSession = new VaultSession();
+     try
+     {
+         return new GalleryService(galleryStore, vaultStore, vaultSession, videoTools, httpClient);
+     }
+     catch
+     {
+         vaultSession.Dispose();
+         throw;
+     }
     }
 
-    public async Task<string> CreateVaultAsync(string passphrase, string confirmation, string? name = null,
-        Gallery.Core.Models.MediaStorageOptions? storageOptions = null)
-    {
-        await lifecycleGate.WaitAsync();
-        try
-        {
-            ValidateCredentialConfirmation(passphrase, confirmation);
-            RequireLocalCatalogDirectory(VaultRoot);
-            if (storageOptions is not null) storageOptions = NormalizeMediaStorageOptions(storageOptions);
-            EnsureCheckout();
-            if (vaultStore.Exists) throw new InvalidOperationException("A gallery already exists. Unlock it instead.");
-            foreach (var fileName in new[] { "gallery.db", "gallery.db-wal", "gallery.db-shm" })
-            {
-                var path = Path.Combine(VaultRoot, fileName);
-                if (File.Exists(path) || Directory.Exists(path))
-                    throw new IOException("A new gallery cannot replace an existing catalog or its journal files.");
-            }
-            var staging = Path.Combine(VaultRoot, ".vault-create-" + Guid.NewGuid().ToString("N"));
-            byte[]? createdKey = null;
-            try
-            {
-                var stagedVault = new VaultStore(staging);
-                var created = await stagedVault.CreateAsync(passphrase, name ?? GenerateVaultName());
-                createdKey = created.Key;
-                var stagedStore = new GalleryStore(Path.Combine(staging, "gallery.db"));
-                await stagedStore.InitializeAsync();
-                if (storageOptions is not null)
-                    await stagedStore.SaveSettingsAsync(storageOptions, "media-storage", "media-storage:v1", createdKey);
-                history?.Save(VaultRoot);
-                EnsureActive();
-                // No leases can observe the new key before catalog/header publication completes.
-                using (var activation = vaultSession.PrepareUnlock(createdKey))
-                {
-                    PublishCreatedVault(staging, VaultRoot);
-                    activation.Commit();
-                }
-                return created.Recovery;
-            }
-            finally
-            {
-                if (createdKey is not null) CryptographicOperations.ZeroMemory(createdKey);
-                DeleteCreationStaging(staging);
-            }
-        }
-        finally { lifecycleGate.Release(); }
-    }
-
-    private static void PublishCreatedVault(string staging, string root)
-    {
-        var database = Path.Combine(root, "gallery.db");
-        File.Move(Path.Combine(staging, "gallery.db"), database, overwrite: false);
-        try { File.Move(Path.Combine(staging, "vault.json"), Path.Combine(root, "vault.json"), overwrite: false); }
-        catch
-        {
-            File.Move(database, Path.Combine(staging, "gallery.db"), overwrite: false);
-            throw;
-        }
-    }
-
-    private static void DeleteCreationStaging(string staging)
-    {
-        // Staging cleanup is nonessential after publication: it must never withhold delivered recovery.
-        try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-    }
+    public Task<string> CreateVaultAsync(string passphrase, string confirmation, string? name = null,
+     MediaStorageOptions? storageOptions = null) =>
+     vaultManager.CreateVaultAsync(passphrase, confirmation, name, storageOptions);
 
     public async Task UnlockWithPassphraseAsync(string passphrase)
     {
@@ -158,18 +110,8 @@ public sealed partial class GalleryService : IDisposable
         finally { lifecycleGate.Release(); }
     }
 
-    public async Task ChangePassphraseAsync(string passphrase, string confirmation)
-    {
-        ValidateCredentialConfirmation(passphrase, confirmation);
-        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        await vaultStore.ChangePassphraseAsync(keyLease.Bytes, passphrase);
-    }
-
-    private static void ValidateCredentialConfirmation(string passphrase, string confirmation)
-    {
-        if (passphrase != confirmation)
-            throw new InvalidOperationException("Passphrases do not match.");
-    }
+    public Task ChangePassphraseAsync(string passphrase, string confirmation) =>
+        vaultManager.ChangePassphraseAsync(passphrase, confirmation);
 
     public event Action? OnAutoLocked;
 
@@ -192,7 +134,7 @@ public sealed partial class GalleryService : IDisposable
     public void Dispose()
     {
         if (!galleryLifetime.TryBeginDisposal()) return;
-        drivePlayer.Dispose();
+        driveOperationPlayer.Dispose();
         vaultSession.Dispose();
         _ = ReleaseCheckoutAfterOperationsAsync();
         ownedHttpClient?.Dispose();
@@ -208,21 +150,23 @@ public sealed partial class GalleryService : IDisposable
         {
             await vaultSession.WhenDrainedAsync();
             await lifecycleGate.WaitAsync();
-            Task? remainingDrain;
-            try { remainingDrain = TryReleaseCheckoutAfterOperations(expectedCheckout); }
+            Task? remainingDrainTask;
+            try { remainingDrainTask = TryReleaseCheckoutAfterOperationsAsync(expectedCheckout); }
             finally { lifecycleGate.Release(); }
-            if (remainingDrain is null) return;
-            await remainingDrain;
+            if (remainingDrainTask is null) return;
+            await remainingDrainTask;
         }
     }
 
     // Caller owns lifecycleGate, which excludes public unlock and location replacement.
-    internal Task? TryReleaseCheckoutAfterOperations(VaultCheckout expectedCheckout)
+    internal Task? TryReleaseCheckoutAfterOperationsAsync(VaultCheckout expectedCheckout)
     {
         if (!ReferenceEquals(checkout, expectedCheckout)) return null;
-        var (unlocked, drain) = vaultSession.ReadCheckoutReleaseState();
-        if (unlocked) return null;
-        if (!drain.IsCompleted) return drain;
+        bool vaultIsUnlocked;
+        Task drainTask;
+        (vaultIsUnlocked, drainTask) = vaultSession.ReadCheckoutReleaseState();
+        if (vaultIsUnlocked) return null;
+        if (!drainTask.IsCompleted) return drainTask;
         galleryLifetime.ReleaseCheckout();
         return null;
     }

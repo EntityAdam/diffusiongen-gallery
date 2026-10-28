@@ -430,9 +430,9 @@ encryption, filesystem/media processing, and external gateways. Web contains
 Blazor components, host/request policies, and dependency-injection composition.
 UI components use Core models directly. Test projects are under `src/tests`.
 
-`GalleryServiceRegistration` captures runtime settings once through
-`GalleryService.CaptureRuntimeOptions`. Core's `ConfigurationProvider` and
-`SettingsSource` remain internal. `Gallery:StateDirectory` selects
+`GalleryServiceRegistration` captures runtime settings once at the host
+composition boundary. Core's `ConfigurationProvider` and `SettingsSource`
+remain internal. `Gallery:StateDirectory` selects
 the last-opened-gallery history directory. Tool search paths retain their order:
 configured `PATH` (or process `PATH` when absent), followed by user and machine
 `PATH` on Windows. The snapshot keeps raw tool paths; `GalleryService.Create`

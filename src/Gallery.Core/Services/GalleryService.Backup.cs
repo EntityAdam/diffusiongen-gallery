@@ -140,8 +140,8 @@ public sealed partial class GalleryService
             {
                 var records = await galleryStore.ReadRecordsAsync(keyLease.Bytes);
                 activity?.SetTag("backup.library.image_count", records.Count);
-                var vaultHeaderPath = Path.Combine(stagingDirectory, "vault.json");
-                var databasePath = Path.Combine(stagingDirectory, "gallery.db");
+                var vaultHeaderPath = Path.Combine(stagingDirectory, VaultHeaderFileName);
+                var databasePath = Path.Combine(stagingDirectory, CatalogFileName);
                 await vaultStore.CopyHeaderAsync(vaultHeaderPath);
                 await galleryStore.CreateSnapshotAsync(databasePath);
                 vaultHeaderSha256 = await HashFileAsync(vaultHeaderPath);
@@ -397,10 +397,10 @@ public sealed partial class GalleryService
             throw new InvalidDataException("The sidecar and embedded manifests disagree.");
         _ = ArchiveManifestProcessor.Read<BackupManifest>(encrypted, key);
 
-        var header = archive.GetEntry("vault.json")
+        var header = archive.GetEntry(VaultHeaderFileName)
             ?? throw new InvalidDataException("The archive is missing 'vault.json'.");
         var verifiedBytes = await VerifyArchiveEntryAsync(header, manifest.VaultHeaderSha256);
-        var database = archive.GetEntry("gallery.db")
+        var database = archive.GetEntry(CatalogFileName)
             ?? throw new InvalidDataException("The archive is missing 'gallery.db'.");
         var databasePath = Path.Combine(stagingDirectory, "parent-gallery.db");
         try
@@ -535,8 +535,8 @@ public sealed partial class GalleryService
                 throw new InvalidOperationException("A backup manifest is too large to publish.");
             await using var archiveStream = new FileStream(archivePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
             using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true);
-            AddFile(archive, "vault.json", Path.Combine(Path.GetDirectoryName(archivePath)!, "vault.json"));
-            AddFile(archive, "gallery.db", Path.Combine(Path.GetDirectoryName(archivePath)!, "gallery.db"));
+            AddFile(archive, VaultHeaderFileName, Path.Combine(Path.GetDirectoryName(archivePath)!, VaultHeaderFileName));
+            AddFile(archive, CatalogFileName, Path.Combine(Path.GetDirectoryName(archivePath)!, CatalogFileName));
             var manifestEntry = archive.CreateEntry("manifest.enc", CompressionLevel.NoCompression);
             await using (var target = manifestEntry.Open())
                 await target.WriteAsync(encryptedManifest);

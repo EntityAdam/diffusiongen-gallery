@@ -48,11 +48,11 @@ public sealed partial class GalleryService
 
         private static (long DatabaseBytes, int FileCount, long Bytes) MeasureVaultFiles(string vaultRoot)
         {
-            var databasePath = Path.Combine(vaultRoot, "gallery.db");
+            var databasePath = Path.Combine(vaultRoot, CatalogFileName);
             string[] databaseFiles = [databasePath, databasePath + "-wal", databasePath + "-shm"];
             long databaseBytes = 0, vaultBytes = 0;
             var vaultFileCount = 0;
-            foreach (var path in databaseFiles.Append(Path.Combine(vaultRoot, "vault.json")))
+            foreach (var path in databaseFiles.Append(Path.Combine(vaultRoot, VaultHeaderFileName)))
             {
                 var length = FileLength(path);
                 if (length is null) continue;

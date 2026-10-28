@@ -18,10 +18,11 @@ public sealed partial class GalleryService
 {
     private const string MediaIndexId = "media-index";
     private const string MediaIndexPurpose = "media-index:v1";
+    private const string RemovalStagingMarker = ".removing-";
     private const int DriveBatchSize = 64;
     private const int MaxDriveAttempts = 5;
 
-    private readonly DriveOperationPlayer drivePlayer;
+    private readonly DriveOperationPlayer driveOperationPlayer;
 
     /// <summary>Base delay before retrying a failed drive operation; doubles with each attempt.</summary>
     internal TimeSpan DriveRetryDelay
@@ -33,27 +34,20 @@ public sealed partial class GalleryService
     /// <summary>Raised from a background thread whenever queued drive work progresses.</summary>
     public event Action? DriveQueueChanged;
 
-    public DriveQueueStatus DriveQueueStatus => drivePlayer.Status;
+    public DriveQueueStatus DriveQueueStatus => driveOperationPlayer.Status;
 
     private sealed record MediaIndexMarker(DateTimeOffset ScheduledAt);
 
-    private sealed class DriveOperationConflictException : Exception
+    private DriveOperationPlayer CreateDriveOperationPlayer()
     {
-        public DriveOperationConflictException() { }
-        public DriveOperationConflictException(string message) : base(message) { }
-        public DriveOperationConflictException(string message, Exception innerException) : base(message, innerException) { }
+        var driveOperationPlayer = new DriveOperationPlayer(OpenDriveSession, ReadDriveQueueCountsAsync);
+        driveOperationPlayer.Changed += () => DriveQueueChanged?.Invoke();
+        return driveOperationPlayer;
     }
 
-    private DriveOperationPlayer CreateDrivePlayer()
-    {
-        var player = new DriveOperationPlayer(OpenDriveSession, ReadDriveQueueCountsAsync);
-        player.Changed += () => DriveQueueChanged?.Invoke();
-        return player;
-    }
+    public Task PauseDriveOperationsAsync() => driveOperationPlayer.PauseAsync();
 
-    public Task PauseDriveOperationsAsync() => drivePlayer.PauseAsync();
-
-    public void ResumeDriveOperations() => drivePlayer.Resume();
+    public void ResumeDriveOperations() => driveOperationPlayer.Resume();
 
     /// <summary>Discards queued and failed drive work. Files those operations would have changed stay as they are.</summary>
     public async Task CancelDriveOperationsAsync()
@@ -62,10 +56,10 @@ public sealed partial class GalleryService
         try
         {
             EnsureCheckout();
-            var store = galleryStore;
-            await drivePlayer.StopAsync();
-            await store.CancelUnfinishedDriveOperationsAsync();
-            await drivePlayer.RefreshAsync();
+            var galleryStore = this.galleryStore;
+            await driveOperationPlayer.StopAsync();
+            await galleryStore.CancelUnfinishedDriveOperationsAsync();
+            await driveOperationPlayer.RefreshAsync();
         }
         finally { lifecycleGate.Release(); }
     }
@@ -76,15 +70,15 @@ public sealed partial class GalleryService
         try
         {
             EnsureCheckout();
-            var store = galleryStore;
-            await store.RetryFailedDriveOperationsAsync();
-            drivePlayer.Start();
-            await drivePlayer.RefreshAsync();
+            var galleryStore = this.galleryStore;
+            await galleryStore.RetryFailedDriveOperationsAsync();
+            driveOperationPlayer.Start();
+            await driveOperationPlayer.RefreshAsync();
         }
         finally { lifecycleGate.Release(); }
     }
 
-    public Task WaitForDriveOperationsAsync() => drivePlayer.WhenIdleAsync();
+    public Task WaitForDriveOperationsAsync() => driveOperationPlayer.WhenIdleAsync();
 
     public async Task RefreshDriveQueueStatusAsync()
     {
@@ -92,7 +86,7 @@ public sealed partial class GalleryService
         try
         {
             EnsureActive();
-            await drivePlayer.RefreshAsync();
+            await driveOperationPlayer.RefreshAsync();
         }
         finally { lifecycleGate.Release(); }
     }
@@ -113,17 +107,16 @@ public sealed partial class GalleryService
         await galleryStore.ClearMediaIndexAsync();
         await galleryStore.DeleteSettingsAsync(MediaIndexId);
         await ScheduleMediaIndexAsync(records, keyLease.Bytes);
-        drivePlayer.Start();
+        driveOperationPlayer.Start();
     }
 
-    private Task StopDrivePlayerAsync() => drivePlayer.StopAsync();
+    private Task StopDriveOperationPlayerAsync() => driveOperationPlayer.StopAsync();
 
     private IDriveOperationSession? OpenDriveSession()
     {
-        KeyLease lease;
-        try { lease = vaultSession.AcquireUnlockedSession().Borrow(); }
-        catch (VaultLockedException) { return null; }
-        return new DriveOperationSession(galleryStore, ImageRoot(vaultStore.Root), lease, DriveRetryDelay);
+        var keyLease = vaultSession.TryBorrowUnlockedKey();
+        return keyLease is null ? null
+            : new DriveOperationSession(galleryStore, ImageRoot(vaultStore.Root), keyLease, DriveRetryDelay);
     }
 
     private static string ImageRoot(string vaultRoot) => Path.Combine(vaultRoot, "images");
@@ -165,27 +158,30 @@ public sealed partial class GalleryService
     /// Deletes a file queued for deletion unless its image was moved back to that path. Caller holds Gate.
     /// An operation whose path is owned again is obsolete and completes without deleting that path.
     /// </summary>
-    private static async Task DeleteQueuedFileAsync(GalleryStore store, DriveOperation operation, string path, byte[] key)
+    private static async Task DeleteQueuedFileAsync(
+        GalleryStore galleryStore, DriveOperation driveOperation, string path, byte[] key)
     {
-        if (!await CanDeleteQueuedFileAsync(store, operation.ImageId, path, key)) return;
-        try { await DeleteObsoleteCiphertextAsync(store, operation, path, key); }
+        if (!await CanDeleteQueuedFileAsync(galleryStore, driveOperation.ImageId, path, key)) return;
+        try { await DeleteObsoleteCiphertextAsync(galleryStore, driveOperation, path, key); }
         catch (Exception exception) when (exception is CryptographicException or InvalidOperationException)
         {
             throw new DriveOperationConflictException("Queued file is not the expected ciphertext.", exception);
         }
     }
 
-    private static async Task<bool> CanDeleteQueuedFileAsync(GalleryStore store, string? imageId, string path, byte[] key) =>
-        imageId is null || await store.TryReadRecordAsync(imageId, key) is not { } owner || !PathEquals(owner.StoredPath, path);
+    private static async Task<bool> CanDeleteQueuedFileAsync(
+        GalleryStore galleryStore, string? imageId, string path, byte[] key) =>
+        imageId is null || await galleryStore.TryReadRecordAsync(imageId, key) is not { } owner
+        || !PathEquals(owner.StoredPath, path);
 
     private static bool IsRemovalStagingFile(string path)
     {
-        var markerIndex = path.LastIndexOf(".removing-", StringComparison.Ordinal);
-        return markerIndex >= 0 && Guid.TryParseExact(path[(markerIndex + ".removing-".Length)..], "N", out _);
+        var markerIndex = path.LastIndexOf(RemovalStagingMarker, StringComparison.Ordinal);
+        return markerIndex >= 0 && Guid.TryParseExact(path[(markerIndex + RemovalStagingMarker.Length)..], "N", out _);
     }
 
     private static string RemovalOriginalPath(string path) =>
-        path[..path.LastIndexOf(".removing-", StringComparison.Ordinal)];
+        path[..path.LastIndexOf(RemovalStagingMarker, StringComparison.Ordinal)];
 
     private static async Task<bool> FilesMatchAsync(string leftPath, string rightPath)
     {
@@ -198,28 +194,39 @@ public sealed partial class GalleryService
     }
 
     /// <summary>Plays due operations for one gallery store with one key lease.</summary>
-    private sealed class DriveOperationSession(GalleryStore store, string imageRoot, KeyLease lease, TimeSpan retryDelay)
+    private sealed class DriveOperationSession(
+        GalleryStore galleryStore, string imageRoot, KeyLease keyLease, TimeSpan retryDelay)
         : IDriveOperationSession
     {
-        private byte[] Key => lease.Bytes;
+        private byte[] Key => keyLease.Bytes;
 
         public async Task<DriveBatchReport> PlayBatchAsync(CancellationToken cancellationToken)
         {
-            var operations = await store.ReadDueDriveOperationsAsync(DriveBatchSize, NowMilliseconds());
-            var results = new List<DriveOperationResult>(operations.Count);
-            var activity = "";
-            foreach (var operation in operations)
-            {
-                // Pausing takes effect between operations, never part-way through one.
-                if (cancellationToken.IsCancellationRequested) break;
-                results.Add(await PlayAsync(operation));
-                activity = Describe(operation.Kind);
-            }
-            await store.CompleteDriveOperationsAsync(results);
-            return new(results.Count, results.Count(result => result.Outcome == DriveOperationOutcome.Done), activity);
+            var dueDriveOperations = await galleryStore.ReadDueDriveOperationsAsync(DriveBatchSize, NowMilliseconds());
+            var driveOperationResults = new List<DriveOperationResult>(dueDriveOperations.Count);
+            var activity = await PlayDueOperationsAsync(dueDriveOperations, driveOperationResults, cancellationToken);
+            await galleryStore.CompleteDriveOperationsAsync(driveOperationResults);
+            return new(driveOperationResults.Count,
+                driveOperationResults.Count(driveOperationResult => driveOperationResult.Outcome == DriveOperationOutcome.Done),
+                activity);
         }
 
-        public void Dispose() => lease.Dispose();
+        private async Task<string> PlayDueOperationsAsync(
+            IReadOnlyList<DriveOperation> dueDriveOperations,
+            List<DriveOperationResult> driveOperationResults,
+            CancellationToken cancellationToken)
+        {
+            var activity = "";
+            foreach (var driveOperation in dueDriveOperations)
+            {
+                if (cancellationToken.IsCancellationRequested) break;
+                driveOperationResults.Add(await ExecuteAndRecordAsync(driveOperation));
+                activity = Describe(driveOperation.Kind);
+            }
+            return activity;
+        }
+
+        public void Dispose() => keyLease.Dispose();
 
         private static string Describe(string kind) => kind switch
         {
@@ -229,114 +236,162 @@ public sealed partial class GalleryService
             _ => "Processing"
         };
 
-        private async Task<DriveOperationResult> PlayAsync(DriveOperation operation)
+        private async Task<DriveOperationResult> ExecuteAndRecordAsync(DriveOperation driveOperation)
         {
-            DriveOperationPayload payload;
-            try
-            {
-                VaultEnvelopeValidator.Validate(operation.Payload.AsSpan(), $"drive operation payload '{operation.Sequence}'");
-                var plain = VaultCrypto.Decrypt(operation.Payload.AsSpan(), Key, DriveOperationPurpose(operation.Kind, operation.Target.AsSpan()));
-                try
-                {
-                    payload = JsonSerializer.Deserialize<DriveOperationPayload>(plain)
-                        ?? throw new JsonException("Empty drive operation payload.");
-                }
-                finally { CryptographicOperations.ZeroMemory(plain); }
-            }
+            DriveOperationPayload driveOperationPayload;
+            try { driveOperationPayload = ReadPayload(driveOperation); }
             catch (Exception exception) when (exception is CryptographicException or JsonException)
-            {
-                return Failed(operation, "unreadable");
-            }
+            { return Failed(driveOperation, "unreadable"); }
 
             try
             {
-                switch (operation.Kind)
-                {
-                    case DriveOperationKind.DeleteFile: await DeleteFileAsync(operation, payload.Path); break;
-                    case DriveOperationKind.ScanDirectory: await ScanDirectoryAsync(payload); break;
-                    case DriveOperationKind.RecoverStaged: await RecoverStagedAsync(payload.Path); break;
-                    default: return Failed(operation, "unreadable");
-                }
-                return new(operation.Sequence, operation.Revision, DriveOperationOutcome.Done);
+                await PlayAsync(driveOperation, driveOperationPayload);
+                return new(driveOperation.Sequence, driveOperation.Revision, DriveOperationOutcome.Done);
             }
             catch (DriveOperationConflictException)
             {
-                return Failed(operation, "conflict");
+                return Failed(driveOperation, "conflict");
+            }
+            catch (JsonException)
+            {
+                return Failed(driveOperation, "unreadable");
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 var category = exception is UnauthorizedAccessException ? "access" : "io";
-                var attempts = operation.Attempts + 1;
-                if (attempts >= MaxDriveAttempts) return Failed(operation, category, attempts);
-                var delay = retryDelay * Math.Pow(2, operation.Attempts);
-                return new(operation.Sequence, operation.Revision, DriveOperationOutcome.Retry, attempts,
+                var attempts = driveOperation.Attempts + 1;
+                if (attempts >= MaxDriveAttempts) return Failed(driveOperation, category, attempts);
+                var delay = retryDelay * Math.Pow(2, driveOperation.Attempts);
+                return new(driveOperation.Sequence, driveOperation.Revision, DriveOperationOutcome.Retry, attempts,
                     NowMilliseconds() + (long)delay.TotalMilliseconds, category);
             }
         }
 
-        // Error text is a category only; paths and names never reach the queue table.
-        private static DriveOperationResult Failed(DriveOperation operation, string category, int? attempts = null) =>
-            new(operation.Sequence, operation.Revision, DriveOperationOutcome.Failed, attempts ?? operation.Attempts, 0, category);
-
-        private async Task DeleteFileAsync(DriveOperation operation, string path)
+        private DriveOperationPayload ReadPayload(DriveOperation driveOperation)
         {
-            await store.Gate.WaitAsync();
-            try { await DeleteQueuedFileAsync(store, operation, path, Key); }
-            finally { store.Gate.Release(); }
+            VaultEnvelopeValidator.Validate(driveOperation.Payload.AsSpan(),
+                $"drive operation payload '{driveOperation.Sequence}'");
+            var plain = VaultCrypto.Decrypt(driveOperation.Payload.AsSpan(), Key,
+                DriveOperationPurpose(driveOperation.Kind, driveOperation.Target.AsSpan()));
+            try
+            {
+                return JsonSerializer.Deserialize<DriveOperationPayload>(plain)
+                    ?? throw new JsonException("Empty drive operation payload.");
+            }
+            finally { CryptographicOperations.ZeroMemory(plain); }
+        }
+
+        private async Task PlayAsync(DriveOperation driveOperation, DriveOperationPayload driveOperationPayload)
+        {
+            switch (driveOperation.Kind)
+            {
+                case DriveOperationKind.DeleteFile:
+                    await DeleteFileAsync(driveOperation, driveOperationPayload.Path);
+                    break;
+                case DriveOperationKind.ScanDirectory: await ScanDirectoryAsync(driveOperationPayload); break;
+                case DriveOperationKind.RecoverStaged: await RecoverStagedAsync(driveOperationPayload.Path); break;
+                default: throw new JsonException($"Unsupported drive operation kind '{driveOperation.Kind}'.");
+            }
+        }
+
+        // Error text is a category only; paths and names never reach the queue table.
+        private static DriveOperationResult Failed(
+            DriveOperation driveOperation, string category, int? attempts = null) =>
+            new(driveOperation.Sequence, driveOperation.Revision, DriveOperationOutcome.Failed,
+                attempts ?? driveOperation.Attempts, 0, category);
+
+        private async Task DeleteFileAsync(DriveOperation driveOperation, string path)
+        {
+            await galleryStore.Gate.WaitAsync();
+            try { await DeleteQueuedFileAsync(galleryStore, driveOperation, path, Key); }
+            finally { galleryStore.Gate.Release(); }
         }
 
         // Lists one directory. A failure retries only this directory instead of aborting the whole tree walk.
-        private async Task ScanDirectoryAsync(DriveOperationPayload payload)
+        private async Task ScanDirectoryAsync(DriveOperationPayload driveOperationPayload)
         {
-            List<FileSystemInfo> entries;
+            var directoryEntries = EnumerateDirectoryEntries(driveOperationPayload.Path);
+            var indexedFiles = CreateDirectoryIndex(directoryEntries);
+            var discoveredDriveOperations = CreateDiscoveredDriveOperations(directoryEntries, driveOperationPayload.Recursive);
+            await galleryStore.ReplaceDirectoryIndexAsync(
+                VaultCrypto.PathFingerprint(Key, driveOperationPayload.Path), indexedFiles, discoveredDriveOperations);
+        }
+
+        private static List<FileSystemInfo> EnumerateDirectoryEntries(string directoryPath)
+        {
             try
             {
-                var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, RecurseSubdirectories = false };
-                entries = new DirectoryInfo(payload.Path).EnumerateFileSystemInfos("*", options).ToList();
+                var enumerationOptions = new EnumerationOptions
+                {
+                    AttributesToSkip = FileAttributes.ReparsePoint,
+                    RecurseSubdirectories = false,
+                    IgnoreInaccessible = false
+                };
+                return new DirectoryInfo(directoryPath)
+                    .EnumerateFileSystemInfos("*", enumerationOptions).ToList();
             }
-            catch (DirectoryNotFoundException) { entries = []; }
+            catch (DirectoryNotFoundException)
+            {
+                // A missing record directory is an expected empty scan; access failures still propagate for retry.
+                return [];
+            }
+        }
 
-            var files = entries.OfType<FileInfo>().ToList();
-            var indexed = files.Where(file => file.Extension is EncryptedPngExtension or EncryptedMp4Extension)
+        private List<IndexedFile> CreateDirectoryIndex(IEnumerable<FileSystemInfo> directoryEntries) =>
+            directoryEntries.OfType<FileInfo>()
+                .Where(file => file.Extension is EncryptedPngExtension or EncryptedMp4Extension)
                 .Select(file => new IndexedFile(VaultCrypto.PathFingerprint(Key, file.FullName), file.Length))
                 .ToList();
-            var discovered = files.Where(file => IsRemovalStagingFile(file.FullName))
+
+        private List<NewDriveOperation> CreateDiscoveredDriveOperations(
+            IReadOnlyCollection<FileSystemInfo> directoryEntries, bool recursive)
+        {
+            var files = directoryEntries.OfType<FileInfo>().ToArray();
+            var discoveredDriveOperations = files.Where(file => IsRemovalStagingFile(file.FullName))
                 .Select(file => CreateDriveOperation(DriveOperationKind.RecoverStaged, file.FullName, null, Key))
                 .ToList();
-            if (payload.Recursive)
-                discovered.AddRange(entries.OfType<DirectoryInfo>()
-                    .Select(directory => CreateDriveOperation(DriveOperationKind.ScanDirectory, directory.FullName, null, Key, recursive: true)));
-            await store.ReplaceDirectoryIndexAsync(VaultCrypto.PathFingerprint(Key, payload.Path), indexed, discovered);
+            if (recursive)
+                discoveredDriveOperations.AddRange(directoryEntries.OfType<DirectoryInfo>()
+                    .Select(directory => CreateDriveOperation(DriveOperationKind.ScanDirectory,
+                        directory.FullName, null, Key, recursive: true)));
+            return discoveredDriveOperations;
         }
 
         // Finishes removal recovery when ciphertext was staged before its catalog row was deleted.
-        private async Task RecoverStagedAsync(string stagedPath)
+        private async Task RecoverStagedAsync(string stagedFilePath)
         {
-            await store.Gate.WaitAsync();
+            await galleryStore.Gate.WaitAsync();
             try
             {
-                if (!File.Exists(stagedPath)) return;
-                var owner = await FindOwnerAsync(stagedPath);
-                if (owner is null)
+                if (!File.Exists(stagedFilePath)) return;
+                var imageRecord = await FindOwnerAsync(stagedFilePath);
+                if (imageRecord is null)
                 {
-                    if (IsWithinImageRoot(Path.GetDirectoryName(stagedPath)!, imageRoot)) File.Delete(stagedPath);
+                    if (IsWithinImageRoot(Path.GetDirectoryName(stagedFilePath)!, imageRoot))
+                        DeleteObsoleteStagingFile(stagedFilePath);
                     return;
                 }
-                if (!File.Exists(owner.StoredPath))
+                if (!File.Exists(imageRecord.StoredPath))
                 {
-                    // Only an authentic ciphertext for this image may take its place; anything else is preserved.
-                    if (!await IsAuthenticCiphertextAsync(stagedPath, owner.Id)) throw new DriveOperationConflictException();
-                    File.Move(stagedPath, owner.StoredPath);
+                    await RestoreStagedFileAsync(stagedFilePath, imageRecord);
                     return;
                 }
-                if (!await FilesMatchAsync(stagedPath, owner.StoredPath))
+                if (!await FilesMatchAsync(stagedFilePath, imageRecord.StoredPath))
                     throw new DriveOperationConflictException();
-                File.Delete(stagedPath);
+                DeleteObsoleteStagingFile(stagedFilePath);
             }
-            finally { store.Gate.Release(); }
+            finally { galleryStore.Gate.Release(); }
         }
 
-        private async Task<bool> IsAuthenticCiphertextAsync(string path, string imageId)
+        private async Task RestoreStagedFileAsync(string stagedFilePath, ImageRecord imageRecord)
+        {
+            await EnsureAuthenticCiphertextAsync(stagedFilePath, imageRecord.Id);
+            File.Move(stagedFilePath, imageRecord.StoredPath);
+        }
+
+        private static void DeleteObsoleteStagingFile(string stagedFilePath) => File.Delete(stagedFilePath);
+
+        private async Task EnsureAuthenticCiphertextAsync(string path, string imageId)
         {
             try
             {
@@ -344,19 +399,27 @@ public sealed partial class GalleryService
                 VaultEnvelopeValidator.Validate(envelope, $"staged media '{imageId}'");
                 var plain = VaultCrypto.Decrypt(envelope, Key, $"image:{imageId}");
                 CryptographicOperations.ZeroMemory(plain);
-                return true;
             }
-            catch (CryptographicException) { return false; }
+            catch (CryptographicException exception)
+            {
+                throw new DriveOperationConflictException("Staged media is not authentic ciphertext.",
+                    GalleryLogEvent.DriveOperationConflict,
+                    new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty
+                        .Add("Image.Id", imageId)), exception);
+            }
         }
 
-        private async Task<ImageRecord?> FindOwnerAsync(string stagedPath)
+        private async Task<ImageRecord?> FindOwnerAsync(string stagedFilePath)
         {
-            var originalPath = RemovalOriginalPath(stagedPath);
-            var stagingIdentity = stagedPath[(stagedPath.LastIndexOf(".removing-", StringComparison.Ordinal) + ".removing-".Length)..];
-            if (await store.TryReadRecordAsync(stagingIdentity, Key) is { } byId && PathEquals(byId.StoredPath, originalPath))
-                return byId;
+            var originalPath = RemovalOriginalPath(stagedFilePath);
+            var stagingIdentity = stagedFilePath[
+                (stagedFilePath.LastIndexOf(RemovalStagingMarker, StringComparison.Ordinal) + RemovalStagingMarker.Length)..];
+            if (await galleryStore.TryReadRecordAsync(stagingIdentity, Key) is { } imageRecord
+                && PathEquals(imageRecord.StoredPath, originalPath))
+                return imageRecord;
             // Legacy staging names carry a random identity; fall back to the catalog's stored paths.
-            return (await store.ReadRecordsAsync(Key)).FirstOrDefault(record => PathEquals(record.StoredPath, originalPath));
+            return (await galleryStore.ReadRecordsAsync(Key))
+                .FirstOrDefault(imageRecord => PathEquals(imageRecord.StoredPath, originalPath));
         }
     }
 }

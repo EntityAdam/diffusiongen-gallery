@@ -2,6 +2,7 @@ using Gallery.Core.Services.Processors;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Components;
 
 namespace Gallery.Tests;
 
@@ -41,6 +42,35 @@ public sealed class ReviewTests
         Assert.Equal(image.Rating, tagged.Rating);
         Assert.Equal(image.IsReviewed, tagged.IsReviewed);
         Assert.Equal(image.IsFavorite, tagged.IsFavorite);
+    }
+
+    [Fact]
+    public async Task Organize_ApprovingSuggestionWithoutCollection_SavesDescriptionAndTagsWithoutAddingCollection()
+    {
+        // Arrange
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var imageRecord = await fixture.Service.ImportAsync(
+            new MemoryStream(GalleryTests.MakePng()), "approval.png", "folder");
+        imageRecord = await fixture.Service.UpdateAsync(imageRecord.Id, existingImageRecord => existingImageRecord with
+        {
+            Tags = "existing",
+            Collections = ["Originals"]
+        });
+        var organizationSuggestion = new OrganizationSuggestion(
+            imageRecord.Id, imageRecord.Name, "A green hillside.", "landscape", "", "vision");
+
+        // Act
+        var approvedImageRecord = await LibraryWorkbench.PersistApprovedSuggestionAsync(
+            fixture.Service, organizationSuggestion);
+        var storedImageRecord = Assert.Single(await fixture.Service.ListAsync());
+
+        // Assert
+        Assert.Equal("A green hillside.", approvedImageRecord.Description);
+        Assert.Equal("A green hillside.", storedImageRecord.Description);
+        Assert.Equal("existing, landscape", storedImageRecord.Tags);
+        Assert.Equal("Originals", Assert.Single(storedImageRecord.Collections));
+        Assert.Equal("vision", storedImageRecord.AnalysisModel);
     }
 
     [Fact]

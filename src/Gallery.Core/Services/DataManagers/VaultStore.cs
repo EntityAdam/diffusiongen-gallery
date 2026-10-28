@@ -16,11 +16,11 @@ internal sealed record VaultHeader(
     KeySlot Passphrase,
     KeySlot Recovery,
     ImmutableArray<byte> KeyCheck,
-    string Name = "unnamed-gallery");
+    string Name = VaultStore.DefaultGalleryName);
 
-/// <summary>Persists and unlocks the encrypted vault header and root key.</summary>
 internal sealed class VaultStore
 {
+    public const string DefaultGalleryName = "unnamed-gallery";
     private const int VaultKeySizeBytes = 32;
     private const int SaltSizeBytes = 32;
     private const int VaultHeaderVersion = 1;
@@ -41,18 +41,9 @@ internal sealed class VaultStore
 
     public async Task RenameAsync(string name)
     {
-        name = ValidateName(name);
         await gate.WaitAsync();
         try { await ReplaceHeaderAsync((await ReadHeaderAsync()) with { Name = name }); }
         finally { gate.Release(); }
-    }
-
-    public static string ValidateName(string name)
-    {
-        name = name.Trim();
-        if (name.Length is < 1 or > 80 || name.Any(char.IsControl))
-            throw new InvalidOperationException("Gallery names must have 1 to 80 characters and no control characters.");
-        return name;
     }
 
     public VaultStore(string root)
@@ -67,30 +58,22 @@ internal sealed class VaultStore
         try
         {
             if (!Exists) throw new InvalidOperationException("The gallery header is missing.");
-            File.Copy(HeaderPath, destinationPath, overwrite: false);
+            CopyExistingHeader(destinationPath);
         }
         finally { gate.Release(); }
     }
 
-    private static bool IsValidPassphrase(string? passphrase) =>
-        !string.IsNullOrWhiteSpace(passphrase) && passphrase.Length >= 14;
+    private void CopyExistingHeader(string destinationPath) =>
+        File.Copy(HeaderPath, destinationPath, overwrite: false);
 
-    public static void ValidatePassphrase(string passphrase)
+    public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase, string name = DefaultGalleryName)
     {
-        if (!IsValidPassphrase(passphrase))
-            throw new InvalidOperationException("Use a passphrase of at least 14 characters; a long unique phrase is recommended.");
-    }
-
-    public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase, string name = "unnamed-gallery")
-    {
-        ValidatePassphrase(passphrase);
-        name = ValidateName(name);
         await gate.WaitAsync();
         try { return await CreateWithOwnedKeyAsync(passphrase, name); }
         finally { gate.Release(); }
     }
 
-    private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase, string name = "unnamed-gallery")
+    private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase, string name)
     {
         var key = RandomNumberGenerator.GetBytes(VaultKeySizeBytes);
         try
@@ -126,17 +109,21 @@ internal sealed class VaultStore
 
     public async Task ChangePassphraseAsync(byte[] key, string passphrase)
     {
-        ValidatePassphrase(passphrase);
         await gate.WaitAsync();
         try
         {
             var vaultHeader = await ReadHeaderAsync();
-            var keyCheckPlaintext = VaultCrypto.Decrypt(vaultHeader.KeyCheck.AsSpan(), key, VaultCheckPurpose);
-            CryptographicOperations.ZeroMemory(keyCheckPlaintext);
-            var passphraseKeySlot = Wrap(key, passphrase, PassphrasePurpose);
-            await ReplaceHeaderAsync(vaultHeader with { Passphrase = passphraseKeySlot });
+            VerifyVaultKey(vaultHeader, key);
+            var keySlot = Wrap(key, passphrase, PassphrasePurpose);
+            await ReplaceHeaderAsync(vaultHeader with { Passphrase = keySlot });
         }
         finally { gate.Release(); }
+    }
+
+    private static void VerifyVaultKey(VaultHeader vaultHeader, byte[] key)
+    {
+        var keyCheckPlaintext = VaultCrypto.Decrypt(vaultHeader.KeyCheck.AsSpan(), key, VaultCheckPurpose);
+        CryptographicOperations.ZeroMemory(keyCheckPlaintext);
     }
 
     private static (VaultHeader VaultHeader, string RecoveryPhrase) CreateInitialVaultHeader(
@@ -200,17 +187,26 @@ internal sealed class VaultStore
 
     private async Task<VaultHeader> ReadHeaderAsync()
     {
-        var vaultHeader = JsonSerializer.Deserialize<VaultHeader>(
-            await File.ReadAllTextAsync(HeaderPath),
-            vaultJsonOptions);
+        var vaultHeader = await LoadHeaderAsync();
+        ValidateHeader(vaultHeader);
+        return vaultHeader;
+    }
+
+    private async Task<VaultHeader> LoadHeaderAsync()
+    {
+        var vaultHeader = JsonSerializer.Deserialize<VaultHeader>(await File.ReadAllTextAsync(HeaderPath), vaultJsonOptions);
         if (vaultHeader is null)
             throw new InvalidOperationException("Gallery header is empty.");
+        return vaultHeader;
+    }
+
+    private static void ValidateHeader(VaultHeader vaultHeader)
+    {
         if (!IsValidVaultHeader(vaultHeader))
             throw new InvalidOperationException("Unsupported or corrupt gallery header.");
         VaultEnvelopeValidator.Validate(vaultHeader.KeyCheck.AsSpan(), "vault key check");
         VaultEnvelopeValidator.Validate(vaultHeader.Passphrase.WrappedKey.AsSpan(), "vault passphrase key slot");
         VaultEnvelopeValidator.Validate(vaultHeader.Recovery.WrappedKey.AsSpan(), "vault recovery key slot");
-        return vaultHeader;
     }
 
     private static bool IsValidVaultHeader(VaultHeader vaultHeader) =>
@@ -272,9 +268,9 @@ internal sealed class VaultStore
 
     private static JsonSerializerOptions CreateVaultJsonOptions()
     {
-        var serializerOptions = new JsonSerializerOptions();
-        serializerOptions.Converters.Add(new ImmutableByteArrayJsonConverter());
-        return serializerOptions;
+        var jsonSerializerOptions = new JsonSerializerOptions();
+        jsonSerializerOptions.Converters.Add(new ImmutableByteArrayJsonConverter());
+        return jsonSerializerOptions;
     }
 
 }

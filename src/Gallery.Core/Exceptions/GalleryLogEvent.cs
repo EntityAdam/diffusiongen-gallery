@@ -9,4 +9,5 @@ internal sealed class GalleryLogEvent(string value) : LogEventBase(value)
     internal static readonly GalleryLogEvent PrepareRemoval = new("Gallery.PrepareRemoval");
     internal static readonly GalleryLogEvent RemoveImage = new("Gallery.RemoveImage");
     internal static readonly GalleryLogEvent ValidateSavedViewName = new("Gallery.ValidateSavedViewName");
+    internal static readonly GalleryLogEvent DriveOperationConflict = new("Gallery.DriveOperationConflict");
 }

@@ -28,16 +28,20 @@ public sealed partial class GalleryService
     private const string EncryptedMp4Extension = ".dmp4";
     private const string EncryptedPngExtension = ".dpng";
     private const string VisionSettingsId = "vision-settings";
+    internal const string CatalogFileName = "gallery.db";
+    internal const string VaultHeaderFileName = "vault.json";
 
     private const string EmptyDuplicateCandidatesMessage =
         "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
 
     private readonly GalleryLifetime galleryLifetime;
+    private readonly VaultManager vaultManager;
+    private readonly RemovalManager removalManager;
     private GalleryStore galleryStore => galleryLifetime.Current.GalleryStore;
     private VaultStore vaultStore => galleryLifetime.Current.VaultStore;
     private readonly VaultSession vaultSession;
     private readonly VideoTools? videoTools;
-    private readonly VisionService? visionService;
+    private readonly VisionManager? visionManager;
 
     private static class GalleryImageRenderer
     {
@@ -91,18 +95,20 @@ public sealed partial class GalleryService
     }
 
     internal GalleryService(GalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools? videoTools = null,
-        VisionService? visionService = null)
+        VisionManager? visionManager = null)
     {
         galleryLifetime = new GalleryLifetime(galleryStore, vaultStore);
         this.vaultSession = vaultSession;
+        vaultManager = new VaultManager(galleryLifetime, vaultSession);
+        removalManager = new RemovalManager(this);
         this.videoTools = videoTools;
-        this.visionService = visionService;
+        this.visionManager = visionManager;
         this.vaultSession.AutoLocked += () =>
         {
             _ = ReleaseCheckoutAfterOperationsAsync();
             OnAutoLocked?.Invoke();
         };
-        drivePlayer = CreateDrivePlayer();
+        driveOperationPlayer = CreateDriveOperationPlayer();
     }
 
     public const long MaxFileBytes = 50 * 1024 * 1024;
@@ -276,20 +282,19 @@ public sealed partial class GalleryService
         await galleryStore.DeleteViewAsync(name, key.Bytes);
     }
     public Task<IReadOnlyList<string>> GetVisionModelsAsync(VisionSettings settings) =>
-        RequiredVision(settings).GetModelsAsync(settings.RequestTimeoutSeconds);
+        RequiredVisionManager().GetModelsAsync(settings);
     public Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData) =>
-        RequiredVision(settings).AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, imageData);
+        RequiredVisionManager().AnalyzeImageAsync(settings, imageData);
     public Task<string> SuggestCollectionAsync(VisionSettings settings, string description, string tags,
-        IEnumerable<string> collections) => RequiredVision(settings).SuggestCollectionAsync(settings.Model, settings.RequestTimeoutSeconds, description, tags, collections);
+        IEnumerable<string> collections) => RequiredVisionManager().SuggestCollectionAsync(settings, description, tags, collections);
     public Task<GalleryFilter> InterpretSearchAsync(VisionSettings settings, string query, IEnumerable<string> collections) =>
-        RequiredVision(settings).InterpretSearchAsync(settings.Model, settings.RequestTimeoutSeconds, query, collections);
+        RequiredVisionManager().InterpretSearchAsync(settings, query, collections);
     public Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
         VisionSettings settings, string imageData, IEnumerable<string> collections) =>
-        RequiredVision(settings).AnalyzeImageWithCollectionAsync(settings.Model, settings.RequestTimeoutSeconds, imageData, collections);
+        RequiredVisionManager().AnalyzeImageWithCollectionAsync(settings, imageData, collections);
 
-    private VisionService RequiredVision(VisionSettings settings) => (visionService
-        ?? throw new InvalidOperationException("The vision manager is not configured."))
-        .Connect(settings.Endpoint, settings.ApiKey);
+    private VisionManager RequiredVisionManager() => visionManager
+        ?? throw new InvalidOperationException("The vision manager is not configured.");
 
     public static string FormatDuration(ImageRecord image)
     {
@@ -324,7 +329,7 @@ public sealed partial class GalleryService
         }
         finally { galleryStore.Gate.Release(); }
         await ScheduleMediaIndexAsync(records, key);
-        drivePlayer.Start();
+        driveOperationPlayer.Start();
         return records;
     }
     /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
@@ -1111,7 +1116,7 @@ public sealed partial class GalleryService
         StoredImageMoveValidator.ValidateDestination(destination);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         await MoveUnderGateAsync(id, destination, key.Bytes);
-        drivePlayer.Start();
+        driveOperationPlayer.Start();
     }
 
     private async Task MoveUnderGateAsync(string id, StoredImageMoveDestination destination, byte[] key)

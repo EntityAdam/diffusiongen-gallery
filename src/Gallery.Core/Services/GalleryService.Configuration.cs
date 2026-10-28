@@ -27,15 +27,15 @@ public sealed partial class GalleryService
             destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
             RequireEmptyDestination(destination);
             key = vaultSession.Key;
-            await StopDrivePlayerAsync();
+            await StopDriveOperationPlayerAsync();
             await vaultSession.LockAndDrainAsync();
             var mediaDirectory = await MediaDirectoryWithKeyAsync(key);
             var sourceRoot = VaultRoot;
             staging = Path.Combine(destination, ".catalog-stage-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(staging);
-            await vaultStore.CopyHeaderAsync(Path.Combine(staging, "vault.json"));
-            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, "gallery.db"));
-            var stagedStore = new GalleryStore(Path.Combine(staging, "gallery.db"));
+            await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
+            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName));
+            var stagedStore = new GalleryStore(Path.Combine(staging, CatalogFileName));
             await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
                 "media-storage", "media-storage:v1", key);
             await stagedStore.DeleteSettingsAsync(StorageOverviewId);
@@ -47,12 +47,13 @@ public sealed partial class GalleryService
             PublishStagedVault(staging, destination);
             published = true;
             var sourceCheckout = galleryLifetime.PublishLocation(
-                new GalleryStore(Path.Combine(destination, "gallery.db")), new VaultStore(destination), destinationCheckout);
+                new GalleryStore(Path.Combine(destination, CatalogFileName)), new VaultStore(destination), destinationCheckout);
             destinationCheckout = null;
             try
             {
                 history?.Save(destination);
-                foreach (var name in new[] { "gallery.db-wal", "gallery.db-shm", "gallery.db", "vault.json" })
+                foreach (var name in new[]
+                    { CatalogFileName + "-wal", CatalogFileName + "-shm", CatalogFileName, VaultHeaderFileName })
                     File.Delete(Path.Combine(sourceRoot, name));
             }
             finally { sourceCheckout?.Dispose(); }
@@ -96,7 +97,7 @@ public sealed partial class GalleryService
         await WriteEncryptedSettingAsync(options, "media-storage", "media-storage:v1");
     }
 
-    private static MediaStorageOptions NormalizeMediaStorageOptions(MediaStorageOptions options)
+    internal static MediaStorageOptions NormalizeMediaStorageOptions(MediaStorageOptions options)
     {
         var directory = options.MediaDirectory.Trim();
         if (directory.Length > 0)
@@ -114,7 +115,7 @@ public sealed partial class GalleryService
         return options is { MediaDirectory.Length: > 0 } ? options.MediaDirectory : VaultRoot;
     }
 
-    private static void RequireLocalCatalogDirectory(string directory)
+    internal static void RequireLocalCatalogDirectory(string directory)
     {
         if (GalleryStore.IsNetworkDirectory(directory))
             throw new InvalidOperationException(
