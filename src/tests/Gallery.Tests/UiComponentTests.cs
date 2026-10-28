@@ -1,10 +1,15 @@
 using System.Net;
+using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Collections.Immutable;
 using Gallery.Web.Components;
+using Gallery.Web.Components.Pages;
 using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gallery.Tests;
 
@@ -196,6 +201,58 @@ public sealed class UiComponentTests
         Assert.Matches(@"data-tool=""organize""[^>]*aria-pressed=""true""", expanded);
         Assert.Contains(">Organize</h3>", expanded);
     }
+
+    [Fact]
+    public async Task Home_WhileImportRuns_ToolboxCannotLeaveIngestionProgress()
+    {
+        var home = new Home();
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        void Set(string name, object value) => typeof(Home).GetField(name, flags)!.SetValue(home, value);
+        T Get<T>(string name) => (T)typeof(Home).GetField(name, flags)!.GetValue(home)!;
+        Task Invoke(string name, params object[] args) =>
+            (Task)typeof(Home).GetMethod(name, flags)!.Invoke(home, args)!;
+
+        Set("workflow", "ingest");
+        Set("toolboxVisible", false);
+        Set("activeTool", "filters");
+        Set("busy", true);
+        Set("importRunning", true);
+
+        await Invoke("ToggleToolboxAsync");
+        await Invoke("SetActiveToolAsync", "trash");
+        await Invoke("SwitchWorkflowAsync", "gallery");
+
+        Assert.Equal("ingest", Get<string>("workflow"));
+        Assert.False(Get<bool>("toolboxVisible"));
+        Assert.Equal("filters", Get<string>("activeTool"));
+
+        Set("importRunning", false);
+        await Invoke("ToggleToolboxAsync");
+        await Invoke("SwitchWorkflowAsync", "gallery");
+        Assert.Equal("ingest", Get<string>("workflow"));
+        Assert.False(Get<bool>("toolboxVisible"));
+    }
+
+    [Fact]
+    public async Task Home_WhenAutoLockPreferenceSaveFails_KeepsExistingTimerAndReportsError()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        fixture.Service.LockVault();
+        var home = new Home();
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+        typeof(Home).GetProperty("Gallery", flags)!.SetValue(home, fixture.Service);
+        typeof(Home).GetProperty("Logger", flags)!.SetValue(home, NullLogger<Home>.Instance);
+        typeof(Home).GetField("autoLockMinutes", flags)!.SetValue(home, 15);
+
+        await (Task)typeof(Home).GetMethod("UpdateAutoLockMinutesAsync", flags)!
+            .Invoke(home, ["30"])!;
+
+        Assert.Equal(15, typeof(Home).GetField("autoLockMinutes", flags)!.GetValue(home));
+        Assert.Contains("previous timer is still active",
+            (string)typeof(Home).GetField("error", flags)!.GetValue(home)!);
+    }
+
     [Fact]
     public async Task ImageCard_WhenSelectedAndRated_ThenRetainsKeyboardHooksAndAccessibleLibraryControls()
     {
@@ -404,6 +461,37 @@ public sealed class UiComponentTests
         MatchCollection buttons = Regex.Matches(actualHtml, @"<button\b[^>]*>");
         Assert.Equal(9, buttons.Count);
         foreach (Match button in buttons) Assert.Contains("disabled", button.Value);
+    }
+
+    [Fact]
+    public async Task DuplicateReviewer_EscapeWhileBusy_ThenClosesWithoutWaitingForLoading()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var first = new ImageRecord { Id = "first", Name = "First", Width = 10, Height = 10, OriginalBytes = 10 };
+        var second = new ImageRecord { Id = "second", Name = "Second", Width = 10, Height = 10, OriginalBytes = 10 };
+        var records = new Dictionary<string, ImageRecord> { [first.Id] = first, [second.Id] = second };
+        var groups = new[] { new DuplicateGroup(first.Id, ImmutableArray.Create(first.Id, second.Id), 0, true, 10) };
+        DuplicateReviewer? component = null;
+        var closeCalled = false;
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<DuplicateReviewerTestHost>(
+            ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(DuplicateReviewerTestHost.Groups)] = groups,
+                [nameof(DuplicateReviewerTestHost.Records)] = records,
+                [nameof(DuplicateReviewerTestHost.Capture)] = (Action<DuplicateReviewer>)(value => component = value),
+                [nameof(DuplicateReviewerTestHost.Closed)] = (Action<string>)(_ => closeCalled = true)
+            })));
+
+        Assert.NotNull(component);
+        var fields = typeof(DuplicateReviewer).GetFields(BindingFlags.Instance | BindingFlags.NonPublic);
+        fields.Single(field => field.Name == "busy").SetValue(component, true);
+        fields.Single(field => field.Name == "loading").SetValue(component, true);
+
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => component!.HandleKey("escape"));
+
+        Assert.True(closeCalled);
     }
 
     // Every unavailable thumbnail state selects its matching placeholder and hides the image.
@@ -626,6 +714,28 @@ public sealed class UiComponentTests
         }
         else
             Assert.DoesNotContain("overview-stale", actualHtml);
+    }
+
+    private sealed class DuplicateReviewerTestHost : ComponentBase
+    {
+        [Parameter] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = [];
+        [Parameter] public IReadOnlyDictionary<string, ImageRecord> Records { get; set; } = new Dictionary<string, ImageRecord>();
+        [Parameter] public Action<DuplicateReviewer>? Capture { get; set; }
+        [Parameter] public Action<string>? Closed { get; set; }
+
+        public DuplicateReviewerTestHost() { }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            builder.OpenComponent<DuplicateReviewer>(0);
+            builder.AddAttribute(1, nameof(DuplicateReviewer.Groups), Groups);
+            builder.AddAttribute(2, nameof(DuplicateReviewer.Lookup), (Func<string, ImageRecord?>)(id =>
+                Records.TryGetValue(id, out var record) ? record : null));
+            builder.AddAttribute(3, nameof(DuplicateReviewer.OnClose), EventCallback.Factory.Create<string>(this,
+                value => Closed?.Invoke(value)));
+            builder.AddComponentReferenceCapture(4, instance => Capture?.Invoke((DuplicateReviewer)instance));
+            builder.CloseComponent();
+        }
     }
 
 }

@@ -21,18 +21,18 @@ webApplicationBuilder.Services.AddShadCnBlazorComponents();
 
 var webApplication = webApplicationBuilder.Build();
 // Binding and Host validation both matter: reject DNS rebinding and accidental LAN exposure.
-webApplication.Use(async (context, next) =>
+webApplication.Use(async (httpContext, next) =>
 {
-    if (IsUntrustedLocalRequest(context.Connection.RemoteIpAddress, context.Request.Host,
-        context.Request.Headers.Origin.ToString(), context.Request.Scheme))
+    if (IsUntrustedLocalRequest(httpContext.Connection.RemoteIpAddress, httpContext.Request.Host,
+        httpContext.Request.Headers.Origin.ToString(), httpContext.Request.Scheme))
     {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        httpContext.Response.StatusCode = StatusCodes.Status403Forbidden;
         return;
     }
-    context.Response.Headers.CacheControl = "no-store";
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'none'";
+    httpContext.Response.Headers.CacheControl = "no-store";
+    httpContext.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    httpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
+    httpContext.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'none'";
     await next();
 });
 webApplication.UseAntiforgery();

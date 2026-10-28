@@ -2,16 +2,21 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using Gallery.Core.Services.Gateways;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
+using Microsoft.Data.Sqlite;
 
 namespace Gallery.Core.Services;
 
 public sealed partial class GalleryService
 {
+    public const string BackupActivitySourceName = "Gallery.Core.Backup";
+    private static readonly ActivitySource BackupActivitySource = new(BackupActivitySourceName);
     private const string BackupSettingsId = "backup-settings";
     private const string BackupSettingsPurpose = "backup-settings:v1";
+    private const int MaximumEncryptedManifestBytes = 16 * 1024 * 1024;
 
     private sealed record StoredBackupSettings(
         string DestinationType,
@@ -99,6 +104,8 @@ public sealed partial class GalleryService
 
     private async Task<BackupRunResult> CreateBackupAsync(bool incremental)
     {
+        using var activity = BackupActivitySource.StartActivity(incremental ? "backup.incremental" : "backup.full");
+        activity?.SetTag("backup.type", incremental ? "incremental" : "full");
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var settings = await ReadBackupSettingsAsync()
             ?? throw new InvalidOperationException("Configure a backup destination before starting a backup.");
@@ -132,13 +139,16 @@ public sealed partial class GalleryService
             try
             {
                 var records = await galleryStore.ReadRecordsAsync(keyLease.Bytes);
-                var vaultHeaderPath = Path.Combine(stagingDirectory, "vault.json");
-                var databasePath = Path.Combine(stagingDirectory, "gallery.db");
+                activity?.SetTag("backup.library.image_count", records.Count);
+                var vaultHeaderPath = Path.Combine(stagingDirectory, VaultHeaderFileName);
+                var databasePath = Path.Combine(stagingDirectory, CatalogFileName);
                 await vaultStore.CopyHeaderAsync(vaultHeaderPath);
                 await galleryStore.CreateSnapshotAsync(databasePath);
                 vaultHeaderSha256 = await HashFileAsync(vaultHeaderPath);
                 DatabaseFingerprint = await Gallery.Core.Services.DataManagers.GalleryStore.ComputeContentFingerprintAsync(databasePath, BackupSettingsId);
 
+                long mediaHashedBytes = 0;
+                var mediaHashTimer = Stopwatch.StartNew();
                 foreach (var record in records)
                 {
                     var sourcePath = Path.GetFullPath(record.StoredPath);
@@ -151,7 +161,10 @@ public sealed partial class GalleryService
 
                     string sha256;
                     await using (var source = File.OpenRead(sourcePath))
+                    {
+                        mediaHashedBytes += source.Length;
                         sha256 = Convert.ToHexString(await SHA256.HashDataAsync(source)).ToLowerInvariant();
+                    }
                     mediaEntries.Add(record.Id, new(sourcePath, sha256, extension));
 
                     var unchanged = previousManifest?.Media.TryGetValue(record.Id, out var previousEntry) == true
@@ -170,18 +183,26 @@ public sealed partial class GalleryService
                         stagedMedia.Add(sha256, stagedPath);
                     }
                 }
+                mediaHashTimer.Stop();
+                activity?.SetTag("backup.library.media_hashed_bytes", mediaHashedBytes);
+                activity?.SetTag("backup.library.media_hash_elapsed_ms", mediaHashTimer.Elapsed.TotalMilliseconds);
             }
             finally { galleryStore.Gate.Release(); }
 
             if (incremental && previousManifest is not null
                 && IsUnchangedSince(previousManifest, mediaEntries, DatabaseFingerprint, vaultHeaderSha256))
+            {
+                activity?.SetTag("backup.skipped", true);
                 return new(backupType, previousName!, 0, mediaEntries.Count, 0, createdAt, WasSkipped: true);
+            }
 
             var manifest = new BackupManifest(1, backupId, backupType, previousName, createdAt, mediaEntries.ToImmutableDictionary(StringComparer.Ordinal),
                 DatabaseFingerprint, vaultHeaderSha256);
             await WriteArchiveAsync(archivePath, manifest, stagedMedia, keyLease.Bytes);
             await File.WriteAllBytesAsync(manifestPath, ReadArchiveManifest(archivePath));
             var archiveBytes = new FileInfo(archivePath).Length;
+            activity?.SetTag("backup.archive.bytes_written", archiveBytes);
+            activity?.SetTag("backup.media.files_copied", stagedMedia.Count);
             await target.UploadAsync(archiveName, archivePath);
             await target.UploadAsync(ManifestName(archiveName), manifestPath);
 
@@ -248,36 +269,186 @@ public sealed partial class GalleryService
     private static async Task<BackupManifest> ValidateBackupChainAsync(
         IBackupTarget target, string latestName, string stagingDirectory, byte[] key)
     {
+        using var activity = BackupActivitySource.StartActivity("backup.chain.validate");
         var archiveName = latestName;
         var visited = new HashSet<string>(StringComparer.Ordinal);
+        var availableMedia = new HashSet<string>(StringComparer.Ordinal);
+        var referencedMedia = new HashSet<string>(StringComparer.Ordinal);
         BackupManifest? latestManifest = null;
         var chainIndex = 0;
-        while (true)
+        var archiveCount = 0;
+        long archiveBytes = 0;
+        long manifestBytes = 0;
+        double archiveDownloadMilliseconds = 0;
+        double manifestDownloadMilliseconds = 0;
+        double archiveValidationMilliseconds = 0;
+        long archiveContentVerifiedBytes = 0;
+        var archiveMediaEntryCount = 0;
+        var stopwatch = Stopwatch.StartNew();
+        try
         {
-            if (!visited.Add(archiveName))
-                throw new InvalidOperationException("The incremental backup chain contains a cycle. Create a new full backup.");
-            if (!await target.ExistsAsync(archiveName) || !await target.ExistsAsync(ManifestName(archiveName)))
-                throw new InvalidOperationException($"Backup '{archiveName}' or its manifest is missing. Create a new full backup.");
-            var manifestPath = Path.Combine(stagingDirectory, $"previous-{chainIndex++}.manifest");
-            await target.DownloadAsync(ManifestName(archiveName), manifestPath);
-            var manifest = await ReadManifestFileAsync(manifestPath, key);
-            if (manifest.FormatVersion != 1 || string.IsNullOrWhiteSpace(manifest.BackupId)
-                || manifest.Media is null)
-                throw new InvalidOperationException("A backup manifest is invalid or unsupported. Create a new full backup.");
-            if (latestManifest is null) latestManifest = manifest;
-            if (manifest.BackupType == "full")
+            while (true)
             {
-                if (manifest.ParentBackupName is not null)
-                    throw new InvalidOperationException("The full backup has an invalid parent link. Create a new full backup.");
-                return latestManifest;
+                target.ValidateArchiveName(archiveName);
+                if (!visited.Add(archiveName) || visited.Count > 10000)
+                    throw new InvalidOperationException("The incremental backup chain contains a cycle or is too long. Create a new full backup.");
+                if (!await target.ExistsAsync(archiveName) || !await target.ExistsAsync(ManifestName(archiveName)))
+                    throw new InvalidOperationException($"Backup '{archiveName}' or its manifest is missing. Create a new full backup.");
+                var manifestPath = Path.Combine(stagingDirectory, $"previous-{chainIndex++}.manifest");
+                var downloadTimer = Stopwatch.StartNew();
+                try { await target.DownloadAsync(ManifestName(archiveName), manifestPath); }
+                finally
+                {
+                    downloadTimer.Stop();
+                    manifestDownloadMilliseconds += downloadTimer.Elapsed.TotalMilliseconds;
+                }
+                manifestBytes += new FileInfo(manifestPath).Length;
+                var manifest = await ReadManifestFileAsync(manifestPath, key);
+                if (manifest.FormatVersion != 1 || string.IsNullOrWhiteSpace(manifest.BackupId)
+                    || manifest.Media is null)
+                    throw new InvalidOperationException("A backup manifest is invalid or unsupported. Create a new full backup.");
+                var archivePath = Path.Combine(stagingDirectory, $"previous-{chainIndex}.zip");
+                downloadTimer.Restart();
+                try { await target.DownloadAsync(archiveName, archivePath); }
+                finally
+                {
+                    downloadTimer.Stop();
+                    archiveDownloadMilliseconds += downloadTimer.Elapsed.TotalMilliseconds;
+                }
+                archiveCount++;
+                archiveBytes += new FileInfo(archivePath).Length;
+                try
+                {
+                    var validationTimer = Stopwatch.StartNew();
+                    try
+                    {
+                        var validation = await ValidateParentArchiveAsync(
+                            archivePath, manifestPath, manifest, key, availableMedia, stagingDirectory);
+                        archiveContentVerifiedBytes += validation.VerifiedBytes;
+                        archiveMediaEntryCount += validation.MediaEntryCount;
+                    }
+                    finally
+                    {
+                        validationTimer.Stop();
+                        archiveValidationMilliseconds += validationTimer.Elapsed.TotalMilliseconds;
+                    }
+                }
+                catch (Exception error) when (error is InvalidDataException or IOException or CryptographicException
+                    or InvalidOperationException or JsonException or SqliteException)
+                {
+                    throw new InvalidOperationException(
+                        $"Backup '{archiveName}' is damaged or disagrees with its manifest. Create a new full backup.", error);
+                }
+                finally { File.Delete(archivePath); }
+                foreach (var entry in manifest.Media.Values)
+                {
+                    if (entry is null || entry.Sha256 is null || entry.Sha256.Length != 64
+                        || entry.Sha256.Any(character => !char.IsAsciiHexDigit(character)))
+                        throw new InvalidOperationException("A backup manifest contains an invalid media reference. Create a new full backup.");
+                    referencedMedia.Add(entry.Sha256);
+                }
+                if (latestManifest is null) latestManifest = manifest;
+                if (manifest.BackupType == "full")
+                {
+                    if (manifest.ParentBackupName is not null)
+                        throw new InvalidOperationException("The full backup has an invalid parent link. Create a new full backup.");
+                    if (!referencedMedia.IsSubsetOf(availableMedia))
+                        throw new InvalidOperationException("The backup chain is missing referenced media. Create a new full backup.");
+                    return latestManifest;
+                }
+                if (manifest.BackupType != "incremental" || string.IsNullOrWhiteSpace(manifest.ParentBackupName))
+                    throw new InvalidOperationException("The incremental backup chain does not lead to a valid full backup.");
+                archiveName = manifest.ParentBackupName;
             }
-            if (manifest.BackupType != "incremental" || string.IsNullOrWhiteSpace(manifest.ParentBackupName))
-                throw new InvalidOperationException("The incremental backup chain does not lead to a valid full backup.");
-            archiveName = manifest.ParentBackupName;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            activity?.SetTag("backup.chain.archive_count", archiveCount);
+            activity?.SetTag("backup.chain.archive_download_bytes", archiveBytes);
+            activity?.SetTag("backup.chain.manifest_download_bytes", manifestBytes);
+            activity?.SetTag("backup.chain.total_download_bytes", archiveBytes + manifestBytes);
+            activity?.SetTag("backup.chain.archive_download_elapsed_ms", archiveDownloadMilliseconds);
+            activity?.SetTag("backup.chain.manifest_download_elapsed_ms", manifestDownloadMilliseconds);
+            activity?.SetTag("backup.chain.total_download_elapsed_ms",
+                archiveDownloadMilliseconds + manifestDownloadMilliseconds);
+            activity?.SetTag("backup.chain.archive_validation_elapsed_ms", archiveValidationMilliseconds);
+            activity?.SetTag("backup.chain.content_verified_bytes", archiveContentVerifiedBytes);
+            activity?.SetTag("backup.chain.media_entry_count", archiveMediaEntryCount);
+            activity?.SetTag("backup.chain.validation_elapsed_ms", stopwatch.Elapsed.TotalMilliseconds);
         }
     }
 
     private static string ManifestName(string archiveName) => archiveName + ".manifest";
+
+    private static async Task<(long VerifiedBytes, int MediaEntryCount)> ValidateParentArchiveAsync(
+        string archivePath, string sidecarPath, BackupManifest manifest, byte[] key,
+        HashSet<string> availableMedia, string stagingDirectory)
+    {
+        using var archive = ZipFile.OpenRead(archivePath);
+        var archiveLength = new FileInfo(archivePath).Length;
+        var embedded = archive.GetEntry("manifest.enc")
+            ?? throw new InvalidDataException("The archive is missing its embedded manifest.");
+        if (embedded.Length > archiveLength)
+            throw new InvalidDataException("The embedded manifest is larger than its archive.");
+        var encrypted = ReadArchiveManifest(embedded);
+        var sidecar = await ReadEncryptedManifestFileAsync(sidecarPath);
+        if (!CryptographicOperations.FixedTimeEquals(encrypted, sidecar))
+            throw new InvalidDataException("The sidecar and embedded manifests disagree.");
+        _ = ArchiveManifestProcessor.Read<BackupManifest>(encrypted, key);
+
+        var header = archive.GetEntry(VaultHeaderFileName)
+            ?? throw new InvalidDataException("The archive is missing 'vault.json'.");
+        var verifiedBytes = await VerifyArchiveEntryAsync(header, manifest.VaultHeaderSha256);
+        var database = archive.GetEntry(CatalogFileName)
+            ?? throw new InvalidDataException("The archive is missing 'gallery.db'.");
+        var databasePath = Path.Combine(stagingDirectory, "parent-gallery.db");
+        try
+        {
+            verifiedBytes += await VerifyArchiveEntryAsync(database, expectedHash: null, databasePath);
+            if (manifest.DatabaseFingerprint is not null
+                && manifest.DatabaseFingerprint != await Gallery.Core.Services.DataManagers.GalleryStore
+                    .ComputeContentFingerprintAsync(databasePath, BackupSettingsId))
+                throw new InvalidDataException("The archive database disagrees with its manifest.");
+        }
+        finally { File.Delete(databasePath); }
+        var mediaEntryCount = 0;
+        foreach (var entry in archive.Entries.Where(entry => entry.FullName.StartsWith("media/", StringComparison.Ordinal)))
+        {
+            var filename = entry.FullName["media/".Length..];
+            if (filename.Length != 69 || !filename.EndsWith(".blob", StringComparison.Ordinal)
+                || filename[..64].Any(character => !char.IsAsciiHexDigit(character)))
+                throw new InvalidDataException("The archive has an invalid media entry.");
+            var hash = filename[..64];
+            verifiedBytes += await VerifyArchiveEntryAsync(entry, hash);
+            mediaEntryCount++;
+            availableMedia.Add(hash);
+        }
+        return (verifiedBytes, mediaEntryCount);
+    }
+
+    private static async Task<long> VerifyArchiveEntryAsync(
+        ZipArchiveEntry entry, string? expectedHash, string? destinationPath = null)
+    {
+        await using var stream = entry.Open();
+        using var hasher = expectedHash is null ? null : IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        await using var destination = destinationPath is null ? null : File.Create(destinationPath);
+        var buffer = new byte[81920];
+        long length = 0;
+        int count;
+        while ((count = await stream.ReadAsync(buffer)) != 0)
+        {
+            length += count;
+            if (length > entry.Length)
+                throw new InvalidDataException($"Archive entry '{entry.FullName}' exceeds its declared length.");
+            hasher?.AppendData(buffer, 0, count);
+            if (destination is not null) await destination.WriteAsync(buffer.AsMemory(0, count));
+        }
+        if (length != entry.Length || (hasher is not null
+            && !Convert.ToHexString(hasher.GetHashAndReset()).Equals(expectedHash, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException($"Archive entry '{entry.FullName}' failed its integrity check.");
+        return length;
+    }
 
     private static async Task<string> HashFileAsync(string path)
     {
@@ -303,21 +474,55 @@ public sealed partial class GalleryService
         return true;
     }
 
-    private static byte[] ReadArchiveManifest(string archivePath)
+    internal static byte[] ReadArchiveManifest(string archivePath)
     {
         using var archive = ZipFile.OpenRead(archivePath);
         var entry = archive.GetEntry("manifest.enc")
             ?? throw new InvalidOperationException("The completed backup archive is missing its manifest.");
+        return ReadArchiveManifest(entry);
+    }
+
+    private static byte[] ReadArchiveManifest(ZipArchiveEntry entry)
+    {
+        if (entry.Length > MaximumEncryptedManifestBytes)
+            throw new InvalidDataException("The embedded manifest is too large.");
         using var stream = entry.Open();
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
+        using var buffer = new MemoryStream((int)entry.Length);
+        var chunk = new byte[81920];
+        int count;
+        while ((count = stream.Read(chunk)) != 0)
+        {
+            if (buffer.Length + count > MaximumEncryptedManifestBytes
+                || buffer.Length + count > entry.Length)
+                throw new InvalidDataException("The embedded manifest exceeds its supported size.");
+            buffer.Write(chunk, 0, count);
+        }
+        if (buffer.Length != entry.Length)
+            throw new InvalidDataException("The embedded manifest is incomplete.");
         return buffer.ToArray();
     }
 
     private static async Task<BackupManifest> ReadManifestFileAsync(string manifestPath, byte[] key)
     {
-        var encrypted = await File.ReadAllBytesAsync(manifestPath);
+        var encrypted = await ReadEncryptedManifestFileAsync(manifestPath);
         return ArchiveManifestProcessor.Read<BackupManifest>(encrypted, key);
+    }
+
+    internal static async Task<byte[]> ReadEncryptedManifestFileAsync(string manifestPath)
+    {
+        await using var stream = new FileStream(manifestPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (stream.Length > MaximumEncryptedManifestBytes)
+            throw new InvalidOperationException("A backup manifest is too large. Create a new full backup.");
+        using var buffer = new MemoryStream((int)stream.Length);
+        var chunk = new byte[81920];
+        int count;
+        while ((count = await stream.ReadAsync(chunk)) != 0)
+        {
+            if (buffer.Length + count > MaximumEncryptedManifestBytes)
+                throw new InvalidOperationException("A backup manifest is too large. Create a new full backup.");
+            buffer.Write(chunk, 0, count);
+        }
+        return buffer.ToArray();
     }
 
     private static async Task WriteArchiveAsync(
@@ -326,10 +531,12 @@ public sealed partial class GalleryService
         var encryptedManifest = ArchiveManifestProcessor.Protect(manifest, key);
         try
         {
+            if (encryptedManifest.Length > MaximumEncryptedManifestBytes)
+                throw new InvalidOperationException("A backup manifest is too large to publish.");
             await using var archiveStream = new FileStream(archivePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
             using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true);
-            AddFile(archive, "vault.json", Path.Combine(Path.GetDirectoryName(archivePath)!, "vault.json"));
-            AddFile(archive, "gallery.db", Path.Combine(Path.GetDirectoryName(archivePath)!, "gallery.db"));
+            AddFile(archive, VaultHeaderFileName, Path.Combine(Path.GetDirectoryName(archivePath)!, VaultHeaderFileName));
+            AddFile(archive, CatalogFileName, Path.Combine(Path.GetDirectoryName(archivePath)!, CatalogFileName));
             var manifestEntry = archive.CreateEntry("manifest.enc", CompressionLevel.NoCompression);
             await using (var target = manifestEntry.Open())
                 await target.WriteAsync(encryptedManifest);

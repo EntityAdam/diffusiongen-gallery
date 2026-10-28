@@ -9,36 +9,51 @@ namespace Gallery.Web.Composition;
 public static class GalleryServiceRegistration
 {
     private const string VisionHttpClientName = "gallery-vision";
+    private const string FFmpegPathSettingName = "Gallery:FFmpegPath";
 
     public static void Register(IServiceCollection services, IConfiguration configuration, string vaultRoot)
     {
-        var searchPaths = new List<string>();
-        AddSearchPaths(configuration["PATH"] ?? Environment.GetEnvironmentVariable("PATH"));
-        if (OperatingSystem.IsWindows())
-        {
-            AddSearchPaths(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User));
-            AddSearchPaths(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine));
-        }
-        var options = new GalleryRuntimeOptions
+        var galleryRuntimeOptions = CaptureGalleryRuntimeOptions(configuration);
+        RegisterVisionHttpClient(services);
+        RegisterGalleryService(services, vaultRoot, galleryRuntimeOptions);
+    }
+
+    internal static GalleryRuntimeOptions CaptureGalleryRuntimeOptions(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        return new GalleryRuntimeOptions
         {
             StateDirectory = configuration["Gallery:StateDirectory"],
-            FFmpegPath = configuration["Gallery:FFmpegPath"],
-            ToolSearchPaths = searchPaths.ToImmutableArray()
+            FFmpegPath = configuration[FFmpegPathSettingName],
+            ToolSearchPaths = DiscoverToolSearchPaths(configuration).ToImmutableArray()
         };
-        services.AddHttpClient(VisionHttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+    }
+
+    private static IEnumerable<string> DiscoverToolSearchPaths(IConfiguration configuration)
+    {
+        var configuredPath = configuration["PATH"] ?? Environment.GetEnvironmentVariable("PATH");
+        foreach (var searchPath in ParseSearchPaths(configuredPath)) yield return searchPath;
+        if (!OperatingSystem.IsWindows()) yield break;
+        foreach (var searchPath in ParseSearchPaths(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User)))
+            yield return searchPath;
+        foreach (var searchPath in ParseSearchPaths(Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine)))
+            yield return searchPath;
+    }
+
+    private static IEnumerable<string> ParseSearchPaths(string? searchPathValue) =>
+        string.IsNullOrWhiteSpace(searchPathValue) ? [] : searchPathValue.Split(Path.PathSeparator,
+            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private static void RegisterVisionHttpClient(IServiceCollection services) =>
+        services.AddHttpClient(VisionHttpClientName, httpClient => httpClient.Timeout = Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
                 AllowAutoRedirect = false,
                 UseProxy = false
             });
-        services.AddScoped(provider => GalleryService.Create(vaultRoot, options,
-            provider.GetRequiredService<IHttpClientFactory>().CreateClient(VisionHttpClientName)));
 
-        void AddSearchPaths(string? value)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-                searchPaths.AddRange(value.Split(Path.PathSeparator,
-                    StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries));
-        }
-    }
+    private static void RegisterGalleryService(IServiceCollection services, string vaultRoot,
+        GalleryRuntimeOptions galleryRuntimeOptions) =>
+        services.AddScoped(serviceProvider => GalleryService.Create(vaultRoot, galleryRuntimeOptions,
+            serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient(VisionHttpClientName)));
 }

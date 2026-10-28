@@ -16,7 +16,7 @@
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || groupIndex + 1 >= Groups.Count)" OnClick="() => OpenGroupAsync(groupIndex + 1)" title="Down arrow: next group"><ChevronDownIcon aria-hidden="true" />Next group</Button>
             <Button Variant="@(originalSize ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => SetSizeAsync(true)" aria-pressed="@(originalSize ? "true" : "false")"><ScanIcon aria-hidden="true" />Original size (O)</Button>
             <Button Variant="@(!originalSize ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => SetSizeAsync(false)" aria-pressed="@(originalSize ? "false" : "true")"><MaximizeIcon aria-hidden="true" />Fit window (P)</Button>
-            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@busy" OnClick="CloseAsync" aria-label="Close duplicate review"><XIcon aria-hidden="true" />Close (Esc)</Button>
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@(busy && !loading)" OnClick="CloseAsync" aria-label="Close duplicate review"><XIcon aria-hidden="true" />Close (Esc)</Button>
         </div>
     </header>
     <div class="max-h-[35vh] shrink-0 space-y-3 overflow-auto border-b border-border bg-primary/5 px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-4">
@@ -77,7 +77,7 @@
     private readonly Dictionary<string, string> thumbs = [];
     private readonly Dictionary<(string Id, bool Full), string> urls = [];
     private readonly SemaphoreSlim gate = new(1);
-    private bool busy, originalSize, disposed, closed;
+    private bool busy, loading, originalSize, disposed, closed;
     private string imageData = "", error = "", status = "";
     private Task? preload;
     private DuplicateGroup Group => Groups[groupIndex];
@@ -95,8 +95,10 @@
         if (!firstRender) return;
         reference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("galleryViewer.attach", element, reference);
-        await RunAsync(LoadGroupAsync);
-        StateHasChanged();
+        loading = true;
+        try { await RunAsync(LoadGroupAsync); }
+        finally { loading = false; }
+        if (!disposed) StateHasChanged();
     }
 
     private void PrepareGroup()
@@ -111,14 +113,35 @@
 
     private async Task LoadGroupAsync()
     {
+        var forGeneration = generation;
+        var currentId = Current.Id;
+        imageData = await LoadImageAsync(currentId, originalSize, forGeneration);
+        if (disposed || forGeneration != generation) return;
+        await InvokeAsync(StateHasChanged);
         foreach (var member in members)
-            if (!thumbs.ContainsKey(member.Id)) thumbs[member.Id] = await Gallery.ThumbnailAsync(member.Id);
-        imageData = await LoadImageAsync(Current.Id, originalSize, generation);
-        preload = PreloadAsync(generation);
+        {
+            if (disposed || forGeneration != generation) return;
+            if (thumbs.ContainsKey(member.Id)) continue;
+            var thumbnail = await Gallery.ThumbnailAsync(member.Id);
+            if (disposed || forGeneration != generation) return;
+            thumbs[member.Id] = thumbnail;
+        }
+        preload = PreloadAsync(forGeneration);
     }
 
     private async Task<string> LoadImageAsync(string id, bool full, int forGeneration)
     {
+        await gate.WaitAsync();
+        try
+        {
+            if (disposed || forGeneration != generation) return "";
+            if (urls.TryGetValue((id, full), out var cached)) return cached;
+        }
+        finally { gate.Release(); }
+
+        var data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
+        if (disposed || forGeneration != generation) return "";
+
         await gate.WaitAsync();
         try
         {
@@ -131,9 +154,12 @@
                 if (stale.Count > 0) await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)stale.Select(entry => entry.Value).ToArray());
                 foreach (var entry in stale) urls.Remove(entry.Key);
             }
-            var data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
-            if (disposed || forGeneration != generation) return "";
             var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
+            if (disposed || forGeneration != generation)
+            {
+                await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)new[] { url });
+                return "";
+            }
             urls[(id, full)] = url;
             return url;
         }
@@ -187,14 +213,19 @@
     private Task ShowImageAsync(int next) => RunAsync(async () =>
     {
         if (next < 0 || next >= members.Count) return;
-        var data = await LoadImageAsync(members[next].Id, originalSize, generation);
+        var forGeneration = generation;
+        var data = await LoadImageAsync(members[next].Id, originalSize, forGeneration);
+        if (disposed || forGeneration != generation) return;
         imageIndex = next;
         imageData = data;
     });
 
     private Task SetSizeAsync(bool original) => RunAsync(async () =>
     {
-        var data = await LoadImageAsync(Current.Id, original, generation);
+        var forGeneration = generation;
+        var currentId = Current.Id;
+        var data = await LoadImageAsync(currentId, original, forGeneration);
+        if (disposed || forGeneration != generation) return;
         originalSize = original;
         imageData = data;
     });
@@ -204,13 +235,20 @@
     private async Task MoveToGroupAsync(int next)
     {
         if (next < 0 || next >= Groups.Count || next == groupIndex) return;
-        generation++;
-        imageData = "";
-        if (preload is not null) await preload;
-        await ReleaseUrlsAsync();
-        groupIndex = next;
-        PrepareGroup();
-        await LoadGroupAsync();
+        loading = true;
+        try
+        {
+            var forGeneration = ++generation;
+            imageData = "";
+            if (preload is not null) await preload;
+            if (disposed || forGeneration != generation) return;
+            await ReleaseUrlsAsync();
+            if (disposed || forGeneration != generation) return;
+            groupIndex = next;
+            PrepareGroup();
+            await LoadGroupAsync();
+        }
+        finally { loading = false; }
     }
 
     private void ToggleKeep(string id)
@@ -252,8 +290,8 @@
     {
         if (closed) return;
         closed = disposed = true;
+        generation++;
         await JS.InvokeVoidAsync("galleryViewer.detach", element);
-        if (preload is not null) await preload;
         await ReleaseUrlsAsync();
         await OnClose.InvokeAsync(applied.Count == 0 ? "" :
             $"Duplicate review: {applied.Count} group(s) applied, {appliedMarks} cop{(appliedMarks == 1 ? "y" : "ies")} marked for deletion. Remove them from Trash.");
@@ -262,6 +300,11 @@
     [JSInvokable]
     public async Task HandleKey(string key)
     {
+        if (key == "escape" && (!busy || loading))
+        {
+            await CloseAsync();
+            return;
+        }
         if (busy) return;
         switch (key)
         {
@@ -274,7 +317,6 @@
             case "s": await OpenGroupAsync(groupIndex + 1); break;
             case "o": await SetSizeAsync(true); break;
             case "p": await SetSizeAsync(false); break;
-            case "escape": await CloseAsync(); return;
         }
         StateHasChanged();
     }
@@ -282,7 +324,7 @@
     public async ValueTask DisposeAsync()
     {
         disposed = true;
-        if (preload is not null) await preload;
+        generation++;
         imageData = "";
         try
         {
@@ -290,6 +332,6 @@
             await JS.InvokeVoidAsync("galleryViewer.detach", element);
         }
         catch (JSDisconnectedException) { }
-        finally { urls.Clear(); reference?.Dispose(); gate.Dispose(); }
+        finally { urls.Clear(); reference?.Dispose(); }
     }
 }

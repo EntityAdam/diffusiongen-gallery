@@ -66,8 +66,13 @@ public sealed class GalleryTests
         }
         fixture.Session.Lock();
         var lockedError = await Assert.ThrowsAsync<VaultLockedException>(() => fixture.Service.ListAsync());
-        fixture.Session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
-        var records = await fixture.Service.ListAsync();
+        await fixture.Service.CloseVaultAsync();
+        using var reopenedSession = new VaultSession();
+        using var reopened = new GalleryService(new GalleryStore(Path.Combine(fixture.Root, "gallery.db")),
+            new VaultStore(fixture.Root), reopenedSession);
+        await reopened.OpenExistingVaultAsync(fixture.Root);
+        await reopened.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        var records = await reopened.ListAsync();
 
         // Assert
         Assert.EndsWith(".dpng", image.StoredPath);

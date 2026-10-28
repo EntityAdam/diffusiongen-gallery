@@ -12,5 +12,5 @@ internal static class SavedViewProcessor
     }
 
     public static void Remove(List<SavedView> views, string name) =>
-        views.RemoveAll(savedView => savedView.Name == name);
+        views.RemoveAll(savedView => savedView.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }

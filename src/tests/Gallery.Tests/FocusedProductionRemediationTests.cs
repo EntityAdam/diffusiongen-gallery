@@ -191,6 +191,158 @@ public sealed class FocusedProductionRemediationTests
     }
 
     [Fact]
+    public void ApiPrompt_WhenNumericTraversalFirstReachesSharedNodeAtDepthLimit_ThenKeepsShallowResolution()
+    {
+        // Arrange
+        var graph = CreateSamplerGraph();
+        graph["root"] = new JsonObject
+        {
+            ["class_type"] = "Primitive",
+            ["inputs"] = new JsonObject
+            {
+                ["cfg"] = CreateLink("node-1")
+            }
+        };
+        for (var nodeIndex = 1; nodeIndex <= 31; nodeIndex++)
+        {
+            var nextNodeId = nodeIndex == 31 ? "shared" : $"node-{nodeIndex + 1}";
+            graph[$"node-{nodeIndex}"] = NumericNode(("value", CreateLink(nextNodeId)));
+        }
+        graph["shared"] = NumericNode(("value", JsonValue.Create(4.5)));
+
+        // Act: the only path reaches the scalar beyond the depth limit.
+        var longPathGenerationInfo = ComfyMetadata.ParseApiPrompt(graph.ToJsonString());
+
+        // Assert: an unsuccessful deep lookup cannot poison a valid shallow alias.
+        Assert.Null(longPathGenerationInfo.Cfg);
+        graph["root"]!["inputs"]!["value"] = CreateLink("shared");
+        var generationInfo = ComfyMetadata.ParseApiPrompt(graph.ToJsonString());
+        Assert.Equal(4.5, generationInfo.Cfg);
+    }
+
+    [Fact]
+    public async Task ApiPrompt_WhenNumericLinksAreCyclicOrRepeatedUnsuccessful_ThenTraversalIsBounded()
+    {
+        // Arrange
+        var cyclicGraph = CreateSamplerGraph();
+        cyclicGraph["sampler"]!["inputs"]!["cfg"] = CreateLink("cycle");
+        cyclicGraph["cycle"] = NumericNode(
+            ("cfg", CreateLink("cycle")),
+            ("value", CreateLink("cycle")),
+            ("int", CreateLink("cycle")),
+            ("float", CreateLink("cycle")),
+            ("number", CreateLink("cycle")));
+
+        var sharedGraph = CreateSamplerGraph();
+        sharedGraph["root"] = NumericNode(
+            ("cfg", CreateLink("level-1")),
+            ("value", CreateLink("level-1")),
+            ("int", CreateLink("level-1")),
+            ("float", CreateLink("level-1")),
+            ("number", CreateLink("level-1")));
+        for (var level = 1; level <= 31; level++)
+        {
+            var nextLevel = $"level-{level + 1}";
+            sharedGraph[$"level-{level}"] = NumericNode(
+                ("cfg", CreateLink(nextLevel)),
+                ("value", CreateLink(nextLevel)),
+                ("int", CreateLink(nextLevel)),
+                ("float", CreateLink(nextLevel)),
+                ("number", CreateLink(nextLevel)));
+        }
+
+        // Act
+        var cycleResult = await Task.Run(() => ComfyMetadata.ParseApiPrompt(cyclicGraph.ToJsonString()))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        var sharedGraphResult = await Task.Run(() => ComfyMetadata.ParseApiPrompt(sharedGraph.ToJsonString()))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        Assert.Null(cycleResult.Cfg);
+        Assert.Null(sharedGraphResult.Cfg);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ApiPrompt_WhenFallbackAndModelLinksHaveSeveralCandidates_ThenPreservesInputOrder(
+        bool reverseInsertionOrder)
+    {
+        // Arrange
+        var graph = CreateSamplerGraph();
+        graph["sampler"]!["inputs"]!["positive"] = CreateLink("text-root");
+        graph["sampler"]!["inputs"]!["model"] = CreateLink("model-root");
+        var promptLinks = reverseInsertionOrder
+            ? new[] { ("a_prompt", "second-encoder"), ("z_prompt", "first-encoder") }
+            : new[] { ("z_prompt", "first-encoder"), ("a_prompt", "second-encoder") };
+        graph["text-root"] = NumericNode(promptLinks
+            .Select(link => (link.Item1, (JsonNode?)CreateLink(link.Item2))).ToArray());
+        graph["first-encoder"] = new JsonObject
+        {
+            ["class_type"] = "CLIPTextEncode",
+            ["inputs"] = new JsonObject { ["text"] = "first prompt" }
+        };
+        graph["second-encoder"] = new JsonObject
+        {
+            ["class_type"] = "CLIPTextEncode",
+            ["inputs"] = new JsonObject { ["text"] = "second prompt" }
+        };
+        var modelLinks = reverseInsertionOrder
+            ? new[] { ("a_model", "second-model"), ("z_model", "first-model") }
+            : new[] { ("z_model", "first-model"), ("a_model", "second-model") };
+        graph["model-root"] = NumericNode(modelLinks
+            .Select(link => (link.Item1, (JsonNode?)CreateLink(link.Item2))).ToArray());
+        graph["first-model"] = new JsonObject
+        {
+            ["class_type"] = "CheckpointLoaderSimple",
+            ["inputs"] = new JsonObject { ["ckpt_name"] = "first-model.safetensors" }
+        };
+        graph["second-model"] = new JsonObject
+        {
+            ["class_type"] = "CheckpointLoaderSimple",
+            ["inputs"] = new JsonObject { ["ckpt_name"] = "second-model.safetensors" }
+        };
+
+        // Act
+        var generationInfo = ComfyMetadata.ParseApiPrompt(graph.ToJsonString());
+
+        // Assert
+        Assert.Equal(reverseInsertionOrder ? "second prompt" : "first prompt", generationInfo.Prompt);
+        Assert.Equal(reverseInsertionOrder ? "second-model.safetensors" : "first-model.safetensors",
+            generationInfo.Model);
+    }
+
+    private static JsonObject CreateSamplerGraph()
+    {
+        var graph = new JsonObject
+        {
+            ["sampler"] = new JsonObject
+            {
+                ["class_type"] = "KSampler",
+                ["inputs"] = new JsonObject
+                {
+                    ["positive"] = "prompt",
+                    ["negative"] = "",
+                    ["cfg"] = CreateLink("root"),
+                    ["steps"] = 20
+                }
+            }
+        };
+        return graph;
+    }
+
+    private static JsonObject NumericNode(params (string Name, JsonNode? Value)[] inputs)
+    {
+        var jsonInputs = new JsonObject();
+        foreach (var input in inputs)
+            jsonInputs[input.Name] = input.Value;
+        return new JsonObject { ["class_type"] = "Primitive", ["inputs"] = jsonInputs };
+    }
+
+    private static JsonArray CreateLink(string nodeId) =>
+        new(JsonValue.Create(nodeId), JsonValue.Create(0));
+
+    [Fact]
     public void ExceptionContracts_WhenUsingLeafExceptions_ThenExposeFixedPublicProperties()
     {
         // Arrange

@@ -14,13 +14,18 @@ internal static class DuplicateRules
         Func<ImageRecord, ulong> hashOf, Func<string, long?> fileLength)
     {
         var imageHashes = records.Select(hashOf).ToArray();
-        var disjointSet = new DisjointSet(records.Count);
-        ConnectDuplicateRecords(records, imageHashes, disjointSet);
-        return BuildDuplicateGroups(records, imageHashes, disjointSet, fileLength);
+        var parentIndexes = Enumerable.Range(0, records.Count).ToArray();
+        ConnectDuplicateRecords(records, imageHashes, parentIndexes);
+        var duplicateGroups = Enumerable.Range(0, parentIndexes.Length)
+            .GroupBy(index => Find(parentIndexes, index))
+            .Where(component => component.Count() > 1)
+            .Select(component => component.ToList())
+            .Select(componentIndexes => CreateDuplicateGroup(componentIndexes, records, imageHashes, fileLength));
+        return OrderDuplicateGroups(duplicateGroups);
     }
 
     private static void ConnectDuplicateRecords(IReadOnlyList<ImageRecord> records, ulong[] imageHashes,
-        DisjointSet disjointSet)
+        int[] parentIndexes)
     {
         for (var candidateIndex = 0; candidateIndex < records.Count; candidateIndex++)
             for (var comparisonIndex = candidateIndex + 1; comparisonIndex < records.Count; comparisonIndex++)
@@ -30,41 +35,46 @@ internal static class DuplicateRules
                 if (candidateRecord.MediaType != comparisonRecord.MediaType) continue;
                 if (AreDuplicates(candidateRecord, comparisonRecord, imageHashes[candidateIndex],
                     imageHashes[comparisonIndex]))
-                    disjointSet.Union(candidateIndex, comparisonIndex);
+                    Union(parentIndexes, candidateIndex, comparisonIndex);
             }
     }
-
-    private static List<DuplicateGroup> BuildDuplicateGroups(IReadOnlyList<ImageRecord> records, ulong[] imageHashes,
-        DisjointSet disjointSet, Func<string, long?> fileLength)
-    {
-        var duplicateGroups = BuildDuplicateComponents(records.Count, disjointSet)
-            .Select(componentIndexes => CreateDuplicateGroup(componentIndexes, records, imageHashes, fileLength));
-        return OrderDuplicateGroups(duplicateGroups);
-    }
-
-    private static IEnumerable<List<int>> BuildDuplicateComponents(int recordCount, DisjointSet disjointSet) =>
-        Enumerable.Range(0, recordCount).GroupBy(disjointSet.Find)
-            .Where(component => component.Count() > 1).Select(component => component.ToList());
 
     private static DuplicateGroup CreateDuplicateGroup(List<int> componentIndexes, IReadOnlyList<ImageRecord> records,
         ulong[] imageHashes, Func<string, long?> fileLength)
     {
-        var maxDistance = 0;
-        foreach (var candidateIndex in componentIndexes)
-            foreach (var comparisonIndex in componentIndexes)
-                maxDistance = Math.Max(maxDistance, HammingDistance(imageHashes[candidateIndex], imageHashes[comparisonIndex]));
+        var maximumDistance = MaximumGroupDistance(componentIndexes, imageHashes);
         var duplicateRecords = componentIndexes.Select(index => records[index]).ToList();
         var imageRecord = PickKeeper(duplicateRecords);
-        var orderedDuplicateRecords = duplicateRecords
+        var orderedDuplicateRecords = OrderDuplicateRecords(duplicateRecords, imageRecord);
+        var groupIsExact = AllRecordsMatchExactly(duplicateRecords, imageRecord);
+        var reclaimableBytes = CalculateReclaimableBytes(orderedDuplicateRecords, fileLength);
+        return new(imageRecord.Id, orderedDuplicateRecords.Select(duplicateImageRecord => duplicateImageRecord.Id).ToImmutableArray(),
+            maximumDistance, groupIsExact, reclaimableBytes);
+    }
+
+    private static int MaximumGroupDistance(IReadOnlyList<int> componentIndexes, ulong[] imageHashes)
+    {
+        var maximumDistance = 0;
+        foreach (var candidateIndex in componentIndexes)
+            foreach (var comparisonIndex in componentIndexes)
+                maximumDistance = Math.Max(maximumDistance, HammingDistance(imageHashes[candidateIndex], imageHashes[comparisonIndex]));
+        return maximumDistance;
+    }
+
+    private static List<ImageRecord> OrderDuplicateRecords(
+        List<ImageRecord> duplicateRecords, ImageRecord imageRecord) =>
+        duplicateRecords
             .OrderByDescending(duplicateImageRecord => duplicateImageRecord.Id == imageRecord.Id)
             .ThenBy(duplicateImageRecord => duplicateImageRecord.ImportedAt).ToList();
-        var groupIsExact = duplicateRecords.All(duplicateImageRecord => duplicateImageRecord.PngSha256.Length > 0
+
+    private static bool AllRecordsMatchExactly(List<ImageRecord> duplicateRecords, ImageRecord imageRecord) =>
+        duplicateRecords.All(duplicateImageRecord => duplicateImageRecord.PngSha256.Length > 0
             && duplicateImageRecord.PngSha256 == imageRecord.PngSha256);
-        var reclaimableBytes = orderedDuplicateRecords.Skip(1)
+
+    private static long CalculateReclaimableBytes(
+        List<ImageRecord> orderedDuplicateRecords, Func<string, long?> fileLength) =>
+        orderedDuplicateRecords.Skip(1)
             .Sum(duplicateImageRecord => fileLength(duplicateImageRecord.StoredPath) ?? 0);
-        return new(imageRecord.Id, orderedDuplicateRecords.Select(duplicateImageRecord => duplicateImageRecord.Id).ToImmutableArray(),
-            maxDistance, groupIsExact, reclaimableBytes);
-    }
 
     private static List<DuplicateGroup> OrderDuplicateGroups(IEnumerable<DuplicateGroup> duplicateGroups) =>
         duplicateGroups.OrderByDescending(duplicateGroup => duplicateGroup.ReclaimableBytes)
@@ -81,17 +91,18 @@ internal static class DuplicateRules
 
     public static ImageRecord PickKeeper(IEnumerable<ImageRecord> imageRecords)
     {
-        var candidates = imageRecords.ToList();
-        return OrderKeeperCandidates(candidates).First();
-    }
-
-    private static IOrderedEnumerable<ImageRecord> OrderKeeperCandidates(IEnumerable<ImageRecord> candidates) => candidates
+        var orderedCandidates = imageRecords
             .OrderBy(imageRecord => imageRecord.IsMarkedForDeletion)
             .ThenByDescending(imageRecord => imageRecord.Rating)
             .ThenByDescending(imageRecord => imageRecord.IsFavorite)
             .ThenByDescending(imageRecord => (long)imageRecord.Width * imageRecord.Height)
             .ThenByDescending(imageRecord => imageRecord.OriginalBytes)
             .ThenBy(imageRecord => imageRecord.ImportedAt);
+        using var candidateEnumerator = orderedCandidates.GetEnumerator();
+        if (!candidateEnumerator.MoveNext())
+            throw new InvalidOperationException("Cannot choose a duplicate keeper because no image records were supplied.");
+        return candidateEnumerator.Current;
+    }
 
     public static HashSet<string> InitialKeepers(IReadOnlyCollection<ImageRecord> groupRecords)
     {
@@ -108,28 +119,23 @@ internal static class DuplicateRules
 
     private static bool SimilarShape(ImageRecord candidateRecord, ImageRecord comparisonRecord)
     {
-        if (candidateRecord.Width <= 0 || candidateRecord.Height <= 0
-            || comparisonRecord.Width <= 0 || comparisonRecord.Height <= 0) return true;
+        if (!HasValidDimensions(candidateRecord) || !HasValidDimensions(comparisonRecord)) return true;
         var candidateAspectRatio = (double)candidateRecord.Width / candidateRecord.Height;
         var comparisonAspectRatio = (double)comparisonRecord.Width / comparisonRecord.Height;
         return Math.Abs(candidateAspectRatio - comparisonAspectRatio)
             / Math.Max(candidateAspectRatio, comparisonAspectRatio) <= 0.05;
     }
 
-    private sealed class DisjointSet
+    private static bool HasValidDimensions(ImageRecord imageRecord) =>
+        imageRecord.Width > 0 && imageRecord.Height > 0;
+
+    private static int Find(int[] parentIndexes, int index)
     {
-        private readonly int[] parentIndexes;
-
-        public DisjointSet(int count) => parentIndexes = Enumerable.Range(0, count).ToArray();
-
-        public int Find(int index)
-        {
-            while (parentIndexes[index] != index)
-                index = parentIndexes[index] = parentIndexes[parentIndexes[index]];
-            return index;
-        }
-
-        public void Union(int firstIndex, int secondIndex) =>
-            parentIndexes[Find(secondIndex)] = Find(firstIndex);
+        while (parentIndexes[index] != index)
+            index = parentIndexes[index] = parentIndexes[parentIndexes[index]];
+        return index;
     }
+
+    private static void Union(int[] parentIndexes, int firstIndex, int secondIndex) =>
+        parentIndexes[Find(parentIndexes, secondIndex)] = Find(parentIndexes, firstIndex);
 }

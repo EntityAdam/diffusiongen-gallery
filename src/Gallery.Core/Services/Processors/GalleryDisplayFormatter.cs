@@ -15,7 +15,10 @@ internal static class GalleryDisplayFormatter
     private static TimeSpan NormalizeDuration(double seconds) => TimeSpan.FromSeconds(Math.Max(0, Math.Round(seconds)));
 
     private static string RenderDuration(TimeSpan duration) =>
-        duration.TotalHours >= 1 ? duration.ToString(@"h\:mm\:ss") : duration.ToString(@"m\:ss");
+        duration.TotalHours >= 1
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{(long)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}")
+            : duration.ToString(@"m\:ss");
 
     public static string FormatBytes(long bytes) => RenderBytes(bytes, ScaleBytes(bytes));
 

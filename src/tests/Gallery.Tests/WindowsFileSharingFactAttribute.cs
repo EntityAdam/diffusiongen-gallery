@@ -1,10 +1,10 @@
 namespace Gallery.Tests;
 
-internal sealed class WindowsFileSharingFactAttribute : FactAttribute
+internal sealed class WindowsFileSystemFactAttribute : FactAttribute
 {
-    public WindowsFileSharingFactAttribute()
+    public WindowsFileSystemFactAttribute()
     {
         if (!OperatingSystem.IsWindows())
-            Skip = "This scenario requires Windows FileShare.None delete-denial semantics; Unix permits unlinking an open file.";
+            Skip = "This scenario requires Windows file-system access semantics.";
     }
 }

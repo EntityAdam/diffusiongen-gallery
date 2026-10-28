@@ -159,7 +159,7 @@ else
         {
             <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name</span></Button>
         }
-        <Button Variant="@(ToolboxShown ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Class="workspace-nav-button" aria-pressed="@(ToolboxShown ? "true" : "false")"
+        <Button Variant="@(ToolboxShown ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@busy" Class="workspace-nav-button" aria-pressed="@(ToolboxShown ? "true" : "false")"
                 aria-label="Toolbox (`)" title="Show or hide the toolbox (`). Shift+` resets its position." OnClick="ToggleToolboxAsync"><WrenchIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Toolbox <kbd>`</kbd></span></Button>
         </nav>
         <div class="workspace-sidebar-details" hidden="@sidebarCollapsed">
@@ -212,7 +212,7 @@ else
             </div>
         }
         </div>
-        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="workspace-panic" Disabled="@busy" aria-label="Panic lock gallery (Ctrl+Shift+L)" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
+        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="workspace-panic" aria-label="Panic lock gallery (Ctrl+Shift+L)" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="PanicAsync">
             <ShieldAlertIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Panic <kbd>Ctrl+Shift+L</kbd></span>
         </Button>
         <WorkspaceSidebarFooter />
@@ -1304,7 +1304,7 @@ else
     }
 
     private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
-    private Task ResetFilters() { filter = new() { Deletion = TrashActive ? "marked" : "all" }; return FilterChangedAsync(); }
+    private Task ResetFilters() { filter = TrashActive ? new() { Deletion = "marked" } : new(); return FilterChangedAsync(); }
     private Task ApplyLibraryFilterAsync(GalleryFilter value) { filter = value; return FilterChangedAsync(); }
     private Task SetSort(string? value)
     {
@@ -1320,6 +1320,7 @@ else
     };
     private async Task SetActiveToolAsync(string value)
     {
+        if (busy) return;
         value = UiPreferences.ToolboxTools.Contains(value) ? value : "";
         if (activeTool == value) return;
         var wasTrash = TrashActive;
@@ -1336,6 +1337,7 @@ else
     }
     private async Task ToggleToolboxAsync()
     {
+        if (busy) return;
         if (workflow != "gallery")
         {
             toolboxVisible = true;
@@ -1373,9 +1375,9 @@ else
         filter = TrashActive ? new() { Deletion = "marked" } : new();
         if (TrashActive) browsingFilter = new();
     }
-    private Task SavePreferencesAsync() => Gallery.SavePreferencesAsync(new UiPreferences
+    private Task SavePreferencesAsync(int? autoLockMinutesOverride = null) => Gallery.SavePreferencesAsync(new UiPreferences
     {
-        GridDensity = density, AutoLockMinutes = autoLockMinutes, ToolboxVisible = toolboxVisible,
+        GridDensity = density, AutoLockMinutes = autoLockMinutesOverride ?? autoLockMinutes, ToolboxVisible = toolboxVisible,
         ToolboxX = toolboxX, ToolboxY = toolboxY, ToolboxTool = activeTool
     });
     // Toolbox state is a convenience; failing to persist it must not interrupt browsing.
@@ -1390,6 +1392,7 @@ else
     }
     private Task SwitchWorkflowAsync(string value)
     {
+        if (busy && value != workflow) return Task.CompletedTask;
         workflow = value;
         ClearSelection();
         if (value == "duplicates")
@@ -1621,6 +1624,7 @@ else
         if (key == "`")
         {
             if (!Gallery.IsUnlocked || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
+            if (busy) return;
             if (shift) await ResetToolboxPositionAsync(); else await ToggleToolboxAsync();
             StateHasChanged();
             return;
@@ -2038,13 +2042,20 @@ else
 
     private async Task UpdateAutoLockMinutesAsync(string? value)
     {
+        if (busy) return;
         if (int.TryParse(value, out var minutes))
         {
-            autoLockMinutes = Math.Clamp(minutes, 0, 1440);
+            minutes = Math.Clamp(minutes, 0, 1440);
+            await RunAsync("Saving auto-lock timer...", () => SavePreferencesAsync(minutes));
+            if (error.Length > 0)
+            {
+                error = "Auto-lock timer could not be saved. The previous timer is still active.";
+                return;
+            }
+            autoLockMinutes = minutes;
             Gallery.ConfigureAutoLock(autoLockMinutes);
             try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
             catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-            await SavePreferencesAsync();
         }
     }
 

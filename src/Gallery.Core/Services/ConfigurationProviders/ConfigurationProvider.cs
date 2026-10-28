@@ -4,9 +4,15 @@ using Gallery.Core.Services.ConfigurationProviders.Sources;
 
 namespace Gallery.Core.Services.ConfigurationProviders;
 
-internal sealed class ConfigurationProvider(IConfiguration configuration)
+internal sealed class ConfigurationProvider
 {
-    private readonly SettingsSource settingsSource = new(configuration);
+    private readonly SettingsSource settingsSource;
 
-    public VideoToolsOptions GetVideoToolsOptions() => settingsSource.ReadVideoToolsOptions();
+    public ConfigurationProvider(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        settingsSource = new SettingsSource(configuration);
+    }
+
+    internal VideoToolsOptions GetVideoToolsOptions() => settingsSource.ReadVideoToolsOptions();
 }

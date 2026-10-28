@@ -2,7 +2,9 @@ using System.Net;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Core.Services.DataManagers;
 using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Sessions;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;
@@ -26,9 +28,13 @@ public sealed class IngestionPerformanceTests
 
         await fixture.Service.ImportFolderAsync(sourceRoot, FolderSearchScope.Descendants,
             sourceRetention: sourceRetention);
-        fixture.Session.Lock();
-        fixture.Session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
-        var record = Assert.Single(await fixture.Service.ListAsync());
+        await fixture.Service.CloseVaultAsync();
+        using var reopenedSession = new VaultSession();
+        using var reopened = new GalleryService(new GalleryStore(Path.Combine(fixture.Root, "gallery.db")),
+            new VaultStore(fixture.Root), reopenedSession);
+        await reopened.OpenExistingVaultAsync(fixture.Root);
+        await reopened.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        var record = Assert.Single(await reopened.ListAsync());
 
         Assert.Equal(sourcePath, record.SourcePath);
         Assert.Equal(new DateTimeOffset(sourceCreatedAt), record.SourceCreatedAt);

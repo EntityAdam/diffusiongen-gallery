@@ -1,3 +1,4 @@
+@using Gallery.Core.Exceptions
 @inject GalleryService Gallery
 @inject ILogger<LibraryWorkbench> Logger
 @implements IDisposable
@@ -225,7 +226,7 @@
         catch (Exception exception)
         {
             Logger.LogError(exception, "Library workbench operation failed");
-            error = exception is InvalidOperationException or IOException or System.Text.Json.JsonException
+            error = exception is InvalidSavedViewNameException or InvalidOperationException or IOException or System.Text.Json.JsonException
                 ? exception.Message : "The operation failed. Check the application console.";
         }
         finally
@@ -408,21 +409,31 @@
     // Approval runs outside RunAsync so suggestions can be reviewed while a Play analysis is still running.
     public async Task<ImageRecord?> ApproveSuggestionAsync(OrganizationSuggestion suggestion)
     {
-        var record = await Gallery.UpdateAsync(suggestion.Id, image =>
-        {
-            var updated = image with { Description = suggestion.Description,
-                Tags = Gallery.MergeTags(image.Tags, suggestion.Tags), AnalysisModel = suggestion.Model };
-            return suggestion.Collection.Length > 0
-                ? Gallery.SetOrganization(updated, updated.Rating, updated.IsReviewed, suggestion.Collection) : updated;
-        });
+        var imageRecord = await PersistApprovedSuggestionAsync(Gallery, suggestion);
         suggestions.RemoveAll(item => item.Id == suggestion.Id);
         if (!working) jobMessage = $"{suggestions.Count} suggestions await approval.";
         await PublishSuggestionsAsync();
         await PublishJobAsync();
         await Changed.InvokeAsync();
         StateHasChanged();
-        return record;
+        return imageRecord;
     }
+
+    internal static Task<ImageRecord> PersistApprovedSuggestionAsync(
+        GalleryService galleryService, OrganizationSuggestion organizationSuggestion) =>
+        galleryService.UpdateAsync(organizationSuggestion.Id, image =>
+        {
+            var updatedImageRecord = image with
+            {
+                Description = organizationSuggestion.Description,
+                Tags = galleryService.MergeTags(image.Tags, organizationSuggestion.Tags),
+                AnalysisModel = organizationSuggestion.Model
+            };
+            return organizationSuggestion.Collection.Length > 0
+                ? galleryService.SetOrganization(updatedImageRecord, updatedImageRecord.Rating,
+                    updatedImageRecord.IsReviewed, organizationSuggestion.Collection)
+                : updatedImageRecord;
+        });
 
     private Task PublishSuggestionsAsync() => disposed ? Task.CompletedTask : SuggestionsChanged.InvokeAsync(suggestions.ToArray());
 

@@ -3,6 +3,14 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class PngFrameAssertionTests
 {
+    [Fact]
+    public void Frame_WhenPngMatchesDimensions_ThenAcceptsFrame()
+    {
+        var dataUri = "data:image/png;base64," + Convert.ToBase64String(GalleryTests.MakePng(384, 216));
+
+        AsserterPngFrame.AssertMatches(new(384, 216), dataUri);
+    }
+
     [Theory]
     [InlineData("data:image/png;base64,")]
     [InlineData("data:image/png;base64,AQID")]

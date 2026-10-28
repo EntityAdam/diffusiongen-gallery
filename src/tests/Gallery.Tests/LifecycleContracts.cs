@@ -2,7 +2,9 @@ using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Core.Services.Sessions;
+using Gallery.Core.Services.Sessions.Generations;
 using System.Collections.Immutable;
+using System.Reflection;
 
 namespace Gallery.Tests;
 
@@ -105,25 +107,30 @@ public static class LifecycleContracts
     }
 
     [Fact]
-    public static async Task VaultSession_WhenActivityRecorded_ThenPostponesAutoLock()
+    public static void VaultSession_WhenActivityRecorded_ThenPostponesAutoLock()
     {
         // Arrange
-        using var session = new VaultSession(TimeSpan.FromMilliseconds(20));
+        using var session = new VaultSession(TimeSpan.FromDays(1));
         byte[] key = Enumerable.Repeat((byte)99, 32).ToArray();
         session.Unlock(key);
-        session.InactivityTimeout = TimeSpan.FromMilliseconds(250);
+        session.InactivityTimeout = TimeSpan.FromDays(1);
+        // Age the session's time state directly so a delayed continuation cannot expire the session before activity.
+        var leaseState = Assert.IsType<VaultLeaseState>(typeof(VaultSession)
+            .GetField("vaultLeaseState", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(session));
+        lock (leaseState.SyncRoot)
+            leaseState.LastAccessUtc = DateTimeOffset.UtcNow.AddHours(-12);
+        var previousAccess = session.LastAccessUtc;
 
-        // Act - record activity halfway through
-        await Task.Delay(130);
+        // Act
         session.RecordActivity();
+        Assert.True(session.LastAccessUtc > previousAccess);
+        lock (leaseState.SyncRoot)
+            leaseState.LastAccessUtc = DateTimeOffset.UtcNow.AddHours(-12);
         Assert.True(session.IsUnlocked);
 
-        // Wait another 130ms (total 260ms from start, but only 130ms since RecordActivity)
-        await Task.Delay(130);
-        Assert.True(session.IsUnlocked);
-
-        // Wait for timeout to actually elapse (another 160ms)
-        await Task.Delay(160);
+        lock (leaseState.SyncRoot)
+            leaseState.LastAccessUtc = DateTimeOffset.UtcNow.AddDays(-2);
+        session.CheckInactivityTimeout();
         Assert.False(session.IsUnlocked);
     }
 

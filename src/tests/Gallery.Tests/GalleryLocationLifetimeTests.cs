@@ -54,7 +54,7 @@ public sealed class GalleryLocationLifetimeTests
         await fixture.InitializeAsync();
         await fixture.Store.InitializeAsync();
         await fixture.Service.WaitForDriveOperationsAsync();
-        await using (var connection = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")}"))
+        await using (var connection = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False"))
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();
@@ -73,7 +73,7 @@ public sealed class GalleryLocationLifetimeTests
         Assert.False(fixture.Service.IsUnlocked);
         using var releasedCheckout = VaultCheckout.Acquire(fixture.Root);
 
-        await using (var connection = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")}"))
+        await using (var connection = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False"))
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();

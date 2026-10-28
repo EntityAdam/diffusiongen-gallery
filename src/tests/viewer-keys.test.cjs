@@ -184,7 +184,7 @@ test("full screen viewer forwards declared extra keys only", async () => {
     assert.equal(keydown, null);
 });
 
-test("gallerySecurity recognizes panic hotkeys and triggers panic lock", async () => {
+test("gallerySecurity recognizes panic hotkeys and triggers panic lock", () => {
     const listeners = new Map();
     const calls = [];
     const doc = {
@@ -209,28 +209,29 @@ test("gallerySecurity recognizes panic hotkeys and triggers panic lock", async (
         invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); }
     };
     window.gallerySecurity.attach(dotNetRef, 15, doc);
+    try {
+        window.gallerySecurity.trackUrl("blob:http://localhost/test-blob-1");
+        assert.equal(window.gallerySecurity.activeUrls.has("blob:http://localhost/test-blob-1"), true);
 
-    window.gallerySecurity.trackUrl("blob:http://localhost/test-blob-1");
-    assert.equal(window.gallerySecurity.activeUrls.has("blob:http://localhost/test-blob-1"), true);
+        const keydown = listeners.get("keydown");
+        assert.ok(keydown);
 
-    const keydown = listeners.get("keydown");
-    assert.ok(keydown);
+        keydown({ key: "l", ctrlKey: true, shiftKey: false, defaultPrevented: false, preventDefault() {} });
+        assert.equal(calls.length, 0);
 
-    keydown({ key: "l", ctrlKey: true, shiftKey: false, defaultPrevented: false, preventDefault() {} });
-    assert.equal(calls.length, 0);
+        let prevented = false;
+        keydown({ key: "L", ctrlKey: true, shiftKey: true, defaultPrevented: false, preventDefault() { prevented = true; } });
+        assert.equal(prevented, true);
+        assert.deepEqual(calls, [["TriggerPanicLock"]]);
+        assert.deepEqual(revokedUrls, ["blob:http://localhost/test-blob-1"]);
+        assert.equal(window.gallerySecurity.activeUrls.size, 0);
 
-    let prevented = false;
-    keydown({ key: "L", ctrlKey: true, shiftKey: true, defaultPrevented: false, preventDefault() { prevented = true; } });
-    assert.equal(prevented, true);
-    assert.deepEqual(calls, [["TriggerPanicLock"]]);
-    assert.deepEqual(revokedUrls, ["blob:http://localhost/test-blob-1"]);
-    assert.equal(window.gallerySecurity.activeUrls.size, 0);
-
-    assert.equal(window.gallerySecurity.isPanicKey({ key: "l", altKey: true, shiftKey: true }), true);
-    assert.equal(window.gallerySecurity.isPanicKey({ key: "Escape", shiftKey: true }), true);
-    assert.equal(window.gallerySecurity.isPanicKey({ key: "Escape", shiftKey: false }), false);
-
-    window.gallerySecurity.detach();
+        assert.equal(window.gallerySecurity.isPanicKey({ key: "l", altKey: true, shiftKey: true }), true);
+        assert.equal(window.gallerySecurity.isPanicKey({ key: "Escape", shiftKey: true }), true);
+        assert.equal(window.gallerySecurity.isPanicKey({ key: "Escape", shiftKey: false }), false);
+    } finally {
+        window.gallerySecurity.detach();
+    }
 });
 
 test("gallerySecurity purgeAllMedia clears tracked blobs and DOM images/videos", () => {
@@ -266,7 +267,7 @@ test("gallerySecurity purgeAllMedia clears tracked blobs and DOM images/videos",
     assert.equal(window.gallerySecurity.activeUrls.size, 0);
 });
 
-test("gallerySecurity idle auto-lock triggers after configured inactivity", async () => {
+test("gallerySecurity idle auto-lock triggers after configured inactivity", () => {
     const listeners = new Map();
     const calls = [];
     const doc = {
@@ -277,20 +278,30 @@ test("gallerySecurity idle auto-lock triggers after configured inactivity", asyn
     const window = {
         URL: { revokeObjectURL() {} }
     };
+    let idleCheck;
+    let timerCleared = false;
+    let now = 0;
+    const clock = { now: () => now };
     vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
-        window, Element: class { }, document: { addEventListener() { } }, URL: window.URL, setInterval, clearInterval, Date
+        window, Element: class { }, document: { addEventListener() { } }, URL: window.URL,
+        setInterval: callback => { idleCheck = callback; return 1; },
+        clearInterval: id => { assert.equal(id, 1); timerCleared = true; }, Date: clock
     });
 
     const dotNetRef = {
         invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); }
     };
     window.gallerySecurity.attach(dotNetRef, 0.0001, doc);
+    try {
+        now = 7;
+        idleCheck();
+        const visibilityHandler = listeners.get("visibilitychange");
+        doc.visibilityState = "visible";
+        visibilityHandler();
 
-    await new Promise(resolve => setTimeout(resolve, 50));
-    const visibilityHandler = listeners.get("visibilitychange");
-    doc.visibilityState = "visible";
-    visibilityHandler();
-
-    assert.deepEqual(calls, [["TriggerAutoLock"]]);
-    window.gallerySecurity.detach();
+        assert.deepEqual(calls, [["TriggerAutoLock"], ["TriggerAutoLock"]]);
+    } finally {
+        window.gallerySecurity.detach();
+    }
+    assert.equal(timerCleared, true);
 });

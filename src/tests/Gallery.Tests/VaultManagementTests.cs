@@ -278,14 +278,7 @@ public sealed class VaultManagementTests
         var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "azure.png", "folder");
         var backups = NewTemporaryDirectory();
         var destination = NewTemporaryDirectory();
-        var portReservation = new TcpListener(IPAddress.Loopback, 0);
-        portReservation.Start();
-        var port = ((IPEndPoint)portReservation.LocalEndpoint).Port;
-        portReservation.Stop();
-        using var listener = new HttpListener();
-        var endpoint = $"http://127.0.0.1:{port}/";
-        listener.Prefixes.Add(endpoint);
-        listener.Start();
+        using var listener = StartLoopbackListener(out var endpoint);
         Task? server = null;
         var requests = new System.Collections.Concurrent.ConcurrentQueue<AzureRequest>();
         try
@@ -392,6 +385,38 @@ public sealed class VaultManagementTests
     }
 
     private static string NewTemporaryDirectory() => Path.Combine(Path.GetTempPath(), "gallery-vault-tests-" + Guid.NewGuid().ToString("N"));
+    private static HttpListener StartLoopbackListener(out string endpoint)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            using var portReservation = new TcpListener(IPAddress.Loopback, 0);
+            portReservation.Start();
+            var port = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+            portReservation.Stop();
+
+            var listener = new HttpListener();
+            var candidate = $"http://127.0.0.1:{port}/";
+            try
+            {
+                listener.Prefixes.Add(candidate);
+                listener.Start();
+                endpoint = candidate;
+                return listener;
+            }
+            catch (HttpListenerException) when (attempt < 9)
+            {
+                listener.Close();
+            }
+            catch
+            {
+                listener.Close();
+                throw;
+            }
+        }
+
+        throw new InvalidOperationException("Could not bind the Azure test listener.");
+    }
+
     private static async Task<VaultCheckout> WaitForCheckoutReleaseAsync(string root)
     {
         var timeout = DateTime.UtcNow.AddSeconds(5);

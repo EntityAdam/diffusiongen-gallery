@@ -45,8 +45,8 @@ internal sealed partial class VisionService
             Search = ReadRequiredResponseString(jsonElement, "search"),
             Tag = ReadRequiredResponseString(jsonElement, "tag"),
             Collection = ReadRequiredResponseString(jsonElement, "collection"),
-            MinRating = jsonElement.GetProperty("minRating").GetInt32(),
-            IncludesFavoritesOnly = jsonElement.GetProperty("favoritesOnly").GetBoolean(),
+            MinRating = ReadRequiredResponseInt32(jsonElement, "minRating"),
+            IncludesFavoritesOnly = ReadRequiredResponseBoolean(jsonElement, "favoritesOnly"),
             Orientation = ReadRequiredResponseString(jsonElement, "orientation"),
             Review = ReadRequiredResponseString(jsonElement, "review")
         };
@@ -56,6 +56,17 @@ internal sealed partial class VisionService
         root.TryGetProperty(fieldName, out var field) && field.ValueKind == JsonValueKind.String
             ? field.GetString()!
             : throw new VisionResponseFormatException($"The model returned {fieldName} as a missing or non-string value.");
+
+    private static int ReadRequiredResponseInt32(JsonElement root, string fieldName) =>
+        root.TryGetProperty(fieldName, out var field) && field.ValueKind == JsonValueKind.Number
+        && field.TryGetInt32(out int value)
+            ? value
+            : throw new VisionResponseFormatException($"The model returned {fieldName} as a missing or non-integer value.");
+
+    private static bool ReadRequiredResponseBoolean(JsonElement root, string fieldName) =>
+        root.TryGetProperty(fieldName, out var field) && field.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? field.GetBoolean()
+            : throw new VisionResponseFormatException($"The model returned {fieldName} as a missing or non-boolean value.");
 
     private static void ValidateGalleryFilter(GalleryFilter galleryFilter, IReadOnlyCollection<string> existingCollections)
     {

@@ -92,7 +92,7 @@ public sealed partial class GalleryService
                 using var archive = ZipFile.OpenRead(archivePath);
                 if (key is null)
                 {
-                    ExtractRequiredEntry(archive, "vault.json", Path.Combine(staging, "vault.json"));
+                    ExtractRequiredEntry(archive, VaultHeaderFileName, Path.Combine(staging, VaultHeaderFileName));
                     var stagedVaultStore = new VaultStore(staging);
                     key = useRecovery
                         ? await stagedVaultStore.UnlockWithRecoveryPhraseAsync(credential)
@@ -104,10 +104,10 @@ public sealed partial class GalleryService
                 if (latestManifest is null)
                 {
                     latestManifest = manifest;
-                    ExtractRequiredEntry(archive, "gallery.db", Path.Combine(staging, "gallery.db"));
-                    if (manifest.VaultHeaderSha256 != await HashFileAsync(Path.Combine(staging, "vault.json"))
+                    ExtractRequiredEntry(archive, CatalogFileName, Path.Combine(staging, CatalogFileName));
+                    if (manifest.VaultHeaderSha256 != await HashFileAsync(Path.Combine(staging, VaultHeaderFileName))
                         || manifest.DatabaseFingerprint != await GalleryStore.ComputeContentFingerprintAsync(
-                            Path.Combine(staging, "gallery.db"), BackupSettingsId))
+                            Path.Combine(staging, CatalogFileName), BackupSettingsId))
                         throw new CryptographicException("Backup header or database integrity check failed.");
                 }
                 if (manifest.BackupType == "full")
@@ -121,7 +121,7 @@ public sealed partial class GalleryService
                 current = manifest.ParentBackupName;
             }
 
-            var store = new GalleryStore(Path.Combine(staging, "gallery.db"));
+            var store = new GalleryStore(Path.Combine(staging, CatalogFileName));
             var records = await store.ReadRecordsAsync(key);
             if (records.Count != latestManifest!.Media.Count)
                 throw new CryptographicException("The backup catalog and manifest disagree.");
@@ -154,11 +154,11 @@ public sealed partial class GalleryService
             }
             await ClearLocationSettingsAsync(store, key);
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
-            await StopDrivePlayerAsync();
+            await StopDriveOperationPlayerAsync();
             await vaultSession.LockAndDrainAsync();
             EnsureActive();
             PublishStagedVault(staging, destination);
-            galleryLifetime.PublishLocation(new GalleryStore(Path.Combine(destination, "gallery.db")),
+            galleryLifetime.PublishLocation(new GalleryStore(Path.Combine(destination, CatalogFileName)),
                 new VaultStore(destination), destinationCheckout)?.Dispose();
             destinationCheckout = null;
             history?.Save(destination);

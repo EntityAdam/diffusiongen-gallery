@@ -3,6 +3,7 @@ using Gallery.Core.Exceptions;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
+using System.Text;
 using System.Text.Json;
 
 namespace Gallery.Core.Services.Gateways;
@@ -27,10 +28,11 @@ internal sealed class VideoTools
     private const string FfprobeExecutable = "ffprobe";
     private const string InvalidProbeValueFormat = "ffprobe returned an invalid {0} value '{1}'.";
     private const long MaxFrameBytes = 256L * 1024 * 1024;
+    private const int MaxStandardErrorCharacters = 4096;
     private static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(60);
 
     internal sealed record ProbeResult(int Width, int Height, double DurationSeconds, string FormatName,
-        ImmutableArray<KeyValuePair<string, string>> Tags);
+        ImmutableArray<KeyValuePair<string, string>> Tags, int StreamIndex);
 
     private readonly string? configuredPath;
     private readonly ImmutableArray<string> searchPaths;
@@ -84,12 +86,17 @@ internal sealed class VideoTools
     /// <summary>Decodes the first video frame as PNG bytes.</summary>
     internal async Task<byte[]> FirstFrameAsync(string path, CancellationToken cancellationToken = default)
     {
+        int streamIndex = (await ProbeAsync(path, cancellationToken)).StreamIndex;
         byte[] frameBytes = await RunAsync(FfmpegExecutable,
-            ["-v", "error", "-nostdin", "-i", path, "-map", "0:v:0", "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"],
+            CreateFrameArguments(path, streamIndex),
             cancellationToken);
         if (frameBytes.Length == 0) throw new InvalidOperationException("ffmpeg could not decode a video frame.");
         return frameBytes;
     }
+
+    internal static string[] CreateFrameArguments(string path, int streamIndex) =>
+        ["-v", "error", "-nostdin", "-i", path, "-map", $"0:{streamIndex}",
+            "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"];
 
     internal static ProbeResult ParseProbe(string json)
     {
@@ -107,7 +114,8 @@ internal sealed class VideoTools
             videoStreamMetadata.Height,
             duration,
             formatMetadata.Name,
-            formatMetadata.Tags);
+            formatMetadata.Tags,
+            videoStreamMetadata.StreamIndex);
     }
 
     private static VideoStreamMetadata? ReadFirstVideoStream(JsonElement root)
@@ -115,18 +123,30 @@ internal sealed class VideoTools
         if (!root.TryGetProperty("streams", out JsonElement streams) || streams.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException($"ffprobe returned an invalid streams array '{ReadRawField(root, "streams")}'.");
 
+        int ordinal = 0;
         foreach (JsonElement stream in streams.EnumerateArray())
         {
             if (stream.ValueKind != JsonValueKind.Object)
                 throw new InvalidOperationException($"ffprobe returned an invalid stream object '{stream.GetRawText()}'.");
-            if (ReadString(stream, "codec_type") != "video" || IsAttachedPicture(stream)) continue;
+            if (ReadString(stream, "codec_type") != "video" || IsAttachedPicture(stream))
+            {
+                ordinal++;
+                continue;
+            }
             return new(
                 ReadInteger(stream, "width"),
                 ReadInteger(stream, "height"),
-                ReadNumber(stream, "duration"));
+                ReadNumber(stream, "duration"),
+                stream.TryGetProperty("index", out JsonElement index) ? ReadStreamIndex(index) : ordinal);
         }
         return null;
     }
+
+    private static int ReadStreamIndex(JsonElement index) =>
+        index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out int parsed) && parsed >= 0
+            ? parsed
+            : throw new InvalidOperationException(string.Format(CultureInfo.InvariantCulture,
+                InvalidProbeValueFormat, "index", index.GetRawText()));
 
     private static bool IsAttachedPicture(JsonElement stream) =>
         stream.TryGetProperty("disposition", out JsonElement disposition)
@@ -260,7 +280,7 @@ internal sealed class VideoTools
         standardErrorTask = null;
         processExitTask = null;
         standardOutputTask = ReadLimitedAsync(process.StandardOutput.BaseStream, cancellationToken);
-        standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        standardErrorTask = ReadBoundedStandardErrorAsync(process.StandardError, cancellationToken);
         processExitTask = process.WaitForExitAsync(cancellationToken);
     }
 
@@ -358,7 +378,29 @@ internal sealed class VideoTools
         return memoryStream.ToArray();
     }
 
-    private readonly record struct VideoStreamMetadata(int Width, int Height, double? DurationSeconds);
+    internal static async Task<string> ReadBoundedStandardErrorAsync(TextReader reader, CancellationToken cancellationToken)
+    {
+        var captured = new StringBuilder(MaxStandardErrorCharacters);
+        var chunk = new char[4096];
+        int read;
+        while ((read = await reader.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            if (read >= MaxStandardErrorCharacters)
+            {
+                captured.Clear();
+                captured.Append(chunk, read - MaxStandardErrorCharacters, MaxStandardErrorCharacters);
+            }
+            else
+            {
+                int excess = captured.Length + read - MaxStandardErrorCharacters;
+                if (excess > 0) captured.Remove(0, excess);
+                captured.Append(chunk, 0, read);
+            }
+        }
+        return captured.ToString();
+    }
+
+    private readonly record struct VideoStreamMetadata(int Width, int Height, double? DurationSeconds, int StreamIndex);
     private readonly record struct FormatMetadata(string Name, double? DurationSeconds,
         ImmutableArray<KeyValuePair<string, string>> Tags);
 }

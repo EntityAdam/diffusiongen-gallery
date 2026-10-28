@@ -132,7 +132,7 @@ internal sealed partial class GalleryStore
 
     public async Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
     {
-        await using var sqliteConnection = await OpenAsync();
+        await using var sqliteConnection = await OpenAsync(createIfMissing: false);
         using var sqliteCommand = DriveOperationCommandFactory.CreateCounts(sqliteConnection);
         return await ReadQueueCountsAsync(sqliteCommand);
     }

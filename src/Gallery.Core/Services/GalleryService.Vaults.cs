@@ -48,22 +48,22 @@ public sealed partial class GalleryService
             if (PathEquals(root, VaultRoot) && checkout is not null)
             {
                 if (!existing) RequireEmptyDestination(root);
-                await StopDrivePlayerAsync();
+                await StopDriveOperationPlayerAsync();
                 await vaultSession.LockAndDrainAsync();
                 return;
             }
             var store = new VaultStore(root);
-            if (existing && (!store.Exists || !File.Exists(Path.Combine(root, "gallery.db"))))
+            if (existing && (!store.Exists || !File.Exists(Path.Combine(root, CatalogFileName))))
                 throw new InvalidOperationException("Select a gallery folder containing vault.json and gallery.db.");
             if (!existing) RequireEmptyDestination(root);
             var nextCheckout = galleryLifetime.AcquireLocationCheckout(root);
             try
             {
                 if (!existing) RequireEmptyDestination(root);
-                await StopDrivePlayerAsync();
+                await StopDriveOperationPlayerAsync();
                 await vaultSession.LockAndDrainAsync();
                 EnsureActive();
-                galleryLifetime.PublishLocation(new GalleryStore(Path.Combine(root, "gallery.db")), store, nextCheckout)?.Dispose();
+                galleryLifetime.PublishLocation(new GalleryStore(Path.Combine(root, CatalogFileName)), store, nextCheckout)?.Dispose();
             }
             catch { nextCheckout.Dispose(); throw; }
         }
@@ -75,7 +75,7 @@ public sealed partial class GalleryService
         await lifecycleGate.WaitAsync();
         try
         {
-            try { await StopDrivePlayerAsync(); }
+            try { await StopDriveOperationPlayerAsync(); }
             finally
             {
                 await vaultSession.LockAndDrainAsync();
@@ -85,17 +85,7 @@ public sealed partial class GalleryService
         finally { lifecycleGate.Release(); }
     }
 
-    public async Task RenameVaultAsync(string name)
-    {
-        await lifecycleGate.WaitAsync();
-        try
-        {
-            using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-            EnsureCheckout();
-            await vaultStore.RenameAsync(name);
-        }
-        finally { lifecycleGate.Release(); }
-    }
+    public Task RenameVaultAsync(string name) => vaultManager.RenameVaultAsync(name);
 
     public async Task MoveVaultAsync(string directory)
     {
@@ -114,16 +104,16 @@ public sealed partial class GalleryService
             destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
             RequireEmptyDestination(destination);
             key = vaultSession.Key;
-            await StopDrivePlayerAsync();
+            await StopDriveOperationPlayerAsync();
             await vaultSession.LockAndDrainAsync();
             var sourceRoot = VaultRoot;
             await ReconcileOutstandingDeletesAsync(key);
             var records = await galleryStore.ReadRecordsAsync(key);
             staging = Path.Combine(destination, ".vault-stage-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(staging);
-            await vaultStore.CopyHeaderAsync(Path.Combine(staging, "vault.json"));
-            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, "gallery.db"));
-            var stagedStore = new GalleryStore(Path.Combine(staging, "gallery.db"));
+            await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
+            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName));
+            var stagedStore = new GalleryStore(Path.Combine(staging, CatalogFileName));
             foreach (var record in records)
             {
                 ValidateMediaPath(record);
@@ -140,7 +130,7 @@ public sealed partial class GalleryService
             PublishStagedVault(staging, destination);
             published = true;
             var sourceCheckout = galleryLifetime.PublishLocation(
-                new GalleryStore(Path.Combine(destination, "gallery.db")), new VaultStore(destination), destinationCheckout);
+                new GalleryStore(Path.Combine(destination, CatalogFileName)), new VaultStore(destination), destinationCheckout);
             destinationCheckout = null;
             try
             {
@@ -176,7 +166,7 @@ public sealed partial class GalleryService
                 throw new InvalidOperationException("Type PURGE to confirm permanent destruction of this gallery.");
             EnsureCheckout();
             key = vaultSession.Key;
-            await StopDrivePlayerAsync();
+            await StopDriveOperationPlayerAsync();
             await vaultSession.LockAndDrainAsync();
             await ReconcileOutstandingDeletesAsync(key);
             var records = await galleryStore.ReadRecordsAsync(key);
@@ -204,7 +194,8 @@ public sealed partial class GalleryService
                 var path = Path.GetFullPath(payload.Path);
                 if (!DriveOperationProcessor.PathFingerprint(key, path).AsSpan().SequenceEqual(operation.Target.AsSpan()))
                     throw new InvalidOperationException("Queued deletion path does not match its authenticated target.");
-                if (!ownedPaths.Contains(path)) await DeleteObsoleteCiphertextAsync(operation, path, key);
+                if (!ownedPaths.Contains(path))
+                    await DeleteObsoleteCiphertextAsync(galleryStore, operation, path, key);
                 await galleryStore.CompleteDriveOperationsAsync(
                     [new DriveOperationResult(operation.Sequence, operation.Revision, DriveOperationOutcome.Done)]);
             }
@@ -212,18 +203,25 @@ public sealed partial class GalleryService
         finally { galleryStore.Gate.Release(); }
     }
 
-    private async Task DeleteObsoleteCiphertextAsync(DriveOperation operation, string path, byte[] key)
+    private static async Task DeleteObsoleteCiphertextAsync(
+        GalleryStore store, DriveOperation operation, string path, byte[] key)
     {
         if (Directory.Exists(path)) throw new IOException("Queued ciphertext deletion points to a directory.");
         if (File.Exists(path))
         {
             if (operation.ImageId is null || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
                 throw new InvalidOperationException("Queued ciphertext ownership cannot be verified.");
-            var plain = await StoredMediaProcessor.ReadAsync(path, operation.ImageId, key);
-            CryptographicOperations.ZeroMemory(plain);
-            File.Delete(path);
+            await VerifyCiphertextAsync(path, operation.ImageId, key);
+            try { File.Delete(path); }
+            catch (DirectoryNotFoundException) { }
         }
-        await galleryStore.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path));
+        await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path));
+    }
+
+    private static async Task VerifyCiphertextAsync(string path, string imageId, byte[] key)
+    {
+        var plain = await StoredMediaProcessor.ReadAsync(path, imageId, key);
+        CryptographicOperations.ZeroMemory(plain);
     }
 
     private static string NormalizeVaultDirectory(string directory)
@@ -281,7 +279,7 @@ public sealed partial class GalleryService
         {
             var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
             foreach (var path in Directory.EnumerateFiles(imagesDirectory, "*", options))
-                if (Path.GetExtension(path) is ".dpng" or ".dmp4" || path.Contains(".removing-", StringComparison.Ordinal))
+                if (Path.GetExtension(path) is ".dpng" or ".dmp4" || path.Contains(RemovalStagingMarker, StringComparison.Ordinal))
                     media.Add(path);
         }
         foreach (var path in media) File.Delete(path);
@@ -293,7 +291,7 @@ public sealed partial class GalleryService
             if (!Directory.EnumerateFileSystemEntries(imagesDirectory).Any()) Directory.Delete(imagesDirectory);
         }
         // Delete the header last; a partial failure remains an identifiable, checked-out vault.
-        foreach (var name in new[] { "gallery.db-wal", "gallery.db-shm", "gallery.db", "vault.json" })
+        foreach (var name in new[] { CatalogFileName + "-wal", CatalogFileName + "-shm", CatalogFileName, VaultHeaderFileName })
             File.Delete(Path.Combine(root, name));
     }
 
@@ -302,7 +300,7 @@ public sealed partial class GalleryService
         var moved = new List<string>();
         try
         {
-            foreach (var name in new[] { "images", "gallery.db", "vault.json" })
+            foreach (var name in new[] { "images", CatalogFileName, VaultHeaderFileName })
             {
                 var source = Path.Combine(staging, name);
                 var target = Path.Combine(destination, name);
