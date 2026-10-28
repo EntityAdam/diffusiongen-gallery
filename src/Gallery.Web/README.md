@@ -430,6 +430,20 @@ encryption, filesystem/media processing, and external gateways. Web contains
 Blazor components, host/request policies, and dependency-injection composition.
 UI components use Core models directly. Test projects are under `src/tests`.
 
+`GalleryServiceRegistration` captures runtime settings once through
+`GalleryService.CaptureRuntimeOptions`. Core's `ConfigurationProvider` and
+`SettingsSource` remain internal. `Gallery:StateDirectory` selects
+the last-opened-gallery history directory. Tool search paths retain their order:
+configured `PATH` (or process `PATH` when absent), followed by user and machine
+`PATH` on Windows. The snapshot keeps raw tool paths; `GalleryService.Create`
+normalizes them once when constructing each scope. Restart the host to apply
+runtime-setting changes.
+
+Browsing projections require immutable image and index collections. Invalid
+saved-view names throw `InvalidSavedViewNameException` before vault access,
+with the normalized name and permitted length range in diagnostic context.
+The workbench preserves the existing caller-facing validation message.
+
 The UI uses ShadCn.Blazor, Lucide, and Tailwind. Generated CSS is checked in, so
 Node is not needed just to run the app. After changing Razor utility classes,
 run from `src/Gallery.Web`:

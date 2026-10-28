@@ -1,3 +1,4 @@
+@using Gallery.Core.Exceptions
 @inject GalleryService Gallery
 @inject ILogger<LibraryWorkbench> Logger
 @implements IDisposable
@@ -225,7 +226,7 @@
         catch (Exception exception)
         {
             Logger.LogError(exception, "Library workbench operation failed");
-            error = exception is InvalidOperationException or IOException or System.Text.Json.JsonException
+            error = exception is InvalidSavedViewNameException or InvalidOperationException or IOException or System.Text.Json.JsonException
                 ? exception.Message : "The operation failed. Check the application console.";
         }
         finally

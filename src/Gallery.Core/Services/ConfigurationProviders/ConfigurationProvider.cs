@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Gallery.Core.Models;
 using Gallery.Core.Services.Gateways;
 using Gallery.Core.Services.ConfigurationProviders.Sources;
 
@@ -8,5 +9,7 @@ internal sealed class ConfigurationProvider(IConfiguration configuration)
 {
     private readonly SettingsSource settingsSource = new(configuration);
 
-    public VideoToolsOptions GetVideoToolsOptions() => settingsSource.ReadVideoToolsOptions();
+    public GalleryRuntimeOptions GetGalleryRuntimeOptions() => settingsSource.ReadGalleryRuntimeOptions();
+
+    internal VideoToolsOptions GetVideoToolsOptions() => settingsSource.ReadVideoToolsOptions();
 }
