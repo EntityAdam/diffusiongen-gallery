@@ -211,8 +211,45 @@ public sealed class MediaAndComfyTests
     }
 
     [Theory]
+    [InlineData(@"..\outside", ".._outside")]
+    [InlineData(@"C:\outside/name:*?""<>|", "C__outside_name_______")]
+    [InlineData("CON", "_CON")]
+    [InlineData("lpt1.notes", "_lpt1.notes")]
+    [InlineData("COM\u00B9", "_COM\u00B9")]
+    [InlineData("LPT\u00B2.notes", "_LPT\u00B2.notes")]
+    [InlineData("com\u00B3", "_com\u00B3")]
+    [InlineData(".. ", "image")]
+    public async Task Export_WhenCatalogNameCameFromAnotherPlatform_ThenUsesPortableSingleComponents(
+        string name, string expectedStem)
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "original.png", "folder");
+        var key = fixture.Session.Key;
+        try { await fixture.Store.UpdateAsync(record with { Name = name }, key); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
+        var extraction = Path.Combine(fixture.Root, "extracted");
+
+        var media = await fixture.Service.ExportAsync(record.Id);
+        var workflow = await fixture.Service.WorkflowAsync(record.Id);
+        var zip = await fixture.Service.ExportZipAsync([record.Id]);
+
+        Assert.Equal(expectedStem + ".png", media.FileName);
+        Assert.Equal(expectedStem + ".workflow.json", workflow!.FileName);
+        using var archive = new ZipArchive(new MemoryStream(zip.CopyContentBytes()));
+        var entry = Assert.Single(archive.Entries);
+        Assert.Equal(media.FileName, entry.FullName);
+        Assert.DoesNotContain('/', entry.FullName);
+        Assert.DoesNotContain('\\', entry.FullName);
+        archive.ExtractToDirectory(extraction);
+        Assert.Equal(media.CopyContentBytes(), await File.ReadAllBytesAsync(Path.Combine(extraction, media.FileName)));
+        Assert.Single(Directory.EnumerateFiles(extraction, "*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
+    [InlineData(2)]
     public async Task Load_WhenLegacyRecordLacksGeneration_ThenBackfillsGeneration(int metadataVersion)
     {
         // Arrange

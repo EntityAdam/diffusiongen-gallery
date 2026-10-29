@@ -47,7 +47,11 @@ public sealed partial class GalleryService
             EnsureActive();
             if (PathEquals(root, VaultRoot) && checkout is not null)
             {
-                if (!existing) RequireEmptyDestination(root);
+                if (!existing)
+                {
+                    VaultManager.RecoverInterruptedCreation(root);
+                    RequireEmptyDestination(root);
+                }
                 await StopDriveOperationPlayerAsync();
                 await vaultSession.LockAndDrainAsync();
                 return;
@@ -55,11 +59,14 @@ public sealed partial class GalleryService
             var store = new VaultStore(root);
             if (existing && (!store.Exists || !File.Exists(Path.Combine(root, CatalogFileName))))
                 throw new InvalidOperationException("Select a gallery folder containing vault.json and gallery.db.");
-            if (!existing) RequireEmptyDestination(root);
             var nextCheckout = galleryLifetime.AcquireLocationCheckout(root);
             try
             {
-                if (!existing) RequireEmptyDestination(root);
+                if (!existing)
+                {
+                    VaultManager.RecoverInterruptedCreation(root);
+                    RequireEmptyDestination(root);
+                }
                 await StopDriveOperationPlayerAsync();
                 await vaultSession.LockAndDrainAsync();
                 EnsureActive();

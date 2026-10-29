@@ -1,4 +1,5 @@
 using Azure.Storage.Blobs;
+using Azure.Core.Pipeline;
 
 namespace Gallery.Core.Services.Gateways;
 
@@ -7,23 +8,30 @@ internal sealed class AzureBackupTarget : IBackupTarget
     private readonly BlobContainerClient blobContainerClient;
     private readonly string prefix;
 
-    internal AzureBackupTarget(string connectionString, string containerName, string prefix)
+    internal AzureBackupTarget(string connectionString, string containerName, string prefix, HttpClient? httpClient = null)
     {
-        blobContainerClient = CreateClient(connectionString).GetBlobContainerClient(containerName);
+        blobContainerClient = CreateClient(connectionString, httpClient).GetBlobContainerClient(containerName);
         this.prefix = prefix;
     }
 
-    internal AzureBackupTarget(string sasUrl)
+    internal AzureBackupTarget(string sasUrl, string prefix = "", HttpClient? httpClient = null)
     {
-        blobContainerClient = new BlobContainerClient(ParseContainerSasUrl(sasUrl));
-        prefix = "";
+        blobContainerClient = new BlobContainerClient(ParseContainerSasUrl(sasUrl), CreateOptions(httpClient));
+        this.prefix = prefix;
     }
 
     public static void ValidateConnectionString(string connectionString) => _ = CreateClient(connectionString);
 
-    private static BlobServiceClient CreateClient(string connectionString)
+    private static BlobClientOptions CreateOptions(HttpClient? httpClient)
     {
-        try { return new BlobServiceClient(connectionString); }
+        var options = new BlobClientOptions();
+        if (httpClient is not null) options.Transport = new HttpClientTransport(httpClient);
+        return options;
+    }
+
+    private static BlobServiceClient CreateClient(string connectionString, HttpClient? httpClient = null)
+    {
+        try { return new BlobServiceClient(connectionString, CreateOptions(httpClient)); }
         catch (FormatException exception)
         {
             throw new InvalidOperationException("The Azure Storage connection string is invalid.", exception);

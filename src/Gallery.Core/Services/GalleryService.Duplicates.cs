@@ -33,16 +33,18 @@ public sealed partial class GalleryService
 
     public async Task<DuplicateScan> ScanDuplicatesAsync(IProgress<(int Completed, int Total)>? progress = null)
     {
-        var imageRecords = await ListAsync();
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        var store = galleryStore;
+        var imageRecords = await store.ReadRecordsAsync(keyLease.Bytes);
         var cachedHashesByImageId =
-            await ReadEncryptedSettingAsync<Dictionary<string, PerceptualHash>>(PerceptualHashesId, PerceptualHashesPurpose) ?? [];
+            await store.ReadSettingsAsync<Dictionary<string, PerceptualHash>>(PerceptualHashesId, PerceptualHashesPurpose, keyLease.Bytes) ?? [];
         Dictionary<string, PerceptualHash> perceptualHashesByImageId;
         List<ImageRecord> pendingImageRecords;
         (perceptualHashesByImageId, pendingImageRecords) = ReconcileCachedHashes(imageRecords, cachedHashesByImageId);
-        await ComputePendingHashesAsync(pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
-        await WriteEncryptedSettingAsync(perceptualHashesByImageId, PerceptualHashesId, PerceptualHashesPurpose);
+        await ComputePendingHashesAsync(store, keyLease.Bytes, pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
+        await store.SaveSettingsAsync(perceptualHashesByImageId, PerceptualHashesId, PerceptualHashesPurpose, keyLease.Bytes);
         var duplicateScan = await BuildDuplicateScanAsync(imageRecords, perceptualHashesByImageId);
-        await WriteEncryptedSettingAsync(duplicateScan, DuplicateScanId, DuplicateScanPurpose);
+        await store.SaveSettingsAsync(duplicateScan, DuplicateScanId, DuplicateScanPurpose, keyLease.Bytes);
         return duplicateScan;
     }
 
@@ -63,7 +65,7 @@ public sealed partial class GalleryService
         return (hashesByImageId, pendingImageRecords);
     }
 
-    private async Task ComputePendingHashesAsync(IReadOnlyList<ImageRecord> pendingImageRecords,
+    private static async Task ComputePendingHashesAsync(GalleryStore store, byte[] key, IReadOnlyList<ImageRecord> pendingImageRecords,
         IDictionary<string, PerceptualHash> perceptualHashesByImageId, int totalImageCount,
         IProgress<(int Completed, int Total)>? progress)
     {
@@ -71,11 +73,10 @@ public sealed partial class GalleryService
         progress?.Report((completedCount, totalImageCount));
         foreach (var imageRecordBatch in pendingImageRecords.Chunk(HashBatchSize))
         {
-            using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
             var imageThumbnails = new List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)>(imageRecordBatch.Length);
             try
             {
-                await ReadHashThumbnailsAsync(imageRecordBatch, keyLease.Bytes, imageThumbnails);
+                await ReadHashThumbnailsAsync(store, imageRecordBatch, key, imageThumbnails);
                 var batchPerceptualHashesByImageId = await PerceptualHashBatchProcessor.ComputeAsync(imageThumbnails);
                 foreach (var (imageId, perceptualHash) in batchPerceptualHashesByImageId)
                     perceptualHashesByImageId.Add(imageId, perceptualHash);
@@ -95,12 +96,12 @@ public sealed partial class GalleryService
         foreach (var (_, imageThumbnail) in imageThumbnails) imageThumbnail.Dispose();
     }
 
-    private async Task ReadHashThumbnailsAsync(IReadOnlyList<ImageRecord> imageRecords, byte[] key,
+    private static async Task ReadHashThumbnailsAsync(GalleryStore store, IReadOnlyList<ImageRecord> imageRecords, byte[] key,
         List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
     {
         foreach (var imageRecord in imageRecords)
         {
-            try { imageThumbnails.Add((imageRecord, await galleryStore.ReadThumbnailAsync(imageRecord.Id, key))); }
+            try { imageThumbnails.Add((imageRecord, await store.ReadThumbnailAsync(imageRecord.Id, key))); }
             catch (Exception exception) when (exception is GalleryException or InvalidOperationException or IOException
                 or UnauthorizedAccessException or CryptographicException)
             {

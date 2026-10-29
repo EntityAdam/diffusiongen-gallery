@@ -221,6 +221,49 @@ public sealed class FocusedProductionRemediationTests
     }
 
     [Fact]
+    public void ApiPrompt_WhenTextTraversalFirstReachesSharedNodeAtDepthLimit_ThenKeepsShallowResolution()
+    {
+        var graph = CreateSamplerGraph();
+        graph["sampler"]!["inputs"]!["negative"] = CreateLink("text-root");
+        graph["text-root"] = NumericNode(("text", CreateLink("text-1")));
+        for (var index = 1; index <= 31; index++)
+            graph[$"text-{index}"] = NumericNode(("text", CreateLink(index == 31 ? "shared" : $"text-{index + 1}")));
+        graph["shared"] = NumericNode(("text", CreateLink("encoder")));
+        graph["encoder"] = new JsonObject
+        {
+            ["class_type"] = "CLIPTextEncode",
+            ["inputs"] = new JsonObject { ["text"] = "reachable negative prompt" }
+        };
+        Assert.Equal("", ComfyMetadata.ParseApiPrompt(graph.ToJsonString()).NegativePrompt);
+        graph["text-root"]!["inputs"]!["conditioning"] = CreateLink("shared");
+
+        var generation = ComfyMetadata.ParseApiPrompt(graph.ToJsonString());
+
+        Assert.Equal("reachable negative prompt", generation.NegativePrompt);
+        Assert.Equal("prompt", generation.Prompt);
+    }
+
+    [Fact]
+    public async Task ApiPrompt_WhenTextGraphIsCyclicOrRepeatedUnsuccessful_ThenTraversalIsBounded()
+    {
+        var graph = CreateSamplerGraph();
+        graph["sampler"]!["inputs"]!["negative"] = CreateLink("text-root");
+        graph["text-root"] = NumericNode(("text", CreateLink("cycle")), ("conditioning", CreateLink("level-1")));
+        graph["cycle"] = NumericNode(("text", CreateLink("cycle")), ("conditioning", CreateLink("text-root")));
+        for (var level = 1; level <= 31; level++)
+            graph[$"level-{level}"] = NumericNode(
+                ("text", CreateLink($"level-{level + 1}")),
+                ("conditioning", CreateLink($"level-{level + 1}")),
+                ("conditioning_1", CreateLink($"level-{level + 1}")));
+
+        var generation = await Task.Run(() => ComfyMetadata.ParseApiPrompt(graph.ToJsonString()))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("", generation.NegativePrompt);
+        Assert.Equal("prompt", generation.Prompt);
+    }
+
+    [Fact]
     public async Task ApiPrompt_WhenNumericLinksAreCyclicOrRepeatedUnsuccessful_ThenTraversalIsBounded()
     {
         // Arrange

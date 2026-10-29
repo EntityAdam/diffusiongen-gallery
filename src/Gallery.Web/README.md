@@ -377,7 +377,9 @@ before another incremental.
 ### Restore a backup
 
 Use **Switch gallery > Restore** with a local/SMB backup folder or an Azure
-container SAS URL with read/list permissions. Select **Find backups**, choose a
+container SAS URL with read/list permissions. For cloud backups, enter the same
+**Backup prefix** configured for the destination (for example, `nightly/gallery`),
+or leave it empty for container-root backups. Select **Find backups**, choose a
 full archive or the last desired incremental, and provide the backup gallery's
 passphrase or recovery words, a name, and a new/empty local destination.
 
@@ -388,6 +390,10 @@ existing gallery or backups. Sign in normally afterward.
 
 ## Privacy and recovery
 
+- **Interrupted creation:** retrying creation in the same folder rolls back a
+  partially published catalog only when its durable creation receipt and staged
+  header identify it. Existing unrelated or changed files are preserved; an
+  ownership conflict is reported instead of deleting them.
 - **Encryption at rest:** media, catalog record/thumbnail blobs, settings, and
   saved credentials are encrypted with authenticated AES-256-GCM. The header
   stores wrapped keys, not the passphrase or plaintext master key. SQLite and

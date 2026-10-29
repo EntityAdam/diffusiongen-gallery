@@ -23,8 +23,10 @@
   </ItemGroup>
   <Target Name="CopyProcessMediator" AfterTargets="Build">
     <ItemGroup>
-      <ProcessMediatorFiles Include="..\Gallery.ProcessMediator\$(BaseOutputPath)$(Configuration)\net10.0\*" />
+      <ProcessMediatorFiles Include="..\Gallery.ProcessMediator\$(BaseOutputPath)$(Configuration)\net10.0\**\*" />
     </ItemGroup>
-    <Copy SourceFiles="@(ProcessMediatorFiles)" DestinationFolder="$(OutDir)ProcessMediator" />
+    <Copy SourceFiles="@(ProcessMediatorFiles)"
+          DestinationFiles="@(ProcessMediatorFiles->'$(OutDir)ProcessMediator\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
   </Target>
 </Project>
