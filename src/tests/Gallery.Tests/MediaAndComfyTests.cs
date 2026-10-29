@@ -213,6 +213,7 @@ public sealed class MediaAndComfyTests
     [Theory]
     [InlineData(@"..\outside", ".._outside")]
     [InlineData(@"C:\outside/name:*?""<>|", "C__outside_name_______")]
+    [InlineData("control\u0001\u007Fname", "control__name")]
     [InlineData("CON", "_CON")]
     [InlineData("lpt1.notes", "_lpt1.notes")]
     [InlineData("COM\u00B9", "_COM\u00B9")]

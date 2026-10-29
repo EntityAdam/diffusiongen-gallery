@@ -12,7 +12,8 @@ internal static class ExportMediaNameFormatter
 
     public static string SafeFileName(string name)
     {
-        const string invalid = "<>:\"/\\|?*";
+        // Include Windows restrictions even when the host filesystem permits them.
+        var invalid = Path.GetInvalidFileNameChars().Union("<>:\"/\\|?*").ToHashSet();
         var safe = new string(name.Select(character => invalid.Contains(character) || char.IsControl(character) ? '_' : character).ToArray())
             .Trim().TrimEnd(' ', '.');
         if (safe.Length == 0) return "image";
