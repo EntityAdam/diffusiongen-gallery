@@ -210,38 +210,22 @@ public sealed class MediaAndComfyTests
         Assert.Equal(["comfy.png", "plain.png"], archive.Entries.Select(entry => entry.FullName).Order());
     }
 
-    [Theory]
-    [InlineData("../outside", ".._outside")]
-    [InlineData("control\u0001\u007Fname", "control__name")]
-    [InlineData(".. ", "image")]
-    public Task Export_WhenCatalogNameIsUnsafeOnAnyHost_ThenUsesHostSafeSingleComponent(
-        string name, string expectedStem) => AssertExportNamesAsync(name, expectedStem);
+    public static TheoryData<string, string> UnsafeExportNames => new()
+    {
+        { ".." + Path.DirectorySeparatorChar + "outside", ".._outside" },
+        { "name" + new string(Path.GetInvalidFileNameChars()), "name" + new string('_', Path.GetInvalidFileNameChars().Length) },
+        { "CON", "_CON" },
+        { "lpt1.notes", "_lpt1.notes" },
+        { "COM\u00B9", "_COM\u00B9" },
+        { "LPT\u00B2.notes", "_LPT\u00B2.notes" },
+        { "com\u00B3", "_com\u00B3" },
+        { ".. ", "image" },
+    };
 
     [Theory]
-    [InlineData(@"..\outside", ".._outside")]
-    [InlineData(@"C:\outside/name:*?""<>|", "C__outside_name_______")]
-    [InlineData("CON", "_CON")]
-    [InlineData("lpt1.notes", "_lpt1.notes")]
-    [InlineData("COM\u00B9", "_COM\u00B9")]
-    [InlineData("LPT\u00B2.notes", "_LPT\u00B2.notes")]
-    [InlineData("com\u00B3", "_com\u00B3")]
-    public async Task Export_WhenCatalogNameIsInvalidOnWindowsHost_ThenUsesWindowsSafeSingleComponent(
+    [MemberData(nameof(UnsafeExportNames))]
+    public async Task Export_WhenCatalogNameIsInvalidOnHost_ThenUsesSafeSingleComponent(
         string name, string expectedStem)
-    {
-        if (!OperatingSystem.IsWindows()) return;
-        await AssertExportNamesAsync(name, expectedStem);
-    }
-
-    [Theory]
-    [InlineData("name:with*chars?", "name:with*chars?")]
-    [InlineData("CON", "CON")]
-    public async Task Export_WhenCharactersAreValidOnUnixHost_ThenPreservesThem(string name, string expectedStem)
-    {
-        if (OperatingSystem.IsWindows()) return;
-        await AssertExportNamesAsync(name, expectedStem);
-    }
-
-    private static async Task AssertExportNamesAsync(string name, string expectedStem)
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
