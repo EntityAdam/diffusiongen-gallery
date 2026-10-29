@@ -88,6 +88,9 @@
                            Placeholder="https://account.blob.core.windows.net/container?sv=...&amp;sr=c&amp;sp=rl&amp;sig=..."
                            pattern="https://[^/?#]+/[^/?#]+\?[^#]+" required Disabled="@busy" />
                     <p class="text-muted-foreground">Use an HTTPS container SAS with read and list permissions. The SAS URL is used only for this restore and is not saved.</p>
+                    <Label For="restore-prefix" Class="mt-4 mb-2 block">Backup prefix (optional)</Label>
+                    <Input id="restore-prefix" @bind-Value="restoreAzurePrefix" Placeholder="nightly/gallery" Disabled="@busy" />
+                    <p class="text-muted-foreground">Use the same prefix configured when the backups were created. Leave empty for backups at the container root.</p>
                 }
                 <div class="flex flex-wrap items-center gap-2">
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ListRestoreBackupsAsync">Find backups</Button>
@@ -779,6 +782,7 @@ else
     private string ingestionProfile = "hdd";
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
     private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
+    private string restoreAzurePrefix = "";
     private string restoreArchive = "", restoreCredential = "";
     private bool restoreUseRecovery;
     private IReadOnlyList<string> restoreArchives = [];
@@ -815,7 +819,7 @@ else
     {
         restoreSourceType = source;
         restoreArchives = [];
-        restoreArchive = restoreSasUrl = "";
+        restoreArchive = restoreSasUrl = restoreAzurePrefix = "";
         restoreCredential = "";
         restoreUseRecovery = false;
     }
@@ -896,7 +900,7 @@ else
     private Task ListRestoreBackupsAsync() => RunAsync("Finding backups...", async () =>
     {
         restoreArchives = restoreSourceType == "sas"
-            ? await Gallery.ListRestoreBackupsFromSasAsync(restoreSasUrl)
+            ? await Gallery.ListRestoreBackupsFromSasAsync(restoreSasUrl, restoreAzurePrefix)
             : await Gallery.ListRestoreBackupsAsync("local", restoreSourceDirectory, "", "", "");
         message = $"Found {restoreArchives.Count} backup archive(s). Select the full or final incremental backup.";
     });
@@ -907,7 +911,7 @@ else
         {
             if (restoreSourceType == "sas")
                 await Gallery.RestoreGalleryFromSasAsync(restoreSasUrl, restoreArchive, newGalleryDirectory,
-                    restoreCredential, restoreUseRecovery, newGalleryName);
+                    restoreCredential, restoreUseRecovery, newGalleryName, restoreAzurePrefix);
             else
                 await Gallery.RestoreVaultAsync("local", restoreSourceDirectory, "", "", "",
                     restoreArchive, newGalleryDirectory, restoreCredential, restoreUseRecovery, newGalleryName);

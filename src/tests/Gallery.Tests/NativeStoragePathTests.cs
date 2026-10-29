@@ -6,6 +6,42 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class NativeStoragePathTests
 {
+    [CaseSensitiveFileSystemFact]
+    public async Task Move_WhenOnlyTheFilenameCaseChanges_ThenMovesCiphertextAndCatalog()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "original.png", "folder");
+        var folder = Path.GetDirectoryName(image.StoredPath)!;
+        await fixture.Service.MoveAsync(image.Id, folder, "lower");
+        await fixture.Service.WaitForDriveOperationsAsync();
+        var lower = Path.Combine(folder, "lower.dpng");
+        var expectedCiphertext = await File.ReadAllBytesAsync(lower);
+
+        await fixture.Service.MoveAsync(image.Id, folder, "LOWER");
+        await fixture.Service.WaitForDriveOperationsAsync();
+
+        var target = Path.Combine(folder, "LOWER.dpng");
+        var moved = Assert.Single(await fixture.Service.ListAsync());
+        Assert.Equal(image.Id, moved.Id);
+        Assert.Equal("LOWER", moved.Name);
+        Assert.Equal(target, moved.StoredPath);
+        Assert.Equal(expectedCiphertext, await File.ReadAllBytesAsync(target));
+        Assert.False(File.Exists(lower));
+        Assert.StartsWith("data:image/", await fixture.Service.PreviewAsync(image.Id));
+    }
+
+    [Fact]
+    public void MoveValidation_WhenComparingCaseVariants_ThenUsesPlatformPathIdentity()
+    {
+        var failure = Record.Exception(() =>
+            Gallery.Core.Services.Validators.StoredImageMoveValidator.ValidateDifferentPath("lower.dpng", "LOWER.dpng"));
+        if (OperatingSystem.IsWindows()) Assert.IsType<InvalidOperationException>(failure);
+        else Assert.Null(failure);
+        Assert.Throws<InvalidOperationException>(() =>
+            Gallery.Core.Services.Validators.StoredImageMoveValidator.ValidateDifferentPath("same.dpng", "same.dpng"));
+    }
+
     [Fact]
     public async Task StorageRefresh_WhenIndexContainsCaseDistinctPaths_ThenUsesThePlatformFingerprintIdentity()
     {

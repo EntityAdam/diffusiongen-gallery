@@ -50,7 +50,10 @@ internal sealed class DriveOperationPlayer : IDisposable
             var previous = lifetime.Run;
             if (previous?.Running == true)
             {
-                previous.Rerun = true;
+                if (previous.cancellationTokenSource.IsCancellationRequested)
+                    previous.RestartRequested = true;
+                else
+                    previous.Rerun = true;
                 previous.taskCompletionSource.TrySetResult();
                 return;
             }
@@ -77,10 +80,10 @@ internal sealed class DriveOperationPlayer : IDisposable
 
     public async Task StopAsync()
     {
-        await CancelLoopAsync();
+        var run = await CancelLoopAsync();
         lock (lifetime.Gate)
         {
-            if (lifetime.Run is { } run) run.Completed = 0;
+            if (run is not null) run.Completed = 0;
         }
     }
 
@@ -123,7 +126,7 @@ internal sealed class DriveOperationPlayer : IDisposable
         }
     }
 
-    private async Task CancelLoopAsync()
+    private async Task<PlayerRun?> CancelLoopAsync()
     {
         PlayerRun? run;
         lock (lifetime.Gate)
@@ -131,11 +134,13 @@ internal sealed class DriveOperationPlayer : IDisposable
             run = lifetime.Run;
             if (run?.Running == true)
             {
+                run.RestartRequested = false;
                 run.cancellationTokenSource.Cancel();
                 run.taskCompletionSource.TrySetResult();
             }
         }
         if (run is not null) await ObserveAsync(run);
+        return run;
     }
 
     private async Task ObserveAsync(PlayerRun run)
@@ -165,6 +170,8 @@ internal sealed class DriveOperationPlayer : IDisposable
                 {
                     if (run.Rerun && !run.cancellationTokenSource.IsCancellationRequested) continue;
                     run.Running = false;
+                    if (run.RestartRequested && ReferenceEquals(run, lifetime.Run))
+                        StartLoopIfEligible();
                     return;
                 }
             }
@@ -249,6 +256,7 @@ internal sealed class DriveOperationPlayer : IDisposable
         internal TaskCompletionSource taskCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Running = true;
         internal bool Rerun;
+        internal bool RestartRequested;
         internal bool Faulted;
         internal bool FaultObserved;
         internal ExceptionDispatchInfo? Failure;

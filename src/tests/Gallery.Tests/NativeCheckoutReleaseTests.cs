@@ -10,6 +10,32 @@ namespace Gallery.Tests;
 public sealed class NativeCheckoutReleaseTests
 {
     [Fact]
+    public async Task CheckoutRelease_WhenInitialPublicationIsStillUnderTheGate_ThenObservesThePublishedCheckout()
+    {
+        using var fixture = new TestVault();
+        var lifetime = Lifetime(fixture.Service);
+        Task cleanup;
+        await lifetime.Gate.WaitAsync();
+        try
+        {
+            Assert.Null(lifetime.Current.Checkout);
+            cleanup = (Task)typeof(GalleryService)
+                .GetMethod("ReleaseCheckoutAfterOperationsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(fixture.Service, null)!;
+            Assert.False(cleanup.IsCompleted);
+            lifetime.EnsureCheckout();
+            Assert.Throws<IOException>(() => VaultCheckout.Acquire(fixture.Root));
+            fixture.Service.Dispose();
+        }
+        finally { lifetime.Gate.Release(); }
+
+        await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Null(lifetime.Current.Checkout);
+        using var nextCheckout = VaultCheckout.Acquire(fixture.Root);
+    }
+
+    [Fact]
     public async Task CheckoutRelease_WhenOldDrainCompletedBeforeNewLeasedGeneration_ThenWaitsForCurrentDrain()
     {
         using var fixture = new TestVault();
