@@ -104,7 +104,7 @@ public sealed class StorageIndexTests
             using var command = connection.CreateCommand();
             using var transaction = connection.BeginTransaction(deferred: false);
             command.Transaction = transaction;
-            command.CommandText = "DROP INDEX images_fingerprint; ALTER TABLE images DROP COLUMN fingerprint;";
+            command.CommandText = "DROP INDEX images_fingerprint; ALTER TABLE images DROP COLUMN fingerprint; DROP TABLE SchemaVersions;";
             await command.ExecuteNonQueryAsync();
             transaction.Commit();
         }

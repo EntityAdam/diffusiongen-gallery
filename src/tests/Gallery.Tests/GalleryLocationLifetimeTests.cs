@@ -58,7 +58,7 @@ public sealed class GalleryLocationLifetimeTests
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();
-            command.CommandText = "DROP TABLE drive_operations; CREATE TABLE drive_operations (corrupt INTEGER)";
+            command.CommandText = "ALTER TABLE drive_operations RENAME TO saved_drive_operations; CREATE TABLE drive_operations (corrupt INTEGER)";
             await command.ExecuteNonQueryAsync();
         }
         fixture.Service.ResumeDriveOperations();
@@ -77,7 +77,7 @@ public sealed class GalleryLocationLifetimeTests
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();
-            command.CommandText = "DROP TABLE drive_operations";
+            command.CommandText = "DROP TABLE drive_operations; ALTER TABLE saved_drive_operations RENAME TO drive_operations";
             await command.ExecuteNonQueryAsync();
         }
         await fixture.Store.InitializeAsync();

@@ -77,6 +77,8 @@ public sealed class SchemaConcurrencyTests
         Assert.Equal(0L, await verifyCommand.ExecuteScalarAsync());
         verifyCommand.CommandText = "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'settings'";
         Assert.Equal(0L, await verifyCommand.ExecuteScalarAsync());
+        verifyCommand.CommandText = "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'SchemaVersions'";
+        Assert.Equal(0L, await verifyCommand.ExecuteScalarAsync());
 
         // Arrange
         arrangeCommand.CommandText = "DROP TABLE images_fingerprint";
