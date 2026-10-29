@@ -12,6 +12,6 @@ public sealed class ThumbnailNotFoundException : GalleryBusinessException
         ContextualData? contextualData = null, Exception? exception = null)
         : base(message, logEvent, contextualData, exception) { }
 
-    protected override string ReasonCore => "Image thumbnail does not exist.";
+    protected override string ReasonCore => "Media thumbnail does not exist.";
     protected override System.Net.HttpStatusCode HttpStatusCodeCore => System.Net.HttpStatusCode.NotFound;
 }

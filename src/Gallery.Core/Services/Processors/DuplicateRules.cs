@@ -68,8 +68,8 @@ internal static class DuplicateRules
             .ThenBy(duplicateImageRecord => duplicateImageRecord.ImportedAt).ToList();
 
     private static bool AllRecordsMatchExactly(List<ImageRecord> duplicateRecords, ImageRecord imageRecord) =>
-        duplicateRecords.All(duplicateImageRecord => duplicateImageRecord.PngSha256.Length > 0
-            && duplicateImageRecord.PngSha256 == imageRecord.PngSha256);
+        duplicateRecords.All(duplicateImageRecord => duplicateImageRecord.ContentSha256.Length > 0
+            && duplicateImageRecord.ContentSha256 == imageRecord.ContentSha256);
 
     private static long CalculateReclaimableBytes(
         List<ImageRecord> orderedDuplicateRecords, Func<string, long?> fileLength) =>
@@ -83,8 +83,8 @@ internal static class DuplicateRules
     private static bool AreDuplicates(ImageRecord candidateRecord, ImageRecord comparisonRecord, ulong candidateHash,
         ulong comparisonHash)
     {
-        var recordsMatchExactly = candidateRecord.PngSha256.Length > 0
-            && candidateRecord.PngSha256 == comparisonRecord.PngSha256;
+        var recordsMatchExactly = candidateRecord.ContentSha256.Length > 0
+            && candidateRecord.ContentSha256 == comparisonRecord.ContentSha256;
         return recordsMatchExactly || (HammingDistance(candidateHash, comparisonHash) <= Threshold
             && SimilarShape(candidateRecord, comparisonRecord));
     }
@@ -100,7 +100,7 @@ internal static class DuplicateRules
             .ThenBy(imageRecord => imageRecord.ImportedAt);
         using var candidateEnumerator = orderedCandidates.GetEnumerator();
         if (!candidateEnumerator.MoveNext())
-            throw new InvalidOperationException("Cannot choose a duplicate keeper because no image records were supplied.");
+            throw new InvalidOperationException("Cannot choose a duplicate keeper because no media records were supplied.");
         return candidateEnumerator.Current;
     }
 

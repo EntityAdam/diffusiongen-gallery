@@ -38,7 +38,7 @@ public sealed class OriginalStorageTests
         // Assert
         Assert.Equal(source, stored);
         Assert.Equal(contentType, record.ContentType);
-        Assert.Equal(record.Sha256, record.PngSha256);
+        Assert.Equal(record.Sha256, record.ContentSha256);
         Assert.StartsWith($"data:{contentType};base64,", original);
         Assert.Equal(source, Convert.FromBase64String(original[$"data:{contentType};base64,".Length..]));
         await fixture.Service.VerifyImportedAsync(record.Id);

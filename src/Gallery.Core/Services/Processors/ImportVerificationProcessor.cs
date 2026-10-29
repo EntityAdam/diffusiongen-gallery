@@ -11,13 +11,13 @@ internal static class ImportVerificationProcessor
     {
         try
         {
-            if (record.PngSha256.Length == 0 || Convert.ToHexString(SHA256.HashData(plain)) != record.PngSha256)
+            if (record.ContentSha256.Length == 0 || Convert.ToHexString(SHA256.HashData(plain)) != record.ContentSha256)
                 throw new CryptographicException("Saved file did not match the imported content.");
             if (!record.IsVideo)
             {
                 var imageInfo = Image.Identify(plain);
                 if (imageInfo.Width != record.Width || imageInfo.Height != record.Height)
-                    throw new CryptographicException("Saved image dimensions did not match the catalog.");
+                    throw new CryptographicException("Saved media dimensions did not match the catalog.");
             }
             Image.Identify(thumbnail);
         }

@@ -360,7 +360,7 @@ public sealed class MediaAndComfyTests
         await fixture.InitializeAsync();
         var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         var video = await fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder");
-        var migratedVideo = video with { PngSha256 = image.PngSha256 };
+        var migratedVideo = video with { ContentSha256 = image.ContentSha256 };
         await DuplicateCacheArrangement.ArrangeAsync(fixture, [(image, 0UL), (migratedVideo, 0UL)]);
 
         // Act

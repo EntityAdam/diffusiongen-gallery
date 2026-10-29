@@ -12,5 +12,5 @@ public sealed class ImageNotMarkedForDeletionException : GalleryBusinessExceptio
         ContextualData? contextualData = null, Exception? exception = null)
         : base(message, logEvent, contextualData, exception) { }
 
-    protected override string ReasonCore => "Image must be marked for deletion.";
+    protected override string ReasonCore => "Media item must be marked for deletion.";
 }

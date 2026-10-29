@@ -55,7 +55,7 @@ public sealed partial class GalleryService
         foreach (var imageRecord in imageRecords)
         {
             if (cachedHashesByImageId.TryGetValue(imageRecord.Id, out var cachedPerceptualHash)
-                && cachedPerceptualHash.PngSha256 == imageRecord.PngSha256)
+                && cachedPerceptualHash.PngSha256 == imageRecord.ContentSha256)
                 hashesByImageId[imageRecord.Id] = cachedPerceptualHash;
             else
                 pendingImageRecords.Add(imageRecord);
@@ -105,7 +105,7 @@ public sealed partial class GalleryService
                 or UnauthorizedAccessException or CryptographicException)
             {
                 throw new InvalidOperationException(
-                    $"Could not read the thumbnail for image '{imageRecord.Id}' during duplicate scanning.", exception);
+                    $"Could not read the thumbnail for media item '{imageRecord.Id}' during duplicate scanning.", exception);
             }
         }
     }
@@ -121,17 +121,17 @@ public sealed partial class GalleryService
     }
 
     /// <summary>Unmarks the kept copies, marks the other copies for deletion, and returns the committed records.</summary>
-    public async Task<List<ImageRecord>> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupIds, IReadOnlySet<string> keep)
+    public async Task<List<ImageRecord>> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupImageIds, IReadOnlySet<string> keep)
     {
-        ArgumentNullException.ThrowIfNull(groupIds);
+        ArgumentNullException.ThrowIfNull(groupImageIds);
         ArgumentNullException.ThrowIfNull(keep);
-        if (keep.Count == 0) throw new InvalidOperationException("Keep at least one image in the group.");
-        var invalidKeeperIds = keep.Where(imageId => !groupIds.Contains(imageId)).ToArray();
+        if (keep.Count == 0) throw new InvalidOperationException("Keep at least one media item in the group.");
+        var invalidKeeperIds = keep.Where(imageId => !groupImageIds.Contains(imageId)).ToArray();
         if (invalidKeeperIds.Length > 0)
             throw new InvalidOperationException(
-                $"Kept images [{string.Join(", ", invalidKeeperIds)}] must belong to the group. Valid image IDs: [{string.Join(", ", groupIds)}].");
+                $"Kept media items [{string.Join(", ", invalidKeeperIds)}] must belong to the group. Valid media IDs: [{string.Join(", ", groupImageIds)}].");
         var retainedIds = keep.ToHashSet(StringComparer.Ordinal);
-        return await UpdateManyAsync(groupIds,
+        return await UpdateManyAsync(groupImageIds,
             record => SetDeletionMark(record, !retainedIds.Contains(record.Id)));
     }
 

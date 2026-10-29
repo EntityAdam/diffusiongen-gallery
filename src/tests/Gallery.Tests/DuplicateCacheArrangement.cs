@@ -12,7 +12,8 @@ internal static class DuplicateCacheArrangement
     {
         foreach (var (record, _) in records)
             await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(JsonSerializer.SerializeToUtf8Bytes(record), fixture.Session.Key, $"record:{record.Id}"));
-        var cachedHashes = records.ToDictionary(item => item.ImageRecord.Id, item => new { item.ImageRecord.PngSha256, item.Hash });
+        var cachedHashes = records.ToDictionary(item => item.ImageRecord.Id,
+            item => new { PngSha256 = item.ImageRecord.ContentSha256, item.Hash });
         var payload = VaultCrypto.Encrypt(JsonSerializer.SerializeToUtf8Bytes(cachedHashes), fixture.Session.Key, "perceptual-hashes:v1");
         await using var connection = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False");
         await connection.OpenAsync();

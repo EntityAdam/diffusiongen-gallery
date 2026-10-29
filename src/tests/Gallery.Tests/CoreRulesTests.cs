@@ -70,7 +70,7 @@ public sealed class CoreRulesTests
     [Fact]
     public void DuplicateGrouping_UsesSuppliedFactsAndKeepsHighestPriorityRecord()
     {
-        var small = new ImageRecord { Id = "small", Width = 100, Height = 100, StoredPath = "small", PngSha256 = "hash" };
+        var small = new ImageRecord { Id = "small", Width = 100, Height = 100, StoredPath = "small", ContentSha256 = "hash" };
         var large = small with { Id = "large", Width = 200, Height = 200, StoredPath = "large" };
         var group = Assert.Single(DuplicateRules.GroupDuplicates([small, large], _ => 0, _ => 42));
 

@@ -1,5 +1,5 @@
 <div class="filter-panel">
-        <p class="text-muted-foreground text-sm" aria-live="polite">@ResultCount of @Images.Count images match</p>
+        <p class="text-muted-foreground text-sm" aria-live="polite">@ResultCount of @Images.Count media items match</p>
         <div class="filter-panel-body">
             <div class="filter-primary">
                 <Label For="search" Class="mb-2 block">Search</Label>
@@ -50,14 +50,14 @@
                                     <div>
                                         <Label For="review-filter" Class="mt-4 mb-2 block">Review</Label>
                                         <Select Disabled="@Disabled" id="review-filter" @bind-Value="draft.Review" @bind-Value:after="NotifyChangedAsync">
-                                            <option value="all">All images</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
+                                            <option value="all">All media</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
                                         </Select>
                                     </div>
                                 </div>
                                 <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-favoritesonly" Class="mt-0.5" @bind-Checked="draft.IncludesFavoritesOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-favoritesonly" Class="text-sm leading-relaxed">Favorites only</Label></div>
                                 <Label For="deletion" Class="mt-4 mb-2 block">Deletion status</Label>
                                 <Select Disabled="@Disabled" id="deletion" @bind-Value="draft.Deletion" @bind-Value:after="NotifyChangedAsync">
-                                    <option value="active">Active images</option><option value="marked">Marked for deletion</option><option value="all">All images</option>
+                                    <option value="active">Active media</option><option value="marked">Marked for deletion</option><option value="all">All media</option>
                                 </Select>
                                 break;
                             case "media":
@@ -65,7 +65,7 @@
                                     <div>
                                         <Label For="media-filter" Class="mb-2 block">Media type</Label>
                                         <Select Disabled="@Disabled" id="media-filter" @bind-Value="draft.Media" @bind-Value:after="NotifyChangedAsync">
-                                            <option value="all">Images and videos</option><option value="image">Images only</option><option value="video">Videos only</option>
+                                            <option value="all">All media</option><option value="image">Images only</option><option value="video">Videos only</option>
                                         </Select>
                                     </div>
                                     <div>
@@ -81,7 +81,7 @@
                             case "vision":
                                 <Label For="analysis" Class="mb-2 block">Analysis status</Label>
                                 <Select Disabled="@Disabled" id="analysis" @bind-Value="draft.Analysis" @bind-Value:after="NotifyChangedAsync">
-                                    <option value="all">All images</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
+                                    <option value="all">All media</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
                                 </Select>
                                 <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
                                 <Input Disabled="@Disabled" id="analysis-model" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />

@@ -353,7 +353,7 @@ public sealed class FocusedProductionRemediationTests
         var status = galleryException.HttpStatusCode;
 
         // Assert
-        Assert.Equal("Image thumbnail does not exist.", reason);
+        Assert.Equal("Media thumbnail does not exist.", reason);
         Assert.Equal(HttpStatusCode.NotFound, status);
         Assert.False(typeof(GalleryException).GetProperty(nameof(GalleryException.Reason))!.GetMethod!.IsVirtual);
         Assert.False(typeof(GalleryException).GetProperty(nameof(GalleryException.HttpStatusCode))!.GetMethod!.IsVirtual);
