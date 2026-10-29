@@ -85,7 +85,7 @@ public sealed class GalleryStoreAtomicityTests
 
         // Assert
         var invalidOperationException = Assert.IsType<InvalidOperationException>(exception);
-        Assert.Equal("Expected to delete one image with id 'missing', but deleted 0.", invalidOperationException.Message);
+        Assert.Equal("Expected to delete one media item with id 'missing', but deleted 0.", invalidOperationException.Message);
         Assert.Empty(await fixture.Store.ReadDueDriveOperationsAsync(100, long.MaxValue));
     }
 

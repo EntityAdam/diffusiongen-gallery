@@ -256,7 +256,7 @@ internal sealed partial class GalleryStore(string databasePath)
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadThumbnail(sqliteConnection, id);
         var encryptedThumbnail = (byte[]?)await sqliteCommand.ExecuteScalarAsync()
-            ?? throw new ThumbnailNotFoundException($"Expected one thumbnail for image '{id}', but found 0.",
+            ?? throw new ThumbnailNotFoundException($"Expected one thumbnail for media item '{id}', but found 0.",
                 GalleryLogEvent.ReadThumbnail, new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Image.Id", id)));
         VaultEnvelopeValidator.Validate(encryptedThumbnail, $"thumbnail '{id}'");
         return new ImageThumbnail(VaultCrypto.Decrypt(encryptedThumbnail, key, $"thumbnail:{id}"));
@@ -321,7 +321,7 @@ internal sealed partial class GalleryStore(string databasePath)
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         if (!await sqliteDataReader.ReadAsync())
-            throw new InvalidOperationException($"Expected one image for verification '{id}', but found 0.");
+            throw new InvalidOperationException($"Expected one media item for verification '{id}', but found 0.");
         var record = DecodeRecord(id, sqliteDataReader.GetFieldValue<byte[]>(0), key);
         var encryptedThumbnail = sqliteDataReader.GetFieldValue<byte[]>(1);
         VaultEnvelopeValidator.Validate(encryptedThumbnail, $"verification thumbnail '{id}'");
@@ -390,7 +390,7 @@ internal sealed partial class GalleryStore(string databasePath)
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadRecord(sqliteConnection, id);
         var encryptedRecord = (byte[]?)await sqliteCommand.ExecuteScalarAsync()
-            ?? throw new InvalidOperationException($"Expected one record for image '{id}', but found 0.");
+            ?? throw new InvalidOperationException($"Expected one record for media item '{id}', but found 0.");
         return DecodeRecord(id, encryptedRecord, key);
     }
 
@@ -413,7 +413,7 @@ internal sealed partial class GalleryStore(string databasePath)
     private static void RequireSingleImageMutation(int affectedRows, string id, string action, string outcome)
     {
         if (affectedRows != 1)
-            throw new InvalidOperationException($"Expected to {action} one image with id '{id}', but {outcome} {affectedRows}.");
+            throw new InvalidOperationException($"Expected to {action} one media item with id '{id}', but {outcome} {affectedRows}.");
     }
 
     public async Task<T?> ReadSettingsAsync<T>(string id, string purpose, byte[] key) where T : class
@@ -458,8 +458,8 @@ internal sealed partial class GalleryStore(string databasePath)
     private static ImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key)
     {
         var record = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key)
-            ?? throw new InvalidOperationException("Invalid image record.");
-        if (record.Id != id) throw new CryptographicException("Image record identity mismatch.");
+            ?? throw new InvalidOperationException("Invalid media record.");
+        if (record.Id != id) throw new CryptographicException("Media record identity mismatch.");
         return record;
     }
 

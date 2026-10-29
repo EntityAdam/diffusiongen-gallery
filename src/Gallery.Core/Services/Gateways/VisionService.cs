@@ -43,8 +43,8 @@ internal sealed partial class VisionService(HttpClient httpClient, string endpoi
             && IsLocalAddress(ipAddress);
         if (!IsAllowedEndpoint(hasLiteralLocalAddress, uri))
         {
-            var endpointHost = hasAbsoluteUri && uri!.Host.Length > 0 ? $"Endpoint '{uri.GetLeftPart(UriPartial.Authority)}' is not allowed. " : "";
-            throw new InvalidOperationException(endpointHost + EndpointPolicy);
+            var endpointRejectionMessage = hasAbsoluteUri && uri!.Host.Length > 0 ? $"Endpoint '{uri.GetLeftPart(UriPartial.Authority)}' is not allowed. " : "";
+            throw new InvalidOperationException(endpointRejectionMessage + EndpointPolicy);
         }
         if (apiKey.Any(char.IsControl))
             throw new InvalidOperationException("API key must not contain control characters.");

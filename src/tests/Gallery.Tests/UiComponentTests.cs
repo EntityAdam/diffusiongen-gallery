@@ -49,7 +49,7 @@ public sealed class UiComponentTests
             return WebUtility.HtmlDecode(root.ToHtmlString());
         });
         Assert.Contains("File information", html);
-        Assert.Contains("aria-label=\"Image detail sections\"", html);
+        Assert.Contains("aria-label=\"Media detail sections\"", html);
         Assert.Contains("role=\"tab\"", html);
         Assert.Contains(">Generation</button>", html);
         Assert.Contains("detail-section-active", html);
@@ -191,7 +191,7 @@ public sealed class UiComponentTests
             Assert.Contains($"data-tooltip=\"{tool.Tooltip}\"", collapsed);
         }
         Assert.Contains("Change view", collapsed);
-        Assert.Contains("Use AI to describe and tag your images", collapsed);
+        Assert.Contains("Use AI to describe and tag your media", collapsed);
         Assert.Contains("double-click to reset", collapsed);
         Assert.Matches(@"class=""gallery-toolbox-panel""[^>]*hidden", collapsed);
         Assert.DoesNotContain("aria-pressed=\"true\"", collapsed);
@@ -613,7 +613,10 @@ public sealed class UiComponentTests
         // Assert
         Assert.DoesNotContain("role=\"dialog\"", html);
         Assert.DoesNotContain("aria-modal", html);
-        Assert.Contains("7 of 0 images match", html);
+        Assert.Contains("7 of 0 media items match", html);
+        Assert.Contains(">All media<", html);
+        Assert.Contains(">Images only<", html);
+        Assert.Contains(">Videos only<", html);
         Assert.Equal(1, GalleryFilterPanel.CountActive(activeFilter));
         Assert.Equal(0, GalleryFilterPanel.CountChanged(new GalleryFilter()));
         Assert.Equal(2, GalleryFilterPanel.CountChanged(activeFilter));

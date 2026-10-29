@@ -354,7 +354,7 @@ public sealed partial class GalleryService
             }
             catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or StoredMetadataFormatException)
             {
-                throw new InvalidOperationException($"Could not backfill generation metadata for image '{record.Id}'.", exception);
+                throw new InvalidOperationException($"Could not backfill generation metadata for media item '{record.Id}'.", exception);
             }
         }
     }
@@ -545,7 +545,7 @@ public sealed partial class GalleryService
             Width = image.Width, Height = image.Height,
             OriginalBytes = original.Length,
             Sha256 = sourceHash,
-            PngSha256 = sourceHash,
+            ContentSha256 = sourceHash,
             ContentType = contentType,
             Metadata = metadata,
             Generation = ComfyMetadata.Extract(metadata),
@@ -687,7 +687,7 @@ public sealed partial class GalleryService
             Width = probe.Width, Height = probe.Height,
             OriginalBytes = contentLength,
             Sha256 = sourceHash,
-            PngSha256 = sourceHash,
+            ContentSha256 = sourceHash,
             Metadata = metadata,
             MediaType = "video",
             ContentType = "video/mp4",
@@ -754,7 +754,7 @@ public sealed partial class GalleryService
                 .Add("Folder", folder).Add("FailureCount", failures.Count)), new AggregateException(failures));
     }
 
-    private async Task ImportFolderBatchAsync(string folder, string[] imagePaths, byte[] key, SourceRetention sourceRetention,
+    private async Task ImportFolderBatchAsync(string folder, string[] mediaPaths, byte[] key, SourceRetention sourceRetention,
         Action<string>? progress, Func<ImportProgress, Task>? reportProgress, 
         IngestionTimings? timings, IngestionOptions options, string mediaRoot)
     {
@@ -762,14 +762,14 @@ public sealed partial class GalleryService
         int completedCount = 0;
         int importedCount = 0;
         int failedCount = 0;
-        var failuresByPathIndex = new Exception?[imagePaths.Length];
+        var failuresByPathIndex = new Exception?[mediaPaths.Length];
         var workers = options.Workers;
         var lastReport = System.Diagnostics.Stopwatch.StartNew();
-        timings?.SetFiles(imagePaths.Length, workers);
-        await ReportAsync("Importing images...", force: true);
-        foreach (var indices in Enumerable.Range(0, imagePaths.Length).Chunk(options.CatalogBatchSize))
+        timings?.SetFiles(mediaPaths.Length, workers);
+        await ReportAsync("Importing media...", force: true);
+        foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
         {
-            var pending = indices.Select(index => new PendingImport(index, imagePaths[index])).ToArray();
+            var pending = indices.Select(index => new PendingImport(index, mediaPaths[index])).ToArray();
             Exception? interruption = null;
             try
             {
@@ -879,7 +879,7 @@ public sealed partial class GalleryService
             }
         }
         timings?.SetOutcome(importedCount, failedCount);
-        await ReportAsync(imagePaths.Length == 0 ? "No supported images found." : "Ingestion complete.", force: true);
+        await ReportAsync(mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.", force: true);
         ThrowImportFailures(folder, failuresByPathIndex);
 
         async Task CommitBatchAsync(PendingImport[] pending)
@@ -928,7 +928,7 @@ public sealed partial class GalleryService
                 if (name is not null) progress?.Invoke(name);
                 if (reportProgress is not null && (force || lastReport.ElapsedMilliseconds >= 100))
                 {
-                    await reportProgress(new ImportProgress(imagePaths.Length, completedCount, importedCount, failedCount, status));
+                    await reportProgress(new ImportProgress(mediaPaths.Length, completedCount, importedCount, failedCount, status));
                     lastReport.Restart();
                 }
             }
@@ -987,7 +987,7 @@ public sealed partial class GalleryService
                 finally { timings?.Record(IngestionStage.ReportProgress, reportStart); }
             }
             var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            var imagePaths = await Task.Run(() =>
+            var mediaPaths = await Task.Run(() =>
             {
                 if (scan is null)
                     return DiscoverImagePaths(folder, searchScope)
@@ -1008,7 +1008,7 @@ public sealed partial class GalleryService
             finally { galleryStore.Gate.Release(); }
             timings?.Record(IngestionStage.Backfill, stageStart);
                 await ImportFolderBatchAsync(
-                folder, imagePaths, key.Bytes, sourceRetention, progress, reportProgress, timings, options, mediaRoot);
+                folder, mediaPaths, key.Bytes, sourceRetention, progress, reportProgress, timings, options, mediaRoot);
         }
         finally
         {

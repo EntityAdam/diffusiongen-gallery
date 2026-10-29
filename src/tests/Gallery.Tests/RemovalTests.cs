@@ -351,7 +351,7 @@ public sealed class RemovalTests
         await fixture.Service.RemoveAsync(plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "");
         var expectedFailure = ExpectedExceptionContract.Create(typeof(ThumbnailNotFoundException),
             ["thumbnail", record.Id, "found 0"], System.Net.HttpStatusCode.NotFound, Severity.Error,
-            "Image thumbnail does not exist.", "Gallery.ReadThumbnail",
+            "Media thumbnail does not exist.", "Gallery.ReadThumbnail",
             new Dictionary<string, object?> { ["Image.Id"] = record.Id });
 
         // Act
@@ -430,7 +430,7 @@ public sealed class RemovalTests
         // Assert
         var expectedFailure = ExpectedExceptionContract.Create(typeof(ImageNotMarkedForDeletionException),
             [record.Id, "marked for deletion"], System.Net.HttpStatusCode.BadRequest, Severity.Error,
-            "Image must be marked for deletion.", "Gallery.PrepareRemoval",
+            "Media item must be marked for deletion.", "Gallery.PrepareRemoval",
             new Dictionary<string, object?> { ["Image.Id"] = record.Id, ["Image.MarkedForDeletion"] = false });
         AsserterExceptionContract.AssertMatches(expectedFailure, exception);
     }
