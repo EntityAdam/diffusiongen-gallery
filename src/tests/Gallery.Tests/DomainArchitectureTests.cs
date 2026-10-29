@@ -43,10 +43,14 @@ public sealed class DomainArchitectureTests
     {
         var sourceRoot = SourceRoot();
         var coreProject = XDocument.Load(Path.Combine(sourceRoot, "Gallery.Core", "Gallery.Core.csproj"));
+        var migrationsProject = XDocument.Load(Path.Combine(sourceRoot, "Gallery.Migrations", "Gallery.Migrations.csproj"));
         var webProject = XDocument.Load(Path.Combine(sourceRoot, "Gallery.Web", "Gallery.Web.csproj"));
 
         Assert.Equal("Microsoft.NET.Sdk", coreProject.Root!.Attribute("Sdk")!.Value);
-        Assert.Empty(coreProject.Descendants("ProjectReference"));
+        Assert.EndsWith("Gallery.Migrations.csproj",
+            Assert.Single(coreProject.Descendants("ProjectReference")).Attribute("Include")!.Value);
+        Assert.Empty(migrationsProject.Descendants("ProjectReference"));
+        Assert.Empty(migrationsProject.Descendants("FrameworkReference"));
         Assert.Empty(coreProject.Descendants("FrameworkReference"));
         Assert.DoesNotContain(coreProject.Descendants("InternalsVisibleTo"),
             friend => friend.Attribute("Include")!.Value == "Gallery.Web");

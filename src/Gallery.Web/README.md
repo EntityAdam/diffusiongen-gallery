@@ -424,11 +424,30 @@ existing gallery or backups. Sign in normally afterward.
 
 ## Developer notes
 
-There are two production projects: `Gallery.Web` references `Gallery.Core`.
+There are three production projects: `Gallery.Web` references `Gallery.Core`,
+which references `Gallery.Migrations`.
 Core currently contains models, domain rules, application services, SQLite,
 encryption, filesystem/media processing, and external gateways. Web contains
 Blazor components, host/request policies, and dependency-injection composition.
 UI components use Core models directly. Test projects are under `src/tests`.
+
+`Gallery.Migrations` owns the SQLite schema and runs through DbUp whenever a
+catalog connection is opened. Applied migrations are recorded in `SchemaVersions`.
+The idempotent baseline also supports pre-DbUp catalogs, including catalogs without
+the image fingerprint column. All pending migrations and journal entries commit
+in one immediate SQLite transaction; failures roll back the entire upgrade and
+independent connections wait before reading the journal.
+
+Add new SQL migrations to `src\Gallery.Migrations\Scripts` using the next
+zero-padded name, such as `M0003_Description.sql`. They are embedded automatically.
+For conditional changes SQLite cannot express in SQL, add a public parameterless
+`IScript` class in `Gallery.Migrations.Scripts` with the same naming scheme.
+Use its supplied command factory so reads and writes participate in the upgrade
+transaction. SQL and code scripts run together in name order. Never rename or
+edit an applied migration; add a new one instead. Scripts must not manage their
+own transactions or change journal mode.
+
+Run `dotnet test src\Gallery.slnx` from the repository root after adding a migration.
 
 `GalleryServiceRegistration` captures runtime settings once at the host
 composition boundary. Core's `ConfigurationProvider` and `SettingsSource`

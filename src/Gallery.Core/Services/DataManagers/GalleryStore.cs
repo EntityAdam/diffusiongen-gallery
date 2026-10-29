@@ -9,6 +9,7 @@ using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers.Models;
 using Gallery.Core.Services.DataManagers.CommandFactories;
 using Microsoft.Data.Sqlite;
+using Gallery.Migrations;
 
 namespace Gallery.Core.Services.DataManagers;
 
@@ -59,7 +60,7 @@ internal sealed partial class GalleryStore(string databasePath)
             await sqliteConnection.OpenAsync();
             await ConfigureDurabilityAsync(sqliteConnection);
             await ConfigureJournalAsync(sqliteConnection);
-            await InitializeSchemaAsync(sqliteConnection);
+            GalleryDatabase.Upgrade(sqliteConnection);
             return sqliteConnection;
         }
         catch
@@ -179,17 +180,6 @@ internal sealed partial class GalleryStore(string databasePath)
         incrementalHash.AppendData(bytes);
     }
 
-    // Acquire the database write reservation before observing schema so independent stores cannot race an upgrade.
-    private static async Task InitializeSchemaAsync(SqliteConnection sqliteConnection)
-    {
-        using var sqliteTransaction = sqliteConnection.BeginTransaction(deferred: false);
-        await CreateBaseSchemaAsync(sqliteConnection, sqliteTransaction);
-        if (!await HasFingerprintColumnAsync(sqliteConnection, sqliteTransaction))
-            await AddFingerprintColumnAsync(sqliteConnection, sqliteTransaction);
-        await CreateFingerprintIndexAsync(sqliteConnection, sqliteTransaction);
-        sqliteTransaction.Commit();
-    }
-
     private async Task ConfigureJournalAsync(SqliteConnection sqliteConnection)
     {
         using var sqliteCommand = IsNetworkDirectory(Path.GetDirectoryName(databasePath)!)
@@ -198,35 +188,11 @@ internal sealed partial class GalleryStore(string databasePath)
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    private static async Task CreateBaseSchemaAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateInitializeSchema(sqliteConnection, sqliteTransaction);
-        await sqliteCommand.ExecuteNonQueryAsync();
-    }
-
     internal static bool IsNetworkDirectory(string directory)
     {
         var root = Path.GetPathRoot(Path.GetFullPath(directory))!;
         return root.StartsWith(@"\\", StringComparison.Ordinal)
             || OperatingSystem.IsWindows() && new DriveInfo(root).DriveType == DriveType.Network;
-    }
-
-    private static async Task<bool> HasFingerprintColumnAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateCheckFingerprintColumn(sqliteConnection, sqliteTransaction);
-        return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync()) != 0;
-    }
-
-    private static async Task AddFingerprintColumnAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateAddFingerprintColumn(sqliteConnection, sqliteTransaction);
-        await sqliteCommand.ExecuteNonQueryAsync();
-    }
-
-    private static async Task CreateFingerprintIndexAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateFingerprintIndex(sqliteConnection, sqliteTransaction);
-        await sqliteCommand.ExecuteNonQueryAsync();
     }
 
     public async Task<List<ImageRecord>> ReadRecordsAsync(byte[] key)
