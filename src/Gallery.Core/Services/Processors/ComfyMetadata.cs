@@ -26,8 +26,8 @@ internal static partial class ComfyMetadata
     public static IEnumerable<(string Keyword, string Value)> TextEntries(string metadataJson)
         => ExtractTextEntries(ParseMetadataDocument(metadataJson));
 
-    private static IEnumerable<(string Keyword, string Value)> ExtractTextEntries(JsonObject? document)
-        => document is null ? [] : ExtractPngAndVideoEntries(document).Concat(ExtractExifEntries(document));
+    private static IEnumerable<(string Keyword, string Value)> ExtractTextEntries(JsonObject? jsonObject)
+        => jsonObject is null ? [] : ExtractPngAndVideoEntries(jsonObject).Concat(ExtractExifEntries(jsonObject));
 
     private static JsonObject? ParseMetadataDocument(string metadataJson)
     {
@@ -42,11 +42,11 @@ internal static partial class ComfyMetadata
         }
     }
 
-    private static IEnumerable<(string Keyword, string Value)> ExtractPngAndVideoEntries(JsonObject document)
+    private static IEnumerable<(string Keyword, string Value)> ExtractPngAndVideoEntries(JsonObject jsonObject)
     {
         foreach (var sectionName in new[] { "png", "video" })
         {
-            if (document[sectionName] is not JsonArray sectionEntries) continue;
+            if (jsonObject[sectionName] is not JsonArray sectionEntries) continue;
             foreach (var entry in sectionEntries.OfType<JsonObject>())
             {
                 var keyword = ReadString(entry["Keyword"]);
@@ -56,9 +56,9 @@ internal static partial class ComfyMetadata
         }
     }
 
-    private static IEnumerable<(string Keyword, string Value)> ExtractExifEntries(JsonObject document)
+    private static IEnumerable<(string Keyword, string Value)> ExtractExifEntries(JsonObject jsonObject)
     {
-        if (document["exif"] is not JsonArray exifEntries) yield break;
+        if (jsonObject["exif"] is not JsonArray exifEntries) yield break;
         foreach (var line in exifEntries.Select(ReadString))
         {
             // Stored as "Tag: value"; ComfyUI writes values such as "Workflow: {...}" or "Prompt: {...}".
@@ -74,21 +74,22 @@ internal static partial class ComfyMetadata
         string? prompt = null, workflow = null;
         foreach (var textEntry in textEntries)
         {
-            var value = textEntry.Value;
-            Classify(value, ref prompt, ref workflow, 0);
+            Classify(textEntry.Value, IsGenerationKeyword(textEntry.Keyword), ref prompt, ref workflow, 0);
             if (prompt is not null && workflow is not null) break;
         }
         return new(prompt, workflow);
     }
 
-    private static void Classify(string value, ref string? prompt, ref string? workflow, int depth)
+    private static bool IsGenerationKeyword(string keyword) =>
+        keyword.Equals("prompt", StringComparison.OrdinalIgnoreCase)
+        || keyword.Equals("workflow", StringComparison.OrdinalIgnoreCase);
+
+    private static void Classify(string value, bool isGenerationSource, ref string? prompt, ref string? workflow, int depth)
     {
         if (depth > 2) return;
-        var text = value.Trim();
-        var match = PrefixedJson().Match(text);
-        if (match.Success) text = text[match.Length..];
+        var text = NormalizeCandidateText(value, out var hasGenerationPrefix);
         if (!text.StartsWith('{')) return;
-        var jsonObject = ParseCandidateDocument(text);
+        var jsonObject = ParseCandidateDocument(text, isGenerationSource || hasGenerationPrefix);
         if (jsonObject is null) return;
 
         if (IsWorkflow(jsonObject)) { workflow ??= text; return; }
@@ -96,11 +97,21 @@ internal static partial class ComfyMetadata
         ClassifyNestedDocuments(jsonObject, ref prompt, ref workflow, depth);
     }
 
-    private static JsonObject? ParseCandidateDocument(string text)
+    private static string NormalizeCandidateText(string value, out bool hasGenerationPrefix)
+    {
+        var text = value.Trim();
+        var match = PrefixedJson().Match(text);
+        hasGenerationPrefix = match.Success;
+        return match.Success ? text[match.Length..] : text;
+    }
+
+    // Free-form text that merely starts with '{' is skipped; only identified generation documents report malformed JSON.
+    private static JsonObject? ParseCandidateDocument(string text, bool isGenerationSource)
     {
         try { return JsonNode.Parse(text) as JsonObject; }
         catch (JsonException exception)
         {
+            if (!isGenerationSource) return null;
             throw new StoredMetadataFormatException("Embedded generation metadata is not valid JSON.",
                 GalleryLogEvent.ParseMetadata, exception: exception);
         }
@@ -113,9 +124,9 @@ internal static partial class ComfyMetadata
         foreach (var name in new[] { "prompt", "workflow" })
         {
             var inner = jsonObject[name];
-            if (inner is JsonObject innerObject) Classify(innerObject.ToJsonString(), ref prompt, ref workflow, depth + 1);
+            if (inner is JsonObject innerObject) Classify(innerObject.ToJsonString(), true, ref prompt, ref workflow, depth + 1);
             else if (inner is JsonValue innerValue && innerValue.TryGetValue<string>(out var innerText))
-                Classify(innerText, ref prompt, ref workflow, depth + 1);
+                Classify(innerText, true, ref prompt, ref workflow, depth + 1);
         }
     }
 
@@ -332,7 +343,7 @@ internal static partial class ComfyMetadata
             string key,
             int depth,
             HashSet<string> activeNodeKeys,
-            Dictionary<(string NodeKey, int Depth), double?> completedNodeValues,
+            Dictionary<(string NodeKey, int Depth), double?> completedValuesByNodeKeyAndDepth,
             ref int work)
         {
             if (depth > MaxDepth || jsonNode is null) return new(null, true);
@@ -343,7 +354,7 @@ internal static partial class ComfyMetadata
             if (node is null) return new(null, true);
             var nodeKey = $"{node.Id}\0{key}";
             var depthKey = (nodeKey, depth);
-            if (completedNodeValues.TryGetValue(depthKey, out var resolvedParameterValue))
+            if (completedValuesByNodeKeyAndDepth.TryGetValue(depthKey, out var resolvedParameterValue))
                 return new(resolvedParameterValue, true);
             if (!activeNodeKeys.Add(nodeKey)) return new(null, false);
             try
@@ -353,22 +364,26 @@ internal static partial class ComfyMetadata
                 {
                     if (!node.Inputs.TryGetValue(inputName, out var input)) continue;
                     var resolution = TraverseNumber(nodesById, JsonNode.Parse(input.GetRawText()),
-                        key, depth + 1, activeNodeKeys, completedNodeValues, ref work);
+                        key, depth + 1, activeNodeKeys, completedValuesByNodeKeyAndDepth, ref work);
                     isComplete &= resolution.IsComplete;
                     resolvedParameterValue = resolution.Value;
                     if (resolvedParameterValue is not null) break;
                 }
-                if (isComplete) completedNodeValues[depthKey] = resolvedParameterValue;
+                if (isComplete) completedValuesByNodeKeyAndDepth[depthKey] = resolvedParameterValue;
                 return new(resolvedParameterValue, isComplete);
             }
             finally { activeNodeKeys.Remove(nodeKey); }
         }
 
+        // Non-finite values (NaN, Infinity, out-of-range literals) are treated as absent so they never reach the catalog.
         private static double? ParseScalarNumber(JsonValue scalar)
         {
-            if (scalar.GetValueKind() == JsonValueKind.Number) return scalar.GetValue<double>();
-            return scalar.TryGetValue<string>(out var text) && double.TryParse(text, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+            double parsed = double.NaN;
+            var isNumber = scalar.GetValueKind() == JsonValueKind.Number
+                ? scalar.TryGetValue(out parsed)
+                : scalar.TryGetValue<string>(out var text) && double.TryParse(text, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out parsed);
+            return isNumber && double.IsFinite(parsed) ? parsed : null;
         }
 
         public static (string Model, string Kind) ResolveModel(JsonObject nodesById, JsonNode? jsonNode, int depth = 0, HashSet<string>? visitedNodeIds = null)

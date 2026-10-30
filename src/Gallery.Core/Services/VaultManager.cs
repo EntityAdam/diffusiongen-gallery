@@ -7,6 +7,9 @@ namespace Gallery.Core.Services;
 
 internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession vaultSession)
 {
+    internal const string CreationStagingPrefix = ".vault-create-";
+    internal const string PublicationMarkerFileName = "publication.sha256";
+
     public async Task<string> CreateVaultAsync(
         string passphrase,
         string confirmation,
@@ -25,6 +28,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
             var vaultRoot = galleryLifetime.Current.VaultStore.Root;
             GalleryService.RequireLocalCatalogDirectory(vaultRoot);
             EnsureCheckout();
+            if (!galleryLifetime.Current.VaultStore.Exists) await RollBackInterruptedPublicationAsync(vaultRoot);
             EnsureVaultDoesNotExist(vaultRoot);
             return await CreateAndPublishVaultAsync(vaultRoot, passphrase, galleryName, storageOptions);
         }
@@ -68,6 +72,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
             await InitializeStagedCatalogAsync(staging, storageOptions, createdKey);
             EnsureActive();
             SaveVaultHistory(vaultRoot);
+            await WritePublicationMarkerAsync(staging);
             using (var activation = vaultSession.PrepareUnlock(createdKey))
             {
                 PublishCreatedVault(staging, vaultRoot);
@@ -100,7 +105,47 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
     }
 
     private static string CreateStagingDirectory(string vaultRoot) =>
-        Path.Combine(vaultRoot, ".vault-create-" + Guid.NewGuid().ToString("N"));
+        Path.Combine(vaultRoot, CreationStagingPrefix + Guid.NewGuid().ToString("N"));
+
+    /// <summary>
+    /// Durably records the staged catalog's content hash before the two-step publication, so a creation interrupted
+    /// after publishing gallery.db but before vault.json can later prove ownership of that orphan catalog.
+    /// </summary>
+    internal static async Task WritePublicationMarkerAsync(string staging)
+    {
+        var catalogHash = await HashFileAsync(Path.Combine(staging, GalleryService.CatalogFileName));
+        await using var marker = new FileStream(Path.Combine(staging, PublicationMarkerFileName),
+            FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        await marker.WriteAsync(System.Text.Encoding.ASCII.GetBytes(catalogHash));
+        marker.Flush(flushToDisk: true);
+    }
+
+    // Removes only an orphan catalog whose bytes match a staged creation's marker; unrelated catalogs are kept.
+    private static async Task RollBackInterruptedPublicationAsync(string vaultRoot)
+    {
+        var catalogPath = Path.Combine(vaultRoot, GalleryService.CatalogFileName);
+        if (!File.Exists(catalogPath) || File.GetAttributes(catalogPath).HasFlag(FileAttributes.ReparsePoint)) return;
+        if (File.Exists(catalogPath + "-wal") || File.Exists(catalogPath + "-shm")) return;
+        string? catalogHash = null;
+        foreach (var staging in Directory.EnumerateDirectories(vaultRoot, CreationStagingPrefix + "*"))
+        {
+            var markerPath = Path.Combine(staging, PublicationMarkerFileName);
+            if (!File.Exists(markerPath) || !File.Exists(Path.Combine(staging, GalleryService.VaultHeaderFileName))
+                || File.Exists(Path.Combine(staging, GalleryService.CatalogFileName)))
+                continue;
+            catalogHash ??= await HashFileAsync(catalogPath);
+            if (!string.Equals((await File.ReadAllTextAsync(markerPath)).Trim(), catalogHash, StringComparison.Ordinal)) continue;
+            File.Move(catalogPath, Path.Combine(staging, GalleryService.CatalogFileName), overwrite: false);
+            DeleteCreationStaging(staging);
+            return;
+        }
+    }
+
+    private static async Task<string> HashFileAsync(string path)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream));
+    }
 
     private static async Task InitializeStagedCatalogAsync(
         string staging, MediaStorageOptions? storageOptions, byte[] createdKey)

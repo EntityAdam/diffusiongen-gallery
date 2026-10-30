@@ -73,10 +73,13 @@ internal sealed partial class VisionService(HttpClient httpClient, string endpoi
 
     public async Task<IReadOnlyList<string>> GetModelsAsync(int requestTimeoutSeconds)
     {
-        using var httpRequestMessage = new HttpRequestMessage(HttpMethod.Get, new Uri(ValidateEndpoint(endpoint, apiKey), "models"));
+        using var httpRequestMessage = CreateModelsRequest();
         using var httpResponseMessage = await SendAsync(requestTimeoutSeconds, httpRequestMessage);
         return await ReadModelsAsync(httpResponseMessage);
     }
+
+    private HttpRequestMessage CreateModelsRequest() =>
+        new(HttpMethod.Get, new Uri(ValidateEndpoint(endpoint, apiKey), "models"));
 
     private static async Task<IReadOnlyList<string>> ReadModelsAsync(HttpResponseMessage httpResponseMessage)
     {
@@ -140,7 +143,9 @@ internal sealed partial class VisionService(HttpClient httpClient, string endpoi
     private HttpRequestMessage CreateAnalysisRequest(
         string model, int requestTimeoutSeconds, string imageData, IEnumerable<string>? collections, AnalysisMode analysisMode)
     {
-        var (system, prompt) = CreateAnalysisPrompt(collections, analysisMode);
+        string system;
+        string prompt;
+        (system, prompt) = CreateAnalysisPrompt(collections, analysisMode);
         var uri = new Uri(ValidateRequest(model, requestTimeoutSeconds), "chat/completions");
         return CreateAnalysisHttpRequest(uri, model, imageData, system, prompt, analysisMode);
     }

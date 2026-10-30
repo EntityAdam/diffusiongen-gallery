@@ -80,7 +80,7 @@ public sealed partial class GalleryService
                 throw new InvalidOperationException("Azure container names may contain only lowercase letters, digits, and hyphens.");
             if (azureContainer != azureContainer.ToLowerInvariant() || azureContainer.Length is < 3 or > 63)
                 throw new InvalidOperationException("Azure container names must be 3 to 63 lowercase letters, digits, or hyphens.");
-            AzureBackupTarget.ValidateConnectionString(connectionString);
+            BackupTargetAzure.ValidateConnectionString(connectionString);
         }
 
         var sameDestination = current is not null
@@ -241,11 +241,11 @@ public sealed partial class GalleryService
             var vaultRoot = Path.GetFullPath(vaultStore.Root);
             if (IsPathWithin(directory, vaultRoot))
                 throw new InvalidOperationException("The backup folder cannot be inside the gallery data folder.");
-            return new LocalBackupTarget(directory);
+            return new BackupTargetLocal(directory);
         }
         if (settings.DestinationType == "azure")
         {
-            return new AzureBackupTarget(settings.AzureConnectionString, settings.AzureContainer, settings.AzurePrefix);
+            return new BackupTargetAzure(settings.AzureConnectionString, settings.AzureContainer, settings.AzurePrefix);
         }
         throw new InvalidOperationException("The saved backup destination is not supported.");
     }
@@ -387,6 +387,7 @@ public sealed partial class GalleryService
     {
         using var archive = ZipFile.OpenRead(archivePath);
         var archiveLength = new FileInfo(archivePath).Length;
+        RequireEntriesWithinArchive(archive, archiveLength);
         var embedded = archive.GetEntry("manifest.enc")
             ?? throw new InvalidDataException("The archive is missing its embedded manifest.");
         if (embedded.Length > archiveLength)

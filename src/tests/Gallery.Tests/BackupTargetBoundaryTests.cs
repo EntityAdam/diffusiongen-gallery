@@ -33,7 +33,7 @@ public sealed class BackupTargetBoundaryTests
         const string invalidConnection = "invalid connection credential";
 
         var failure = Assert.Throws<InvalidOperationException>(() =>
-            AzureBackupTarget.ValidateConnectionString(invalidConnection));
+            BackupTargetAzure.ValidateConnectionString(invalidConnection));
 
         Assert.IsType<FormatException>(failure.InnerException);
         AsserterExceptionContract.AssertMessageContains(["Azure", "connection string", "invalid"], failure.Message);
@@ -46,7 +46,7 @@ public sealed class BackupTargetBoundaryTests
     [InlineData("https://example.test/container?sr=c&sp=r&sig=secret")]
     public void InvalidContainerSas_IsRejectedBeforeStorageAccess(string sasUrl)
     {
-        var failure = Assert.Throws<InvalidOperationException>(() => new AzureBackupTarget(sasUrl));
+        var failure = Assert.Throws<InvalidOperationException>(() => new BackupTargetAzure(sasUrl));
 
         Assert.DoesNotContain("secret", failure.Message, StringComparison.Ordinal);
         Assert.NotEmpty(failure.Message);
@@ -60,7 +60,7 @@ public sealed class BackupTargetBoundaryTests
     {
         using var fixture = new TestVault();
         var destination = Path.Combine(fixture.Root, "download.zip");
-        var target = new LocalBackupTarget(fixture.Root);
+        var target = new BackupTargetLocal(fixture.Root);
 
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => target.DownloadAsync(archiveName, destination));
 

@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace Gallery.Core.Services.DataManagers.Converters;
 
-internal sealed class ImmutableByteArrayJsonConverter : JsonConverter<ImmutableArray<byte>>
+internal sealed class JsonConverterImmutableByteArray : JsonConverter<ImmutableArray<byte>>
 {
     public override ImmutableArray<byte> Read(
         ref Utf8JsonReader utf8JsonReader,

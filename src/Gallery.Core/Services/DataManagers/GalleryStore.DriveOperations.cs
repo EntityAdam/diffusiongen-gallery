@@ -18,36 +18,36 @@ internal sealed partial class GalleryStore
         sqliteTransaction.Commit();
     }
 
-    public async Task DeleteImageAndEnqueueAsync(string id, NewDriveOperation operation)
+    public async Task DeleteImageAndEnqueueAsync(string id, NewDriveOperation newDriveOperation)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
         await DeleteImageAsync(sqliteConnection, sqliteTransaction, id);
-        await EnqueueAsync(sqliteConnection, sqliteTransaction, [operation]);
+        await EnqueueAsync(sqliteConnection, sqliteTransaction, [newDriveOperation]);
         sqliteTransaction.Commit();
     }
 
     /// <summary>Updates a record, drops a superseded queued operation and enqueues follow-up drive work atomically.</summary>
-    public async Task UpdateImageAndEnqueueAsync(ImageRecord record, byte[] key, NewDriveOperation operation, long? supersededSequence = null)
+    public async Task UpdateImageAndEnqueueAsync(ImageRecord imageRecord, byte[] key, NewDriveOperation newDriveOperation, long? supersededSequence = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
-        await UpdateImageAsync(sqliteConnection, sqliteTransaction, record, key);
+        await UpdateImageAsync(sqliteConnection, sqliteTransaction, imageRecord, key);
         if (supersededSequence is long sequence)
             await RemoveSupersededOperationAsync(sqliteConnection, sqliteTransaction, sequence);
-        await EnqueueAsync(sqliteConnection, sqliteTransaction, [operation]);
+        await EnqueueAsync(sqliteConnection, sqliteTransaction, [newDriveOperation]);
         sqliteTransaction.Commit();
     }
 
 
     private static async Task ApplyDriveResultsAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction,
-        IReadOnlyCollection<DriveOperationResult> results)
+        IReadOnlyCollection<DriveOperationResult> driveOperationResults)
     {
-        foreach (var result in results)
+        foreach (var driveOperationResult in driveOperationResults)
         {
-            using var sqliteCommand = result.Outcome == DriveOperationOutcome.Done
-                ? DriveOperationCommandFactory.CreateDeletePlayed(sqliteConnection, sqliteTransaction, result)
-                : DriveOperationCommandFactory.CreateUpdateOutcome(sqliteConnection, sqliteTransaction, result);
+            using var sqliteCommand = driveOperationResult.Outcome == DriveOperationOutcome.Done
+                ? DriveOperationCommandFactory.CreateDeletePlayed(sqliteConnection, sqliteTransaction, driveOperationResult)
+                : DriveOperationCommandFactory.CreateUpdateOutcome(sqliteConnection, sqliteTransaction, driveOperationResult);
             await sqliteCommand.ExecuteNonQueryAsync();
         }
     }
@@ -56,15 +56,15 @@ internal sealed partial class GalleryStore
     {
         using var sqliteCommand = GalleryStoreCommandFactory.CreateDeleteImage(sqliteConnection, id, sqliteTransaction);
         var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
-        RequireSingleImageMutation(affectedRows, id, "delete", "deleted");
+        RequireSingleImageMutation(affectedRows, id, DeleteAction, DeletedOutcome);
     }
 
     private static async Task UpdateImageAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction,
-        ImageRecord record, byte[] key)
+        ImageRecord imageRecord, byte[] key)
     {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, record.Id, EncodeRecord(record, key), sqliteTransaction);
+        using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, imageRecord.Id, EncodeRecord(imageRecord, key), sqliteTransaction);
         var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
-        RequireSingleImageMutation(affectedRows, record.Id, "update", "updated");
+        RequireSingleImageMutation(affectedRows, imageRecord.Id, UpdateAction, UpdatedOutcome);
     }
 
     private static async Task RemoveSupersededOperationAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction, long sequence)
@@ -75,9 +75,9 @@ internal sealed partial class GalleryStore
 
     private static async Task EnqueueAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction, IEnumerable<NewDriveOperation> operations)
     {
-        foreach (var operation in operations)
+        foreach (var newDriveOperation in operations)
         {
-            using var sqliteCommand = DriveOperationCommandFactory.CreateEnqueue(sqliteConnection, sqliteTransaction, operation);
+            using var sqliteCommand = DriveOperationCommandFactory.CreateEnqueueOrReset(sqliteConnection, sqliteTransaction, newDriveOperation);
             await sqliteCommand.ExecuteNonQueryAsync();
         }
     }
@@ -121,18 +121,18 @@ internal sealed partial class GalleryStore
     }
 
     /// <summary>Records a played batch in one transaction: finished operations leave the queue, others are rescheduled.</summary>
-    public async Task CompleteDriveOperationsAsync(IReadOnlyCollection<DriveOperationResult> results)
+    public async Task CompleteDriveOperationsAsync(IReadOnlyCollection<DriveOperationResult> driveOperationResults)
     {
-        if (results.Count == 0) return;
+        if (driveOperationResults.Count == 0) return;
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
-        await ApplyDriveResultsAsync(sqliteConnection, sqliteTransaction, results);
+        await ApplyDriveResultsAsync(sqliteConnection, sqliteTransaction, driveOperationResults);
         sqliteTransaction.Commit();
     }
 
     public async Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
     {
-        await using var sqliteConnection = await OpenAsync(createIfMissing: false);
+        await using var sqliteConnection = await OpenExistingAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateCounts(sqliteConnection);
         return await ReadQueueCountsAsync(sqliteCommand);
     }
@@ -185,13 +185,13 @@ internal sealed partial class GalleryStore
 
     /// <summary>Replaces one directory's cached listing and enqueues the work it discovered, atomically.</summary>
     public async Task ReplaceDirectoryIndexAsync(byte[] directory, IReadOnlyCollection<IndexedFile> files,
-        IReadOnlyCollection<NewDriveOperation> discovered)
+        IReadOnlyCollection<NewDriveOperation> discoveredDriveOperations)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
         await DeleteDirectoryIndexAsync(sqliteConnection, sqliteTransaction, directory);
         await UpsertIndexedFilesAsync(sqliteConnection, sqliteTransaction, directory, files);
-        await EnqueueAsync(sqliteConnection, sqliteTransaction, discovered);
+        await EnqueueAsync(sqliteConnection, sqliteTransaction, discoveredDriveOperations);
         sqliteTransaction.Commit();
     }
 
@@ -225,9 +225,9 @@ internal sealed partial class GalleryStore
     private static async Task UpsertIndexedFilesAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction,
         byte[] directory, IEnumerable<IndexedFile> files)
     {
-        foreach (var file in files)
+        foreach (var indexedFile in files)
         {
-            using var sqliteCommand = DriveOperationCommandFactory.CreateUpsertIndexedFile(sqliteConnection, sqliteTransaction, directory, file);
+            using var sqliteCommand = DriveOperationCommandFactory.CreateUpsertIndexedFile(sqliteConnection, sqliteTransaction, directory, indexedFile);
             await sqliteCommand.ExecuteNonQueryAsync();
         }
     }

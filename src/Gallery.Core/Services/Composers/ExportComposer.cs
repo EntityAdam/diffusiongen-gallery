@@ -18,32 +18,42 @@ internal static class ExportComposer
     private static async Task<ExportFile> BuildZipAsync(IAsyncEnumerable<ExportFile> files)
     {
         using var memoryStream = new MemoryStream();
+        try
+        {
+            await WriteZipEntriesAsync(memoryStream, files);
+            return new($"gallery-export-{DateTime.Now:yyyyMMdd-HHmmss}.zip", "application/zip", memoryStream.ToArray());
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(memoryStream.GetBuffer());
+        }
+    }
+
+    private static async Task WriteZipEntriesAsync(MemoryStream memoryStream, IAsyncEnumerable<ExportFile> files)
+    {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long centralDirectoryBytes = 0;
-        using (var zipArchive = new ZipArchive(memoryStream, ZipArchiveMode.Create, leaveOpen: true))
+        using var zipArchive = new ZipArchive(memoryStream, ZipArchiveMode.Create, leaveOpen: true);
+        await foreach (var file in files)
         {
-            await foreach (var file in files)
+            var contentBytes = file.CopyContentBytes();
+            try
             {
-                var contentBytes = file.CopyContentBytes();
-                try
-                {
-                    var entryName = UniqueName(file.FileName, names);
-                    var centralEntryBytes = RequireAvailableArchiveCapacity(memoryStream.Length, contentBytes.Length,
-                        entryName, centralDirectoryBytes);
-                    // Media is already compressed; storing avoids a slow, pointless deflate pass.
-                    var zipArchiveEntry = zipArchive.CreateEntry(entryName, CompressionLevel.NoCompression);
-                    await using var stream = zipArchiveEntry.Open();
-                    await stream.WriteAsync(contentBytes);
-                    centralDirectoryBytes += centralEntryBytes;
-                }
-                finally
-                {
-                    CryptographicOperations.ZeroMemory(contentBytes);
-                    ClearOwnedContent(file);
-                }
+                var entryName = UniqueName(file.FileName, names);
+                var centralEntryBytes = RequireAvailableArchiveCapacity(memoryStream.Length, contentBytes.Length,
+                    entryName, centralDirectoryBytes);
+                // Media is already compressed; storing avoids a slow, pointless deflate pass.
+                var zipArchiveEntry = zipArchive.CreateEntry(entryName, CompressionLevel.NoCompression);
+                await using var stream = zipArchiveEntry.Open();
+                await stream.WriteAsync(contentBytes);
+                centralDirectoryBytes += centralEntryBytes;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(contentBytes);
+                ClearOwnedContent(file);
             }
         }
-        return new($"gallery-export-{DateTime.Now:yyyyMMdd-HHmmss}.zip", "application/zip", memoryStream.ToArray());
     }
 
     public static void ClearOwnedContent(ExportFile file)

@@ -9,9 +9,12 @@ internal static class VaultEnvelopeValidator
     private static ReadOnlySpan<byte> Magic => "DPNG0001"u8;
     public static void Validate(ReadOnlySpan<byte> encryptedEnvelopeBytes, string source)
     {
-        if (encryptedEnvelopeBytes.Length < EnvelopeHeaderSizeBytes ||
-            !encryptedEnvelopeBytes[..MagicSizeBytes].SequenceEqual(Magic))
+        if (!HasValidEnvelopeFormat(encryptedEnvelopeBytes))
             throw new CryptographicException($"Invalid encrypted file format from {source}.");
     }
+
+    private static bool HasValidEnvelopeFormat(ReadOnlySpan<byte> encryptedEnvelopeBytes) =>
+        encryptedEnvelopeBytes.Length >= EnvelopeHeaderSizeBytes
+        && encryptedEnvelopeBytes[..MagicSizeBytes].SequenceEqual(Magic);
 
 }

@@ -3,6 +3,7 @@ using Gallery.Core.Exceptions;
 using Gallery.Core.Services.DataManagers.Models;
 using Gallery.Core.Services.Processors;
 using System.Security.Cryptography;
+using System.Runtime.ExceptionServices;
 using Gallery.Core.Models;
 using SixLabors.ImageSharp;
 
@@ -95,6 +96,7 @@ public sealed partial class GalleryService
     {
         var failures = new List<Exception>();
         var receipts = new List<RemovalResult>(removalItems.Count);
+        Exception? queueStartFailure = null;
         await galleryStore.Gate.WaitAsync();
         try
         {
@@ -119,10 +121,14 @@ public sealed partial class GalleryService
         finally
         {
             galleryStore.Gate.Release();
-            driveOperationPlayer.Start();
+            // A prior unobserved queue fault must not hide receipts for removals that already committed.
+            try { driveOperationPlayer.Start(); }
+            catch (Exception exception) { queueStartFailure = exception; }
         }
         var observerFailures = DeliverRemovalReceipts(receipts, reportRemoval);
-        ThrowCombinedRemovalFailures(failures, observerFailures);
+        if (queueStartFailure is not null && failures.Count == 0 && observerFailures.Count == 0)
+            ExceptionDispatchInfo.Throw(queueStartFailure);
+        ThrowCombinedRemovalFailures(failures, observerFailures, queueStartFailure);
     }
 
     private static List<Exception> DeliverRemovalReceipts(
@@ -137,13 +143,15 @@ public sealed partial class GalleryService
         return observerFailures;
     }
 
-    private static void ThrowCombinedRemovalFailures(
-        IReadOnlyCollection<Exception> failures, IReadOnlyCollection<Exception> observerFailures)
+    private static void ThrowCombinedRemovalFailures(IReadOnlyCollection<Exception> failures,
+        IReadOnlyCollection<Exception> observerFailures, Exception? queueStartFailure)
     {
         if (failures.Count == 0 && observerFailures.Count == 0) return;
-        var allFailures = failures.Concat(observerFailures).ToArray();
+        var allFailures = failures.Concat(observerFailures)
+            .Concat(queueStartFailure is null ? [] : [queueStartFailure]).ToArray();
         throw new AggregateException(
-            $"Failed to completely remove {failures.Count} image(s); {observerFailures.Count} receipt observer(s) failed: " +
+            $"Failed to completely remove {failures.Count} image(s); {observerFailures.Count} receipt observer(s) failed" +
+            (queueStartFailure is null ? "" : "; the drive queue could not restart") + ": " +
             string.Join(", ", allFailures.Select(failure => failure.Message)),
             allFailures);
     }

@@ -46,17 +46,15 @@ internal sealed partial class GalleryStore(string databasePath)
         return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync());
     }
 
-    private async Task<SqliteConnection> OpenAsync(bool createIfMissing = true)
+    private Task<SqliteConnection> OpenAsync() => OpenAsync(SqliteOpenMode.ReadWriteCreate);
+
+    private Task<SqliteConnection> OpenExistingAsync() => OpenAsync(SqliteOpenMode.ReadWrite);
+
+    private async Task<SqliteConnection> OpenAsync(SqliteOpenMode sqliteOpenMode)
     {
-        var sqliteConnection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = databasePath,
-            Mode = createIfMissing ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadWrite,
-            Pooling = false
-        }.ToString());
+        var sqliteConnection = await OpenConnectionAsync(databasePath, sqliteOpenMode);
         try
         {
-            await sqliteConnection.OpenAsync();
             await ConfigureDurabilityAsync(sqliteConnection);
             await ConfigureJournalAsync(sqliteConnection);
             await InitializeSchemaAsync(sqliteConnection);
@@ -78,12 +76,7 @@ internal sealed partial class GalleryStore(string databasePath)
     public async Task CreateSnapshotAsync(string destinationPath)
     {
         await using var source = await OpenAsync();
-        await using var destination = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = destinationPath,
-            Pooling = false
-        }.ToString());
-        await destination.OpenAsync();
+        await using var destination = await OpenConnectionAsync(destinationPath, SqliteOpenMode.ReadWriteCreate);
         source.BackupDatabase(destination);
     }
 
@@ -102,12 +95,15 @@ internal sealed partial class GalleryStore(string databasePath)
     private static string CompleteFingerprint(IncrementalHash incrementalHash) =>
         Convert.ToHexString(incrementalHash.GetHashAndReset()).ToLowerInvariant();
 
-    private static async Task<SqliteConnection> OpenSnapshotAsync(string snapshotPath)
+    private static Task<SqliteConnection> OpenSnapshotAsync(string snapshotPath) =>
+        OpenConnectionAsync(snapshotPath, SqliteOpenMode.ReadOnly);
+
+    private static async Task<SqliteConnection> OpenConnectionAsync(string dataSource, SqliteOpenMode sqliteOpenMode)
     {
         var sqliteConnection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = snapshotPath,
-            Mode = SqliteOpenMode.ReadOnly,
+            DataSource = dataSource,
+            Mode = sqliteOpenMode,
             Pooling = false
         }.ToString());
         try
@@ -255,58 +251,77 @@ internal sealed partial class GalleryStore(string databasePath)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadThumbnail(sqliteConnection, id);
-        var encryptedThumbnail = (byte[]?)await sqliteCommand.ExecuteScalarAsync()
+        var encryptedThumbnail = await ReadRequiredEncryptedThumbnailAsync(sqliteCommand, id);
+        return DecodeThumbnail(encryptedThumbnail, key, id, $"thumbnail '{id}'");
+    }
+
+    private static async Task<byte[]> ReadRequiredEncryptedThumbnailAsync(SqliteCommand sqliteCommand, string id) =>
+        (byte[]?)await sqliteCommand.ExecuteScalarAsync()
             ?? throw new ThumbnailNotFoundException($"Expected one thumbnail for image '{id}', but found 0.",
                 GalleryLogEvent.ReadThumbnail, new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Image.Id", id)));
-        VaultEnvelopeValidator.Validate(encryptedThumbnail, $"thumbnail '{id}'");
+
+    private static ImageThumbnail DecodeThumbnail(byte[] encryptedThumbnail, byte[] key, string id, string envelopeDescription)
+    {
+        VaultEnvelopeValidator.Validate(encryptedThumbnail, envelopeDescription);
         return new ImageThumbnail(VaultCrypto.Decrypt(encryptedThumbnail, key, $"thumbnail:{id}"));
     }
 
-    public async Task InsertAsync(ImageRecord record, ImageThumbnail thumbnail, byte[] key)
+    public async Task InsertAsync(ImageRecord imageRecord, ImageThumbnail imageThumbnail, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
-        await InsertAsync(sqliteConnection, record, thumbnail, key);
+        await InsertAsync(sqliteConnection, imageRecord, imageThumbnail, key);
     }
 
-    private static async Task InsertAsync(SqliteConnection sqliteConnection, ImageRecord record, ImageThumbnail thumbnail, byte[] key)
+    private static async Task InsertAsync(SqliteConnection sqliteConnection, ImageRecord imageRecord, ImageThumbnail imageThumbnail, byte[] key)
     {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, record.Id, EncodeRecord(record, key),
-            VaultCrypto.Encrypt(thumbnail.Content.Span, key, $"thumbnail:{record.Id}"),
-            EncodeContentFingerprint(key, record.Sha256));
+        using var sqliteCommand = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, imageRecord.Id, EncodeRecord(imageRecord, key),
+            VaultCrypto.Encrypt(imageThumbnail.Content.Span, key, $"thumbnail:{imageRecord.Id}"),
+            EncodeContentFingerprint(key, imageRecord.Sha256));
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    public async Task<ImportCommitResult> CommitImportsAsync(IReadOnlyList<ImportCatalogEntry> entries, byte[] key)
+    public async Task<ImportCommitResult> CommitImportsAsync(IReadOnlyList<ImportCatalogEntry> importCatalogEntries, byte[] key)
     {
         await Gate.WaitAsync();
         try
         {
-            await using var sqliteConnection = await OpenAsync();
-            using var sqliteTransaction = sqliteConnection.BeginTransaction();
-            var imported = System.Collections.Immutable.ImmutableArray.CreateBuilder<string>();
-            var duplicates = System.Collections.Immutable.ImmutableArray.CreateBuilder<string>();
-            foreach (var entry in entries)
-            {
-                if (await ContainsFingerprintAsync(sqliteConnection, entry.Record.Sha256, key, sqliteTransaction))
-                {
-                    duplicates.Add(entry.Record.Id);
-                    continue;
-                }
-                using var sqliteCommand = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, entry.Record.Id,
-                    EncodeRecord(entry.Record, key), entry.EncryptedThumbnail.ToArray(),
-                    EncodeContentFingerprint(key, entry.Record.Sha256));
-                sqliteCommand.Transaction = sqliteTransaction;
-                await sqliteCommand.ExecuteNonQueryAsync();
-                imported.Add(entry.Record.Id);
-            }
-            sqliteTransaction.Commit();
-            return new(imported.ToImmutable(), duplicates.ToImmutable());
+            return await CommitImportBatchAsync(importCatalogEntries, key);
         }
-        catch (SqliteException exception)
+        catch (SqliteException sqliteException)
         {
-            throw new ImportCatalogWriteException("The prepared import batch could not be committed to the gallery catalog.", exception);
+            throw new ImportCatalogWriteException("The prepared import batch could not be committed to the gallery catalog.", sqliteException);
         }
         finally { Gate.Release(); }
+    }
+
+    private async Task<ImportCommitResult> CommitImportBatchAsync(IReadOnlyList<ImportCatalogEntry> importCatalogEntries, byte[] key)
+    {
+        await using var sqliteConnection = await OpenAsync();
+        using var sqliteTransaction = sqliteConnection.BeginTransaction();
+        var imported = System.Collections.Immutable.ImmutableArray.CreateBuilder<string>();
+        var duplicates = System.Collections.Immutable.ImmutableArray.CreateBuilder<string>();
+        foreach (var importCatalogEntry in importCatalogEntries)
+        {
+            if (await ContainsFingerprintAsync(sqliteConnection, importCatalogEntry.Record.Sha256, key, sqliteTransaction))
+            {
+                duplicates.Add(importCatalogEntry.Record.Id);
+                continue;
+            }
+            await InsertImportCatalogEntryAsync(sqliteConnection, sqliteTransaction, importCatalogEntry, key);
+            imported.Add(importCatalogEntry.Record.Id);
+        }
+        sqliteTransaction.Commit();
+        return new(imported.ToImmutable(), duplicates.ToImmutable());
+    }
+
+    private static async Task InsertImportCatalogEntryAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction,
+        ImportCatalogEntry importCatalogEntry, byte[] key)
+    {
+        using var sqliteCommand = GalleryStoreCommandFactory.CreateInsertImage(sqliteConnection, importCatalogEntry.Record.Id,
+            EncodeRecord(importCatalogEntry.Record, key), importCatalogEntry.EncryptedThumbnail.ToArray(),
+            EncodeContentFingerprint(key, importCatalogEntry.Record.Sha256));
+        sqliteCommand.Transaction = sqliteTransaction;
+        await sqliteCommand.ExecuteNonQueryAsync();
     }
 
     public async Task<(ImageRecord Record, ImageThumbnail Thumbnail)> ReadVerificationAsync(string id, byte[] key)
@@ -322,10 +337,9 @@ internal sealed partial class GalleryStore(string databasePath)
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         if (!await sqliteDataReader.ReadAsync())
             throw new InvalidOperationException($"Expected one image for verification '{id}', but found 0.");
-        var record = DecodeRecord(id, sqliteDataReader.GetFieldValue<byte[]>(0), key);
+        var imageRecord = DecodeRecord(id, sqliteDataReader.GetFieldValue<byte[]>(0), key);
         var encryptedThumbnail = sqliteDataReader.GetFieldValue<byte[]>(1);
-        VaultEnvelopeValidator.Validate(encryptedThumbnail, $"verification thumbnail '{id}'");
-        return (record, new ImageThumbnail(VaultCrypto.Decrypt(encryptedThumbnail, key, $"thumbnail:{id}")));
+        return (imageRecord, DecodeThumbnail(encryptedThumbnail, key, id, $"verification thumbnail '{id}'"));
     }
 
     // Caller holds Gate so backfill and ingestion cannot interleave in this process.
@@ -389,17 +403,20 @@ internal sealed partial class GalleryStore(string databasePath)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadRecord(sqliteConnection, id);
-        var encryptedRecord = (byte[]?)await sqliteCommand.ExecuteScalarAsync()
-            ?? throw new InvalidOperationException($"Expected one record for image '{id}', but found 0.");
+        var encryptedRecord = await ReadRequiredEncryptedRecordAsync(sqliteCommand, id);
         return DecodeRecord(id, encryptedRecord, key);
     }
 
-    public async Task UpdateAsync(ImageRecord record, byte[] key)
+    private static async Task<byte[]> ReadRequiredEncryptedRecordAsync(SqliteCommand sqliteCommand, string id) =>
+        (byte[]?)await sqliteCommand.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException($"Expected one record for image '{id}', but found 0.");
+
+    public async Task UpdateAsync(ImageRecord imageRecord, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, record.Id, EncodeRecord(record, key));
+        using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, imageRecord.Id, EncodeRecord(imageRecord, key));
         var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
-        RequireSingleImageMutation(affectedRows, record.Id, "update", "updated");
+        RequireSingleImageMutation(affectedRows, imageRecord.Id, UpdateAction, UpdatedOutcome);
     }
 
     public async Task DeleteAsync(string id)
@@ -407,8 +424,13 @@ internal sealed partial class GalleryStore(string databasePath)
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateDeleteImage(sqliteConnection, id);
         var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
-        RequireSingleImageMutation(affectedRows, id, "delete", "deleted");
+        RequireSingleImageMutation(affectedRows, id, DeleteAction, DeletedOutcome);
     }
+
+    private const string UpdateAction = "update";
+    private const string UpdatedOutcome = "updated";
+    private const string DeleteAction = "delete";
+    private const string DeletedOutcome = "deleted";
 
     private static void RequireSingleImageMutation(int affectedRows, string id, string action, string outcome)
     {
@@ -437,8 +459,8 @@ internal sealed partial class GalleryStore(string databasePath)
     public async Task<List<SavedView>> LoadViewsAsync(byte[] key) =>
         await ReadSettingsAsync<List<SavedView>>(SavedViewsId, SavedViewsPurpose, key) ?? [];
 
-    public Task SaveViewAsync(string name, GalleryFilter filter, byte[] key) =>
-        ChangeViewsUnderGateAsync(views => SavedViewProcessor.Replace(views, name, filter), key);
+    public Task SaveViewAsync(string name, GalleryFilter galleryFilter, byte[] key) =>
+        ChangeViewsUnderGateAsync(views => SavedViewProcessor.Replace(views, name, galleryFilter), key);
 
     public Task DeleteViewAsync(string name, byte[] key) =>
         ChangeViewsUnderGateAsync(views => SavedViewProcessor.Remove(views, name), key);
@@ -457,14 +479,14 @@ internal sealed partial class GalleryStore(string databasePath)
 
     private static ImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key)
     {
-        var record = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key)
+        var imageRecord = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key)
             ?? throw new InvalidOperationException("Invalid image record.");
-        if (record.Id != id) throw new CryptographicException("Image record identity mismatch.");
-        return record;
+        if (imageRecord.Id != id) throw new CryptographicException("Image record identity mismatch.");
+        return imageRecord;
     }
 
-    private static byte[] EncodeRecord(ImageRecord record, byte[] key) =>
-        EncodeSetting(record, $"record:{record.Id}", key);
+    private static byte[] EncodeRecord(ImageRecord imageRecord, byte[] key) =>
+        EncodeSetting(imageRecord, $"record:{imageRecord.Id}", key);
 
     private static T? DecodeSetting<T>(byte[] encryptedSettings, string purpose, byte[] key)
     {

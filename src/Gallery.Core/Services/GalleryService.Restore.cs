@@ -19,7 +19,7 @@ public sealed partial class GalleryService
     public Task<IReadOnlyList<string>> ListRestoreBackupsFromSasAsync(string sasUrl) =>
         CreateSasRestoreTarget(sasUrl).ListAsync();
 
-    private static IBackupTarget CreateSasRestoreTarget(string sasUrl) => new AzureBackupTarget(sasUrl);
+    private static IBackupTarget CreateSasRestoreTarget(string sasUrl) => new BackupTargetAzure(sasUrl);
 
     private static IBackupTarget CreateRestoreTarget(
         string sourceType, string localDirectory, string azureContainer, string azurePrefix, string connectionString)
@@ -27,13 +27,13 @@ public sealed partial class GalleryService
         if (sourceType == "local")
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(localDirectory);
-            return new LocalBackupTarget(Path.GetFullPath(localDirectory.Trim()));
+            return new BackupTargetLocal(Path.GetFullPath(localDirectory.Trim()));
         }
         if (sourceType == "azure")
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(azureContainer);
             ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-            return new AzureBackupTarget(connectionString.Trim(), azureContainer.Trim(), NormalizeAzurePrefix(azurePrefix));
+            return new BackupTargetAzure(connectionString.Trim(), azureContainer.Trim(), NormalizeAzurePrefix(azurePrefix));
         }
         throw new InvalidOperationException("Choose a local/SMB folder or Azure Blob Storage.");
     }
@@ -89,10 +89,13 @@ public sealed partial class GalleryService
                 var archivePath = Path.Combine(staging, $"backup-{archivePaths.Count}.zip");
                 await target.DownloadAsync(current, archivePath);
                 archivePaths.Add(archivePath);
+                var archiveLength = new FileInfo(archivePath).Length;
                 using var archive = ZipFile.OpenRead(archivePath);
+                RequireEntriesWithinArchive(archive, archiveLength);
                 if (key is null)
                 {
-                    ExtractRequiredEntry(archive, VaultHeaderFileName, Path.Combine(staging, VaultHeaderFileName));
+                    await ExtractRequiredEntryAsync(archive, VaultHeaderFileName, Path.Combine(staging, VaultHeaderFileName),
+                        MaximumVaultHeaderBytes);
                     var stagedVaultStore = new VaultStore(staging);
                     key = useRecovery
                         ? await stagedVaultStore.UnlockWithRecoveryPhraseAsync(credential)
@@ -104,7 +107,7 @@ public sealed partial class GalleryService
                 if (latestManifest is null)
                 {
                     latestManifest = manifest;
-                    ExtractRequiredEntry(archive, CatalogFileName, Path.Combine(staging, CatalogFileName));
+                    await ExtractRequiredEntryAsync(archive, CatalogFileName, Path.Combine(staging, CatalogFileName), archiveLength);
                     if (manifest.VaultHeaderSha256 != await HashFileAsync(Path.Combine(staging, VaultHeaderFileName))
                         || manifest.DatabaseFingerprint != await GalleryStore.ComputeContentFingerprintAsync(
                             Path.Combine(staging, CatalogFileName), BackupSettingsId))
@@ -125,6 +128,8 @@ public sealed partial class GalleryService
             var records = await store.ReadRecordsAsync(key);
             if (records.Count != latestManifest!.Media.Count)
                 throw new CryptographicException("The backup catalog and manifest disagree.");
+            var archiveIndexByBlobName = IndexArchiveMediaEntries(archivePaths);
+            var restoresByArchiveIndex = new SortedDictionary<int, List<(ImageRecord Record, BackupMediaEntry Entry, string Relative)>>();
             foreach (var record in records)
             {
                 var relative = MediaRelativePath(record);
@@ -133,24 +138,29 @@ public sealed partial class GalleryService
                     || entry.StoredPath != record.StoredPath
                     || entry.Sha256.Length != 64 || entry.Sha256.Any(c => !char.IsAsciiHexDigit(c)))
                     throw new CryptographicException("Invalid media entry in the backup manifest.");
-                var mediaPath = Path.Combine(staging, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(mediaPath)!);
-                var found = false;
-                foreach (var archivePath in archivePaths)
+                if (!archiveIndexByBlobName.TryGetValue(MediaBlobEntryName(entry.Sha256), out var archiveIndex))
+                    throw new InvalidOperationException($"The full/incremental chain is missing media for '{record.Name}'.");
+                if (!restoresByArchiveIndex.TryGetValue(archiveIndex, out var restores))
+                    restoresByArchiveIndex.Add(archiveIndex, restores = []);
+                restores.Add((record, entry, relative));
+            }
+            // Each archive is opened once and only while its own blobs are extracted.
+            foreach (var (archiveIndex, restores) in restoresByArchiveIndex)
+            {
+                var archivePath = archivePaths[archiveIndex];
+                var archiveLength = new FileInfo(archivePath).Length;
+                using var archive = ZipFile.OpenRead(archivePath);
+                foreach (var (record, entry, relative) in restores)
                 {
-                    using var archive = ZipFile.OpenRead(archivePath);
-                    var blob = archive.GetEntry($"media/{entry.Sha256}.blob");
-                    if (blob is null) continue;
-                    blob.ExtractToFile(mediaPath, overwrite: false);
-                    found = true;
-                    break;
+                    var mediaPath = Path.Combine(staging, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(mediaPath)!);
+                    await ExtractRequiredEntryAsync(archive, MediaBlobEntryName(entry.Sha256), mediaPath, archiveLength);
+                    if (await HashFileAsync(mediaPath) != entry.Sha256)
+                        throw new CryptographicException("Encrypted backup media failed its integrity check.");
+                    var plaintext = await StoredMediaProcessor.ReadAsync(mediaPath, record.Id, key);
+                    CryptographicOperations.ZeroMemory(plaintext);
+                    await store.UpdateAsync(record with { StoredPath = Path.Combine(destination, relative) }, key);
                 }
-                if (!found) throw new InvalidOperationException($"The full/incremental chain is missing media for '{record.Name}'.");
-                if (await HashFileAsync(mediaPath) != entry.Sha256)
-                    throw new CryptographicException("Encrypted backup media failed its integrity check.");
-                var plaintext = await StoredMediaProcessor.ReadAsync(mediaPath, record.Id, key);
-                CryptographicOperations.ZeroMemory(plaintext);
-                await store.UpdateAsync(record with { StoredPath = Path.Combine(destination, relative) }, key);
             }
             await ClearLocationSettingsAsync(store, key);
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
@@ -173,7 +183,45 @@ public sealed partial class GalleryService
         }
     }
 
-    private static void ExtractRequiredEntry(ZipArchive archive, string name, string destination) =>
-        (archive.GetEntry(name) ?? throw new InvalidOperationException($"Backup is missing '{name}'."))
-            .ExtractToFile(destination, overwrite: false);
+    // The fixed-format header holds only a name, key slots and salts; anything larger is not a genuine header.
+    internal const long MaximumVaultHeaderBytes = 1024 * 1024;
+
+    private static string MediaBlobEntryName(string sha256) => $"media/{sha256}.blob";
+
+    // Each blob name maps to the first (newest) archive in the chain that contains it.
+    private static Dictionary<string, int> IndexArchiveMediaEntries(IReadOnlyList<string> archivePaths)
+    {
+        var archiveIndexByBlobName = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var archiveIndex = 0; archiveIndex < archivePaths.Count; archiveIndex++)
+        {
+            using var archive = ZipFile.OpenRead(archivePaths[archiveIndex]);
+            foreach (var entry in archive.Entries)
+                if (entry.FullName.StartsWith("media/", StringComparison.Ordinal))
+                    archiveIndexByBlobName.TryAdd(entry.FullName, archiveIndex);
+        }
+        return archiveIndexByBlobName;
+    }
+
+    // Backups are written without compression, so no genuine entry, nor all entries together, expands beyond the
+    // archive itself. Declared sizes are then enforced while each entry is copied.
+    internal static void RequireEntriesWithinArchive(ZipArchive archive, long archiveLength)
+    {
+        long declaredBytes = 0;
+        foreach (var entry in archive.Entries)
+        {
+            if (entry.Length < 0 || entry.Length > archiveLength - declaredBytes)
+                throw new InvalidDataException("The backup archive declares more content than it contains.");
+            declaredBytes += entry.Length;
+        }
+    }
+
+    private static async Task ExtractRequiredEntryAsync(
+        ZipArchive archive, string name, string destination, long maximumBytes)
+    {
+        var entry = archive.GetEntry(name) ?? throw new InvalidOperationException($"Backup is missing '{name}'.");
+        if (entry.Length > maximumBytes)
+            throw new InvalidDataException($"Backup entry '{name}' exceeds its supported size.");
+        if (File.Exists(destination)) throw new IOException($"The restore file '{destination}' already exists.");
+        await VerifyArchiveEntryAsync(entry, expectedHash: null, destination);
+    }
 }

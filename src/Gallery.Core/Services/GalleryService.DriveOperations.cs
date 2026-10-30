@@ -129,9 +129,7 @@ public sealed partial class GalleryService
         if (await galleryStore.ReadSettingsAsync<MediaIndexMarker>(MediaIndexId, MediaIndexPurpose, key) is not null) return;
         var imageRoot = ImageRoot(vaultStore.Root);
         var scans = new List<NewDriveOperation> { CreateDriveOperation(DriveOperationKind.ScanDirectory, imageRoot, null, key, recursive: true) };
-        scans.AddRange(records.Select(record => Path.GetDirectoryName(record.StoredPath)!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(directory => !IsWithinImageRoot(directory, imageRoot))
+        scans.AddRange(ExternalMediaDirectories(records.Select(record => record.StoredPath), imageRoot)
             .Select(directory => CreateDriveOperation(DriveOperationKind.ScanDirectory, directory, null, key)));
         await galleryStore.EnqueueDriveOperationsAsync(scans);
         await galleryStore.SaveSettingsAsync(new MediaIndexMarker(DateTimeOffset.UtcNow), MediaIndexId, MediaIndexPurpose, key);
@@ -146,6 +144,11 @@ public sealed partial class GalleryService
 
     private static string DriveOperationPurpose(string kind, ReadOnlySpan<byte> target) =>
         $"drive-operation:{kind}:{Convert.ToHexString(target)}";
+
+    internal static IEnumerable<string> ExternalMediaDirectories(IEnumerable<string> storedPaths, string imageRoot) =>
+        storedPaths.Select(path => Path.GetDirectoryName(path)!)
+            .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+            .Where(directory => !IsWithinImageRoot(directory, imageRoot));
 
     private static bool IsWithinImageRoot(string directory, string imageRoot)
     {

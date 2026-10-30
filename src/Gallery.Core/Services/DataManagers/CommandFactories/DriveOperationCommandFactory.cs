@@ -5,8 +5,7 @@ namespace Gallery.Core.Services.DataManagers.CommandFactories;
 
 internal static class DriveOperationCommandFactory
 {
-    // Re-enqueueing the same kind and target replaces the queued payload and resets a failed operation.
-    public static SqliteCommand CreateEnqueue(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction, NewDriveOperation newDriveOperation)
+    public static SqliteCommand CreateEnqueueOrReset(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction, NewDriveOperation newDriveOperation)
     {
         var sqliteCommand = Create(sqliteConnection, sqliteTransaction, """
             INSERT INTO drive_operations (kind, target, image_id, payload, state, attempts, not_before, error)

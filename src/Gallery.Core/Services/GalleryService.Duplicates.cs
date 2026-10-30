@@ -33,16 +33,20 @@ public sealed partial class GalleryService
 
     public async Task<DuplicateScan> ScanDuplicatesAsync(IProgress<(int Completed, int Total)>? progress = null)
     {
-        var imageRecords = await ListAsync();
-        var cachedHashesByImageId =
-            await ReadEncryptedSettingAsync<Dictionary<string, PerceptualHash>>(PerceptualHashesId, PerceptualHashesPurpose) ?? [];
+        // One lease spans the scan, so a gallery switch cannot drain and publish another location until the
+        // results are stored in the gallery that produced them.
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        var scanStore = galleryStore;
+        var imageRecords = await ListWithKeyAsync(keyLease.Bytes);
+        var cachedHashesByImageId = await scanStore.ReadSettingsAsync<Dictionary<string, PerceptualHash>>(
+            PerceptualHashesId, PerceptualHashesPurpose, keyLease.Bytes) ?? [];
         Dictionary<string, PerceptualHash> perceptualHashesByImageId;
         List<ImageRecord> pendingImageRecords;
         (perceptualHashesByImageId, pendingImageRecords) = ReconcileCachedHashes(imageRecords, cachedHashesByImageId);
-        await ComputePendingHashesAsync(pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
-        await WriteEncryptedSettingAsync(perceptualHashesByImageId, PerceptualHashesId, PerceptualHashesPurpose);
+        await ComputePendingHashesAsync(scanStore, pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
+        await scanStore.SaveSettingsAsync(perceptualHashesByImageId, PerceptualHashesId, PerceptualHashesPurpose, keyLease.Bytes);
         var duplicateScan = await BuildDuplicateScanAsync(imageRecords, perceptualHashesByImageId);
-        await WriteEncryptedSettingAsync(duplicateScan, DuplicateScanId, DuplicateScanPurpose);
+        await scanStore.SaveSettingsAsync(duplicateScan, DuplicateScanId, DuplicateScanPurpose, keyLease.Bytes);
         return duplicateScan;
     }
 
@@ -63,7 +67,7 @@ public sealed partial class GalleryService
         return (hashesByImageId, pendingImageRecords);
     }
 
-    private async Task ComputePendingHashesAsync(IReadOnlyList<ImageRecord> pendingImageRecords,
+    private async Task ComputePendingHashesAsync(GalleryStore scanStore, IReadOnlyList<ImageRecord> pendingImageRecords,
         IDictionary<string, PerceptualHash> perceptualHashesByImageId, int totalImageCount,
         IProgress<(int Completed, int Total)>? progress)
     {
@@ -71,11 +75,12 @@ public sealed partial class GalleryService
         progress?.Report((completedCount, totalImageCount));
         foreach (var imageRecordBatch in pendingImageRecords.Chunk(HashBatchSize))
         {
+            // Re-acquiring per batch lets an explicit lock stop a long scan between batches.
             using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
             var imageThumbnails = new List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)>(imageRecordBatch.Length);
             try
             {
-                await ReadHashThumbnailsAsync(imageRecordBatch, keyLease.Bytes, imageThumbnails);
+                await ReadHashThumbnailsAsync(scanStore, imageRecordBatch, keyLease.Bytes, imageThumbnails);
                 var batchPerceptualHashesByImageId = await PerceptualHashBatchProcessor.ComputeAsync(imageThumbnails);
                 foreach (var (imageId, perceptualHash) in batchPerceptualHashesByImageId)
                     perceptualHashesByImageId.Add(imageId, perceptualHash);
@@ -95,12 +100,12 @@ public sealed partial class GalleryService
         foreach (var (_, imageThumbnail) in imageThumbnails) imageThumbnail.Dispose();
     }
 
-    private async Task ReadHashThumbnailsAsync(IReadOnlyList<ImageRecord> imageRecords, byte[] key,
-        List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
+    private static async Task ReadHashThumbnailsAsync(GalleryStore scanStore, IReadOnlyList<ImageRecord> imageRecords,
+        byte[] key, List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
     {
         foreach (var imageRecord in imageRecords)
         {
-            try { imageThumbnails.Add((imageRecord, await galleryStore.ReadThumbnailAsync(imageRecord.Id, key))); }
+            try { imageThumbnails.Add((imageRecord, await scanStore.ReadThumbnailAsync(imageRecord.Id, key))); }
             catch (Exception exception) when (exception is GalleryException or InvalidOperationException or IOException
                 or UnauthorizedAccessException or CryptographicException)
             {

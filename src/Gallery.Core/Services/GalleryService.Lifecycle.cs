@@ -11,6 +11,7 @@ namespace Gallery.Core.Services;
 public sealed partial class GalleryService : IDisposable
 {
     private readonly HttpClient? ownedHttpClient;
+    private readonly System.Runtime.CompilerServices.StrongBox<long> explicitLockRequests = new();
 
     private static VaultHistory CreateVaultHistory(GalleryRuntimeOptions galleryRuntimeOptions) =>
         new(galleryRuntimeOptions.StateDirectory ?? DefaultApplicationDirectory);
@@ -127,8 +128,18 @@ public sealed partial class GalleryService : IDisposable
 
     public void LockVault()
     {
+        Interlocked.Increment(ref explicitLockRequests.Value);
         vaultSession.Lock();
         _ = ReleaseCheckoutAfterOperationsAsync();
+    }
+
+    private long ReadExplicitLockRequests() => Interlocked.Read(ref explicitLockRequests.Value);
+
+    // Restores a session revoked for a failed location change unless a later explicit lock superseded it.
+    private void RestoreUnlockedSessionAfterFailure(byte[]? key, long lockRequestsAtStart)
+    {
+        if (key is not null && !galleryLifetime.IsDisposed && ReadExplicitLockRequests() == lockRequestsAtStart)
+            vaultSession.Unlock(key);
     }
 
     public void Dispose()

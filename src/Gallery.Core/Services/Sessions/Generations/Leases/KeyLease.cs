@@ -14,6 +14,11 @@ internal sealed class KeyLease(byte[] leasedKeyBytes, VaultLeaseState vaultLease
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         CryptographicOperations.ZeroMemory(leasedKeyBytes);
+        ReleaseLease();
+    }
+
+    private void ReleaseLease()
+    {
         lock (vaultLeaseState.SyncRoot)
         {
             if (--vaultLeaseState.ActiveLeases != 0) return;

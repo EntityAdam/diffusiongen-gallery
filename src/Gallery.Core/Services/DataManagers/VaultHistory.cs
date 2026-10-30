@@ -20,13 +20,21 @@ internal sealed class VaultHistory(string directory)
         lock (gate)
         {
             Directory.CreateDirectory(directory);
-            var temporaryHistoryPath = HistoryPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                File.WriteAllText(temporaryHistoryPath, JsonSerializer.Serialize(root));
-                File.Move(temporaryHistoryPath, HistoryPath, overwrite: true);
-            }
-            finally { if (File.Exists(temporaryHistoryPath)) File.Delete(temporaryHistoryPath); }
+            WriteHistoryAtomically(root);
         }
     }
+
+    private void WriteHistoryAtomically(string root)
+    {
+        var temporaryHistoryPath = CreateTemporaryHistoryPath();
+        try
+        {
+            File.WriteAllText(temporaryHistoryPath, JsonSerializer.Serialize(root));
+            File.Move(temporaryHistoryPath, HistoryPath, overwrite: true);
+        }
+        finally { if (File.Exists(temporaryHistoryPath)) File.Delete(temporaryHistoryPath); }
+    }
+
+    private string CreateTemporaryHistoryPath() =>
+        HistoryPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
 }

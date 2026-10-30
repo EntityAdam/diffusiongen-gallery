@@ -60,8 +60,16 @@ internal static class VaultCrypto
     public static byte[] Decrypt(ReadOnlySpan<byte> envelope, ReadOnlySpan<byte> key, string purpose)
     {
         // Preserve native fail-before-allocation safety even when called without an ingress owner.
-        if (envelope.Length < EnvelopeHeaderSizeBytes || !envelope[..MagicSizeBytes].SequenceEqual(Magic))
+        if (!HasValidEnvelopeFormat(envelope))
             throw new CryptographicException("Invalid encrypted file format.");
+        return DecryptToNewBuffer(envelope, key, purpose);
+    }
+
+    private static bool HasValidEnvelopeFormat(ReadOnlySpan<byte> envelope) =>
+        envelope.Length >= EnvelopeHeaderSizeBytes && envelope[..MagicSizeBytes].SequenceEqual(Magic);
+
+    private static byte[] DecryptToNewBuffer(ReadOnlySpan<byte> envelope, ReadOnlySpan<byte> key, string purpose)
+    {
         var plaintextBytes = new byte[envelope.Length - EnvelopeHeaderSizeBytes];
         try
         {
@@ -76,9 +84,13 @@ internal static class VaultCrypto
     }
 
     // Each independently random compound word represents 8 bits: 32 words = 256 bits.
-    public static string CreateRecoveryPhrase() => string.Join(' ',
-        RandomNumberGenerator.GetBytes(RecoveryPhraseWords.Count)
-            .Select(value => $"{RecoveryPhraseWords.Prefixes[value >> 4]}-{RecoveryPhraseWords.Suffixes[value & 15]}"));
+    public static string CreateRecoveryPhrase() => string.Join(' ', CreateRecoveryWords());
+
+    private static IEnumerable<string> CreateRecoveryWords() =>
+        RandomNumberGenerator.GetBytes(RecoveryPhraseWords.Count).Select(FormatRecoveryWord);
+
+    private static string FormatRecoveryWord(byte value) =>
+        $"{RecoveryPhraseWords.Prefixes[value >> 4]}-{RecoveryPhraseWords.Suffixes[value & 15]}";
 
     private static Span<byte> FillEnvelopeNonce(Span<byte> encryptedEnvelopeBytes)
     {

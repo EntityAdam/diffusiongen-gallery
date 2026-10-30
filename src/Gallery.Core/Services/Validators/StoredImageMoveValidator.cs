@@ -21,7 +21,8 @@ internal static class StoredImageMoveValidator
 
     public static void ValidateDifferentPath(string source, string target)
     {
-        if (string.Equals(source, target, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(source, target,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             throw new InvalidOperationException("Choose a different name or destination.");
     }
 }
