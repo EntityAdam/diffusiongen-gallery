@@ -53,6 +53,22 @@ gallery has an exclusive checkout: another session or process cannot unlock that
 gallery until it is released. Different galleries can run on different loopback
 ports.
 
+## Opening large galleries
+
+Opening uses an encrypted index of the newest items to make the first page usable
+before reading the rest of the catalog. You can view and edit those items while
+the remaining library loads in the background. Search, filters, grouping, further
+pages, ingestion, duplicate finding and library counts become available when the
+full load finishes. A status message shows this pending state and offers a retry
+if the background load fails. Locking or switching galleries cancels the load.
+
+The first open after upgrading, or after a membership change invalidates the
+index, needs one full scan to rebuild it. Rating, favorite and notes edits preserve
+a valid index. Imports, removals and deletion-mark changes invalidate it; the next
+completed catalog load rebuilds it. The index contains encrypted IDs and a catalog
+revision; page items are read from authoritative records in a consistent snapshot.
+This improves opening time but still loads the full records into memory eventually.
+
 ## Importing media
 
 1. Open **Ingest media**, enter a source folder, and select **Scan**.
@@ -111,7 +127,7 @@ The floating toolbox contains:
 | Tool | Purpose |
 |---|---|
 | Change view | Card size, grouping, sorting, full-screen viewer, and toolbox-position reset. |
-| Filter media | Text, model, organization, media/dimensions, vision, and import-date filters. Changes apply immediately; **Reset filters** clears them. |
+| Filter media | Text, model, organization, media/dimensions, vision, and import-date filters. Text applies after a short typing pause; other controls apply immediately. **Reset filters** clears them. |
 | Review media one by one | Guided review of pending items. |
 | Organize media | Add collections/tags and remove tags from selected items. |
 | Search | Ask the configured LLM to suggest explicit filters. |
@@ -179,7 +195,10 @@ dimensions, orientation, analysis status, and import dates. Text search includes
 user descriptions. **Group by same prompt** groups exact positive-prompt matches;
 **Group by diffusion model** groups embedded model names. Prompt groups can be
 filtered with **Show only these**. Model-name filtering is partial and
-case-insensitive.
+case-insensitive. Text fields wait 300 ms after typing stops before filtering;
+Enter or leaving the field applies the pending value immediately. While a filter
+is processing, newer text stays visible and only its latest value is queued.
+**Reset filters** cancels pending text updates.
 
 ### Media details
 

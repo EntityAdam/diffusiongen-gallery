@@ -11,7 +11,7 @@
             var active = ActiveTool == tool.Id;
             var badge = Badge?.Invoke(tool.Id) ?? "";
             <button type="button" class="gallery-toolbox-tool" data-tool="@tool.Id" data-tooltip="@tool.Tooltip" aria-label="@tool.Tooltip"
-                    aria-pressed="@(active ? "true" : "false")" aria-controls="@PanelId" @onclick="() => ToggleAsync(tool.Id)">
+                    disabled="@(CatalogLoading && tool.Id != "views")" aria-pressed="@(active ? "true" : "false")" aria-controls="@PanelId" @onclick="() => ToggleAsync(tool.Id)">
                 <LucideIcon Name="@tool.Icon" Size="18" aria-hidden="true" />
                 @if (badge.Length > 0) { <span class="gallery-toolbox-badge" aria-hidden="true">@badge</span> }
             </button>
@@ -43,6 +43,7 @@
     ];
 
     [Parameter] public bool Visible { get; set; } = true;
+    [Parameter] public bool CatalogLoading { get; set; }
     [Parameter] public string ActiveTool { get; set; } = "";
     [Parameter] public EventCallback<string> ActiveToolChanged { get; set; }
     [Parameter] public EventCallback Close { get; set; }

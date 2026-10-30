@@ -160,7 +160,7 @@ else
         <nav class="workspace-navigation" aria-label="Gallery workflows">
         @foreach (var item in Workflows)
         {
-            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name</span></Button>
+            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || catalogPartial && item.Id is "ingest" or "duplicates" || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name</span></Button>
         }
         <Button Variant="@(ToolboxShown ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@busy" Class="workspace-nav-button" aria-pressed="@(ToolboxShown ? "true" : "false")"
                 aria-label="Toolbox (`)" title="Show or hide the toolbox (`). Shift+` resets its position." OnClick="ToggleToolboxAsync"><WrenchIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Toolbox <kbd>`</kbd></span></Button>
@@ -359,11 +359,18 @@ else
     }
     @if (workflow == "settings" && settingsTab == "overview")
     {
-        <Card Class="mb-6 p-5 md:p-6 storage-overview" aria-labelledby="storage-overview-title">
+        <Card Class="mb-6 p-5 md:p-6 storage-overview" aria-labelledby="storage-overview-title" aria-busy="@(refreshingStorageOverview ? "true" : "false")">
             <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 id="storage-overview-title">Gallery overview</h3>
-                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="RefreshStorageOverviewAsync">@(busy && progress.StartsWith("Measuring") ? "Refreshing..." : "Refresh")</Button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || catalogPartial)" OnClick="RefreshStorageOverviewAsync">
+                    @if (refreshingStorageOverview) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
+                    @(refreshingStorageOverview ? "Refreshing..." : "Refresh")
+                </Button>
             </div>
+            @if (refreshingStorageOverview)
+            {
+                <p class="text-muted-foreground" role="status">Refreshing gallery overview...</p>
+            }
             @if (storageOverview is null)
             {
                 <p class="text-muted-foreground">Storage has not been measured yet. Select Refresh to calculate it.</p>
@@ -387,7 +394,7 @@ else
             }
             <p class="text-muted-foreground flex flex-wrap items-center gap-2">
                 <span>Sizes come from a cached file index. Rebuild it if files were changed outside the gallery.</span>
-                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@busy" OnClick="RebuildStorageIndexAsync">Rebuild file index</Button>
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@(busy || catalogPartial)" OnClick="RebuildStorageIndexAsync">Rebuild file index</Button>
             </p>
             <p class="text-muted-foreground flex flex-wrap items-center gap-2">
                 @if (duplicateScan is null) { <span>Duplicates have not been scanned yet.</span> }
@@ -555,6 +562,18 @@ else
     {
     <div class="gallery-layout grid min-w-0 grid-cols-1" data-has-selection="@((librarySelection.Count > 0 || removalSelection.Count > 0) ? "true" : "false")">
         <section aria-label="@(TrashActive ? "Trash" : "Gallery")">
+            @if (catalogPartial)
+            {
+                <div class="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground" role="status" data-testid="catalog-loading">
+                    @if (catalogLoading) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
+                    <span>Showing the initial page. Full-library search, filters and counts are @(catalogLoading ? "loading in the background" : "not ready yet").</span>
+                    @if (catalogLoadError.Length > 0)
+                    {
+                        <span>@catalogLoadError</span>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" OnClick="RetryCatalogLoadAsync">Retry loading library</Button>
+                    }
+                </div>
+            }
             @if (Filtered.Count > 0)
             {
                 <div class="image-grid density-@density">
@@ -602,8 +621,8 @@ else
                 </div>
                 <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(page == 0 || busy)" OnClick="PreviousAsync"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
-                    <span>Page @(page + 1) of @PageCount</span>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(page + 1 >= PageCount || busy)" OnClick="NextAsync">Next <ArrowRightIcon aria-hidden="true" /></Button>
+                    <span>@if (catalogPartial) { <text>Initial page · library loading</text> } else { <text>Page @(page + 1) of @PageCount</text> }</span>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(catalogPartial || page + 1 >= PageCount || busy)" OnClick="NextAsync">Next <ArrowRightIcon aria-hidden="true" /></Button>
                 </div>
             }
         </section>
@@ -614,7 +633,7 @@ else
     </AppLayout>
 
     <GalleryToolbox @ref="toolbox" Visible="@(toolboxVisible && workflow == "gallery" && selected is null && removalPlan.Count == 0)" ActiveTool="@activeTool" ActiveToolChanged="SetActiveToolAsync"
-                    Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="toolboxX" Y="toolboxY" Badge="ToolBadge">
+                    CatalogLoading="catalogPartial" Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="toolboxX" Y="toolboxY" Badge="ToolBadge">
         @if (activeTool == "views")
         {
             <div class="space-y-4">
@@ -632,13 +651,13 @@ else
                 <div class="grid grid-cols-2 gap-3">
                     <div class="space-y-2">
                         <Label For="view-grouping">Grouping</Label>
-                        <Select id="view-grouping" Disabled="@busy" Class="w-full" @bind-Value="grouping" @bind-Value:after="FilterChangedAsync">
+                        <Select id="view-grouping" Disabled="@(busy || catalogPartial)" Class="w-full" @bind-Value="grouping" @bind-Value:after="FilterChangedAsync">
                             <option value="none">No grouping</option><option value="prompt">Same prompt</option><option value="model">Diffusion model</option>
                         </Select>
                     </div>
                     <div class="space-y-2">
                         <Label For="view-sorting">Sorting</Label>
-                        <Select id="view-sorting" Disabled="@busy" Class="w-full" @bind-Value:get="filter.Sort" @bind-Value:set="SetSort">
+                        <Select id="view-sorting" Disabled="@(busy || catalogPartial)" Class="w-full" @bind-Value:get="filter.Sort" @bind-Value:set="SetSort">
                             <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
                         </Select>
                     </div>
@@ -649,11 +668,15 @@ else
                 </div>
             </div>
         }
-        @if (activeTool == "filters")
+        @if (catalogPartial && activeTool is "filters" or "review" or "organize" or "search" or "intelligence")
         {
-            <GalleryFilterPanel Filter="filter" Images="images" ResultCount="Filtered.Count" Changed="ApplyLibraryFilterAsync" Reset="ResetFilters" Disabled="busy" />
+            <p class="text-muted-foreground" role="status">This tool will be available when the full library finishes loading.</p>
         }
-        @if (activeTool == "review")
+        @if (activeTool == "filters" && !catalogPartial)
+        {
+            <GalleryFilterPanel Filter="filter" Images="images" ResultCount="Filtered.Count" Changed="ApplyFilterPanelAsync" Reset="ResetFilters" Disabled="busy" ResetVersion="filterInputRevision" />
+        }
+        @if (activeTool == "review" && !catalogPartial)
         {
             <div class="review-intro space-y-4">
                 <p class="text-muted-foreground text-sm">Review media one item at a time. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
@@ -694,7 +717,7 @@ else
                 }
             </div>
         }
-        <LibraryWorkbench @ref="workbench" Visible="@(activeTool is "organize" or "search" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
+        <LibraryWorkbench @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "search" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
                           Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
                           SuggestionsChanged="SuggestionsChanged" />
     </GalleryToolbox>
@@ -710,7 +733,7 @@ else
                                         Rate="value => RateImageAsync(selected, value)" Favorite="() => FavoriteAsync(selected)"
                                         Mark="() => MarkAsync(selected)" />
                     <div class="min-w-0 space-y-4">
-                        <ImageDetailFields @key="selected.Id" Image="selected" Busy="busy" @bind-Description="editDescription" @bind-UserDescription="editUserDescription"
+                        <ImageDetailFields @key="selected.Id" Image="selected" Busy="busy" CatalogLoading="catalogPartial" @bind-Description="editDescription" @bind-UserDescription="editUserDescription"
                                            Save="SaveNotesAsync" Analyze="AnalyzeAsync" DownloadWorkflow="() => ExportWorkflowAsync(selected)"
                                            ShowPrompt="() => ShowPromptAsync(selected.Prompt)" Remove="() => PrepareRemovalAsync(new[] { selected.Id })" />
                         @if (busy) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@progress</p> }
@@ -973,6 +996,7 @@ else
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
+    private bool refreshingStorageOverview;
     private DriveQueueStatus driveQueue = DriveQueueStatus.Empty;
     private BackupOptions? backupOptions;
     private string backupDestinationType = "local", backupLocalDirectory = "", backupAzureContainer = "", backupAzurePrefix = "", backupAzureConnectionString = "";
@@ -1028,6 +1052,7 @@ else
         .Where(group => group.ImageIds.Length > 1).ToList();
     private ImageRecord KeeperOf(DuplicateGroup group) => Gallery.PickDuplicateKeeper(group.ImageIds.Select(id => ImageById(id)!));
     private GalleryFilter filter = new();
+    private long filterInputRevision;
     private VisionSettings settings = new();
     private List<ImageRecord> images = [];
     private List<string> importFailures = [];
@@ -1048,7 +1073,7 @@ else
         {
             if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != grouping)
             {
-                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, grouping);
+                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, catalogPartial ? "none" : grouping);
                 browsingSource = images;
                 projectedFilter = filter;
                 projectedGrouping = grouping;
@@ -1178,7 +1203,7 @@ else
                 Gallery.ConfigureAutoLock(autoLockMinutes);
                 try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
                 catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-                await ReloadAsync();
+                await OpenGalleryAsync();
             }
             else throw new InvalidOperationException("No gallery is selected. Choose Switch gallery to open or create one.");
         }
@@ -1197,28 +1222,31 @@ else
         Gallery.ConfigureAutoLock(autoLockMinutes);
         try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-        await ReloadAsync();
+        await OpenGalleryAsync();
         recoveryPhrase = "";
     });
 
     private async Task ReloadAsync()
     {
-        images = await Gallery.LoadAsync();
-        browsingSource = null;
-        mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
-        catalogDirectory = "";
-        ApplyIngestionProfile(await Gallery.LoadIngestionOptionsAsync());
-        imagesById = images.ToDictionary(image => image.Id);
-        UpdateDuplicateGroups();
-        if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
-        settings = await Gallery.SettingsAsync();
-        storageOverview = await Gallery.CachedStorageOverviewAsync();
-        selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
-        if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }
-        removalSelection.IntersectWith(images.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
-        librarySelection.IntersectWith(images.Select(image => image.Id));
-        page = Math.Min(page, PageCount - 1);
-        await LoadThumbnailsAsync();
+        CancelCatalogLoad();
+        var generation = catalogGeneration;
+        if (catalogPartial)
+        {
+            var records = await Gallery.ReloadRecordsAsync(images.Select(image => image.Id));
+            if (!IsCatalogGenerationCurrent(generation)) return;
+            images = records;
+            await ApplyLoadedRecordsAsync();
+            StartCatalogLoad();
+        }
+        else
+        {
+            var snapshot = await Gallery.LoadCatalogAsync();
+            if (!IsCatalogGenerationCurrent(generation)) return;
+            images = snapshot.Records;
+            catalogPartial = !snapshot.IsCurrent;
+            await ApplyLoadedRecordsAsync();
+            if (catalogPartial) StartCatalogLoad();
+        }
     }
 
     // Thumbnails decrypt in the background so the grid renders immediately with placeholders.
@@ -1308,33 +1336,38 @@ else
     }
 
     private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
-    private Task ResetFilters() { filter = TrashActive ? new() { Deletion = "marked" } : new(); return FilterChangedAsync(); }
-    private Task ApplyLibraryFilterAsync(GalleryFilter value) { filter = value; return FilterChangedAsync(); }
+    private Task ResetFilters() { filterInputRevision++; filter = TrashActive ? new() { Deletion = "marked" } : new(); return FilterChangedAsync(); }
+    private Task ApplyFilterPanelAsync(GalleryFilter value) { if (catalogPartial) return Task.CompletedTask; filter = value; return FilterChangedAsync(); }
+    private Task ApplyLibraryFilterAsync(GalleryFilter value) { filterInputRevision++; return ApplyFilterPanelAsync(value); }
     private Task SetSort(string? value)
     {
+        if (catalogPartial) return Task.CompletedTask;
         filter = filter with { Sort = value ?? "newest" };
         return FilterChangedAsync();
     }
     private string ToolBadge(string tool) => tool switch
     {
         "filters" when !TrashActive && GalleryFilterPanel.CountChanged(filter) is > 0 and var count => count.ToString(),
-        "trash" when images.Count(image => image.IsMarkedForDeletion) is > 0 and var count => count.ToString(),
+        "trash" when !catalogPartial && images.Count(image => image.IsMarkedForDeletion) is > 0 and var count => count.ToString(),
         "intelligence" when aiSuggestions.Count > 0 => aiSuggestions.Count.ToString(),
         _ => ""
     };
     private async Task SetActiveToolAsync(string value)
     {
         if (busy) return;
+        if (catalogPartial && value is not ("" or "views")) return;
         value = UiPreferences.ToolboxTools.Contains(value) ? value : "";
         if (activeTool == value) return;
         var wasTrash = TrashActive;
         activeTool = value;
         if (TrashActive != wasTrash)
         {
+            filterInputRevision++;
             // Trash temporarily swaps the browsing filter for marked images and restores it when another tool is chosen.
             if (TrashActive) { browsingFilter = filter with { }; filter = new() { Deletion = "marked" }; }
             else { filter = browsingFilter ?? new(); browsingFilter = null; }
             ClearSelection();
+            if (catalogPartial) await OpenGalleryAsync();
             await FilterChangedAsync();
         }
         await SaveToolboxStateAsync();
@@ -1376,6 +1409,7 @@ else
         (toolboxX, toolboxY) = (preferences.ToolboxX, preferences.ToolboxY);
         activeTool = preferences.ToolboxTool;
         browsingFilter = null;
+        filterInputRevision++;
         filter = TrashActive ? new() { Deletion = "marked" } : new();
         if (TrashActive) browsingFilter = new();
     }
@@ -1548,11 +1582,22 @@ else
         reviewGroups = matches;
         reviewStartGroup = 0;
     });
-    private Task RefreshStorageOverviewAsync() => RunAsync("Measuring gallery storage...", async () =>
+    private async Task RefreshStorageOverviewAsync()
     {
-        storageOverview = await Gallery.RefreshStorageOverviewAsync();
-        message = "Gallery overview refreshed.";
-    });
+        if (busy) return;
+        refreshingStorageOverview = true;
+        try
+        {
+            await RunAsync("Measuring gallery storage...", async () =>
+            {
+                // SQLite reads/decryption can run synchronously before the service's first yield.
+                // Keep that work off the renderer so the busy state is visible throughout the refresh.
+                storageOverview = await Task.Run(Gallery.RefreshStorageOverviewAsync);
+                message = "Gallery overview refreshed.";
+            });
+        }
+        finally { refreshingStorageOverview = false; }
+    }
     private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
     private async Task OpenLibraryJobAsync()
     {
@@ -1577,6 +1622,7 @@ else
         if (imageIndex >= 0) images[imageIndex] = updated;
         if (selected?.Id == updated.Id) selected = updated;
         browsingSource = null;
+        if (catalogPartial) StartCatalogLoad();
     }
     private void SelectCard(string id, bool range)
     {
@@ -1598,6 +1644,18 @@ else
         if (density == value) return;
         var first = page * PageSize;
         density = value;
+        if (catalogPartial)
+        {
+            CancelCatalogLoad();
+            var generation = catalogGeneration;
+            var initial = await Gallery.LoadInitialPageAsync(PageSize, TrashActive);
+            if (!IsCatalogGenerationCurrent(generation)) return;
+            catalogPartial = !initial.IsComplete || !initial.IsCurrent;
+            images = initial.Records;
+            imagesById = images.ToDictionary(image => image.Id);
+            browsingSource = null;
+            if (catalogPartial) StartCatalogLoad();
+        }
         page = Math.Min(first / PageSize, PageCount - 1);
         await LoadThumbnailsAsync();
         await SavePreferencesAsync();
@@ -1834,21 +1892,21 @@ else
 
     private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current =>
-            Gallery.SetCuration(current, current.Rating == value ? 0 : value, null));
-        await ReloadAsync();
+        ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current =>
+            Gallery.SetCuration(current, current.Rating == value ? 0 : value, null)));
+        await LoadThumbnailsAsync();
     });
 
     private Task FavoriteAsync(ImageRecord image) => RunAsync("Saving favorite...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => current with { IsFavorite = !current.IsFavorite });
-        await ReloadAsync();
+        ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current => current with { IsFavorite = !current.IsFavorite }));
+        await LoadThumbnailsAsync();
     });
 
     private Task MarkAsync(ImageRecord image) => RunAsync("Saving deletion mark...", async () =>
     {
-        await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.IsMarkedForDeletion));
-        await ReloadAsync();
+        ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.IsMarkedForDeletion)));
+        await LoadThumbnailsAsync();
     });
 
     private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(removalSelection.ToArray());
@@ -1928,6 +1986,7 @@ else
 
     private Task ShowPromptAsync(string prompt)
     {
+        if (catalogPartial) return Task.CompletedTask;
         CloseDetail();
         filter = filter with { Prompt = prompt };
         return FilterChangedAsync();
@@ -2093,6 +2152,9 @@ else
 
     private void Lock()
     {
+        CancelCatalogLoad();
+        catalogPartial = false;
+        catalogLoadError = "";
         try { _ = JS.InvokeVoidAsync("gallerySecurity.purgeAllMedia"); }
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         Gallery.LockVault();

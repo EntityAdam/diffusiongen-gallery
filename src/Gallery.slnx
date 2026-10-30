@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="perf/Gallery.Stress.Core/Gallery.Stress.Core.csproj" />
+  <Project Path="perf/Gallery.Stress/Gallery.Stress.csproj" />
   <Project Path="Gallery.Core/Gallery.Core.csproj" />
   <Project Path="Gallery.Migrations/Gallery.Migrations.csproj" />
   <Project Path="Gallery.Web/Gallery.Web.csproj" />

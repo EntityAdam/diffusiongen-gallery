@@ -14,6 +14,7 @@
     </PackageReference>
     <Using Include="Xunit" />
     <ProjectReference Include="../../Gallery.Core/Gallery.Core.csproj" />
+    <ProjectReference Include="../../perf/Gallery.Stress.Core/Gallery.Stress.Core.csproj" />
     <ProjectReference Include="../../Gallery.Migrations/Gallery.Migrations.csproj" />
     <ProjectReference Include="../../Gallery.Web/Gallery.Web.csproj" />
     <ProjectReference Include="../Gallery.TestSupport/Gallery.TestSupport.csproj" />
