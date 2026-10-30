@@ -14,6 +14,8 @@ internal sealed record GalleryLocation(GalleryStore GalleryStore, VaultStore Vau
 /// </summary>
 internal sealed class GalleryLifetime(GalleryStore galleryStore, VaultStore vaultStore)
 {
+    // Serializes disposal admission with checkout publication so disposal cleanup observes every published checkout.
+    private readonly object publicationGate = new();
     private GalleryLocation current = new(galleryStore, vaultStore, null);
     private int disposalStarted;
     private VaultHistory? history;
@@ -35,7 +37,10 @@ internal sealed class GalleryLifetime(GalleryStore galleryStore, VaultStore vaul
             throw new InvalidOperationException("Gallery history has already been initialized for this scope.");
     }
 
-    internal bool TryBeginDisposal() => Interlocked.Exchange(ref disposalStarted, 1) == 0;
+    internal bool TryBeginDisposal()
+    {
+        lock (publicationGate) return Interlocked.Exchange(ref disposalStarted, 1) == 0;
+    }
 
     internal VaultCheckout AcquireLocationCheckout(string root) => VaultCheckout.Acquire(root);
 
@@ -43,8 +48,18 @@ internal sealed class GalleryLifetime(GalleryStore galleryStore, VaultStore vaul
     {
         ObjectDisposedException.ThrowIf(IsDisposed, this);
         var location = Current;
-        if (location.Checkout is null)
-            Volatile.Write(ref current, location with { Checkout = VaultCheckout.Acquire(location.VaultStore.Root) });
+        if (location.Checkout is not null) return;
+        var acquiredCheckout = VaultCheckout.Acquire(location.VaultStore.Root);
+        lock (publicationGate)
+        {
+            if (!IsDisposed)
+            {
+                Volatile.Write(ref current, location with { Checkout = acquiredCheckout });
+                return;
+            }
+        }
+        acquiredCheckout.Dispose();
+        throw new ObjectDisposedException(GetType().FullName);
     }
 
     internal void ReleaseCheckout()
@@ -56,8 +71,11 @@ internal sealed class GalleryLifetime(GalleryStore galleryStore, VaultStore vaul
 
     internal VaultCheckout? PublishLocation(GalleryStore nextGalleryStore, VaultStore nextVaultStore, VaultCheckout? nextCheckout)
     {
-        ObjectDisposedException.ThrowIf(IsDisposed, this);
-        var previous = Interlocked.Exchange(ref current, new(nextGalleryStore, nextVaultStore, nextCheckout));
-        return previous.Checkout;
+        lock (publicationGate)
+        {
+            ObjectDisposedException.ThrowIf(IsDisposed, this);
+            var previous = Interlocked.Exchange(ref current, new(nextGalleryStore, nextVaultStore, nextCheckout));
+            return previous.Checkout;
+        }
     }
 }

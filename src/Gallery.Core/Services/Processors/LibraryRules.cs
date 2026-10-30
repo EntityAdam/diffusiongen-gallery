@@ -7,11 +7,14 @@ internal static class LibraryRules
     public static ImageRecord ApplyEdit(ImageRecord storedImageRecord, ImageRecordEdit imageRecordEdit)
     {
         var editedImageRecord = ApplyFields(storedImageRecord, imageRecordEdit);
-        return (editedImageRecord.Rating > 0 && editedImageRecord.Rating != storedImageRecord.Rating)
-            || (editedImageRecord.IsMarkedForDeletion && !storedImageRecord.IsMarkedForDeletion)
+        return ShouldMarkReviewed(storedImageRecord, editedImageRecord)
             ? editedImageRecord with { IsReviewed = true }
             : editedImageRecord;
     }
+
+    private static bool ShouldMarkReviewed(ImageRecord storedImageRecord, ImageRecord editedImageRecord) =>
+        (editedImageRecord.Rating > 0 && editedImageRecord.Rating != storedImageRecord.Rating)
+        || (editedImageRecord.IsMarkedForDeletion && !storedImageRecord.IsMarkedForDeletion);
 
     public static string MergeTags(string existing, string additions) =>
         string.Join(", ", (existing + "," + additions).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
@@ -49,16 +52,16 @@ internal static class LibraryRules
             IsMarkedForDeletion = markedForDeletion,
             IsReviewed = markedForDeletion || imageRecordEdit.IsReviewed
         };
-    private static ImageRecord ApplyFields(ImageRecord imageRecord, ImageRecordEdit edit) => imageRecord with
+    private static ImageRecord ApplyFields(ImageRecord imageRecord, ImageRecordEdit imageRecordEdit) => imageRecord with
     {
-        Description = edit.Description,
-        UserDescription = edit.UserDescription,
-        Tags = edit.Tags,
-        AnalysisModel = edit.AnalysisModel,
-        IsFavorite = edit.IsFavorite,
-        IsMarkedForDeletion = edit.IsMarkedForDeletion,
-        Collections = edit.Collections,
-        Rating = edit.Rating,
-        IsReviewed = edit.IsReviewed
+        Description = imageRecordEdit.Description,
+        UserDescription = imageRecordEdit.UserDescription,
+        Tags = imageRecordEdit.Tags,
+        AnalysisModel = imageRecordEdit.AnalysisModel,
+        IsFavorite = imageRecordEdit.IsFavorite,
+        IsMarkedForDeletion = imageRecordEdit.IsMarkedForDeletion,
+        Collections = imageRecordEdit.Collections,
+        Rating = imageRecordEdit.Rating,
+        IsReviewed = imageRecordEdit.IsReviewed
     };
 }

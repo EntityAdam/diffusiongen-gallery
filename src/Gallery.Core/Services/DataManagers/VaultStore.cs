@@ -28,22 +28,23 @@ internal sealed class VaultStore
     private const string RecoveryPurpose = "recovery";
     private const string VaultCheckPurpose = "vault-check";
     private const string VaultCheckPlaintext = "gallery-vault";
-    private static readonly JsonSerializerOptions vaultJsonOptions = CreateVaultJsonOptions();
+    private const string EmptyHeaderMessage = "Gallery header is empty.";
+    private static readonly JsonSerializerOptions jsonSerializerOptions = CreateVaultJsonOptions();
 
-    private readonly SemaphoreSlim gate = new(1);
+    private readonly SemaphoreSlim semaphoreSlim = new(1);
     public string Root { get; }
     private string HeaderPath => Path.Combine(Root, "vault.json");
     public bool Exists => File.Exists(HeaderPath);
     public string Name => Exists
-        ? JsonSerializer.Deserialize<VaultHeader>(File.ReadAllText(HeaderPath), vaultJsonOptions)?.Name
-            ?? throw new InvalidOperationException("Gallery header is empty.")
+        ? JsonSerializer.Deserialize<VaultHeader>(File.ReadAllText(HeaderPath), jsonSerializerOptions)?.Name
+            ?? throw new InvalidOperationException(EmptyHeaderMessage)
         : "";
 
     public async Task RenameAsync(string name)
     {
-        await gate.WaitAsync();
+        await semaphoreSlim.WaitAsync();
         try { await ReplaceHeaderAsync((await ReadHeaderAsync()) with { Name = name }); }
-        finally { gate.Release(); }
+        finally { semaphoreSlim.Release(); }
     }
 
     public VaultStore(string root)
@@ -54,13 +55,13 @@ internal sealed class VaultStore
 
     public async Task CopyHeaderAsync(string destinationPath)
     {
-        await gate.WaitAsync();
+        await semaphoreSlim.WaitAsync();
         try
         {
             if (!Exists) throw new InvalidOperationException("The gallery header is missing.");
             CopyExistingHeader(destinationPath);
         }
-        finally { gate.Release(); }
+        finally { semaphoreSlim.Release(); }
     }
 
     private void CopyExistingHeader(string destinationPath) =>
@@ -68,9 +69,9 @@ internal sealed class VaultStore
 
     public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase, string name = DefaultGalleryName)
     {
-        await gate.WaitAsync();
+        await semaphoreSlim.WaitAsync();
         try { return await CreateWithOwnedKeyAsync(passphrase, name); }
-        finally { gate.Release(); }
+        finally { semaphoreSlim.Release(); }
     }
 
     private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase, string name)
@@ -78,8 +79,7 @@ internal sealed class VaultStore
         var key = RandomNumberGenerator.GetBytes(VaultKeySizeBytes);
         try
         {
-            if (Exists) throw new InvalidOperationException("A gallery already exists. Unlock it instead.");
-            Directory.CreateDirectory(Root);
+            PrepareNewVaultDirectory();
             VaultHeader vaultHeader;
             string recoveryPhrase;
             (vaultHeader, recoveryPhrase) = CreateInitialVaultHeader(key, passphrase);
@@ -91,6 +91,12 @@ internal sealed class VaultStore
             CryptographicOperations.ZeroMemory(key);
             throw;
         }
+    }
+
+    private void PrepareNewVaultDirectory()
+    {
+        if (Exists) throw new InvalidOperationException("A gallery already exists. Unlock it instead.");
+        Directory.CreateDirectory(Root);
     }
 
     public Task<byte[]> UnlockWithPassphraseAsync(string passphrase) =>
@@ -109,7 +115,7 @@ internal sealed class VaultStore
 
     public async Task ChangePassphraseAsync(byte[] key, string passphrase)
     {
-        await gate.WaitAsync();
+        await semaphoreSlim.WaitAsync();
         try
         {
             var vaultHeader = await ReadHeaderAsync();
@@ -117,7 +123,7 @@ internal sealed class VaultStore
             var keySlot = Wrap(key, passphrase, PassphrasePurpose);
             await ReplaceHeaderAsync(vaultHeader with { Passphrase = keySlot });
         }
-        finally { gate.Release(); }
+        finally { semaphoreSlim.Release(); }
     }
 
     private static void VerifyVaultKey(VaultHeader vaultHeader, byte[] key)
@@ -151,7 +157,7 @@ internal sealed class VaultStore
         Func<string, string> normalizeSecret,
         string purpose)
     {
-        await gate.WaitAsync();
+        await semaphoreSlim.WaitAsync();
         try
         {
             var vaultHeader = await ReadHeaderAsync();
@@ -159,7 +165,7 @@ internal sealed class VaultStore
             var normalizedSecret = normalizeSecret(secret);
             return UnwrapVaultKey(vaultHeader, keySlot, normalizedSecret, purpose);
         }
-        finally { gate.Release(); }
+        finally { semaphoreSlim.Release(); }
     }
 
     private static byte[] UnwrapVaultKey(VaultHeader vaultHeader, KeySlot keySlot, string secret, string purpose)
@@ -194,9 +200,9 @@ internal sealed class VaultStore
 
     private async Task<VaultHeader> LoadHeaderAsync()
     {
-        var vaultHeader = JsonSerializer.Deserialize<VaultHeader>(await File.ReadAllTextAsync(HeaderPath), vaultJsonOptions);
+        var vaultHeader = JsonSerializer.Deserialize<VaultHeader>(await File.ReadAllTextAsync(HeaderPath), jsonSerializerOptions);
         if (vaultHeader is null)
-            throw new InvalidOperationException("Gallery header is empty.");
+            throw new InvalidOperationException(EmptyHeaderMessage);
         return vaultHeader;
     }
 
@@ -245,12 +251,10 @@ internal sealed class VaultStore
         VaultHeader vaultHeader,
         Action<string, string> finalizeHeaderWrite)
     {
-        var temporaryHeaderPath = HeaderPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var temporaryHeaderPath = CreateTemporaryHeaderPath();
         try
         {
-            await File.WriteAllTextAsync(
-                temporaryHeaderPath,
-                JsonSerializer.Serialize(vaultHeader, vaultJsonOptions));
+            await WriteTemporaryHeaderAsync(temporaryHeaderPath, vaultHeader);
             finalizeHeaderWrite(temporaryHeaderPath, HeaderPath);
         }
         finally
@@ -259,6 +263,12 @@ internal sealed class VaultStore
                 File.Delete(temporaryHeaderPath);
         }
     }
+
+    private string CreateTemporaryHeaderPath() =>
+        HeaderPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+
+    private static Task WriteTemporaryHeaderAsync(string temporaryHeaderPath, VaultHeader vaultHeader) =>
+        File.WriteAllTextAsync(temporaryHeaderPath, JsonSerializer.Serialize(vaultHeader, jsonSerializerOptions));
 
     private static void MoveNewHeaderIntoPlace(string temporaryHeaderPath, string headerPath) =>
         File.Move(temporaryHeaderPath, headerPath);
@@ -269,7 +279,7 @@ internal sealed class VaultStore
     private static JsonSerializerOptions CreateVaultJsonOptions()
     {
         var jsonSerializerOptions = new JsonSerializerOptions();
-        jsonSerializerOptions.Converters.Add(new ImmutableByteArrayJsonConverter());
+        jsonSerializerOptions.Converters.Add(new JsonConverterImmutableByteArray());
         return jsonSerializerOptions;
     }
 

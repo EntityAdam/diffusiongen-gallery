@@ -13,16 +13,24 @@ internal static class DuplicateRules
     public static List<DuplicateGroup> GroupDuplicates(IReadOnlyList<ImageRecord> records,
         Func<ImageRecord, ulong> hashOf, Func<string, long?> fileLength)
     {
-        var imageHashes = records.Select(hashOf).ToArray();
-        var parentIndexes = Enumerable.Range(0, records.Count).ToArray();
+        var imageHashes = CollectImageHashes(records, hashOf);
+        var parentIndexes = CreateParentIndexes(records.Count);
         ConnectDuplicateRecords(records, imageHashes, parentIndexes);
-        var duplicateGroups = Enumerable.Range(0, parentIndexes.Length)
-            .GroupBy(index => Find(parentIndexes, index))
-            .Where(component => component.Count() > 1)
-            .Select(component => component.ToList())
+        var duplicateGroups = CollectDuplicateComponents(parentIndexes)
             .Select(componentIndexes => CreateDuplicateGroup(componentIndexes, records, imageHashes, fileLength));
         return OrderDuplicateGroups(duplicateGroups);
     }
+
+    private static ulong[] CollectImageHashes(IReadOnlyList<ImageRecord> records, Func<ImageRecord, ulong> hashOf) =>
+        records.Select(hashOf).ToArray();
+
+    private static int[] CreateParentIndexes(int recordCount) => Enumerable.Range(0, recordCount).ToArray();
+
+    private static IEnumerable<List<int>> CollectDuplicateComponents(int[] parentIndexes) =>
+        Enumerable.Range(0, parentIndexes.Length)
+            .GroupBy(index => Find(parentIndexes, index))
+            .Where(component => component.Count() > 1)
+            .Select(component => component.ToList());
 
     private static void ConnectDuplicateRecords(IReadOnlyList<ImageRecord> records, ulong[] imageHashes,
         int[] parentIndexes)
@@ -68,8 +76,10 @@ internal static class DuplicateRules
             .ThenBy(duplicateImageRecord => duplicateImageRecord.ImportedAt).ToList();
 
     private static bool AllRecordsMatchExactly(List<ImageRecord> duplicateRecords, ImageRecord imageRecord) =>
-        duplicateRecords.All(duplicateImageRecord => duplicateImageRecord.ContentSha256.Length > 0
-            && duplicateImageRecord.ContentSha256 == imageRecord.ContentSha256);
+        duplicateRecords.All(duplicateImageRecord => RecordsMatchExactly(duplicateImageRecord, imageRecord));
+
+    private static bool RecordsMatchExactly(ImageRecord candidateRecord, ImageRecord comparisonRecord) =>
+        candidateRecord.ContentSha256.Length > 0 && candidateRecord.ContentSha256 == comparisonRecord.ContentSha256;
 
     private static long CalculateReclaimableBytes(
         List<ImageRecord> orderedDuplicateRecords, Func<string, long?> fileLength) =>
@@ -81,23 +91,24 @@ internal static class DuplicateRules
             .ThenByDescending(group => group.ImageIds.Length).ToList();
 
     private static bool AreDuplicates(ImageRecord candidateRecord, ImageRecord comparisonRecord, ulong candidateHash,
-        ulong comparisonHash)
-    {
-        var recordsMatchExactly = candidateRecord.ContentSha256.Length > 0
-            && candidateRecord.ContentSha256 == comparisonRecord.ContentSha256;
-        return recordsMatchExactly || (HammingDistance(candidateHash, comparisonHash) <= Threshold
-            && SimilarShape(candidateRecord, comparisonRecord));
-    }
+        ulong comparisonHash) =>
+        RecordsMatchExactly(candidateRecord, comparisonRecord)
+        || (HammingDistance(candidateHash, comparisonHash) <= Threshold && SimilarShape(candidateRecord, comparisonRecord));
 
-    public static ImageRecord PickKeeper(IEnumerable<ImageRecord> imageRecords)
-    {
-        var orderedCandidates = imageRecords
+    public static ImageRecord PickKeeper(IEnumerable<ImageRecord> imageRecords) =>
+        FirstCandidate(RankKeeperCandidates(imageRecords));
+
+    private static IOrderedEnumerable<ImageRecord> RankKeeperCandidates(IEnumerable<ImageRecord> imageRecords) =>
+        imageRecords
             .OrderBy(imageRecord => imageRecord.IsMarkedForDeletion)
             .ThenByDescending(imageRecord => imageRecord.Rating)
             .ThenByDescending(imageRecord => imageRecord.IsFavorite)
             .ThenByDescending(imageRecord => (long)imageRecord.Width * imageRecord.Height)
             .ThenByDescending(imageRecord => imageRecord.OriginalBytes)
             .ThenBy(imageRecord => imageRecord.ImportedAt);
+
+    private static ImageRecord FirstCandidate(IEnumerable<ImageRecord> orderedCandidates)
+    {
         using var candidateEnumerator = orderedCandidates.GetEnumerator();
         if (!candidateEnumerator.MoveNext())
             throw new InvalidOperationException("Cannot choose a duplicate keeper because no media records were supplied.");

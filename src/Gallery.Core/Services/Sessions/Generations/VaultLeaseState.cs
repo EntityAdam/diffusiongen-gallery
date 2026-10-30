@@ -5,7 +5,7 @@ namespace Gallery.Core.Services.Sessions.Generations;
 internal sealed class VaultLeaseState
 {
     internal readonly object SyncRoot = new();
-    internal UnlockedVaultSession? UnlockedSession;
+    internal UnlockedVaultSession? UnlockedVaultSession;
     internal DateTimeOffset LastAccessUtc = DateTimeOffset.UtcNow;
     internal TimeSpan? InactivityTimeout;
     internal int ActiveLeases;

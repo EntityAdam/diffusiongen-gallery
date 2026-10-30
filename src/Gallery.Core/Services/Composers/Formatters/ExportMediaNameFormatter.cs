@@ -12,7 +12,8 @@ internal static class ExportMediaNameFormatter
 
     public static string SafeFileName(string name)
     {
-        var invalid = Path.GetInvalidFileNameChars();
+        // Archive entries may be extracted on any OS, so both separators are invalid regardless of host.
+        var invalid = Path.GetInvalidFileNameChars().Concat(['/', '\\']).ToArray();
         var safe = new string(name.Select(character => invalid.Contains(character) || char.IsControl(character) ? '_' : character).ToArray())
             .Trim().TrimEnd(' ', '.');
         if (safe.Length == 0) return "image";

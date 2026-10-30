@@ -22,16 +22,16 @@ internal static class PromptRules
         CollectPromptGroups(IEnumerable<ImageRecord> orderedImages)
     {
         var promptGroups = new List<(string Prompt, List<ImageRecord> Images)>();
-        var promptGroupsByPrompt = new Dictionary<string, List<ImageRecord>>(StringComparer.Ordinal);
+        var imageRecordsByPrompt = new Dictionary<string, List<ImageRecord>>(StringComparer.Ordinal);
         var imagesWithoutPrompts = new List<ImageRecord>();
         foreach (var imageRecord in orderedImages)
         {
             var prompt = imageRecord.Prompt;
             if (prompt.Length == 0) { imagesWithoutPrompts.Add(imageRecord); continue; }
-            if (!promptGroupsByPrompt.TryGetValue(prompt, out var promptGroupImages))
+            if (!imageRecordsByPrompt.TryGetValue(prompt, out var promptGroupImages))
             {
                 promptGroupImages = [];
-                promptGroupsByPrompt[prompt] = promptGroupImages;
+                imageRecordsByPrompt[prompt] = promptGroupImages;
                 promptGroups.Add((prompt, promptGroupImages));
             }
             promptGroupImages.Add(imageRecord);

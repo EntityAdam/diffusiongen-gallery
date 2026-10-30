@@ -3,18 +3,18 @@ using Azure.Core.Pipeline;
 
 namespace Gallery.Core.Services.Gateways;
 
-internal sealed class AzureBackupTarget : IBackupTarget
+internal sealed class BackupTargetAzure : IBackupTarget
 {
     private readonly BlobContainerClient blobContainerClient;
     private readonly string prefix;
 
-    internal AzureBackupTarget(string connectionString, string containerName, string prefix, HttpClient? httpClient = null)
+    internal BackupTargetAzure(string connectionString, string containerName, string prefix, HttpClient? httpClient = null)
     {
         blobContainerClient = CreateClient(connectionString, httpClient).GetBlobContainerClient(containerName);
         this.prefix = prefix;
     }
 
-    internal AzureBackupTarget(string sasUrl, string prefix = "", HttpClient? httpClient = null)
+    internal BackupTargetAzure(string sasUrl, string prefix = "", HttpClient? httpClient = null)
     {
         blobContainerClient = new BlobContainerClient(ParseContainerSasUrl(sasUrl), CreateOptions(httpClient));
         this.prefix = prefix;
@@ -49,15 +49,27 @@ internal sealed class AzureBackupTarget : IBackupTarget
 
     public async Task<IReadOnlyList<string>> ListAsync()
     {
+        var names = await ReadTopLevelArchiveNamesAsync();
+        return OrderArchiveNames(names);
+    }
+
+    private async Task<List<string>> ReadTopLevelArchiveNamesAsync()
+    {
         var names = new List<string>();
         var blobPrefix = prefix.Length == 0 ? "" : prefix + "/";
         await foreach (var blob in blobContainerClient.GetBlobsAsync(prefix: blobPrefix))
         {
             var name = blob.Name[blobPrefix.Length..];
-            if (!name.Contains('/') && name.EndsWith(".zip", StringComparison.Ordinal)) names.Add(name);
+            if (IsTopLevelArchiveName(name)) names.Add(name);
         }
-        return names.OrderDescending(StringComparer.Ordinal).ToArray();
+        return names;
     }
+
+    private static bool IsTopLevelArchiveName(string name) =>
+        !name.Contains('/') && name.EndsWith(".zip", StringComparison.Ordinal);
+
+    private static string[] OrderArchiveNames(IEnumerable<string> names) =>
+        names.OrderDescending(StringComparer.Ordinal).ToArray();
 
     public async Task<bool> ExistsAsync(string name) =>
         (await Blob(name).ExistsAsync()).Value;

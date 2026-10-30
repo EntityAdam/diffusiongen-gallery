@@ -1,5 +1,6 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services.Gateways;
+using Gallery.Core.Services.Validators;
 
 namespace Gallery.Core.Services;
 
@@ -17,9 +18,12 @@ internal sealed class VisionManager(HttpClient httpClient)
             settings.Model, settings.RequestTimeoutSeconds, description, tags, collections);
 
     public Task<GalleryFilter> InterpretSearchAsync(
-        VisionSettings settings, string query, IEnumerable<string> collections) =>
-        CreateGateway(settings).InterpretSearchAsync(
+        VisionSettings settings, string query, IEnumerable<string> collections)
+    {
+        SearchRequestValidator.Validate(query);
+        return CreateGateway(settings).InterpretSearchAsync(
             settings.Model, settings.RequestTimeoutSeconds, query, collections);
+    }
 
     public Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
         VisionSettings settings, string imageData, IEnumerable<string> collections) =>

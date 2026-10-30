@@ -71,11 +71,21 @@ public sealed partial class GalleryService
 
     private static DriveInfo FindIngestionDrive(string directory)
     {
-        var path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)) + Path.DirectorySeparatorChar;
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        return DriveInfo.GetDrives().OrderByDescending(drive => drive.Name.Length)
-            .FirstOrDefault(drive => path.StartsWith(drive.Name, comparison))
+        var path = Path.GetFullPath(directory);
+        var drives = DriveInfo.GetDrives();
+        var mountName = SelectIngestionMount(path, drives.Select(drive => drive.Name));
+        return drives.FirstOrDefault(drive => drive.Name == mountName)
             ?? new DriveInfo(Path.GetPathRoot(path) ?? throw new IOException("Cannot determine the destination drive."));
+    }
+
+    /// <summary>Selects the longest mount name that contains the path at a directory boundary.</summary>
+    internal static string? SelectIngestionMount(string fullPath, IEnumerable<string> mountNames)
+    {
+        var path = Path.TrimEndingDirectorySeparator(fullPath) + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return mountNames.OrderByDescending(name => name.Length)
+            .FirstOrDefault(name => name.Length > 0 && path.StartsWith(name, comparison)
+                && (Path.EndsInDirectorySeparator(name) || path[name.Length] == Path.DirectorySeparatorChar));
     }
 
     private static (string Name, long AvailableBytes) ReadIngestionDiskSpace(string directory)

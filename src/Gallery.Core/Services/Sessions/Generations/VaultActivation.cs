@@ -5,31 +5,33 @@ namespace Gallery.Core.Services.Sessions.Generations;
 internal sealed class VaultActivation
     : IDisposable
 {
-    private readonly UnlockedVaultSession preparedSession;
+    private readonly UnlockedVaultSession unlockedVaultSession;
     private readonly VaultLeaseState vaultLeaseState;
-    private bool committed;
-    private bool disposed;
+    private bool activationIsCommitted;
+    private bool activationIsDisposed;
 
     internal VaultActivation(byte[] key, VaultLeaseState vaultLeaseState)
     {
         this.vaultLeaseState = vaultLeaseState;
-        preparedSession = new UnlockedVaultSession(key, vaultLeaseState);
+        unlockedVaultSession = new UnlockedVaultSession(key, vaultLeaseState);
     }
+
+    private bool ActivationIsFinished => activationIsCommitted || activationIsDisposed;
 
     internal void Commit()
     {
-        if (committed || disposed) return;
-        vaultLeaseState.UnlockedSession?.Revoke();
-        vaultLeaseState.UnlockedSession = preparedSession;
+        if (ActivationIsFinished) return;
+        vaultLeaseState.UnlockedVaultSession?.Revoke();
+        vaultLeaseState.UnlockedVaultSession = unlockedVaultSession;
         vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
-        committed = true;
+        activationIsCommitted = true;
     }
 
     public void Dispose()
     {
-        if (disposed) return;
-        disposed = true;
-        if (!committed) preparedSession.Revoke();
+        if (activationIsDisposed) return;
+        activationIsDisposed = true;
+        if (!activationIsCommitted) unlockedVaultSession.Revoke();
         Monitor.Exit(vaultLeaseState.SyncRoot);
     }
 }

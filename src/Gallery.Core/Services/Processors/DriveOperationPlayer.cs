@@ -23,7 +23,7 @@ internal sealed class DriveOperationPlayer : IDisposable
 {
     private readonly Func<IDriveOperationSession?> openSession;
     private readonly Func<Task<DriveQueueCounts>> readCounts;
-    private readonly PlayerLifetime lifetime = new();
+    private readonly PlayerLifetime playerLifetime = new();
 
     internal DriveOperationPlayer(Func<IDriveOperationSession?> openSession, Func<Task<DriveQueueCounts>> readCounts)
     {
@@ -33,58 +33,61 @@ internal sealed class DriveOperationPlayer : IDisposable
 
     public event Action? Changed
     {
-        add { lock (lifetime.Gate) lifetime.Changed += value; }
-        remove { lock (lifetime.Gate) lifetime.Changed -= value; }
+        add { lock (playerLifetime.Gate) playerLifetime.Changed += value; }
+        remove { lock (playerLifetime.Gate) playerLifetime.Changed -= value; }
     }
 
-    public DriveQueueStatus Status { get { lock (lifetime.Gate) return lifetime.driveQueueStatus; } }
-    public bool IsPaused { get { lock (lifetime.Gate) return lifetime.Paused; } }
+    public DriveQueueStatus Status { get { lock (playerLifetime.Gate) return playerLifetime.driveQueueStatus; } }
+    public bool IsPaused { get { lock (playerLifetime.Gate) return playerLifetime.Paused; } }
 
     public void Start() => StartLoopIfEligible();
 
     private void StartLoopIfEligible()
     {
-        lock (lifetime.Gate)
+        lock (playerLifetime.Gate)
         {
-            if (lifetime.Disposed || lifetime.Paused) return;
-            var previous = lifetime.Run;
-            if (previous?.Running == true)
+            if (playerLifetime.Disposed || playerLifetime.Paused) return;
+            var playerRun = playerLifetime.PlayerRun;
+            if (playerRun?.Running == true)
             {
-                if (previous.cancellationTokenSource.IsCancellationRequested)
-                    previous.RestartRequested = true;
+                if (playerRun.cancellationTokenSource.IsCancellationRequested)
+                    playerRun.RestartAfterCancellation = true;
                 else
-                    previous.Rerun = true;
-                previous.taskCompletionSource.TrySetResult();
+                    playerRun.Rerun = true;
+                playerRun.taskCompletionSource.TrySetResult();
                 return;
             }
-            if (previous?.Failure is { } failure && !previous.FaultObserved)
+            if (playerRun?.Failure is { } failure && !playerRun.FaultObserved)
                 failure.Throw();
-            var run = new PlayerRun();
-            lifetime.Run = run;
-            run.task = Task.Run(() => RunAsync(run));
+            StartReplacementRun();
         }
+    }
+
+    // Caller holds PlayerLifetime.Gate.
+    private void StartReplacementRun()
+    {
+        var playerRun = new PlayerRun();
+        playerLifetime.PlayerRun = playerRun;
+        playerRun.task = Task.Run(() => RunAsync(playerRun));
     }
 
     public async Task PauseAsync()
     {
-        lock (lifetime.Gate) lifetime.Paused = true;
+        SetPaused(true);
         await CancelLoopAsync();
         await RefreshAsync();
     }
 
     public void Resume()
     {
-        lock (lifetime.Gate) lifetime.Paused = false;
+        SetPaused(false);
         Start();
     }
 
     public async Task StopAsync()
     {
-        var run = await CancelLoopAsync();
-        lock (lifetime.Gate)
-        {
-            if (run is not null) run.Completed = 0;
-        }
+        var playerRun = await CancelLoopAsync();
+        ResetCompletedCount(playerRun);
     }
 
     /// <summary>Includes final refresh and session release; failure is never converted into successful idle.</summary>
@@ -94,13 +97,12 @@ internal sealed class DriveOperationPlayer : IDisposable
     {
         while (true)
         {
-            PlayerRun? run;
-            lock (lifetime.Gate) run = lifetime.Run;
-            if (run is null) return;
-            await ObserveAsync(run);
-            lock (lifetime.Gate)
+            var playerRun = ReadCurrentRun();
+            if (playerRun is null) return;
+            await ObserveAsync(playerRun);
+            lock (playerLifetime.Gate)
             {
-                if (!run.Running && ReferenceEquals(run, lifetime.Run)) return;
+                if (!playerRun.Running && ReferenceEquals(playerRun, playerLifetime.PlayerRun)) return;
             }
         }
     }
@@ -108,69 +110,86 @@ internal sealed class DriveOperationPlayer : IDisposable
     public async Task RefreshAsync()
     {
         var driveQueueCounts = await readCounts();
-        PlayerRun? run;
-        lock (lifetime.Gate) run = lifetime.Run;
-        Publish(run, driveQueueCounts, null);
+        Publish(ReadCurrentRun(), driveQueueCounts, null);
     }
 
-    public void Dispose()
+    public void Dispose() => CancelForDisposal();
+
+    private void SetPaused(bool paused)
     {
-        lock (lifetime.Gate)
+        lock (playerLifetime.Gate) playerLifetime.Paused = paused;
+    }
+
+    private void ResetCompletedCount(PlayerRun? playerRun)
+    {
+        lock (playerLifetime.Gate)
         {
-            lifetime.Disposed = true;
-            if (lifetime.Run is { Running: true } run)
-            {
-                run.cancellationTokenSource.Cancel();
-                run.taskCompletionSource.TrySetResult();
-            }
+            if (playerRun is not null) playerRun.Completed = 0;
+        }
+    }
+
+    private PlayerRun? ReadCurrentRun()
+    {
+        lock (playerLifetime.Gate) return playerLifetime.PlayerRun;
+    }
+
+    private void CancelForDisposal()
+    {
+        lock (playerLifetime.Gate)
+        {
+            playerLifetime.Disposed = true;
+            if (playerLifetime.PlayerRun is { Running: true } playerRun) CancelRun(playerRun);
         }
     }
 
     private async Task<PlayerRun?> CancelLoopAsync()
     {
-        PlayerRun? run;
-        lock (lifetime.Gate)
+        PlayerRun? playerRun;
+        lock (playerLifetime.Gate)
         {
-            run = lifetime.Run;
-            if (run?.Running == true)
-            {
-                run.RestartRequested = false;
-                run.cancellationTokenSource.Cancel();
-                run.taskCompletionSource.TrySetResult();
-            }
+            playerRun = playerLifetime.PlayerRun;
+            if (playerRun?.Running == true) CancelRun(playerRun);
         }
-        if (run is not null) await ObserveAsync(run);
-        return run;
+        if (playerRun is not null) await ObserveAsync(playerRun);
+        return playerRun;
     }
 
-    private async Task ObserveAsync(PlayerRun run)
+    // Caller holds PlayerLifetime.Gate; a later cancellation supersedes any start that arrived while stopping.
+    private static void CancelRun(PlayerRun playerRun)
     {
-        try { await run.task; }
+        playerRun.RestartAfterCancellation = false;
+        playerRun.cancellationTokenSource.Cancel();
+        playerRun.taskCompletionSource.TrySetResult();
+    }
+
+    private async Task ObserveAsync(PlayerRun playerRun)
+    {
+        try { await playerRun.task; }
         finally
         {
-            if (run.task.IsFaulted)
+            if (playerRun.task.IsFaulted)
             {
-                lock (lifetime.Gate) run.FaultObserved = true;
+                lock (playerLifetime.Gate) playerRun.FaultObserved = true;
             }
         }
     }
 
-    private async Task RunAsync(PlayerRun run)
+    private async Task RunAsync(PlayerRun playerRun)
     {
         try
         {
             while (true)
             {
-                lock (lifetime.Gate) run.Rerun = false;
-                var counts = await RunBoundSessionAsync(run);
+                lock (playerLifetime.Gate) playerRun.Rerun = false;
+                var driveQueueCounts = await RunBoundSessionAsync(playerRun);
                 DriveQueueState idleState;
-                lock (lifetime.Gate) idleState = lifetime.Paused ? DriveQueueState.Paused : DriveQueueState.Idle;
-                Publish(run, counts, null, idleState);
-                lock (lifetime.Gate)
+                lock (playerLifetime.Gate) idleState = playerLifetime.Paused ? DriveQueueState.Paused : DriveQueueState.Idle;
+                Publish(playerRun, driveQueueCounts, null, idleState);
+                lock (playerLifetime.Gate)
                 {
-                    if (run.Rerun && !run.cancellationTokenSource.IsCancellationRequested) continue;
-                    run.Running = false;
-                    if (run.RestartRequested && ReferenceEquals(run, lifetime.Run))
+                    if (playerRun.Rerun && !playerRun.cancellationTokenSource.IsCancellationRequested) continue;
+                    playerRun.Running = false;
+                    if (playerRun.RestartAfterCancellation && ReferenceEquals(playerRun, playerLifetime.PlayerRun))
                         StartLoopIfEligible();
                     return;
                 }
@@ -178,74 +197,86 @@ internal sealed class DriveOperationPlayer : IDisposable
         }
         catch (Exception exception)
         {
-            // Publish the failed run's state and preserve the original exception for every observing boundary.
-            lock (lifetime.Gate)
-            {
-                run.Failure = ExceptionDispatchInfo.Capture(exception);
-                run.Faulted = true;
-                run.Running = false;
-                if (ReferenceEquals(run, lifetime.Run))
-                    lifetime.driveQueueStatus = lifetime.driveQueueStatus with { State = DriveQueueState.Faulted, Completed = run.Completed };
-            }
+            PublishFault(playerRun, exception);
             throw;
         }
-        finally { run.cancellationTokenSource.Dispose(); }
+        finally { playerRun.cancellationTokenSource.Dispose(); }
     }
 
-    private async Task<DriveQueueCounts> RunBoundSessionAsync(PlayerRun run)
+    private void PublishFault(PlayerRun playerRun, Exception exception)
+    {
+        Action? changed = null;
+        lock (playerLifetime.Gate)
+        {
+            playerRun.Failure = ExceptionDispatchInfo.Capture(exception);
+            playerRun.Faulted = true;
+            playerRun.Running = false;
+            if (ReferenceEquals(playerRun, playerLifetime.PlayerRun))
+            {
+                playerLifetime.driveQueueStatus = playerLifetime.driveQueueStatus with { State = DriveQueueState.Faulted, Completed = playerRun.Completed };
+                changed = playerLifetime.Changed;
+            }
+        }
+        changed?.Invoke();
+    }
+
+    private async Task<DriveQueueCounts> RunBoundSessionAsync(PlayerRun playerRun)
     {
         using var driveOperationSession = openSession();
         if (driveOperationSession is null) return await readCounts();
-        while (!run.cancellationTokenSource.IsCancellationRequested)
+        while (!playerRun.cancellationTokenSource.IsCancellationRequested)
         {
-            lock (lifetime.Gate)
+            lock (playerLifetime.Gate)
             {
-                run.Rerun = false;
-                if (run.taskCompletionSource.Task.IsCompleted)
-                    run.taskCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                playerRun.Rerun = false;
+                if (playerRun.taskCompletionSource.Task.IsCompleted)
+                    playerRun.taskCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
             }
-            var driveBatchReport = await driveOperationSession.PlayBatchAsync(run.cancellationTokenSource.Token);
-            lock (lifetime.Gate) run.Completed += driveBatchReport.Done;
+            var driveBatchReport = await driveOperationSession.PlayBatchAsync(playerRun.cancellationTokenSource.Token);
+            lock (playerLifetime.Gate) playerRun.Completed += driveBatchReport.Done;
             var driveQueueCounts = await readCounts();
             if (driveBatchReport.Played > 0)
             {
-                Publish(run, driveQueueCounts, driveBatchReport.Activity, DriveQueueState.Running);
+                Publish(playerRun, driveQueueCounts, driveBatchReport.Activity, DriveQueueState.Running);
                 continue;
             }
             if (driveQueueCounts.NextDue is long due)
             {
-                Publish(run, driveQueueCounts, "Waiting to retry", DriveQueueState.Waiting);
+                Publish(playerRun, driveQueueCounts, "Waiting to retry", DriveQueueState.Waiting);
                 var delay = TimeSpan.FromMilliseconds(Math.Max(10, due - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
                 Task wakeTask;
-                lock (lifetime.Gate) wakeTask = run.taskCompletionSource.Task;
-                await Task.WhenAny(Task.Delay(delay, run.cancellationTokenSource.Token), wakeTask);
+                lock (playerLifetime.Gate) wakeTask = playerRun.taskCompletionSource.Task;
+                await Task.WhenAny(Task.Delay(delay, playerRun.cancellationTokenSource.Token), wakeTask);
                 continue;
             }
-            lock (lifetime.Gate)
+            lock (playerLifetime.Gate)
             {
-                if (run.Rerun) continue;
+                if (playerRun.Rerun) continue;
             }
             return driveQueueCounts;
         }
         return await readCounts();
     }
 
-    private void Publish(PlayerRun? run, DriveQueueCounts driveQueueCounts, string? activity, DriveQueueState? state = null)
+    private void Publish(PlayerRun? playerRun, DriveQueueCounts driveQueueCounts, string? activity, DriveQueueState? state = null)
     {
         Action? changed;
-        lock (lifetime.Gate)
+        lock (playerLifetime.Gate)
         {
-            if (!ReferenceEquals(run, lifetime.Run)) return;
-            var effective = state ?? (run?.Faulted == true ? DriveQueueState.Faulted
-                : lifetime.Paused ? DriveQueueState.Paused
-                : run?.Running == true ? DriveQueueState.Running : DriveQueueState.Idle);
-            var completed = run?.Completed ?? 0;
-            if (driveQueueCounts.Pending == 0 && driveQueueCounts.Failed == 0 && effective == DriveQueueState.Idle) completed = 0;
-            lifetime.driveQueueStatus = new(effective, driveQueueCounts.Pending, driveQueueCounts.Failed, completed, activity ?? "");
-            changed = lifetime.Changed;
+            if (!ReferenceEquals(playerRun, playerLifetime.PlayerRun)) return;
+            var effective = state ?? (playerRun?.Faulted == true ? DriveQueueState.Faulted
+                : playerLifetime.Paused ? DriveQueueState.Paused
+                : playerRun?.Running == true ? DriveQueueState.Running : DriveQueueState.Idle);
+            var completed = playerRun?.Completed ?? 0;
+            if (ShouldResetCompletedCount(driveQueueCounts, effective)) completed = 0;
+            playerLifetime.driveQueueStatus = new(effective, driveQueueCounts.Pending, driveQueueCounts.Failed, completed, activity ?? "");
+            changed = playerLifetime.Changed;
         }
         changed?.Invoke();
     }
+
+    private static bool ShouldResetCompletedCount(DriveQueueCounts driveQueueCounts, DriveQueueState effective) =>
+        driveQueueCounts.Pending == 0 && driveQueueCounts.Failed == 0 && effective == DriveQueueState.Idle;
 
     // Private resource state: only this player accesses these members, always under PlayerLifetime.Gate.
     // A run owns its token until its task finishes. Counters, wake/rerun flags and faults never transfer.
@@ -256,7 +287,7 @@ internal sealed class DriveOperationPlayer : IDisposable
         internal TaskCompletionSource taskCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool Running = true;
         internal bool Rerun;
-        internal bool RestartRequested;
+        internal bool RestartAfterCancellation;
         internal bool Faulted;
         internal bool FaultObserved;
         internal ExceptionDispatchInfo? Failure;
@@ -267,7 +298,7 @@ internal sealed class DriveOperationPlayer : IDisposable
     private sealed class PlayerLifetime
     {
         internal readonly object Gate = new();
-        internal PlayerRun? Run;
+        internal PlayerRun? PlayerRun;
         internal bool Paused;
         internal bool Disposed;
         internal DriveQueueStatus driveQueueStatus = DriveQueueStatus.Empty;

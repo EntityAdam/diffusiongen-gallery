@@ -5,8 +5,8 @@ namespace Gallery.Core.Services.DataManagers.Models;
 
 internal sealed record ImportCatalogEntry(ImageRecord Record, ImmutableArray<byte> EncryptedThumbnail)
 {
-    public ImportCatalogEntry(ImageRecord record, byte[] encryptedThumbnail)
-        : this(record, ImmutableArray.CreateRange(encryptedThumbnail)) { }
+    public ImportCatalogEntry(ImageRecord imageRecord, byte[] encryptedThumbnail)
+        : this(imageRecord,  ImmutableArray.CreateRange(encryptedThumbnail)) { }
 }
 
 internal sealed record ImportCommitResult(ImmutableArray<string> ImportedIds, ImmutableArray<string> DuplicateIds);

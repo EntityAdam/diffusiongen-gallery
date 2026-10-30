@@ -6,11 +6,22 @@ internal static class RecoveryPhraseValidator
 {
     public static string Normalize(string phrase)
     {
-        var words = (phrase ?? "").ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length != RecoveryPhraseWords.Count || !words.All(IsValidWord))
-            throw new InvalidOperationException($"Recovery requires all {RecoveryPhraseWords.Count} compound words in their original order.");
+        var words = ParseWords(phrase);
+        ValidatePhrase(words);
         return string.Join(' ', words);
     }
+
+    private static string[] ParseWords(string phrase) =>
+        (phrase ?? "").ToLowerInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+    private static void ValidatePhrase(string[] words)
+    {
+        if (!IsValidPhrase(words))
+            throw new InvalidOperationException($"Recovery requires all {RecoveryPhraseWords.Count} compound words in their original order.");
+    }
+
+    private static bool IsValidPhrase(string[] words) =>
+        words.Length == RecoveryPhraseWords.Count && words.All(IsValidWord);
 
     private static bool IsValidWord(string word)
     {

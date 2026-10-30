@@ -103,6 +103,7 @@ public sealed partial class GalleryService
         VaultCheckout? destinationCheckout = null;
         string? staging = null;
         var published = false;
+        var lockRequestsAtStart = 0L;
         try
         {
             EnsureCheckout();
@@ -110,6 +111,7 @@ public sealed partial class GalleryService
             RequireEmptyDestination(destination);
             destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
             RequireEmptyDestination(destination);
+            lockRequestsAtStart = ReadExplicitLockRequests();
             key = vaultSession.Key;
             await StopDriveOperationPlayerAsync();
             await vaultSession.LockAndDrainAsync();
@@ -151,7 +153,7 @@ public sealed partial class GalleryService
             // Until publication, the original vault remains intact and can be unlocked again.
             if (published)
                 throw new IOException($"The gallery was moved to '{destination}', but old-location cleanup or history persistence failed. The verified destination is intact; inspect the original location before removing any remaining files.", exception);
-            if (!published && key is not null && !galleryLifetime.IsDisposed) vaultSession.Unlock(key);
+            RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
         finally

@@ -28,15 +28,22 @@ internal static class GalleryStoreCommandFactory
 
     public static SqliteCommand CreateReadFingerprintRows(SqliteConnection sqliteConnection, string table, string excludedSettingId)
     {
-        var quotedTable = "\"" + table.Replace("\"", "\"\"") + "\"";
-        var sql = table == "settings"
-            ? $"SELECT * FROM {quotedTable} WHERE id <> $excluded ORDER BY rowid"
-            : $"SELECT * FROM {quotedTable} ORDER BY rowid";
-        var sqliteCommand = CreateCommand(sqliteConnection, sql);
+        var sqliteCommand = CreateCommand(sqliteConnection, CreateReadFingerprintRowsSql(table));
         if (table == "settings")
             sqliteCommand.Parameters.Add("$excluded", SqliteType.Text, excludedSettingId.Length).Value = excludedSettingId;
         return sqliteCommand;
     }
+
+    private static string CreateReadFingerprintRowsSql(string table)
+    {
+        var quotedTable = QuoteIdentifier(table);
+        return table == "settings"
+            ? $"SELECT * FROM {quotedTable} WHERE id <> $excluded ORDER BY rowid"
+            : $"SELECT * FROM {quotedTable} ORDER BY rowid";
+    }
+
+    private static string QuoteIdentifier(string identifier) =>
+        "\"" + identifier.Replace("\"", "\"\"") + "\"";
 
     public static SqliteCommand CreateReadVerification(SqliteConnection sqliteConnection, string id)
     {

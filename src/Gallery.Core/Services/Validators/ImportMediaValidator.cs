@@ -36,8 +36,13 @@ internal static class ImportMediaValidator
     {
         if (!probeResult.FormatName.Split(',').Any(format => format is "mp4" or "mov"))
             throw new InvalidOperationException("File is not a valid MP4 video.");
-        if (probeResult.Width <= 0 || probeResult.Height <= 0) throw new InvalidOperationException("No video stream was found.");
-        if (probeResult.Width > MaxMediaDimensionPixels || probeResult.Height > MaxMediaDimensionPixels)
+        if (!HasVideoStream(probeResult.Width, probeResult.Height)) throw new InvalidOperationException("No video stream was found.");
+        if (ExceedsSupportedVideoDimensions(probeResult.Width, probeResult.Height))
             throw new InvalidOperationException("Video exceeds the 16384 pixel dimension limit.");
     }
+
+    private static bool HasVideoStream(int width, int height) => width > 0 && height > 0;
+
+    private static bool ExceedsSupportedVideoDimensions(int width, int height) =>
+        width > MaxMediaDimensionPixels || height > MaxMediaDimensionPixels;
 }

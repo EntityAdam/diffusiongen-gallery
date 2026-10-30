@@ -16,7 +16,9 @@ internal static class PerceptualHashBatchProcessor
         var computedHashes = new PerceptualHash[imageThumbnails.Count];
         Parallel.For(0, imageThumbnails.Count, index =>
         {
-            var (imageRecord, imageThumbnail) = imageThumbnails[index];
+            ImageRecord imageRecord;
+            ImageThumbnail imageThumbnail;
+            (imageRecord, imageThumbnail) = imageThumbnails[index];
             try
             {
                 computedHashes[index] = new(imageRecord.ContentSha256,

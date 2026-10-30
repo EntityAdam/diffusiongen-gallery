@@ -6,10 +6,10 @@ internal static class SourceFingerprintValidator
     {
         byte[] hash;
         try { hash = Convert.FromHexString(sourceSha256); }
-        catch (FormatException exception)
+        catch (FormatException formatException)
         {
             throw new InvalidOperationException(
-                $"Source SHA-256 value '{sourceSha256}' must contain exactly 64 hexadecimal characters.", exception);
+                $"Source SHA-256 value '{sourceSha256}' must contain exactly 64 hexadecimal characters.", formatException);
         }
         if (hash.Length != 32)
             throw new InvalidOperationException($"Source SHA-256 value '{sourceSha256}' must contain exactly 64 hexadecimal characters.");

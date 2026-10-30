@@ -10,23 +10,32 @@ internal static class DriveOperationProcessor
 {
     public static byte[] PathFingerprint(byte[] key, string path) => VaultCrypto.PathFingerprint(key, path);
 
-    public static NewDriveOperation Create(string kind, string path, string? imageId, byte[] key, bool recursive = false)
+    public static NewDriveOperation Create(string kind, string path, string? imageId, byte[] key, bool operationIsRecursive = false)
     {
         var target = VaultCrypto.PathFingerprint(key, path);
-        var plaintext = JsonSerializer.SerializeToUtf8Bytes(new DriveOperationPayload(path, recursive));
-        try
-        {
-            var payload = VaultCrypto.Encrypt(plaintext, key, $"drive-operation:{kind}:{Convert.ToHexString(target)}");
-            return new(kind, target, imageId, payload);
-        }
+        var payload = ProtectPayload(new DriveOperationPayload(path, operationIsRecursive), key, PayloadPurpose(kind, target));
+        return new(kind, target, imageId, payload);
+    }
+
+    public static DriveOperationPayload Read(DriveOperation driveOperation, byte[] key)
+    {
+        VaultEnvelopeValidator.Validate(driveOperation.Payload.AsSpan(), $"drive operation payload '{driveOperation.Sequence}'");
+        return UnprotectPayload(driveOperation.Payload.AsSpan(), key, PayloadPurpose(driveOperation.Kind, driveOperation.Target.AsSpan()));
+    }
+
+    private static string PayloadPurpose(string kind, ReadOnlySpan<byte> target) =>
+        $"drive-operation:{kind}:{Convert.ToHexString(target)}";
+
+    private static byte[] ProtectPayload(DriveOperationPayload driveOperationPayload, byte[] key, string purpose)
+    {
+        var plaintext = JsonSerializer.SerializeToUtf8Bytes(driveOperationPayload);
+        try { return VaultCrypto.Encrypt(plaintext, key, purpose); }
         finally { CryptographicOperations.ZeroMemory(plaintext); }
     }
 
-    public static DriveOperationPayload Read(DriveOperation operation, byte[] key)
+    private static DriveOperationPayload UnprotectPayload(ReadOnlySpan<byte> payload, byte[] key, string purpose)
     {
-        VaultEnvelopeValidator.Validate(operation.Payload.AsSpan(), $"drive operation payload '{operation.Sequence}'");
-        var plaintext = VaultCrypto.Decrypt(operation.Payload.AsSpan(), key,
-            $"drive-operation:{operation.Kind}:{Convert.ToHexString(operation.Target.AsSpan())}");
+        var plaintext = VaultCrypto.Decrypt(payload, key, purpose);
         try { return JsonSerializer.Deserialize<DriveOperationPayload>(plaintext) ?? throw new InvalidOperationException("Drive operation payload is empty."); }
         finally { CryptographicOperations.ZeroMemory(plaintext); }
     }

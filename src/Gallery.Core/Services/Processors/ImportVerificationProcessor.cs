@@ -7,20 +7,35 @@ namespace Gallery.Core.Services.Processors;
 
 internal static class ImportVerificationProcessor
 {
-    public static void Verify(ImageRecord record, ReadOnlySpan<byte> thumbnail, byte[] plain)
+    public static void Verify(ImageRecord imageRecord, ReadOnlySpan<byte> thumbnail, byte[] plain)
     {
         try
         {
-            if (record.ContentSha256.Length == 0 || Convert.ToHexString(SHA256.HashData(plain)) != record.ContentSha256)
-                throw new CryptographicException("Saved file did not match the imported content.");
-            if (!record.IsVideo)
-            {
-                var imageInfo = Image.Identify(plain);
-                if (imageInfo.Width != record.Width || imageInfo.Height != record.Height)
-                    throw new CryptographicException("Saved media dimensions did not match the catalog.");
-            }
-            Image.Identify(thumbnail);
+            VerifyContentHash(imageRecord, plain);
+            VerifyImageDimensions(imageRecord, plain);
+            VerifyThumbnail(thumbnail);
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
+
+    private static void VerifyContentHash(ImageRecord imageRecord, byte[] plain)
+    {
+        if (!SavedContentMatches(imageRecord, plain))
+            throw new CryptographicException("Saved file did not match the imported content.");
+    }
+
+    private static bool SavedContentMatches(ImageRecord imageRecord, byte[] plain) =>
+        imageRecord.ContentSha256.Length > 0 && Convert.ToHexString(SHA256.HashData(plain)) == imageRecord.ContentSha256;
+
+    private static void VerifyImageDimensions(ImageRecord imageRecord, byte[] plain)
+    {
+        if (imageRecord.IsVideo) return;
+        if (!DimensionsMatch(Image.Identify(plain), imageRecord))
+            throw new CryptographicException("Saved media dimensions did not match the catalog.");
+    }
+
+    private static bool DimensionsMatch(ImageInfo imageInfo, ImageRecord imageRecord) =>
+        imageInfo.Width == imageRecord.Width && imageInfo.Height == imageRecord.Height;
+
+    private static void VerifyThumbnail(ReadOnlySpan<byte> thumbnail) => Image.Identify(thumbnail);
 }

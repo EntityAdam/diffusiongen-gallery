@@ -378,26 +378,26 @@ internal sealed class VideoTools
         return memoryStream.ToArray();
     }
 
-    internal static async Task<string> ReadBoundedStandardErrorAsync(TextReader reader, CancellationToken cancellationToken)
+    internal static async Task<string> ReadBoundedStandardErrorAsync(TextReader textReader, CancellationToken cancellationToken)
     {
-        var captured = new StringBuilder(MaxStandardErrorCharacters);
+        var stringBuilder = new StringBuilder(MaxStandardErrorCharacters);
         var chunk = new char[4096];
         int read;
-        while ((read = await reader.ReadAsync(chunk, cancellationToken)) > 0)
+        while ((read = await textReader.ReadAsync(chunk, cancellationToken)) > 0)
         {
             if (read >= MaxStandardErrorCharacters)
             {
-                captured.Clear();
-                captured.Append(chunk, read - MaxStandardErrorCharacters, MaxStandardErrorCharacters);
+                stringBuilder.Clear();
+                stringBuilder.Append(chunk, read - MaxStandardErrorCharacters, MaxStandardErrorCharacters);
             }
             else
             {
-                int excess = captured.Length + read - MaxStandardErrorCharacters;
-                if (excess > 0) captured.Remove(0, excess);
-                captured.Append(chunk, 0, read);
+                int excess = stringBuilder.Length + read - MaxStandardErrorCharacters;
+                if (excess > 0) stringBuilder.Remove(0, excess);
+                stringBuilder.Append(chunk, 0, read);
             }
         }
-        return captured.ToString();
+        return stringBuilder.ToString();
     }
 
     private readonly record struct VideoStreamMetadata(int Width, int Height, double? DurationSeconds, int StreamIndex);

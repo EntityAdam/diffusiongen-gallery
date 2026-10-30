@@ -10,6 +10,16 @@ internal static class GalleryRecordUpdater
     public static async Task<List<ImageRecord>> UpdateBatchAsync(
         IReadOnlyList<string> ids, Func<string, Task<ImageRecord>> update)
     {
+        List<ImageRecord> records;
+        List<Exception> failures;
+        (records, failures) = await UpdateRecordsAsync(ids, update);
+        ThrowFailures(failures);
+        return records;
+    }
+
+    private static async Task<(List<ImageRecord> Records, List<Exception> Failures)> UpdateRecordsAsync(
+        IReadOnlyList<string> ids, Func<string, Task<ImageRecord>> update)
+    {
         var records = new List<ImageRecord>(ids.Count);
         var failures = new List<Exception>();
         foreach (var id in ids)
@@ -20,8 +30,7 @@ internal static class GalleryRecordUpdater
                 failures.Add(new InvalidOperationException($"Could not update gallery record '{id}'.", exception));
             }
         }
-        ThrowFailures(failures);
-        return records;
+        return (records, failures);
     }
 
     private static void ThrowFailures(List<Exception> failures)

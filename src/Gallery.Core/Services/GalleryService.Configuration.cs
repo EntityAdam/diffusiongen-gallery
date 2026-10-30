@@ -19,6 +19,7 @@ public sealed partial class GalleryService
         VaultCheckout? destinationCheckout = null;
         string? staging = null;
         var published = false;
+        var lockRequestsAtStart = 0L;
         try
         {
             EnsureCheckout();
@@ -26,6 +27,7 @@ public sealed partial class GalleryService
             RequireEmptyDestination(destination);
             destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
             RequireEmptyDestination(destination);
+            lockRequestsAtStart = ReadExplicitLockRequests();
             key = vaultSession.Key;
             await StopDriveOperationPlayerAsync();
             await vaultSession.LockAndDrainAsync();
@@ -62,7 +64,7 @@ public sealed partial class GalleryService
         {
             if (published)
                 throw new IOException($"The local catalog is intact at '{destination}', but old catalog cleanup or history persistence failed. Media files were not moved.", exception);
-            if (key is not null && !galleryLifetime.IsDisposed) vaultSession.Unlock(key);
+            RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
         finally

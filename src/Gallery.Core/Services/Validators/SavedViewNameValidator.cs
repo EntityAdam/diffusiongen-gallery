@@ -10,7 +10,7 @@ internal static class SavedViewNameValidator
 
     public static void Validate(string name)
     {
-        if (name.Length < MinimumNameLength || name.Length > MaximumNameLength)
+        if (!HasSupportedLength(name))
             throw new InvalidSavedViewNameException(
                 $"Saved view name '{name}' must have {MinimumNameLength} to {MaximumNameLength} characters.",
                 GalleryLogEvent.ValidateSavedViewName, new ContextualData(ImmutableDictionary<string, object>.Empty
@@ -18,4 +18,7 @@ internal static class SavedViewNameValidator
                     .Add("SavedView.MinimumNameLength", MinimumNameLength)
                     .Add("SavedView.MaximumNameLength", MaximumNameLength)));
     }
+
+    private static bool HasSupportedLength(string name) =>
+        name.Length is >= MinimumNameLength and <= MaximumNameLength;
 }
