@@ -126,6 +126,8 @@ public sealed partial class GalleryService
     /// <summary>Schedules the one-time scan that seeds the media index; later loads read the index instead of the drive.</summary>
     private async Task ScheduleMediaIndexAsync(IReadOnlyCollection<ImageRecord> records, byte[] key)
     {
+        var activity = System.Diagnostics.Activity.Current is { OperationName: "gallery.load" } load ? load : null;
+        activity?.SetTag("gallery.load.media_index_scheduled", false);
         if (await galleryStore.ReadSettingsAsync<MediaIndexMarker>(MediaIndexId, MediaIndexPurpose, key) is not null) return;
         var imageRoot = ImageRoot(vaultStore.Root);
         var scans = new List<NewDriveOperation> { CreateDriveOperation(DriveOperationKind.ScanDirectory, imageRoot, null, key, recursive: true) };
@@ -133,6 +135,7 @@ public sealed partial class GalleryService
             .Select(directory => CreateDriveOperation(DriveOperationKind.ScanDirectory, directory, null, key)));
         await galleryStore.EnqueueDriveOperationsAsync(scans);
         await galleryStore.SaveSettingsAsync(new MediaIndexMarker(DateTimeOffset.UtcNow), MediaIndexId, MediaIndexPurpose, key);
+        activity?.SetTag("gallery.load.media_index_scheduled", true);
     }
 
     private async Task<bool> IsMediaIndexPendingAsync(byte[] key) =>

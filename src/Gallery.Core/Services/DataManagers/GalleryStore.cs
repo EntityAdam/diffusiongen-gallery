@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Gallery.Core.Services.Processors.Validators;
 using Gallery.Core.Services.Processors.Codecs;
 using Gallery.Core.Services.Processors;
@@ -53,12 +54,20 @@ internal sealed partial class GalleryStore(string databasePath)
 
     private async Task<SqliteConnection> OpenAsync(SqliteOpenMode sqliteOpenMode)
     {
+        var openStarted = CatalogMetrics.ConnectionDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
         var sqliteConnection = await OpenConnectionAsync(databasePath, sqliteOpenMode);
+        CatalogMetrics.ConnectionOpens.Add(1);
         try
         {
             await ConfigureDurabilityAsync(sqliteConnection);
             await ConfigureJournalAsync(sqliteConnection);
-            GalleryDatabase.Upgrade(sqliteConnection);
+            if (openStarted != 0) CatalogMetrics.ConnectionDuration.Record(Stopwatch.GetElapsedTime(openStarted).TotalMilliseconds);
+            var migrationStarted = CatalogMetrics.MigrationDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
+            try { GalleryDatabase.Upgrade(sqliteConnection); }
+            finally
+            {
+                if (migrationStarted != 0) CatalogMetrics.MigrationDuration.Record(Stopwatch.GetElapsedTime(migrationStarted).TotalMilliseconds);
+            }
             return sqliteConnection;
         }
         catch
@@ -193,21 +202,83 @@ internal sealed partial class GalleryStore(string databasePath)
 
     public async Task<List<ImageRecord>> ReadRecordsAsync(byte[] key)
     {
+        var activity = Activity.Current is { OperationName: "gallery.load", IsAllDataRequested: true } load ? load : null;
+        var openStarted = VaultOpenTelemetry.Start(activity);
         await using var sqliteConnection = await OpenAsync();
-        return await ReadImageRecordsAsync(sqliteConnection, key);
+        VaultOpenTelemetry.Record(activity, "gallery.load.connection_open_ms", openStarted);
+        return await ReadImageRecordsAsync(sqliteConnection, key, activity);
     }
 
-    private static async Task<List<ImageRecord>> ReadImageRecordsAsync(SqliteConnection sqliteConnection, byte[] key)
+    private static async Task<List<ImageRecord>> ReadImageRecordsAsync(SqliteConnection sqliteConnection, byte[] key, Activity? activity,
+        CancellationToken token = default, SqliteTransaction? transaction = null)
     {
+        var readStarted = VaultOpenTelemetry.Start(activity);
+        var pauseStarted = activity is null ? TimeSpan.Zero : GC.GetTotalPauseDuration();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadImageRecords(sqliteConnection);
-        await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
+        sqliteCommand.Transaction = transaction;
+        using var cancellation = token.Register(sqliteCommand.Cancel);
+        var queryStarted = VaultOpenTelemetry.Start(activity);
+        await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync(token);
         var imageRecords = new List<ImageRecord>();
-        while (await sqliteDataReader.ReadAsync())
+        if (activity is null)
         {
-            var imageRecord = MapImageRecord(sqliteDataReader);
-            imageRecords.Add(DecodeRecord(imageRecord.Id, imageRecord.Record, key));
+            // Leave the ordinary application path free of per-row stopwatch work.
+            while (await sqliteDataReader.ReadAsync(token))
+            {
+                token.ThrowIfCancellationRequested();
+                var imageRecord = MapImageRecord(sqliteDataReader);
+                imageRecords.Add(DecodeRecord(imageRecord.Id, imageRecord.Record, key));
+            }
+            return imageRecords;
         }
+
+        double decryptMs = 0, deserializeMs = 0, materializeMs = 0;
+        var queryMs = VaultOpenTelemetry.Elapsed(queryStarted);
+        long recordBytes = 0;
+        while (true)
+        {
+            var stepStarted = Stopwatch.GetTimestamp();
+            token.ThrowIfCancellationRequested();
+            var hasRow = await sqliteDataReader.ReadAsync(token);
+            queryMs += Stopwatch.GetElapsedTime(stepStarted).TotalMilliseconds;
+            if (!hasRow) break;
+            var materializeStarted = Stopwatch.GetTimestamp();
+            var imageRecord = MapImageRecord(sqliteDataReader);
+            materializeMs += Stopwatch.GetElapsedTime(materializeStarted).TotalMilliseconds;
+            recordBytes += imageRecord.Record.Length;
+            imageRecords.Add(DecodeMeasuredRecord(imageRecord.Id, imageRecord.Record, key, ref decryptMs, ref deserializeMs));
+        }
+        var residualMs = Math.Max(0, VaultOpenTelemetry.Elapsed(readStarted) - decryptMs - deserializeMs);
+        activity.SetTag("gallery.load.record_count", imageRecords.Count);
+        activity.SetTag("gallery.load.record_bytes", recordBytes);
+        activity.SetTag("gallery.load.decrypt_ms", decryptMs);
+        activity.SetTag("gallery.load.deserialize_ms", deserializeMs);
+        // Keep the legacy residual, but expose its major components rather than calling it pure I/O.
+        activity.SetTag("gallery.load.query_read_ms", residualMs);
+        activity.SetTag("gallery.load.query_step_ms", queryMs);
+        activity.SetTag("gallery.load.blob_materialize_ms", materializeMs);
+        activity.SetTag("gallery.load.other_loop_ms", Math.Max(0, residualMs - queryMs - materializeMs));
+        activity.SetTag("gallery.load.gc_pause_ms", (GC.GetTotalPauseDuration() - pauseStarted).TotalMilliseconds);
         return imageRecords;
+    }
+
+    private static ImageRecord DecodeMeasuredRecord(string id, byte[] encryptedRecord, byte[] key,
+        ref double decryptMs, ref double deserializeMs)
+    {
+        VaultEnvelopeValidator.Validate(encryptedRecord, $"stored value 'record:{id}'");
+        var started = Stopwatch.GetTimestamp();
+        var plain = VaultCrypto.Decrypt(encryptedRecord, key, $"record:{id}");
+        decryptMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        try
+        {
+            started = Stopwatch.GetTimestamp();
+            var record = JsonSerializer.Deserialize<ImageRecord>(plain)
+                ?? throw new InvalidOperationException("Invalid media record.");
+            deserializeMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (record.Id != id) throw new CryptographicException("Media record identity mismatch.");
+            return record;
+        }
+        finally { CryptographicOperations.ZeroMemory(plain); }
     }
 
     private static (string Id, byte[] Record) MapImageRecord(SqliteDataReader sqliteDataReader) =>
@@ -215,10 +286,19 @@ internal sealed partial class GalleryStore(string databasePath)
 
     public async Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key)
     {
-        await using var sqliteConnection = await OpenAsync();
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateReadThumbnail(sqliteConnection, id);
-        var encryptedThumbnail = await ReadRequiredEncryptedThumbnailAsync(sqliteCommand, id);
-        return DecodeThumbnail(encryptedThumbnail, key, id, $"thumbnail '{id}'");
+        var started = CatalogMetrics.ThumbnailDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
+        try
+        {
+            await using var sqliteConnection = await OpenAsync();
+            using var sqliteCommand = GalleryStoreCommandFactory.CreateReadThumbnail(sqliteConnection, id);
+            var encryptedThumbnail = await ReadRequiredEncryptedThumbnailAsync(sqliteCommand, id);
+            CatalogMetrics.ThumbnailBytes.Add(encryptedThumbnail.Length);
+            return DecodeThumbnail(encryptedThumbnail, key, id, $"thumbnail '{id}'");
+        }
+        finally
+        {
+            if (started != 0) CatalogMetrics.ThumbnailDuration.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        }
     }
 
     private static async Task<byte[]> ReadRequiredEncryptedThumbnailAsync(SqliteCommand sqliteCommand, string id) =>
@@ -317,6 +397,8 @@ internal sealed partial class GalleryStore(string databasePath)
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
         var recordsMissingFingerprints = await ReadRecordsMissingFingerprintsAsync(sqliteConnection, sqliteTransaction);
+        if (Activity.Current is { OperationName: "gallery.load" } activity)
+            activity.SetTag("gallery.load.backfill_fingerprint_count", recordsMissingFingerprints.Count);
         await UpdateMissingFingerprintsAsync(sqliteConnection, sqliteTransaction, recordsMissingFingerprints, key);
         sqliteTransaction.Commit();
     }
@@ -377,12 +459,24 @@ internal sealed partial class GalleryStore(string databasePath)
         (byte[]?)await sqliteCommand.ExecuteScalarAsync()
             ?? throw new InvalidOperationException($"Expected one record for media item '{id}', but found 0.");
 
-    public async Task UpdateAsync(ImageRecord imageRecord, byte[] key)
+    public async Task UpdateAsync(ImageRecord imageRecord, byte[] key, bool preserveBrowseIndex = true)
     {
         await using var sqliteConnection = await OpenAsync();
+        using var transaction = sqliteConnection.BeginTransaction();
+        ImageRecord? previous = null;
+        if (preserveBrowseIndex)
+        {
+            using var read = GalleryStoreCommandFactory.CreateReadRecord(sqliteConnection, imageRecord.Id);
+            read.Transaction = transaction;
+            previous = DecodeRecord(imageRecord.Id, await ReadRequiredEncryptedRecordAsync(read, imageRecord.Id), key);
+        }
         using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, imageRecord.Id, EncodeRecord(imageRecord, key));
+        sqliteCommand.Transaction = transaction;
         var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
         RequireSingleImageMutation(affectedRows, imageRecord.Id, UpdateAction, UpdatedOutcome);
+        if (previous is not null)
+            await PreserveBrowseIndexAsync(sqliteConnection, transaction, previous, imageRecord, key, CancellationToken.None);
+        transaction.Commit();
     }
 
     public async Task DeleteAsync(string id)

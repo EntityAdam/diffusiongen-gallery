@@ -319,26 +319,42 @@ public sealed partial class GalleryService
 
     private async Task<List<ImageRecord>> LoadGalleryWithKeyAsync(byte[] key)
     {
+        using var activity = VaultOpenTelemetry.Source.StartActivity("gallery.load");
+        var started = VaultOpenTelemetry.Start(activity);
         List<ImageRecord> records;
-        await galleryStore.Gate.WaitAsync();
         try
         {
-            records = await ListWithKeyAsync(key);
-            await BackfillFingerprintsAsync(key);
-            await BackfillGenerationAsync(records, key);
+            await galleryStore.Gate.WaitAsync();
+            VaultOpenTelemetry.Record(activity, "gallery.load.gate_wait_ms", started);
+            try
+            {
+                records = await ListWithKeyAsync(key);
+                var backfillStarted = VaultOpenTelemetry.Start(activity);
+                await BackfillFingerprintsAsync(key);
+                VaultOpenTelemetry.Record(activity, "gallery.load.backfill_fingerprint_ms", backfillStarted);
+                backfillStarted = VaultOpenTelemetry.Start(activity);
+                await BackfillGenerationAsync(records, key);
+                VaultOpenTelemetry.Record(activity, "gallery.load.backfill_generation_ms", backfillStarted);
+            }
+            finally { galleryStore.Gate.Release(); }
+            var scheduleStarted = VaultOpenTelemetry.Start(activity);
+            await ScheduleMediaIndexAsync(records, key);
+            VaultOpenTelemetry.Record(activity, "gallery.load.schedule_media_index_ms", scheduleStarted);
+            driveOperationPlayer.Start();
+            return records;
         }
-        finally { galleryStore.Gate.Release(); }
-        await ScheduleMediaIndexAsync(records, key);
-        driveOperationPlayer.Start();
-        return records;
+        finally { VaultOpenTelemetry.Record(activity, "gallery.load.elapsed_ms", started); }
     }
     /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
-    private async Task BackfillGenerationAsync(List<ImageRecord> records, byte[] key)
+    private async Task BackfillGenerationAsync(List<ImageRecord> records, byte[] key, CancellationToken cancellationToken = default)
     {
         var staleRecordIndices = records.Select((record, index) => (record, index))
             .Where(item => item.record.MetadataVersion < ComfyMetadata.Version).ToList();
+        if (System.Diagnostics.Activity.Current is { OperationName: "gallery.load" } activity)
+            activity.SetTag("gallery.load.backfill_generation_count", staleRecordIndices.Count);
         foreach (var staleRecordIndex in staleRecordIndices)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ImageRecord record;
             int index;
             (record, index) = staleRecordIndex;
@@ -349,7 +365,8 @@ public sealed partial class GalleryService
                     Generation = ComfyMetadata.Extract(record.Metadata),
                     MetadataVersion = ComfyMetadata.Version
                 };
-                await galleryStore.UpdateAsync(refreshedImageRecord, key);
+                // The browse opener rebuilds once after the batch; rewriting its index per legacy row is wasteful.
+                await galleryStore.UpdateAsync(refreshedImageRecord, key, preserveBrowseIndex: false);
                 records[index] = refreshedImageRecord;
             }
             catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or StoredMetadataFormatException)

@@ -84,31 +84,51 @@ public sealed partial class GalleryService : IDisposable
 
     public async Task UnlockWithPassphraseAsync(string passphrase)
     {
+        using var activity = VaultOpenTelemetry.Source.StartActivity("vault.unlock");
+        activity?.SetTag("vault.unlock.method", "passphrase");
+        var started = VaultOpenTelemetry.Start(activity);
         await lifecycleGate.WaitAsync();
+        VaultOpenTelemetry.Record(activity, "vault.unlock.gate_wait_ms", started);
         try
         {
             EnsureCheckout();
             var key = await vaultStore.UnlockWithPassphraseAsync(passphrase);
             try { vaultSession.Unlock(key); }
             finally { CryptographicOperations.ZeroMemory(key); }
+            var historyStarted = VaultOpenTelemetry.Start(activity);
             history?.Save(VaultRoot);
+            VaultOpenTelemetry.Record(activity, "vault.unlock.history_save_ms", historyStarted);
         }
-        finally { lifecycleGate.Release(); }
+        finally
+        {
+            lifecycleGate.Release();
+            VaultOpenTelemetry.Record(activity, "vault.unlock.elapsed_ms", started);
+        }
     }
 
     public async Task UnlockWithRecoveryPhraseAsync(string recoveryPhrase)
     {
+        using var activity = VaultOpenTelemetry.Source.StartActivity("vault.unlock");
+        activity?.SetTag("vault.unlock.method", "recovery");
+        var started = VaultOpenTelemetry.Start(activity);
         var normalizedRecoveryPhrase = Gallery.Core.Services.Validators.RecoveryPhraseValidator.Normalize(recoveryPhrase);
         await lifecycleGate.WaitAsync();
+        VaultOpenTelemetry.Record(activity, "vault.unlock.gate_wait_ms", started);
         try
         {
             EnsureCheckout();
             var key = await vaultStore.UnlockWithRecoveryPhraseAsync(normalizedRecoveryPhrase);
             try { vaultSession.Unlock(key); }
             finally { CryptographicOperations.ZeroMemory(key); }
+            var historyStarted = VaultOpenTelemetry.Start(activity);
             history?.Save(VaultRoot);
+            VaultOpenTelemetry.Record(activity, "vault.unlock.history_save_ms", historyStarted);
         }
-        finally { lifecycleGate.Release(); }
+        finally
+        {
+            lifecycleGate.Release();
+            VaultOpenTelemetry.Record(activity, "vault.unlock.elapsed_ms", started);
+        }
     }
 
     public Task ChangePassphraseAsync(string passphrase, string confirmation) =>

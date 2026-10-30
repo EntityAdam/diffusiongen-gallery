@@ -1,0 +1,90 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@* Keep the rendered value constant: browser edits must not be replaced by an older server render. *@
+<input @ref="element" id="@Id" type="text" value="@initialValue" placeholder="@Placeholder" list="@List"
+       disabled="@(!attached || Disabled)"
+       class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" />
+
+@code {
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public string? List { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public long ResetVersion { get; set; }
+
+    private ElementReference element;
+    private DotNetObjectReference<DebouncedFilterInput>? reference;
+    private string initialValue = "";
+    private string observedValue = "";
+    private long observedResetVersion;
+    private long revision;
+    private bool initialized;
+    private bool attached;
+    private bool needsSync;
+    private bool disposed;
+
+    protected override void OnParametersSet()
+    {
+        if (!initialized)
+        {
+            initialized = true;
+            initialValue = observedValue = Value;
+            observedResetVersion = ResetVersion;
+        }
+        else if (Value != observedValue || ResetVersion != observedResetVersion)
+        {
+            observedValue = Value;
+            observedResetVersion = ResetVersion;
+            revision++;
+            needsSync = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed) return;
+        if (!attached)
+        {
+            reference = DotNetObjectReference.Create(this);
+            var attachedRevision = revision;
+            await JS.InvokeVoidAsync("galleryFilterInput.attach", element, reference, observedValue, attachedRevision, 300);
+            if (disposed)
+            {
+                await JS.InvokeVoidAsync("galleryFilterInput.detach", element);
+                return;
+            }
+            attached = true;
+            if (revision == attachedRevision) needsSync = false;
+            StateHasChanged();
+        }
+        else if (needsSync)
+        {
+            needsSync = false;
+            await JS.InvokeVoidAsync("galleryFilterInput.sync", element, observedValue, revision);
+        }
+    }
+
+    [JSInvokable]
+    public async Task<bool> CommitAsync(string value, long clientRevision)
+    {
+        if (disposed || Disabled || clientRevision != revision) return false;
+        // A parent echo acknowledges this submission; it is not an instruction to replace newer browser text.
+        observedValue = value;
+        await ValueChanged.InvokeAsync(value);
+        return true;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        try
+        {
+            if (attached) await JS.InvokeVoidAsync("galleryFilterInput.detach", element);
+        }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        finally { reference?.Dispose(); }
+    }
+}

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Gallery.Core.Services.Processors.Validators;
 using Gallery.Core.Services.Processors.Codecs;
 using Gallery.Core.Services.Processors;
@@ -160,7 +161,10 @@ internal sealed class VaultStore
         await semaphoreSlim.WaitAsync();
         try
         {
+            var activity = Activity.Current;
+            var headerStarted = VaultOpenTelemetry.Start(activity);
             var vaultHeader = await ReadHeaderAsync();
+            VaultOpenTelemetry.Record(activity, "vault.unlock.header_read_ms", headerStarted);
             var keySlot = keySlotSelector(vaultHeader);
             var normalizedSecret = normalizeSecret(secret);
             return UnwrapVaultKey(vaultHeader, keySlot, normalizedSecret, purpose);
@@ -170,7 +174,13 @@ internal sealed class VaultStore
 
     private static byte[] UnwrapVaultKey(VaultHeader vaultHeader, KeySlot keySlot, string secret, string purpose)
     {
-        var derivedKey = VaultCrypto.Derive(secret, keySlot.Salt.AsSpan());
+        var activity = Activity.Current;
+        byte[] derivedKey;
+        var kdfStarted = VaultOpenTelemetry.Start(activity);
+        using (var kdfActivity = VaultOpenTelemetry.Source.StartActivity("vault.unlock.kdf"))
+            derivedKey = VaultCrypto.Derive(secret, keySlot.Salt.AsSpan());
+        VaultOpenTelemetry.Record(activity, "vault.unlock.kdf_ms", kdfStarted);
+        var unwrapStarted = VaultOpenTelemetry.Start(activity);
         try
         {
             var vaultKey = VaultCrypto.Decrypt(keySlot.WrappedKey.AsSpan(), derivedKey, purpose);
@@ -188,7 +198,11 @@ internal sealed class VaultStore
                 throw;
             }
         }
-        finally { CryptographicOperations.ZeroMemory(derivedKey); }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(derivedKey);
+            VaultOpenTelemetry.Record(activity, "vault.unlock.unwrap_ms", unwrapStarted);
+        }
     }
 
     private async Task<VaultHeader> ReadHeaderAsync()

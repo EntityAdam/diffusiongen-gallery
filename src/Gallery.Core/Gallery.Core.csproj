@@ -13,6 +13,7 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0" />
     <InternalsVisibleTo Include="Gallery.Tests" />
     <InternalsVisibleTo Include="Gallery.TestSupport" />
+    <InternalsVisibleTo Include="Gallery.Stress" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Gallery.Migrations\Gallery.Migrations.csproj" />

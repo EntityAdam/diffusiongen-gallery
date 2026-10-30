@@ -3,9 +3,9 @@
         <div class="filter-panel-body">
             <div class="filter-primary">
                 <Label For="search" Class="mb-2 block">Search</Label>
-                <Input Disabled="@Disabled" id="search" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
+                <DebouncedFilterInput Disabled="@Disabled" Id="search" ResetVersion="@ResetVersion" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
                 <Label For="diffusion-model" Class="mt-4 mb-2 block">Diffusion model</Label>
-                <Input Disabled="@Disabled" id="diffusion-model" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" Placeholder="Any diffusion model" list="diffusion-models" />
+                <DebouncedFilterInput Disabled="@Disabled" Id="diffusion-model" ResetVersion="@ResetVersion" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" Placeholder="Any diffusion model" List="diffusion-models" />
                 <datalist id="diffusion-models">@foreach (var model in DiffusionModels) { <option value="@model"></option> }</datalist>
             </div>
 
@@ -16,7 +16,7 @@
                 <section class="filter-section">
                     <h3>
                         <button type="button" class="filter-section-toggle" data-filter-navigation aria-expanded="@(isExpanded ? "true" : "false")" aria-controls="@($"filter-section-{section.Id}")" @onclick="() => ToggleSection(section.Id)">
-                            <span>@section.Title</span>
+                            <span>@(section.Title)</span>
                             @if (count > 0)
                             {
                                 <span class="filter-count" aria-label="@($"{count} active")">@count</span>
@@ -36,10 +36,10 @@
                                 </Select>
                                 <div class="mt-3 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.IncludesUnorganizedOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
                                 <Label For="tag" Class="mt-4 mb-2 block">Tag</Label>
-                                <Input Disabled="@Disabled" id="tag" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" Placeholder="Exact tag" list="tags" />
+                                <DebouncedFilterInput Disabled="@Disabled" Id="tag" ResetVersion="@ResetVersion" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" Placeholder="Exact tag" List="tags" />
                                 <datalist id="tags">@foreach (var tag in Tags) { <option value="@tag"></option> }</datalist>
                                 <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
-                                <Input Disabled="@Disabled" id="folder" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
+                                <DebouncedFilterInput Disabled="@Disabled" Id="folder" ResetVersion="@ResetVersion" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
                                 <div class="grid grid-cols-2 gap-3">
                                     <div>
                                         <Label For="rating-filter" Class="mt-4 mb-2 block">Minimum rating</Label>
@@ -84,7 +84,7 @@
                                     <option value="all">All media</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
                                 </Select>
                                 <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
-                                <Input Disabled="@Disabled" id="analysis-model" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
+                                <DebouncedFilterInput Disabled="@Disabled" Id="analysis-model" ResetVersion="@ResetVersion" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
                                 break;
                             case "imported":
                                 <div class="grid grid-cols-2 gap-3">
@@ -114,6 +114,7 @@
     [Parameter] public EventCallback<GalleryFilter> Changed { get; set; }
     [Parameter] public EventCallback Reset { get; set; }
     [Parameter] public bool Disabled { get; set; }
+    [Parameter] public long ResetVersion { get; set; }
 
     private sealed record FilterSection(string Id, string Title, Func<GalleryFilter, int> ActiveCount);
 
@@ -132,6 +133,8 @@
     private static int Count(params bool[] conditions) => conditions.Count(condition => condition);
 
     private FilterDraft draft = new();
+    private GalleryFilter? receivedFilter;
+    private long receivedResetVersion;
     private readonly HashSet<string> expanded = [];
 
     public static int CountActive(GalleryFilter filter) => Sections.Sum(section => section.ActiveCount(filter))
@@ -148,7 +151,12 @@
 
     protected override void OnParametersSet()
     {
-        draft = FilterDraft.CreateFrom(Filter);
+        if (receivedFilter != Filter || receivedResetVersion != ResetVersion)
+        {
+            draft = FilterDraft.CreateFrom(Filter);
+            receivedFilter = Filter;
+            receivedResetVersion = ResetVersion;
+        }
     }
 
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections)

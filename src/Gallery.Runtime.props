@@ -1,0 +1,6 @@
+<Project>
+  <!-- Keep production and fresh-process performance measurements on the same GC defaults. -->
+  <PropertyGroup>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+</Project>

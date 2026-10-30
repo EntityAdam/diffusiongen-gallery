@@ -11,6 +11,8 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
 {
     private readonly byte[] key = key.ToArray();
     private readonly VaultLeaseState vaultLeaseState = vaultLeaseState;
+    private readonly CancellationTokenSource revocation = new();
+    internal CancellationToken RevocationToken => revocation.Token;
     internal bool IsRevoked { get; private set; }
     internal bool HasTimedOut { get; private set; }
     internal bool HasPendingTimeoutNotification { get; private set; }
@@ -72,6 +74,8 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
         {
             IsRevoked = true;
             CryptographicOperations.ZeroMemory(key);
+            // Signal immediately, but run cancellation callbacks outside the session's synchronization lock.
+            _ = revocation.CancelAsync();
         }
     }
 

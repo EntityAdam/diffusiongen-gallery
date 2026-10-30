@@ -1,6 +1,6 @@
 <div class="image-detail-fields min-w-0 space-y-4 text-sm">
     <div class="image-detail-tabs">
-        <Tabs Value="@section" ValueChanged="value => section = value">
+        <Tabs Value="@(section)" ValueChanged="value => section = value">
             <TabsList aria-label="Media detail sections">
                 <TabsTrigger Value="file">File</TabsTrigger>
                 @if (Image.Generation is not null) { <TabsTrigger Value="generation">Generation</TabsTrigger> }
@@ -42,7 +42,7 @@
             @if (generation.HasWorkflow || generation.HasApiPrompt)
             { <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="DownloadWorkflow"><DownloadIcon Size="16" aria-hidden="true" />Download workflow</Button> }
             @if (generation.Prompt.Length > 0)
-            { <Button Variant="ButtonVariant.Ghost" Disabled="@Busy" OnClick="ShowPrompt">Show media with this prompt</Button> }
+            { <Button Variant="ButtonVariant.Ghost" Disabled="@(Busy || CatalogLoading)" OnClick="ShowPrompt">Show media with this prompt</Button> }
         </Card>
     }
     <Card Class="@($"detail-section p-4 space-y-3 {(section == "notes" ? "detail-section-active" : "")}")">
@@ -62,6 +62,7 @@
 @code {
     [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
     [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool CatalogLoading { get; set; }
     [Parameter] public string Description { get; set; } = "";
     [Parameter] public EventCallback<string> DescriptionChanged { get; set; }
     [Parameter] public string UserDescription { get; set; } = "";
