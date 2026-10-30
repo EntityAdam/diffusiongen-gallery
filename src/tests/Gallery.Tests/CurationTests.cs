@@ -134,7 +134,7 @@ public sealed class CurationTests
         await fixture.InitializeAsync();
         var wide = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(400, 100, 0)), "wide.png", "folder");
         var square = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(100, 100, 1)), "square.png", "folder");
-        var arrangedSquare = identicalPixels ? square with { PngSha256 = wide.PngSha256 } : square;
+        var arrangedSquare = identicalPixels ? square with { ContentSha256 = wide.ContentSha256 } : square;
         await DuplicateCacheArrangement.ArrangeAsync(fixture, [(wide, identicalPixels ? 0UL : 42UL), (arrangedSquare, identicalPixels ? ulong.MaxValue : 42UL)]);
 
         // Act

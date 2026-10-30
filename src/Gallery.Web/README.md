@@ -1,7 +1,7 @@
 # DiffusionGen Gallery
 
-A local-only application for organizing an encrypted image and video library.
-Browse, rate, tag, review duplicates, and optionally describe images with your own
+A local-only application for organizing an encrypted media library.
+Browse, rate, tag, review duplicates, and optionally describe media with your own
 vision model. No model is bundled.
 
 The web interface runs on your computer. Media may be stored on local drives or
@@ -27,7 +27,7 @@ Open **http://127.0.0.1:5189**.
 5. **Save the 32 recovery words offline before continuing.** They are shown only
    once. Losing both the passphrase and recovery words makes the gallery
    unrecoverable.
-6. Open the gallery, then use **Ingest images** to import media.
+6. Open the gallery, then use **Ingest media** to import media.
 
 The catalog contains the database and encryption header. The app remembers the
 last successfully opened gallery; use **Switch gallery** to open, create, or
@@ -55,7 +55,7 @@ ports.
 
 ## Importing media
 
-1. Open **Ingest images**, enter a source folder, and select **Scan**.
+1. Open **Ingest media**, enter a source folder, and select **Scan**.
 2. Choose whether to include subfolders, images, and videos.
 3. Check the selected count, available disk space, and estimated size change.
 4. Leave **Delete original media** off to keep the source files.
@@ -100,7 +100,7 @@ or folder names.
 
 ## Browsing and organizing
 
-The sidebar contains **Gallery**, **Duplicate finder**, **Ingest images**,
+The sidebar contains **Gallery**, **Duplicate finder**, **Ingest media**,
 **Settings**, and a **Toolbox** toggle. Collapse it to an icon rail when you need
 more space.
 
@@ -111,11 +111,11 @@ The floating toolbox contains:
 | Tool | Purpose |
 |---|---|
 | Change view | Card size, grouping, sorting, full-screen viewer, and toolbox-position reset. |
-| Filter images | Text, model, organization, media/dimensions, vision, and import-date filters. Changes apply immediately; **Reset filters** clears them. |
-| Review images one by one | Guided review of pending items. |
+| Filter media | Text, model, organization, media/dimensions, vision, and import-date filters. Changes apply immediately; **Reset filters** clears them. |
+| Review media one by one | Guided review of pending items. |
 | Organize media | Add collections/tags and remove tags from selected items. |
 | Search | Ask the configured LLM to suggest explicit filters. |
-| Use AI to describe and tag your images | Generate suggestions for approval. |
+| Use AI to describe and tag your media | Generate suggestions for approval. |
 | Trash | Restore marked items or permanently remove them. |
 
 Click a tool to expand its panel; click it again to collapse it. Toggle the toolbox
@@ -170,7 +170,7 @@ The **Organize** tool lists selected items' tags as removable chips. A count mea
 only that many selected items have the tag. A chip's **x** removes that tag from
 all selected items that carry it. Collection and tag **Apply** actions add/merge
 values; **Clear** only resets the input. Collections are virtual and never move
-files. AI organization suggestions support up to 24 selected images and apply
+files. AI organization suggestions support up to 24 selected media items and apply
 only the requested collection or tags.
 
 Filters include collections, tags, ratings, review status, favorite/deletion state,
@@ -181,7 +181,7 @@ user descriptions. **Group by same prompt** groups exact positive-prompt matches
 filtered with **Show only these**. Model-name filtering is partial and
 case-insensitive.
 
-### Image details
+### Media details
 
 Click a thumbnail to open details. The preview has a download icon at the top
 right and a full-screen icon at the bottom right. Rating, favorite, and trash
@@ -253,7 +253,7 @@ it. Closing early retains saved decisions.
 
 ### Duplicate finder
 
-Scan for likely duplicates, including resized/re-encoded images. Results are
+Scan for likely duplicates, including resized/re-encoded media. Results are
 recommendations, not proof that files are interchangeable. A keeper is recommended
 using review-related preferences such as rating, favorite, resolution, and size.
 Marking extra copies is reversible; remove them permanently through Trash.
@@ -282,13 +282,13 @@ operator and use HTTPS when available. The gallery itself remains loopback-only.
 
 In the AI toolbox panel:
 
-- **Play** analyzes images without vision descriptions or pending suggestions.
-- **Analyze selected** analyzes up to 24 selected images.
+- **Play** analyzes media without vision descriptions or pending suggestions.
+- **Analyze selected** analyzes up to 24 selected media items.
 - The eye-dashed badge opens a pending suggestion in the full-screen viewer.
   **Approve & save** replaces vision notes, merges tags, and adds the suggested
   collection. **Dismiss** discards it. Locking also discards pending suggestions.
 - **Stop** finishes the current request before stopping; the configured timeout
-  still applies. Per-image failures are reported.
+  still applies. Per-item failures are reported.
 
 Analysis runs only when requested and does not change rating, review state,
 deletion marks, or media files. The details dialog's **Analyze locally** action
@@ -307,7 +307,7 @@ The trash-can button only sets a reversible deletion mark. In Trash, **Restore**
 clears that mark; it does not restore a backup or a deleted source file.
 
 To delete permanently, select marked cards and choose **Delete Forever**, or
-choose **Remove this image** in a marked item's File details. Review the removal
+choose **Remove this media item** in a marked item's File details. Review the removal
 plan and explicitly confirm:
 
 - If the original source is accessible, retain it or delete it too. Source deletion
@@ -377,7 +377,9 @@ before another incremental.
 ### Restore a backup
 
 Use **Switch gallery > Restore** with a local/SMB backup folder or an Azure
-container SAS URL with read/list permissions. Select **Find backups**, choose a
+container SAS URL with read/list permissions. For cloud backups, enter the same
+**Backup prefix** configured for the destination (for example, `nightly/gallery`),
+or leave it empty for container-root backups. Select **Find backups**, choose a
 full archive or the last desired incremental, and provide the backup gallery's
 passphrase or recovery words, a name, and a new/empty local destination.
 
@@ -388,6 +390,10 @@ existing gallery or backups. Sign in normally afterward.
 
 ## Privacy and recovery
 
+- **Interrupted creation:** retrying creation in the same folder rolls back a
+  partially published catalog only when its durable creation receipt and staged
+  header identify it. Existing unrelated or changed files are preserved; an
+  ownership conflict is reported instead of deleting them.
 - **Encryption at rest:** media, catalog record/thumbnail blobs, settings, and
   saved credentials are encrypted with authenticated AES-256-GCM. The header
   stores wrapped keys, not the passphrase or plaintext master key. SQLite and
@@ -424,11 +430,30 @@ existing gallery or backups. Sign in normally afterward.
 
 ## Developer notes
 
-There are two production projects: `Gallery.Web` references `Gallery.Core`.
+There are three production projects: `Gallery.Web` references `Gallery.Core`,
+which references `Gallery.Migrations`.
 Core currently contains models, domain rules, application services, SQLite,
 encryption, filesystem/media processing, and external gateways. Web contains
 Blazor components, host/request policies, and dependency-injection composition.
 UI components use Core models directly. Test projects are under `src/tests`.
+
+`Gallery.Migrations` owns the SQLite schema and runs through DbUp whenever a
+catalog connection is opened. Applied migrations are recorded in `SchemaVersions`.
+The idempotent baseline also supports pre-DbUp catalogs, including catalogs without
+the image fingerprint column. All pending migrations and journal entries commit
+in one immediate SQLite transaction; failures roll back the entire upgrade and
+independent connections wait before reading the journal.
+
+Add new SQL migrations to `src\Gallery.Migrations\Scripts` using the next
+zero-padded name, such as `M0003_Description.sql`. They are embedded automatically.
+For conditional changes SQLite cannot express in SQL, add a public parameterless
+`IScript` class in `Gallery.Migrations.Scripts` with the same naming scheme.
+Use its supplied command factory so reads and writes participate in the upgrade
+transaction. SQL and code scripts run together in name order. Never rename or
+edit an applied migration; add a new one instead. Scripts must not manage their
+own transactions or change journal mode.
+
+Run `dotnet test src\Gallery.slnx` from the repository root after adding a migration.
 
 `GalleryServiceRegistration` captures runtime settings once at the host
 composition boundary. Core's `ConfigurationProvider` and `SettingsSource`
@@ -439,7 +464,7 @@ configured `PATH` (or process `PATH` when absent), followed by user and machine
 normalizes them once when constructing each scope. Restart the host to apply
 runtime-setting changes.
 
-Browsing projections require immutable image and index collections. Invalid
+Browsing projections require immutable media and index collections. Invalid
 saved-view names throw `InvalidSavedViewNameException` before vault access,
 with the normalized name and permitted length range in diagnostic context.
 The workbench preserves the existing caller-facing validation message.
@@ -469,7 +494,7 @@ dotnet test .\src\Gallery.slnx
 node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
 
-Retained but unexposed code includes saved filter views, two-image comparison,
-selection ZIP export, and additional bulk organization/review operations. These are not user-facing
+Retained but unexposed code includes saved filter views, comparison of two media
+items, selection ZIP export, and additional bulk organization/review operations. These are not user-facing
 features. Explicit persisted vision-acceptance tracking is a future change;
 the current card icon is inferred from saved analysis and pending suggestions.

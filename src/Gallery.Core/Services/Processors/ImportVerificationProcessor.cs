@@ -25,13 +25,13 @@ internal static class ImportVerificationProcessor
     }
 
     private static bool SavedContentMatches(ImageRecord imageRecord, byte[] plain) =>
-        imageRecord.PngSha256.Length > 0 && Convert.ToHexString(SHA256.HashData(plain)) == imageRecord.PngSha256;
+        imageRecord.ContentSha256.Length > 0 && Convert.ToHexString(SHA256.HashData(plain)) == imageRecord.ContentSha256;
 
     private static void VerifyImageDimensions(ImageRecord imageRecord, byte[] plain)
     {
         if (imageRecord.IsVideo) return;
         if (!DimensionsMatch(Image.Identify(plain), imageRecord))
-            throw new CryptographicException("Saved image dimensions did not match the catalog.");
+            throw new CryptographicException("Saved media dimensions did not match the catalog.");
     }
 
     private static bool DimensionsMatch(ImageInfo imageInfo, ImageRecord imageRecord) =>

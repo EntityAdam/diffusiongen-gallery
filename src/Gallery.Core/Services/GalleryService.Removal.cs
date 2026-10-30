@@ -28,7 +28,7 @@ public sealed partial class GalleryService
     {
         var imageRecord = await FindAsync(id, key);
         if (!RemovalRules.CanRemove(imageRecord))
-            throw new ImageNotMarkedForDeletionException($"'{imageRecord.Name}' (image '{imageRecord.Id}') must be marked for deletion first.",
+            throw new ImageNotMarkedForDeletionException($"'{imageRecord.Name}' (media item '{imageRecord.Id}') must be marked for deletion first.",
                 GalleryLogEvent.PrepareRemoval, new ContextualData(ImmutableDictionary<string, object>.Empty
                     .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false)));
         var original = OriginalPath(imageRecord);
@@ -72,7 +72,7 @@ public sealed partial class GalleryService
 
         private static void ValidateRemovalSelection(IReadOnlyCollection<RemovalItem> removalItems)
         {
-            if (removalItems.Count == 0) throw new InvalidOperationException("Select marked images to remove.");
+            if (removalItems.Count == 0) throw new InvalidOperationException("Select marked media items to remove.");
         }
 
         private static string NormalizeRestoreFolder(
@@ -150,7 +150,7 @@ public sealed partial class GalleryService
         var allFailures = failures.Concat(observerFailures)
             .Concat(queueStartFailure is null ? [] : [queueStartFailure]).ToArray();
         throw new AggregateException(
-            $"Failed to completely remove {failures.Count} image(s); {observerFailures.Count} receipt observer(s) failed" +
+            $"Failed to completely remove {failures.Count} media item(s); {observerFailures.Count} receipt observer(s) failed" +
             (queueStartFailure is null ? "" : "; the drive queue could not restart") + ": " +
             string.Join(", ", allFailures.Select(failure => failure.Message)),
             allFailures);
@@ -166,7 +166,7 @@ public sealed partial class GalleryService
         {
             var imageRecord = await FindAsync(removalItem.Id, key);
             if (!RemovalRules.CanRemove(imageRecord))
-                throw new ImageNotMarkedForDeletionException($"Image '{imageRecord.Id}' is no longer marked for deletion.",
+                throw new ImageNotMarkedForDeletionException($"Media item '{imageRecord.Id}' is no longer marked for deletion.",
                     GalleryLogEvent.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
                         .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false)));
             var original = OriginalPath(imageRecord);
@@ -196,7 +196,7 @@ public sealed partial class GalleryService
             or InvalidImageContentException or Microsoft.Data.Sqlite.SqliteException)
         {
             var message = (originalDeleted ? OriginalDeletedMessage : "") + exception.Message;
-            throw CreateRemovalFailure($"Could not remove image '{removalItem.Id}': {message}",
+            throw CreateRemovalFailure($"Could not remove media item '{removalItem.Id}': {message}",
                 removalItem.Id, false, restoredPath, originalDeleted, exception);
         }
     }
@@ -219,7 +219,7 @@ public sealed partial class GalleryService
         {
             VerifyRestoredContent(imageRecord, plain);
             if (!Guid.TryParseExact(imageRecord.Id, "N", out _))
-                throw new InvalidOperationException("Invalid image identity for restoration.");
+                throw new InvalidOperationException("Invalid media identity for restoration.");
             var restoredPath = Path.Combine(restoreFolder,
                 imageRecord.Id + ImageContentFormats.FileExtension(imageRecord.ContentType));
             await WriteRestoredFileAsync(restoredPath, plain);
@@ -231,10 +231,10 @@ public sealed partial class GalleryService
 
     private static void VerifyRestoredContent(ImageRecord imageRecord, byte[] content)
     {
-        if (IsSavedContentHashInvalid(imageRecord.PngSha256, content))
+        if (IsSavedContentHashInvalid(imageRecord.ContentSha256, content))
             throw new CryptographicException("Saved file failed verification.");
         if (!imageRecord.IsVideo && !SavedImageDimensionsMatch(imageRecord, content))
-            throw new CryptographicException("Saved image dimensions do not match.");
+            throw new CryptographicException("Saved media dimensions do not match.");
     }
 
     private static bool SavedImageDimensionsMatch(ImageRecord imageRecord, byte[] content)
@@ -264,7 +264,7 @@ public sealed partial class GalleryService
         await using var restoredFile = File.OpenRead(restoredPath);
         if (!CryptographicOperations.FixedTimeEquals(
                 await SHA256.HashDataAsync(restoredFile), SHA256.HashData(content)))
-            throw new CryptographicException("Restored file failed read-back verification; gallery image retained.");
+            throw new CryptographicException("Restored file failed read-back verification; gallery media item retained.");
     }
 
     // The catalog row and the queued ciphertext delete commit together; the drive queue deletes the file.

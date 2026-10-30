@@ -88,6 +88,9 @@
                            Placeholder="https://account.blob.core.windows.net/container?sv=...&amp;sr=c&amp;sp=rl&amp;sig=..."
                            pattern="https://[^/?#]+/[^/?#]+\?[^#]+" required Disabled="@busy" />
                     <p class="text-muted-foreground">Use an HTTPS container SAS with read and list permissions. The SAS URL is used only for this restore and is not saved.</p>
+                    <Label For="restore-prefix" Class="mt-4 mb-2 block">Backup prefix (optional)</Label>
+                    <Input id="restore-prefix" @bind-Value="restoreAzurePrefix" Placeholder="nightly/gallery" Disabled="@busy" />
+                    <p class="text-muted-foreground">Use the same prefix configured when the backups were created. Leave empty for backups at the container root.</p>
                 }
                 <div class="flex flex-wrap items-center gap-2">
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ListRestoreBackupsAsync">Find backups</Button>
@@ -126,7 +129,7 @@
             <p class="text-muted-foreground">Open, create, or restore a gallery to continue.</p>
         }
         <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@busy" OnClick="OpenGallerySwitcher">Switch gallery <ArrowRightIcon aria-hidden="true" /></Button>
-        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted images cannot be recovered.</div>
+        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted media cannot be recovered.</div>
         }
     </Card>
 }
@@ -172,7 +175,7 @@ else
                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@busy" OnClick="OpenLibraryJobAsync">Open job</Button>
                 @if (libraryJob.CanStop)
                 {
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="StopLibraryJobAsync">Stop after current image</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" OnClick="StopLibraryJobAsync">Stop after current media item</Button>
                 }
                 @if (!libraryJob.IsRunning && libraryJob.Suggestions == 0)
                 {
@@ -229,7 +232,7 @@ else
     @if (workflow == "ingest")
     {
         <Card Class="mb-6 p-5 md:p-6">
-            <p class="text-muted-foreground">Load images and videos into your secure library. Media are encrypted with your passphrase and you can optionally delete the originals.</p>
+            <p class="text-muted-foreground">Load media into your secure library. It is encrypted with your passphrase, and you can optionally delete the originals.</p>
             <section class="mt-4 space-y-3" aria-labelledby="supported-media-heading">
                 <h3 id="supported-media-heading">Supported Media</h3>
                 <div class="flex flex-wrap items-center gap-2"><span>Images</span><Badge Variant="BadgeVariant.Secondary">PNG</Badge><Badge Variant="BadgeVariant.Secondary">JPEG</Badge><Badge Variant="BadgeVariant.Secondary">WEBP</Badge><span>Up to 50MB</span></div>
@@ -243,7 +246,7 @@ else
             </section>
             <h3 class="mt-6">Ingest</h3>
                 <form @onsubmit="ScanImportFolderAsync" @onsubmit:preventDefault>
-                    <Label For="source" Class="mt-4 mb-2 block">Ingest Images From</Label>
+                    <Label For="source" Class="mt-4 mb-2 block">Ingest Media From</Label>
                     <Input id="source" @bind-Value="importPath" @bind-Value:after="ClearIngestionScan" Placeholder="C:\Pictures\Diffusion" required Disabled="@busy" />
                     <div class="mt-4 flex items-center gap-3"><button id="check-recursive" type="button" role="switch" class="review-random-toggle" aria-checked="@(recursive ? "true" : "false")" aria-labelledby="recursive-label" disabled="@busy" @onclick="ToggleImportRecursion"><span></span></button><Label id="recursive-label" For="check-recursive">Include subfolders</Label></div>
                     <div class="mt-4 flex items-center gap-3"><button id="check-recordtimings" type="button" role="switch" class="review-random-toggle" aria-checked="@(recordTimings ? "true" : "false")" aria-labelledby="record-timings-label" disabled="@busy" @onclick="() => recordTimings = !recordTimings"><span></span></button><Label id="record-timings-label" For="check-recordtimings">Save performance information</Label></div>
@@ -310,10 +313,10 @@ else
             @if (importProgress is not null)
             {
                 <div class="mt-5 space-y-2" aria-busy="@(busy ? "true" : "false")">
-                    <Label For="ingestion-progress" Class="mt-4 mb-2 block">Image ingestion</Label>
+                    <Label For="ingestion-progress" Class="mt-4 mb-2 block">Media ingestion</Label>
                     @if (importProgress.Total is int progressTotal)
                     {
-                        <Progress id="ingestion-progress" Value="@(Math.Clamp((int)(100L * importProgress.Completed / Math.Max(1, progressTotal)), 0, 100))" aria-label="Image ingestion progress" />
+                        <Progress id="ingestion-progress" Value="@(Math.Clamp((int)(100L * importProgress.Completed / Math.Max(1, progressTotal)), 0, 100))" aria-label="Media ingestion progress" />
                     }
                     else
                     {
@@ -369,12 +372,12 @@ else
             {
                 <dl class="my-4 grid grid-cols-1 gap-3 lg:grid-cols-3 [&>div]:min-w-0 [&>div]:rounded-lg [&>div]:border [&>div]:border-border [&>div]:p-4 [&_dt]:text-xs [&_dt]:uppercase [&_dt]:text-muted-foreground [&_dd]:my-2 [&_dd]:text-2xl [&_dd]:text-primary [&_dd]:break-all [&_span]:text-xs">
                     <div><dt>Database size</dt><dd data-testid="database-size">@GalleryService.FormatBytes(storageOverview.DatabaseBytes)</dd><span class="text-muted-foreground">gallery.db with WAL files, including thumbnails</span></div>
-                    <div><dt>Total file count</dt><dd data-testid="file-count">@storageOverview.TotalFileCount.ToString("N0")</dd><span class="text-muted-foreground">@storageOverview.ImageFileCount.ToString("N0") encrypted images + @storageOverview.VaultFileCount gallery files</span></div>
-                    <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryService.FormatBytes(storageOverview.TotalBytes)</dd><span class="text-muted-foreground">@GalleryService.FormatBytes(storageOverview.ImageBytes) of encrypted images</span></div>
+                    <div><dt>Total file count</dt><dd data-testid="file-count">@storageOverview.TotalFileCount.ToString("N0")</dd><span class="text-muted-foreground">@storageOverview.ImageFileCount.ToString("N0") encrypted media files + @storageOverview.VaultFileCount gallery files</span></div>
+                    <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryService.FormatBytes(storageOverview.TotalBytes)</dd><span class="text-muted-foreground">@GalleryService.FormatBytes(storageOverview.ImageBytes) of encrypted media</span></div>
                 </dl>
                 @if (storageOverview.MissingImageFiles > 0)
                 {
-                    <Alert Variant="AlertVariant.Destructive">@storageOverview.MissingImageFiles catalogued image file(s) were not found on disk and are not counted.</Alert>
+                    <Alert Variant="AlertVariant.Destructive">@storageOverview.MissingImageFiles catalogued media file(s) were not found on disk and are not counted.</Alert>
                 }
                 @if (storageOverview.IsIndexPending)
                 {
@@ -427,7 +430,7 @@ else
                 <h3 id="duplicates-title">Duplicate finder</h3>
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ScanDuplicatesAsync">@(duplicateScan is null ? "Scan for duplicates" : "Scan again")</Button>
             </div>
-            <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed images are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Trash</em>.</p>
+            <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed media are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Trash</em>.</p>
             @if (busy && progress.StartsWith("Scanning")) { <p class="flex items-center gap-2 pb-4 text-primary" role="status"><span class="status-dot"></span> @progress</p> }
             @if (duplicateScan is not null)
             {
@@ -435,7 +438,7 @@ else
                 var pendingMarks = groups.Sum(group => group.ImageIds.Count(id => id != KeeperOf(group).Id && !ImageById(id)!.IsMarkedForDeletion));
                 <div class="my-4 flex flex-col gap-2">
                     <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.ImageIds.Length - 1)</strong> extra copies &middot; <strong>@GalleryService.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
-                    <span class="text-muted-foreground">Scanned @duplicateScan.ScannedCount.ToString("N0") images <time datetime="@duplicateScan.ScannedAt.ToString("O")">@duplicateScan.ScannedAt.ToLocalTime().ToString("g")</time></span>
+                    <span class="text-muted-foreground">Scanned @duplicateScan.ScannedCount.ToString("N0") media items <time datetime="@duplicateScan.ScannedAt.ToString("O")">@duplicateScan.ScannedAt.ToLocalTime().ToString("g")</time></span>
                     <div class="flex flex-wrap items-center gap-2">
                         <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(busy || groups.Count == 0)" OnClick="() => OpenDuplicateReview(groups, 0)">Review in full screen</Button>
                         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || pendingMarks == 0)" OnClick="() => MarkDuplicatesAsync(groups)">Mark all extra copies (@pendingMarks)</Button>
@@ -449,7 +452,7 @@ else
                     var groupMarks = group.ImageIds.Count(id => id != keeper.Id && !ImageById(id)!.IsMarkedForDeletion);
                     <article class="mt-4 rounded-xl border border-border p-4 [&>header]:mb-3 [&>header]:flex [&>header]:flex-wrap [&>header]:items-center [&>header]:justify-between [&>header]:gap-3 [&>header]:text-sm" @key="group.ImageIds[0]">
                         <header>
-                            <span>@(group.IsExact ? "Exact copies" : $"Similar images (difference {group.MaxDistance}/64)") &middot; @GalleryService.FormatBytes(group.ReclaimableBytes) reclaimable</span>
+                            <span>@(group.IsExact ? "Exact copies" : $"Similar media (difference {group.MaxDistance}/64)") &middot; @GalleryService.FormatBytes(group.ReclaimableBytes) reclaimable</span>
                             <div class="flex flex-wrap items-center gap-2">
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="() => OpenDuplicateReview(groups, groupNumber)">Review &amp; choose keepers</Button>
                                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || groupMarks == 0)" OnClick="() => MarkDuplicatesAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</Button>
@@ -653,7 +656,7 @@ else
         @if (activeTool == "review")
         {
             <div class="review-intro space-y-4">
-                <p class="text-muted-foreground text-sm">Review images one by one. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
+                <p class="text-muted-foreground text-sm">Review media one item at a time. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
                 <div class="flex items-center gap-3">
                     <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(reviewRandomOrder ? "true" : "false")"
                             aria-labelledby="review-random-order-label" disabled="@busy" @onclick="() => reviewRandomOrder = !reviewRandomOrder"><span></span></button>
@@ -665,13 +668,13 @@ else
                            class="review-goal-input" disabled="@(busy || ReviewPoolCount == 0)" @bind="ReviewGoal" />
                     <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(busy || ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
                 </div>
-                <p class="text-muted-foreground text-sm">@ReviewPoolCount of the filtered images await review.</p>
+                <p class="text-muted-foreground text-sm">@ReviewPoolCount of the filtered media items await review.</p>
             </div>
         }
         @if (activeTool == "trash")
         {
             <div class="space-y-3">
-                <p class="text-muted-foreground text-sm">Showing images marked for deletion. Select with X or the check mark, then delete forever or restore.</p>
+                <p class="text-muted-foreground text-sm">Showing media marked for deletion. Select with X or the check mark, then delete forever or restore.</p>
                 <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
                     <strong>@removalSelection.Count selected</strong>
                     <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@(busy || removalSelection.Count == 0)" OnClick="ClearSelection">Clear selection <kbd>Esc</kbd></Button>
@@ -700,7 +703,7 @@ else
     {
         <div class="image-detail-overlay fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
             <Card Class="image-detail-dialog mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
-                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close image details"><XIcon aria-hidden="true" /></Button></div>
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close media details"><XIcon aria-hidden="true" /></Button></div>
                 <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
                     <ImageDetailPreview Image="selected" Preview="@preview" VideoUrl="@videoUrl" Busy="busy"
                                         Download="() => ExportAsync(selected)" Fullscreen="() => OpenViewer(selected.Id)"
@@ -721,9 +724,9 @@ else
     {
         <div class="fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
             <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4" role="dialog" aria-modal="true" aria-labelledby="removal-title">
-                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="removal-title" class="min-w-0 flex-1 break-words">Remove @removalPlan.Count marked image(s)</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CancelRemoval" aria-label="Cancel removal"><XIcon aria-hidden="true" /></Button></div>
-                <p>This removes gallery records, thumbnails and encrypted files. Each image is checked again before removal. Unmarked images cannot be removed.</p>
-                <details><summary>Review affected images</summary>
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="removal-title" class="min-w-0 flex-1 break-words">Remove @removalPlan.Count marked media item(s)</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CancelRemoval" aria-label="Cancel removal"><XIcon aria-hidden="true" /></Button></div>
+                <p>This removes gallery records, thumbnails and encrypted files. Each media item is checked again before removal. Unmarked media cannot be removed.</p>
+                <details><summary>Review affected media</summary>
                     @foreach (var item in removalPlan)
                     {
                         <p class="break-all text-muted-foreground">@item.Name: @(item.OriginalExists ? $"Original exists: {item.OriginalPath}" : "No accessible original (missing or browser upload)")</p>
@@ -748,12 +751,12 @@ else
                     {
                         <Label For="restore-folder" Class="mt-4 mb-2 block">Existing folder for restored files</Label>
                         <Input id="restore-folder" @bind-Value="restoreFolder" Disabled="@busy" />
-                        <p class="text-muted-foreground">Restores the stored file in its stored format, named by image ID; never overwrites. Images imported by this version restore as their exact original bytes; images imported by earlier versions restore as the PNG they were converted to. Browser uploads may still have originals the app cannot access.</p>
+                        <p class="text-muted-foreground">Restores the stored file in its stored format, named by media ID; never overwrites. Media imported by this version restore as their exact original bytes; image files imported by earlier versions restore as the PNG they were converted to. Browser uploads may still have originals the app cannot access.</p>
                     }
                 }
-                <Alert Variant="AlertVariant.Destructive">Removal bypasses the Recycle Bin. Without a retained or restored copy, images are lost from this gallery. Backups may still contain them. This is not secure SSD/NVMe erasure.</Alert>
-                <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmremoval" Class="mt-0.5" @bind-Checked="confirmRemoval" Disabled="@busy"  /><Label For="check-confirmremoval" Class="text-sm leading-relaxed">I reviewed these images and actions and confirm permanent removal.</Label></div>
-                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@(busy || !confirmRemoval)" OnClick="ExecuteRemovalAsync">Confirm removal of @removalPlan.Count image(s)</Button>
+                <Alert Variant="AlertVariant.Destructive">Removal bypasses the Recycle Bin. Without a retained or restored copy, media are lost from this gallery. Backups may still contain them. This is not secure SSD/NVMe erasure.</Alert>
+                <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmremoval" Class="mt-0.5" @bind-Checked="confirmRemoval" Disabled="@busy"  /><Label For="check-confirmremoval" Class="text-sm leading-relaxed">I reviewed these media items and actions and confirm permanent removal.</Label></div>
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@(busy || !confirmRemoval)" OnClick="ExecuteRemovalAsync">Confirm removal of @removalPlan.Count media item(s)</Button>
                 @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                 @if (busy) { <p role="status">@progress</p> }
             </Card>
@@ -779,6 +782,7 @@ else
     private string ingestionProfile = "hdd";
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
     private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
+    private string restoreAzurePrefix = "";
     private string restoreArchive = "", restoreCredential = "";
     private bool restoreUseRecovery;
     private IReadOnlyList<string> restoreArchives = [];
@@ -815,7 +819,7 @@ else
     {
         restoreSourceType = source;
         restoreArchives = [];
-        restoreArchive = restoreSasUrl = "";
+        restoreArchive = restoreSasUrl = restoreAzurePrefix = "";
         restoreCredential = "";
         restoreUseRecovery = false;
     }
@@ -896,7 +900,7 @@ else
     private Task ListRestoreBackupsAsync() => RunAsync("Finding backups...", async () =>
     {
         restoreArchives = restoreSourceType == "sas"
-            ? await Gallery.ListRestoreBackupsFromSasAsync(restoreSasUrl)
+            ? await Gallery.ListRestoreBackupsFromSasAsync(restoreSasUrl, restoreAzurePrefix)
             : await Gallery.ListRestoreBackupsAsync("local", restoreSourceDirectory, "", "", "");
         message = $"Found {restoreArchives.Count} backup archive(s). Select the full or final incremental backup.";
     });
@@ -907,7 +911,7 @@ else
         {
             if (restoreSourceType == "sas")
                 await Gallery.RestoreGalleryFromSasAsync(restoreSasUrl, restoreArchive, newGalleryDirectory,
-                    restoreCredential, restoreUseRecovery, newGalleryName);
+                    restoreCredential, restoreUseRecovery, newGalleryName, restoreAzurePrefix);
             else
                 await Gallery.RestoreVaultAsync("local", restoreSourceDirectory, "", "", "",
                     restoreArchive, newGalleryDirectory, restoreCredential, restoreUseRecovery, newGalleryName);
@@ -950,13 +954,13 @@ else
     private bool progressToastScheduled;
     private bool TrashActive => activeTool == "trash";
     private bool ToolboxShown => toolboxVisible && workflow == "gallery";
-    // Gallery feedback is shown as toasts so the main content holds only image cards; dialogs keep their inline messages.
+    // Gallery feedback is shown as toasts so the main content holds only media cards; dialogs keep their inline messages.
     private bool UsesToasts => Gallery.IsUnlocked && workflow == "gallery" && selected is null && removalPlan.Count == 0;
     private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
     private GalleryFilter? browsingFilter;
     private static readonly (string Id, string Name)[] Workflows =
     [
-        ("gallery", "Gallery"), ("duplicates", "Duplicate finder"), ("ingest", "Ingest images"), ("settings", "Settings")
+        ("gallery", "Gallery"), ("duplicates", "Duplicate finder"), ("ingest", "Ingest media"), ("settings", "Settings")
     ];
     private static string WorkflowIcon(string workflow) => workflow switch
     {
@@ -1480,7 +1484,7 @@ else
         var reporter = new InlineProgress<(int Completed, int Total)>(update => InvokeAsync(() =>
         {
             if (disposed || !busy) return;
-            progress = $"Scanning for duplicates... {update.Completed:N0} / {update.Total:N0} images fingerprinted";
+            progress = $"Scanning for duplicates... {update.Completed:N0} / {update.Total:N0} media items fingerprinted";
             StateHasChanged();
         }));
         duplicateScan = await Gallery.ScanDuplicatesAsync(reporter);
@@ -1522,12 +1526,12 @@ else
             message = summary;
         });
     }
-    private Task FindSelectedDuplicatesAsync() => RunAsync("Finding duplicates of selected images...", async () =>
+    private Task FindSelectedDuplicatesAsync() => RunAsync("Finding duplicates of selected media...", async () =>
     {
         var reporter = new InlineProgress<(int Completed, int Total)>(update => InvokeAsync(() =>
         {
             if (disposed || !busy) return;
-            progress = $"Finding duplicates... {update.Completed:N0} / {update.Total:N0} images fingerprinted";
+            progress = $"Finding duplicates... {update.Completed:N0} / {update.Total:N0} media items fingerprinted";
             StateHasChanged();
         }));
         duplicateScan = await Gallery.ScanDuplicatesAsync(reporter);
@@ -1538,7 +1542,7 @@ else
         var matches = VisibleDuplicateGroups.Where(group => group.ImageIds.Any(librarySelection.Contains)).ToList();
         if (matches.Count == 0)
         {
-            message = $"No likely duplicates found for the {librarySelection.Count} selected image(s).";
+            message = $"No likely duplicates found for the {librarySelection.Count} selected media item(s).";
             return;
         }
         reviewGroups = matches;
@@ -1805,8 +1809,8 @@ else
             await InvokeAsync(StateHasChanged);
             if (Gallery.IsUnlocked) await ReloadAsync();
             if (disposed) return;
-            importProgress = importProgress with { Status = importProgress.Total == 0 ? "No supported images found." : "Ingestion complete." };
-            message = $"Imported {importProgress.Imported} images. {importFailures.Count} file(s) reported errors."
+            importProgress = importProgress with { Status = importProgress.Total == 0 ? "No supported media found." : "Ingestion complete." };
+            message = $"Imported {importProgress.Imported} media item(s). {importFailures.Count} file(s) reported errors."
                 + (deletingSources ? " Sources of verified imports were deleted unless an error was reported; duplicates were retained." : " Sources were retained.");
         }
         catch
@@ -1860,7 +1864,7 @@ else
 
     private void CancelRemoval() { removalPlan.Clear(); confirmRemoval = false; }
 
-    private Task ExecuteRemovalAsync() => RunAsync("Removing marked images...", async () =>
+    private Task ExecuteRemovalAsync() => RunAsync("Removing marked media...", async () =>
     {
         EnsureNoLibraryJob();
         if (!confirmRemoval) throw new InvalidOperationException("Confirm removal first.");
@@ -1872,12 +1876,12 @@ else
         finally
         {
             foreach (var result in removalResults.Where(result => result.Error is not null))
-                Logger.LogWarning("Image removal issue for {ImageId}: {Error}", result.Id, result.Error);
+                Logger.LogWarning("Media removal issue for {ImageId}: {Error}", result.Id, result.Error);
             CancelRemoval();
             CloseDetail();
             await ReloadAsync();
         }
-        message = $"Removed {removalResults.Count(result => result.WasRemoved)} images. {removalResults.Count(result => result.Error is not null)} issue(s); review the removal results.";
+        message = $"Removed {removalResults.Count(result => result.WasRemoved)} media item(s). {removalResults.Count(result => result.Error is not null)} issue(s); review the removal results.";
     });
 
     private Task OpenAsync(ImageRecord image) => RunAsync("Decrypting preview...", async () =>
@@ -2015,13 +2019,13 @@ else
         message = "Vision analysis saved.";
     });
 
-    private Task MoveAsync() => RunAsync("Moving encrypted image...", async () =>
+    private Task MoveAsync() => RunAsync("Moving encrypted media...", async () =>
     {
         EnsureNoLibraryJob();
         if (selected is null) return;
         try { await Gallery.MoveAsync(selected.Id, destination, rename); }
         finally { await ReloadAsync(); }
-        message = "Encrypted image moved and renamed.";
+        message = "Encrypted media moved and renamed.";
     });
 
     private Task ChangePassphraseAsync() => RunAsync("Updating passphrase...", async () =>
@@ -2037,7 +2041,7 @@ else
 
     private void EnsureNoLibraryJob()
     {
-        if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current image, before changing files or gallery settings.");
+        if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current media item, before changing files or gallery settings.");
     }
 
     private async Task UpdateAutoLockMinutesAsync(string? value)

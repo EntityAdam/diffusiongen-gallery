@@ -14,4 +14,7 @@
     <InternalsVisibleTo Include="Gallery.Tests" />
     <InternalsVisibleTo Include="Gallery.TestSupport" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Gallery.Migrations\Gallery.Migrations.csproj" />
+  </ItemGroup>
 </Project>

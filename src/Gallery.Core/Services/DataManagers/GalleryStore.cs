@@ -9,6 +9,7 @@ using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers.Models;
 using Gallery.Core.Services.DataManagers.CommandFactories;
 using Microsoft.Data.Sqlite;
+using Gallery.Migrations;
 
 namespace Gallery.Core.Services.DataManagers;
 
@@ -57,7 +58,7 @@ internal sealed partial class GalleryStore(string databasePath)
         {
             await ConfigureDurabilityAsync(sqliteConnection);
             await ConfigureJournalAsync(sqliteConnection);
-            await InitializeSchemaAsync(sqliteConnection);
+            GalleryDatabase.Upgrade(sqliteConnection);
             return sqliteConnection;
         }
         catch
@@ -175,17 +176,6 @@ internal sealed partial class GalleryStore(string databasePath)
         incrementalHash.AppendData(bytes);
     }
 
-    // Acquire the database write reservation before observing schema so independent stores cannot race an upgrade.
-    private static async Task InitializeSchemaAsync(SqliteConnection sqliteConnection)
-    {
-        using var sqliteTransaction = sqliteConnection.BeginTransaction(deferred: false);
-        await CreateBaseSchemaAsync(sqliteConnection, sqliteTransaction);
-        if (!await HasFingerprintColumnAsync(sqliteConnection, sqliteTransaction))
-            await AddFingerprintColumnAsync(sqliteConnection, sqliteTransaction);
-        await CreateFingerprintIndexAsync(sqliteConnection, sqliteTransaction);
-        sqliteTransaction.Commit();
-    }
-
     private async Task ConfigureJournalAsync(SqliteConnection sqliteConnection)
     {
         using var sqliteCommand = IsNetworkDirectory(Path.GetDirectoryName(databasePath)!)
@@ -194,35 +184,11 @@ internal sealed partial class GalleryStore(string databasePath)
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    private static async Task CreateBaseSchemaAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateInitializeSchema(sqliteConnection, sqliteTransaction);
-        await sqliteCommand.ExecuteNonQueryAsync();
-    }
-
     internal static bool IsNetworkDirectory(string directory)
     {
         var root = Path.GetPathRoot(Path.GetFullPath(directory))!;
         return root.StartsWith(@"\\", StringComparison.Ordinal)
             || OperatingSystem.IsWindows() && new DriveInfo(root).DriveType == DriveType.Network;
-    }
-
-    private static async Task<bool> HasFingerprintColumnAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateCheckFingerprintColumn(sqliteConnection, sqliteTransaction);
-        return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync()) != 0;
-    }
-
-    private static async Task AddFingerprintColumnAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateAddFingerprintColumn(sqliteConnection, sqliteTransaction);
-        await sqliteCommand.ExecuteNonQueryAsync();
-    }
-
-    private static async Task CreateFingerprintIndexAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateFingerprintIndex(sqliteConnection, sqliteTransaction);
-        await sqliteCommand.ExecuteNonQueryAsync();
     }
 
     public async Task<List<ImageRecord>> ReadRecordsAsync(byte[] key)
@@ -257,7 +223,7 @@ internal sealed partial class GalleryStore(string databasePath)
 
     private static async Task<byte[]> ReadRequiredEncryptedThumbnailAsync(SqliteCommand sqliteCommand, string id) =>
         (byte[]?)await sqliteCommand.ExecuteScalarAsync()
-            ?? throw new ThumbnailNotFoundException($"Expected one thumbnail for image '{id}', but found 0.",
+            ?? throw new ThumbnailNotFoundException($"Expected one thumbnail for media item '{id}', but found 0.",
                 GalleryLogEvent.ReadThumbnail, new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Image.Id", id)));
 
     private static ImageThumbnail DecodeThumbnail(byte[] encryptedThumbnail, byte[] key, string id, string envelopeDescription)
@@ -336,7 +302,7 @@ internal sealed partial class GalleryStore(string databasePath)
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         if (!await sqliteDataReader.ReadAsync())
-            throw new InvalidOperationException($"Expected one image for verification '{id}', but found 0.");
+            throw new InvalidOperationException($"Expected one media item for verification '{id}', but found 0.");
         var imageRecord = DecodeRecord(id, sqliteDataReader.GetFieldValue<byte[]>(0), key);
         var encryptedThumbnail = sqliteDataReader.GetFieldValue<byte[]>(1);
         return (imageRecord, DecodeThumbnail(encryptedThumbnail, key, id, $"verification thumbnail '{id}'"));
@@ -409,7 +375,7 @@ internal sealed partial class GalleryStore(string databasePath)
 
     private static async Task<byte[]> ReadRequiredEncryptedRecordAsync(SqliteCommand sqliteCommand, string id) =>
         (byte[]?)await sqliteCommand.ExecuteScalarAsync()
-            ?? throw new InvalidOperationException($"Expected one record for image '{id}', but found 0.");
+            ?? throw new InvalidOperationException($"Expected one record for media item '{id}', but found 0.");
 
     public async Task UpdateAsync(ImageRecord imageRecord, byte[] key)
     {
@@ -435,7 +401,7 @@ internal sealed partial class GalleryStore(string databasePath)
     private static void RequireSingleImageMutation(int affectedRows, string id, string action, string outcome)
     {
         if (affectedRows != 1)
-            throw new InvalidOperationException($"Expected to {action} one image with id '{id}', but {outcome} {affectedRows}.");
+            throw new InvalidOperationException($"Expected to {action} one media item with id '{id}', but {outcome} {affectedRows}.");
     }
 
     public async Task<T?> ReadSettingsAsync<T>(string id, string purpose, byte[] key) where T : class
@@ -480,8 +446,8 @@ internal sealed partial class GalleryStore(string databasePath)
     private static ImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key)
     {
         var imageRecord = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key)
-            ?? throw new InvalidOperationException("Invalid image record.");
-        if (imageRecord.Id != id) throw new CryptographicException("Image record identity mismatch.");
+            ?? throw new InvalidOperationException("Invalid media record.");
+        if (imageRecord.Id != id) throw new CryptographicException("Media record identity mismatch.");
         return imageRecord;
     }
 

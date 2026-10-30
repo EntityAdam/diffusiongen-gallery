@@ -15,9 +15,10 @@ namespace Gallery.Core.Services.Processors;
 internal static partial class ComfyMetadata
 {
     /// <summary>Bump when extraction improves so existing records are re-parsed once.</summary>
-    public const int Version = 2;
+    public const int Version = 3;
     private const int MaxDepth = 32;
     private const int MaxNumericTraversalWork = 10_000;
+    private const int MaxTextTraversalWork = 10_000;
     private const string GenericModelKind = "Model";
 
     internal sealed record Documents(string? ApiPrompt, string? Workflow);
@@ -282,50 +283,70 @@ internal static partial class ComfyMetadata
                 ?? samplers.FirstOrDefault();
         }
 
-        public static string? ResolveText(JsonObject nodesById, JsonNode? jsonNode, string role, int depth = 0, HashSet<string>? visitedNodeIds = null)
+        public static string? ResolveText(JsonObject nodesById, JsonNode? jsonNode, string role)
         {
-            if (depth > MaxDepth || jsonNode is null) return null;
-            if (jsonNode is JsonValue scalar) return scalar.TryGetValue<string>(out var text) ? text : null;
-            var node = Linked(nodesById, jsonNode);
-            visitedNodeIds ??= [];
-            if (node is null || !visitedNodeIds.Add(node.Id)) return null;
-            return ResolvePreferredText(nodesById, node, role, depth, visitedNodeIds)
-                ?? ResolveConditioningText(nodesById, node, role, depth, visitedNodeIds)
-                ?? ResolveFallbackText(nodesById, node, role, depth, visitedNodeIds);
+            var work = 0;
+            return TraverseText(nodesById, jsonNode, role, 0, new HashSet<string>(),
+                new Dictionary<(string NodeId, int Depth), string?>(), ref work).Value;
         }
 
-        private static string? ResolvePreferredText(JsonObject nodesById, Node node, string role, int depth, HashSet<string> visitedNodeIds)
+        private readonly record struct TextResolution(string? Value, bool IsComplete);
+
+        private static TextResolution TraverseText(
+            JsonObject nodesById,
+            JsonNode? jsonNode,
+            string role,
+            int depth,
+            HashSet<string> activeNodeIds,
+            Dictionary<(string NodeId, int Depth), string?> completedNodeValues,
+            ref int work)
+        {
+            if (depth > MaxDepth || jsonNode is null) return new(null, true);
+            if (work >= MaxTextTraversalWork) return new(null, false);
+            work++;
+            if (jsonNode is JsonValue scalar)
+                return new(scalar.TryGetValue<string>(out var text) ? text : null, true);
+            var node = Linked(nodesById, jsonNode);
+            if (node is null) return new(null, true);
+            var depthKey = (node.Id, depth);
+            if (completedNodeValues.TryGetValue(depthKey, out var cachedText)) return new(cachedText, true);
+            if (!activeNodeIds.Add(node.Id)) return new(null, false);
+            try
+            {
+                var isComplete = true;
+                string? resolvedText = null;
+                foreach (var input in TextInputs(node, role))
+                {
+                    var resolution = input.ValueKind == JsonValueKind.String
+                        ? new TextResolution(input.GetString(), true)
+                        : TraverseText(nodesById, JsonNode.Parse(input.GetRawText()), role, depth + 1,
+                            activeNodeIds, completedNodeValues, ref work);
+                    isComplete &= resolution.IsComplete;
+                    resolvedText = resolution.Value;
+                    if (resolvedText is not null) break;
+                }
+                if (isComplete) completedNodeValues[depthKey] = resolvedText;
+                return new(resolvedText, isComplete);
+            }
+            finally { activeNodeIds.Remove(node.Id); }
+        }
+
+        private static IEnumerable<JsonElement> TextInputs(Node node, string role)
         {
             foreach (var key in TextKeys)
-            {
-                if (!node.Inputs.TryGetValue(key, out var input)) continue;
-                if (input.ValueKind == JsonValueKind.String) return input.GetString();
-                if (input.ValueKind == JsonValueKind.Array
-                    && ResolveText(nodesById, JsonNode.Parse(input.GetRawText()), role, depth + 1, visitedNodeIds) is { } linkedText)
-                    return linkedText;
-            }
-            return null;
-        }
-
-        private static string? ResolveConditioningText(JsonObject nodesById, Node node, string role, int depth, HashSet<string> visitedNodeIds)
-        {
+                if (node.Inputs.TryGetValue(key, out var input)
+                    && input.ValueKind is JsonValueKind.String or JsonValueKind.Array)
+                    yield return input;
             foreach (var key in new[] { role }.Concat(ConditioningKeys))
-                if (node.Inputs.TryGetValue(key, out var input) && input.ValueKind == JsonValueKind.Array
-                    && ResolveText(nodesById, JsonNode.Parse(input.GetRawText()), role, depth + 1, visitedNodeIds) is { } text)
-                    return text;
-            return null;
-        }
-
-        private static string? ResolveFallbackText(JsonObject nodesById, Node node, string role, int depth, HashSet<string> visitedNodeIds)
-        {
+                if (node.Inputs.TryGetValue(key, out var input) && input.ValueKind == JsonValueKind.Array)
+                    yield return input;
             var opposite = role == "positive" ? "negative" : "positive";
             foreach (var key in node.InputNames)
             {
                 var input = node.Inputs[key];
                 if (input.ValueKind != JsonValueKind.Array || key == opposite || NonTextLinks.Contains(key) || ConditioningKeys.Contains(key) || key == role) continue;
-                if (ResolveText(nodesById, JsonNode.Parse(input.GetRawText()), role, depth + 1, visitedNodeIds) is { } text) return text;
+                yield return input;
             }
-            return null;
         }
 
         public static double? ResolveNumber(JsonObject nodesById, JsonNode? jsonNode, string key, int depth = 0)

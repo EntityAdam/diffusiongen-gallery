@@ -33,17 +33,15 @@ public sealed partial class GalleryService
 
     public async Task<DuplicateScan> ScanDuplicatesAsync(IProgress<(int Completed, int Total)>? progress = null)
     {
-        // One lease spans the scan, so a gallery switch cannot drain and publish another location until the
-        // results are stored in the gallery that produced them.
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var scanStore = galleryStore;
-        var imageRecords = await ListWithKeyAsync(keyLease.Bytes);
+        var imageRecords = await scanStore.ReadRecordsAsync(keyLease.Bytes);
         var cachedHashesByImageId = await scanStore.ReadSettingsAsync<Dictionary<string, PerceptualHash>>(
             PerceptualHashesId, PerceptualHashesPurpose, keyLease.Bytes) ?? [];
         Dictionary<string, PerceptualHash> perceptualHashesByImageId;
         List<ImageRecord> pendingImageRecords;
         (perceptualHashesByImageId, pendingImageRecords) = ReconcileCachedHashes(imageRecords, cachedHashesByImageId);
-        await ComputePendingHashesAsync(scanStore, pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
+        await ComputePendingHashesAsync(scanStore, keyLease.Bytes, pendingImageRecords, perceptualHashesByImageId, imageRecords.Count, progress);
         await scanStore.SaveSettingsAsync(perceptualHashesByImageId, PerceptualHashesId, PerceptualHashesPurpose, keyLease.Bytes);
         var duplicateScan = await BuildDuplicateScanAsync(imageRecords, perceptualHashesByImageId);
         await scanStore.SaveSettingsAsync(duplicateScan, DuplicateScanId, DuplicateScanPurpose, keyLease.Bytes);
@@ -59,7 +57,7 @@ public sealed partial class GalleryService
         foreach (var imageRecord in imageRecords)
         {
             if (cachedHashesByImageId.TryGetValue(imageRecord.Id, out var cachedPerceptualHash)
-                && cachedPerceptualHash.PngSha256 == imageRecord.PngSha256)
+                && cachedPerceptualHash.PngSha256 == imageRecord.ContentSha256)
                 hashesByImageId[imageRecord.Id] = cachedPerceptualHash;
             else
                 pendingImageRecords.Add(imageRecord);
@@ -67,7 +65,7 @@ public sealed partial class GalleryService
         return (hashesByImageId, pendingImageRecords);
     }
 
-    private async Task ComputePendingHashesAsync(GalleryStore scanStore, IReadOnlyList<ImageRecord> pendingImageRecords,
+    private static async Task ComputePendingHashesAsync(GalleryStore scanStore, byte[] key, IReadOnlyList<ImageRecord> pendingImageRecords,
         IDictionary<string, PerceptualHash> perceptualHashesByImageId, int totalImageCount,
         IProgress<(int Completed, int Total)>? progress)
     {
@@ -75,12 +73,10 @@ public sealed partial class GalleryService
         progress?.Report((completedCount, totalImageCount));
         foreach (var imageRecordBatch in pendingImageRecords.Chunk(HashBatchSize))
         {
-            // Re-acquiring per batch lets an explicit lock stop a long scan between batches.
-            using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
             var imageThumbnails = new List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)>(imageRecordBatch.Length);
             try
             {
-                await ReadHashThumbnailsAsync(scanStore, imageRecordBatch, keyLease.Bytes, imageThumbnails);
+                await ReadHashThumbnailsAsync(scanStore, imageRecordBatch, key, imageThumbnails);
                 var batchPerceptualHashesByImageId = await PerceptualHashBatchProcessor.ComputeAsync(imageThumbnails);
                 foreach (var (imageId, perceptualHash) in batchPerceptualHashesByImageId)
                     perceptualHashesByImageId.Add(imageId, perceptualHash);
@@ -110,7 +106,7 @@ public sealed partial class GalleryService
                 or UnauthorizedAccessException or CryptographicException)
             {
                 throw new InvalidOperationException(
-                    $"Could not read the thumbnail for image '{imageRecord.Id}' during duplicate scanning.", exception);
+                    $"Could not read the thumbnail for media item '{imageRecord.Id}' during duplicate scanning.", exception);
             }
         }
     }
@@ -126,17 +122,17 @@ public sealed partial class GalleryService
     }
 
     /// <summary>Unmarks the kept copies, marks the other copies for deletion, and returns the committed records.</summary>
-    public async Task<List<ImageRecord>> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupIds, IReadOnlySet<string> keep)
+    public async Task<List<ImageRecord>> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupImageIds, IReadOnlySet<string> keep)
     {
-        ArgumentNullException.ThrowIfNull(groupIds);
+        ArgumentNullException.ThrowIfNull(groupImageIds);
         ArgumentNullException.ThrowIfNull(keep);
-        if (keep.Count == 0) throw new InvalidOperationException("Keep at least one image in the group.");
-        var invalidKeeperIds = keep.Where(imageId => !groupIds.Contains(imageId)).ToArray();
+        if (keep.Count == 0) throw new InvalidOperationException("Keep at least one media item in the group.");
+        var invalidKeeperIds = keep.Where(imageId => !groupImageIds.Contains(imageId)).ToArray();
         if (invalidKeeperIds.Length > 0)
             throw new InvalidOperationException(
-                $"Kept images [{string.Join(", ", invalidKeeperIds)}] must belong to the group. Valid image IDs: [{string.Join(", ", groupIds)}].");
+                $"Kept media items [{string.Join(", ", invalidKeeperIds)}] must belong to the group. Valid media IDs: [{string.Join(", ", groupImageIds)}].");
         var retainedIds = keep.ToHashSet(StringComparer.Ordinal);
-        return await UpdateManyAsync(groupIds,
+        return await UpdateManyAsync(groupImageIds,
             record => SetDeletionMark(record, !retainedIds.Contains(record.Id)));
     }
 

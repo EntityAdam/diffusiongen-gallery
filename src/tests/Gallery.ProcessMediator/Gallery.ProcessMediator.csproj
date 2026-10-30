@@ -6,4 +6,7 @@
     <Nullable>enable</Nullable>
     <UseAppHost>true</UseAppHost>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Gallery.Core\Gallery.Core.csproj" />
+  </ItemGroup>
 </Project>

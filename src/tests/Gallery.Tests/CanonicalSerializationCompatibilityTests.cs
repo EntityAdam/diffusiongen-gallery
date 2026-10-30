@@ -6,6 +6,18 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class CanonicalSerializationCompatibilityTests
 {
+    [Fact]
+    public void ImageRecord_ContentSha256_RetainsLegacyCatalogWireName()
+    {
+        const string legacyHash = "legacy-content-hash";
+        var image = JsonSerializer.Deserialize<ImageRecord>($$"""{"PngSha256":"{{legacyHash}}"}""")!;
+
+        Assert.Equal(legacyHash, image.ContentSha256);
+        var serialized = JsonSerializer.SerializeToElement(image);
+        Assert.Equal(legacyHash, serialized.GetProperty("PngSha256").GetString());
+        Assert.False(serialized.TryGetProperty("ContentSha256", out _));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

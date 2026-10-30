@@ -452,7 +452,7 @@ public sealed class GalleryTests
             return Task.CompletedTask;
         });
         // Assert
-        Assert.Equal(new ImportProgress(0, 0, 0, 0, "No supported images found."), updates[^1]);
+        Assert.Equal(new ImportProgress(0, 0, 0, 0, "No supported media found."), updates[^1]);
         Assert.Empty(await fixture.Service.ListAsync());
     }
 
@@ -878,7 +878,7 @@ public sealed class GalleryTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
-        var wrong = record with { PngSha256 = new string('0', 64) };
+        var wrong = record with { ContentSha256 = new string('0', 64) };
         var payload = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(wrong);
         await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(payload, fixture.Session.Key, $"record:{record.Id}"));
         // Act
@@ -935,7 +935,7 @@ public sealed class GalleryTests
         Assert.Equal(1600, fitImage.Width);
         Assert.Null(fitImage.Metadata.ExifProfile);
         Assert.StartsWith("data:image/png;base64,", full);
-        Assert.Equal(record.PngSha256, Convert.ToHexString(SHA256.HashData(fullBytes)));
+        Assert.Equal(record.ContentSha256, Convert.ToHexString(SHA256.HashData(fullBytes)));
         Assert.Equal(1800, fullImage.Width);
     }
 

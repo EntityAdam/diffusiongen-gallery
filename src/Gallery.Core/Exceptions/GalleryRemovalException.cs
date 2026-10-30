@@ -12,5 +12,5 @@ public sealed class GalleryRemovalException : GalleryTechnicalException
         ContextualData? contextualData = null, Exception? exception = null)
         : base(message, logEvent, contextualData, exception) { }
 
-    protected override string ReasonCore => "An image could not be completely removed.";
+    protected override string ReasonCore => "A media item could not be completely removed.";
 }

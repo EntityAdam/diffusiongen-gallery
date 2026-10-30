@@ -21,12 +21,12 @@ internal static class PerceptualHashBatchProcessor
             (imageRecord, imageThumbnail) = imageThumbnails[index];
             try
             {
-                computedHashes[index] = new(imageRecord.PngSha256,
+                computedHashes[index] = new(imageRecord.ContentSha256,
                     PerceptualImageHasher.DifferenceHash(imageThumbnail.Content.Span));
             }
             catch (Exception exception) when (exception is CryptographicException or ImageFormatException or UnknownImageFormatException)
             {
-                throw new InvalidOperationException($"Could not compute a perceptual hash for image '{imageRecord.Id}'.", exception);
+                throw new InvalidOperationException($"Could not compute a perceptual hash for media item '{imageRecord.Id}'.", exception);
             }
         });
         var hashesByImageId = new Dictionary<string, PerceptualHash>(imageThumbnails.Count, StringComparer.Ordinal);

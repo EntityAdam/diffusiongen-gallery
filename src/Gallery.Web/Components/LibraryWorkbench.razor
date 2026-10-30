@@ -12,17 +12,17 @@
             <h4 id="selected-tags-heading">Tags</h4>
             @if (SelectedTags.Count == 0)
             {
-                <p class="text-muted-foreground text-sm">@(SelectedIds.Count == 0 ? "Select images to see their tags." : "The selected images have no tags.")</p>
+                <p class="text-muted-foreground text-sm">@(SelectedIds.Count == 0 ? "Select media to see their tags." : "The selected media have no tags.")</p>
             }
             else
             {
-                <ul class="tag-chips" aria-label="Tags on selected images">
+                <ul class="tag-chips" aria-label="Tags on selected media">
                     @foreach (var (tag, count) in SelectedTags)
                     {
                         <li class="tag-chip" title="@($"On {count} of {SelectedIds.Count} selected")">
                             <span>@tag</span>
                             @if (count < SelectedIds.Count) { <span class="tag-chip-count">@count</span> }
-                            <button type="button" aria-label="@($"Remove tag {tag} from selected images")" disabled="@working" @onclick="() => RemoveTagAsync(tag)">
+                            <button type="button" aria-label="@($"Remove tag {tag} from selected media")" disabled="@working" @onclick="() => RemoveTagAsync(tag)">
                                 <XIcon Size="12" aria-hidden="true" />
                             </button>
                         </li>
@@ -94,7 +94,7 @@
         </div>
         @if (analyzing)
         {
-            <Button Variant="ButtonVariant.Outline" Disabled="@cancelRequested" OnClick="StopAnalysisAsync">Stop after current image</Button>
+            <Button Variant="ButtonVariant.Outline" Disabled="@cancelRequested" OnClick="StopAnalysisAsync">Stop after current media item</Button>
         }
     }
     @if (Workflow == "search")
@@ -113,20 +113,20 @@
     }
     @if (Workflow == "intelligence")
     {
-        <p class="text-muted-foreground text-sm">Describe and tag images with your local vision model. Nothing is saved until you approve: cards with a suggestion show a <SparklesIcon Size="12" aria-hidden="true" /> badge, which opens the image in full screen for review.</p>
+        <p class="text-muted-foreground text-sm">Describe and tag media with your local vision model. Nothing is saved until you approve: cards with a suggestion show a <SparklesIcon Size="12" aria-hidden="true" /> badge, which opens the media item in full screen for review.</p>
         <div class="flex flex-wrap items-center gap-2">
             @if (analyzing)
             {
                 <Button Variant="ButtonVariant.Secondary" Size="ButtonSize.Icon" Disabled="@cancelRequested" OnClick="StopAnalysisAsync"
-                        aria-label="Stop after the current image" title="Stop after the current image"><SquareIcon Size="16" aria-hidden="true" /></Button>
+                        aria-label="Stop after the current media item" title="Stop after the current media item"><SquareIcon Size="16" aria-hidden="true" /></Button>
             }
             else
             {
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Icon" Disabled="@(working || UnanalyzedCount == 0)" OnClick="AnalyzeUnanalyzedAsync"
-                        aria-label="Analyze all images without a description" title="Analyze all images without a description"><PlayIcon Size="16" aria-hidden="true" /></Button>
+                        aria-label="Analyze all media without a description" title="Analyze all media without a description"><PlayIcon Size="16" aria-hidden="true" /></Button>
             }
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(working || SelectedIds.Count is 0 or > 24)" OnClick="SuggestAsync"
-                    title="Analyze up to 24 selected images">Analyze selected (@SelectedIds.Count)</Button>
+                    title="Analyze up to 24 selected media items">Analyze selected (@SelectedIds.Count)</Button>
         </div>
         <p class="text-muted-foreground text-sm">@UnanalyzedCount without a description · @suggestions.Count awaiting approval</p>
     }
@@ -136,7 +136,7 @@
     @if (compareImages.Count == 2)
     {
         <div class="fixed inset-0 z-40 overflow-y-auto bg-black/90 p-3 md:p-7">
-            <Card Class="mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-label="Compare images">
+            <Card Class="mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-label="Compare media">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2>Choose what deserves to stay.</h2><Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@working" OnClick="CloseComparison">Close comparison</Button></div>
                 <div class="grid grid-cols-1 items-start gap-6 md:grid-cols-2 [&>div]:min-w-0 [&>div]:space-y-3">
                     @foreach (var image in compareImages)
@@ -245,7 +245,7 @@
     {
         if (!analyzing) return;
         cancelRequested = true;
-        status = "Stopping after the current image...";
+        status = "Stopping after the current media item...";
         await PublishJobAsync();
     }
 
@@ -272,7 +272,7 @@
             }
         }
         await Changed.InvokeAsync();
-        notice = $"Updated {ids.Length - failures.Count} image(s).";
+        notice = $"Updated {ids.Length - failures.Count} media item(s).";
         error = string.Join(" / ", failures);
     }
 
@@ -305,7 +305,7 @@
             }
         }
         await Changed.InvokeAsync();
-        notice = $"Removed \"{tag}\" from {ids.Length - failures.Count} image(s).";
+        notice = $"Removed \"{tag}\" from {ids.Length - failures.Count} media item(s).";
         error = string.Join(" / ", failures);
     });
 
@@ -345,15 +345,15 @@
 
     private Task AnalyzeSelectionAsync(List<OrganizationSuggestion> target)
     {
-        if (SelectedIds.Count is 0 or > 24) return RunAsync("Analyzing selection...", () => throw new InvalidOperationException("Select between 1 and 24 images."));
+        if (SelectedIds.Count is 0 or > 24) return RunAsync("Analyzing selection...", () => throw new InvalidOperationException("Select between 1 and 24 media items."));
         return AnalyzeAsync(Images.Where(image => SelectedIds.Contains(image.Id)).ToArray(), target, "Analyzing selection...");
     }
 
-    private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing images without a description...");
+    private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing media without a description...");
 
     private Task AnalyzeAsync(ImageRecord[] selected, List<OrganizationSuggestion> target, string message) => RunAsync(message, async () =>
     {
-        if (selected.Length == 0) throw new InvalidOperationException("There are no images to analyze.");
+        if (selected.Length == 0) throw new InvalidOperationException("There is no media to analyze.");
         cancelRequested = false;
         analyzing = true;
         var settings = await Gallery.SettingsAsync();
@@ -441,7 +441,7 @@
     {
         comparison.Clear();
         var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
-        if (selected.Count != 2) throw new InvalidOperationException("Select exactly two images.");
+        if (selected.Count != 2) throw new InvalidOperationException("Select exactly two media items.");
         foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, ImageResolution.Fit);
         compareImages = selected;
     });

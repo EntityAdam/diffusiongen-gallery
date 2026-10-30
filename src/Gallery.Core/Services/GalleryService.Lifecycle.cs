@@ -155,7 +155,10 @@ public sealed partial class GalleryService : IDisposable
     // unlock again while that work continues. The checkout is kept if the gallery was unlocked meanwhile.
     private async Task ReleaseCheckoutAfterOperationsAsync()
     {
-        var expectedCheckout = checkout;
+        VaultCheckout? expectedCheckout;
+        await lifecycleGate.WaitAsync();
+        try { expectedCheckout = checkout; }
+        finally { lifecycleGate.Release(); }
         if (expectedCheckout is null) return;
         while (true)
         {

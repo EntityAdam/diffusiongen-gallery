@@ -50,9 +50,10 @@ internal sealed class DriveOperationPlayer : IDisposable
             var playerRun = playerLifetime.PlayerRun;
             if (playerRun?.Running == true)
             {
-                // A cancelled run cannot execute a rerun, so a start arriving during stop/pause replaces it once it ends.
-                if (playerRun.cancellationTokenSource.IsCancellationRequested) playerRun.RestartAfterCancellation = true;
-                else playerRun.Rerun = true;
+                if (playerRun.cancellationTokenSource.IsCancellationRequested)
+                    playerRun.RestartAfterCancellation = true;
+                else
+                    playerRun.Rerun = true;
                 playerRun.taskCompletionSource.TrySetResult();
                 return;
             }
@@ -85,8 +86,8 @@ internal sealed class DriveOperationPlayer : IDisposable
 
     public async Task StopAsync()
     {
-        await CancelLoopAsync();
-        ResetCompletedCount();
+        var playerRun = await CancelLoopAsync();
+        ResetCompletedCount(playerRun);
     }
 
     /// <summary>Includes final refresh and session release; failure is never converted into successful idle.</summary>
@@ -119,11 +120,11 @@ internal sealed class DriveOperationPlayer : IDisposable
         lock (playerLifetime.Gate) playerLifetime.Paused = paused;
     }
 
-    private void ResetCompletedCount()
+    private void ResetCompletedCount(PlayerRun? playerRun)
     {
         lock (playerLifetime.Gate)
         {
-            if (playerLifetime.PlayerRun is { } playerRun) playerRun.Completed = 0;
+            if (playerRun is not null) playerRun.Completed = 0;
         }
     }
 
@@ -141,7 +142,7 @@ internal sealed class DriveOperationPlayer : IDisposable
         }
     }
 
-    private async Task CancelLoopAsync()
+    private async Task<PlayerRun?> CancelLoopAsync()
     {
         PlayerRun? playerRun;
         lock (playerLifetime.Gate)
@@ -150,6 +151,7 @@ internal sealed class DriveOperationPlayer : IDisposable
             if (playerRun?.Running == true) CancelRun(playerRun);
         }
         if (playerRun is not null) await ObserveAsync(playerRun);
+        return playerRun;
     }
 
     // Caller holds PlayerLifetime.Gate; a later cancellation supersedes any start that arrived while stopping.
@@ -187,7 +189,8 @@ internal sealed class DriveOperationPlayer : IDisposable
                 {
                     if (playerRun.Rerun && !playerRun.cancellationTokenSource.IsCancellationRequested) continue;
                     playerRun.Running = false;
-                    if (ShouldRestartAfterCancellation(playerRun)) StartReplacementRun();
+                    if (playerRun.RestartAfterCancellation && ReferenceEquals(playerRun, playerLifetime.PlayerRun))
+                        StartLoopIfEligible();
                     return;
                 }
             }
@@ -199,11 +202,6 @@ internal sealed class DriveOperationPlayer : IDisposable
         }
         finally { playerRun.cancellationTokenSource.Dispose(); }
     }
-
-    // Caller holds PlayerLifetime.Gate.
-    private bool ShouldRestartAfterCancellation(PlayerRun playerRun) =>
-        playerRun.RestartAfterCancellation && ReferenceEquals(playerRun, playerLifetime.PlayerRun)
-        && !playerLifetime.Disposed && !playerLifetime.Paused;
 
     private void PublishFault(PlayerRun playerRun, Exception exception)
     {

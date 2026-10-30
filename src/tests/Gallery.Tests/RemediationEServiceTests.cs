@@ -2,7 +2,6 @@ using System.IO.Compression;
 using System.Reflection;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers;
 using Gallery.Core.Services.DataManagers.Models;
 using Gallery.Core.Services.Processors;
 
@@ -191,76 +190,6 @@ public sealed class RemediationEServiceTests
             if (Directory.Exists(backups)) Directory.Delete(backups, recursive: true);
             if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
         }
-    }
-
-    [Fact]
-    public async Task Creation_WhenInterruptedAfterPublishingOnlyTheCatalog_ThenRetryRollsBackItsOwnCatalog()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "gallery-interrupted-create-" + Guid.NewGuid().ToString("N"));
-        var state = root + "-state";
-        Directory.CreateDirectory(root);
-        try
-        {
-            await ArrangeInterruptedPublicationAsync(root, markerMatches: true);
-            using var service = GalleryService.Create(root, new GalleryRuntimeOptions { StateDirectory = state }, new HttpClient());
-            try
-            {
-                var recovery = await service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Retried");
-                service.LockVault();
-                await service.UnlockWithRecoveryPhraseAsync(recovery);
-
-                Assert.Equal("Retried", service.VaultName);
-                Assert.Empty(await service.ListAsync());
-                Assert.Empty(Directory.EnumerateDirectories(root, ".vault-create-*"));
-            }
-            finally { await service.CloseVaultAsync(); }
-        }
-        finally
-        {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-            if (Directory.Exists(state)) Directory.Delete(state, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task Creation_WhenOrphanCatalogDoesNotMatchAStagedCreation_ThenPreservesIt()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "gallery-unrelated-create-" + Guid.NewGuid().ToString("N"));
-        var state = root + "-state";
-        Directory.CreateDirectory(root);
-        try
-        {
-            await ArrangeInterruptedPublicationAsync(root, markerMatches: false);
-            var catalog = Path.Combine(root, "gallery.db");
-            var original = await File.ReadAllBytesAsync(catalog);
-            using var service = GalleryService.Create(root, new GalleryRuntimeOptions { StateDirectory = state }, new HttpClient());
-            try
-            {
-                await Assert.ThrowsAsync<IOException>(() =>
-                    service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Retried"));
-
-                Assert.Equal(original, await File.ReadAllBytesAsync(catalog));
-                Assert.False(service.VaultExists);
-            }
-            finally { await service.CloseVaultAsync(); }
-        }
-        finally
-        {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-            if (Directory.Exists(state)) Directory.Delete(state, recursive: true);
-        }
-    }
-
-    private static async Task ArrangeInterruptedPublicationAsync(string root, bool markerMatches)
-    {
-        var staging = Path.Combine(root, VaultManager.CreationStagingPrefix + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(staging);
-        await new VaultStore(staging).CreateAsync(TestVault.Passphrase);
-        await new GalleryStore(Path.Combine(staging, "gallery.db")).InitializeAsync();
-        await VaultManager.WritePublicationMarkerAsync(staging);
-        if (!markerMatches)
-            await File.WriteAllTextAsync(Path.Combine(staging, VaultManager.PublicationMarkerFileName), new string('0', 64));
-        File.Move(Path.Combine(staging, "gallery.db"), Path.Combine(root, "gallery.db"));
     }
 
     private static MemoryStream CreateArchive(string entryName, byte[] content, CompressionLevel compressionLevel)

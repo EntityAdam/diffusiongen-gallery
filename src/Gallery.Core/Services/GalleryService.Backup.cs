@@ -107,7 +107,9 @@ public sealed partial class GalleryService
         using var activity = BackupActivitySource.StartActivity(incremental ? "backup.incremental" : "backup.full");
         activity?.SetTag("backup.type", incremental ? "incremental" : "full");
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var settings = await ReadBackupSettingsAsync()
+        var store = galleryStore;
+        var headerStore = vaultStore;
+        var settings = await store.ReadSettingsAsync<StoredBackupSettings>(BackupSettingsId, BackupSettingsPurpose, keyLease.Bytes)
             ?? throw new InvalidOperationException("Configure a backup destination before starting a backup.");
         var target = CreateBackupTarget(settings);
         var previousName = incremental
@@ -121,7 +123,7 @@ public sealed partial class GalleryService
         Directory.CreateDirectory(stagingDirectory);
         var archivePath = Path.Combine(stagingDirectory, archiveName);
         var manifestPath = Path.Combine(stagingDirectory, "manifest.enc");
-        await galleryStore.BackupGate.WaitAsync();
+        await store.BackupGate.WaitAsync();
         try
         {
             BackupManifest? previousManifest = null;
@@ -130,20 +132,19 @@ public sealed partial class GalleryService
                 previousManifest = await ValidateBackupChainAsync(target, previousName, stagingDirectory, keyLease.Bytes);
             }
 
-            await ListAsync();
             var mediaEntries = new Dictionary<string, BackupMediaEntry>(StringComparer.Ordinal);
             var stagedMedia = new Dictionary<string, string>(StringComparer.Ordinal);
             string DatabaseFingerprint;
             string vaultHeaderSha256;
-            await galleryStore.Gate.WaitAsync();
+            await store.Gate.WaitAsync();
             try
             {
-                var records = await galleryStore.ReadRecordsAsync(keyLease.Bytes);
+                var records = await store.ReadRecordsAsync(keyLease.Bytes);
                 activity?.SetTag("backup.library.image_count", records.Count);
                 var vaultHeaderPath = Path.Combine(stagingDirectory, VaultHeaderFileName);
                 var databasePath = Path.Combine(stagingDirectory, CatalogFileName);
-                await vaultStore.CopyHeaderAsync(vaultHeaderPath);
-                await galleryStore.CreateSnapshotAsync(databasePath);
+                await headerStore.CopyHeaderAsync(vaultHeaderPath);
+                await store.CreateSnapshotAsync(databasePath);
                 vaultHeaderSha256 = await HashFileAsync(vaultHeaderPath);
                 DatabaseFingerprint = await Gallery.Core.Services.DataManagers.GalleryStore.ComputeContentFingerprintAsync(databasePath, BackupSettingsId);
 
@@ -187,7 +188,7 @@ public sealed partial class GalleryService
                 activity?.SetTag("backup.library.media_hashed_bytes", mediaHashedBytes);
                 activity?.SetTag("backup.library.media_hash_elapsed_ms", mediaHashTimer.Elapsed.TotalMilliseconds);
             }
-            finally { galleryStore.Gate.Release(); }
+            finally { store.Gate.Release(); }
 
             if (incremental && previousManifest is not null
                 && IsUnchangedSince(previousManifest, mediaEntries, DatabaseFingerprint, vaultHeaderSha256))
@@ -206,20 +207,20 @@ public sealed partial class GalleryService
             await target.UploadAsync(archiveName, archivePath);
             await target.UploadAsync(ManifestName(archiveName), manifestPath);
 
-            var latestSettings = await ReadBackupSettingsAsync();
+            var latestSettings = await store.ReadSettingsAsync<StoredBackupSettings>(BackupSettingsId, BackupSettingsPurpose, keyLease.Bytes);
             if (latestSettings is null || !SameDestination(settings, latestSettings))
                 throw new InvalidOperationException("The backup completed, but the destination settings changed before its status could be saved. Verify the archive and run a new full backup if needed.");
-            await WriteEncryptedSettingAsync(settings with
+            await store.SaveSettingsAsync(settings with
             {
                 LastBackupName = archiveName,
                 LastBackupType = backupType
-            }, BackupSettingsId, BackupSettingsPurpose);
+            }, BackupSettingsId, BackupSettingsPurpose, keyLease.Bytes);
             return new(backupType, archiveName, stagedMedia.Count, mediaEntries.Count, archiveBytes, createdAt);
         }
         finally
         {
             try { Directory.Delete(stagingDirectory, recursive: true); }
-            finally { galleryStore.BackupGate.Release(); }
+            finally { store.BackupGate.Release(); }
         }
     }
 
@@ -245,7 +246,7 @@ public sealed partial class GalleryService
         }
         if (settings.DestinationType == "azure")
         {
-            return new BackupTargetAzure(settings.AzureConnectionString, settings.AzureContainer, settings.AzurePrefix);
+            return new BackupTargetAzure(settings.AzureConnectionString, settings.AzureContainer, settings.AzurePrefix, ownedHttpClient);
         }
         throw new InvalidOperationException("The saved backup destination is not supported.");
     }

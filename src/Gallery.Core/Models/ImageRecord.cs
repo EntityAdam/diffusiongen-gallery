@@ -16,7 +16,8 @@ public sealed record ImageRecord
     public int Height { get; init; }
     public long OriginalBytes { get; init; }
     public string Sha256 { get; init; } = "";
-    public string PngSha256 { get; init; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("PngSha256")]
+    public string ContentSha256 { get; init; } = "";
     public string Metadata { get; init; } = "";
     public string Description { get; init; } = "";
     public string UserDescription { get; init; } = "";

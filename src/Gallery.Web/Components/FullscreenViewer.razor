@@ -3,12 +3,12 @@
 @inject IJSRuntime JS
 @inject ILogger<FullscreenViewer> Logger
 
-<section class="fullscreen-viewer fixed inset-0 z-50 flex flex-col bg-background outline-none" role="dialog" aria-modal="true" aria-label="@(ReviewMode ? "Guided review session" : "Full screen image viewer")" tabindex="-1" @ref="element" data-review="@ReviewMode.ToString().ToLowerInvariant()">
+<section class="fullscreen-viewer fixed inset-0 z-50 flex flex-col bg-background outline-none" role="dialog" aria-modal="true" aria-label="@(ReviewMode ? "Guided review session" : "Full screen media viewer")" tabindex="-1" @ref="element" data-review="@ReviewMode.ToString().ToLowerInvariant()">
     <header class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 [&_strong]:break-all">
         <div><strong>@Current.Name</strong><span class="text-muted-foreground"> @(index + 1) / @Images.Count &middot; @Current.Width &times; @Current.Height</span></div>
         <div class="flex flex-wrap items-center gap-2">
-            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || index == 0)" OnClick="() => NavigateAsync(-1)" title="Left arrow: previous image"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
-            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || index + 1 >= Images.Count)" OnClick="() => NavigateAsync(1)" title="Right arrow: next image">Next<ChevronRightIcon aria-hidden="true" /></Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || index == 0)" OnClick="() => NavigateAsync(-1)" title="Left arrow: previous media item"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || index + 1 >= Images.Count)" OnClick="() => NavigateAsync(1)" title="Right arrow: next media item">Next<ChevronRightIcon aria-hidden="true" /></Button>
             @if (!ReviewMode)
             {
                 <Button Variant="@(Current.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@busy" OnClick="MarkAsync" aria-pressed="@Current.IsMarkedForDeletion"><TrashIcon aria-hidden="true" />@(Current.IsMarkedForDeletion ? "Unmark deletion" : "Mark deletion") (D)</Button>
@@ -208,7 +208,7 @@
         {
             Logger.LogError(exception, "Full screen viewer operation failed");
             error = exception is System.Security.Cryptography.CryptographicException
-                ? "Image failed its encryption integrity check."
+                ? "Media preview failed its encryption integrity check."
                 : exception is IOException or InvalidOperationException ? exception.Message
                 : "Viewer operation failed. Check the application console for details.";
         }
