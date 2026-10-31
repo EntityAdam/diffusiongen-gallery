@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Services.DataManagers.Models;
+namespace Gallery.Core.Services.Ports.Models;
 
 internal sealed record ImportCatalogEntry(ImageRecord Record, ImmutableArray<byte> EncryptedThumbnail)
 {
@@ -10,3 +10,5 @@ internal sealed record ImportCatalogEntry(ImageRecord Record, ImmutableArray<byt
 }
 
 internal sealed record ImportCommitResult(ImmutableArray<string> ImportedIds, ImmutableArray<string> DuplicateIds);
+
+internal sealed record CatalogImportSource(string Id, string SourcePath, string Sha256, long OriginalBytes);

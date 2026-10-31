@@ -23,14 +23,14 @@ internal static class ReportCommand
             .Select(group => group.LastOrDefault(row => Property(row, "report").ValueKind == JsonValueKind.Object) is { ValueKind: JsonValueKind.Object } measured
                 ? measured : group.Last()).ToList();
         var markdown = new StringBuilder("# Gallery stress measurements\n\n");
-        markdown.AppendLine("Durations are milliseconds. Schema 3 measures first-page opening through the encrypted browse index, before thumbnails; catalog loading is optional background work. Schema 2 measures full-catalog readiness before thumbnails. Legacy rows measure startup through thumbnail completion. Browser rendering is excluded. Failed cache purges are a separate series and cannot establish cold-cache performance. Simulated vaults contain synthetic catalog records and may have unreadable placeholder media.\n");
-        markdown.AppendLine("## Environments\n\n| Key | OS | Runtime | CPUs | Available memory bytes | Schema | GC mode | GC latency |\n|---|---|---|---:|---:|---|---|---|");
+        markdown.AppendLine("Durations are milliseconds. Schema 3 measures first-page opening before thumbnails (SQLite encrypted browse cache or Turso indexed SQL); catalog loading is optional background work. Schema 2 measures full-catalog readiness before thumbnails. Legacy rows measure startup through thumbnail completion. Browser rendering is excluded. Failed cache purges are a separate series and cannot establish cold-cache performance. Simulated vaults contain synthetic catalog records and may have unreadable placeholder media.\n");
+        markdown.AppendLine("## Environments\n\n| Key | Backend | OS | Runtime | CPUs | Available memory bytes | Schema | GC mode | GC latency |\n|---|---|---|---|---:|---:|---|---|---|");
         foreach (var group in open.Concat(ingestion).Concat(large).Concat(failures).GroupBy(EnvironmentKey))
         {
             var env = Property(group.First(), "env");
-            markdown.AppendLine($"| {group.Key} | {Cell(Text(env, "os"))} | {Cell(Text(env, "dotnet"))} | {F(Number(env, "cpus"))} | {F(Number(env, "ramBytes"))} | {Cell(Text(env, "schemaVersion"))} | {Cell(Text(env, "gcMode"))} | {Cell(Text(env, "gcLatencyMode"))} |");
+            markdown.AppendLine($"| {group.Key} | {Cell(Text(env, "catalogBackend"))} | {Cell(Text(env, "os"))} | {Cell(Text(env, "dotnet"))} | {F(Number(env, "cpus"))} | {F(Number(env, "ramBytes"))} | {Cell(Text(env, "schemaVersion"))} | {Cell(Text(env, "gcMode"))} | {Cell(Text(env, "gcLatencyMode"))} |");
         }
-        markdown.AppendLine("\nSeries are separated by measurement schema, effective GC configuration, page size, optional background/drive waits, environment, cache status and simulated/real data. Legacy GC mode is unknown and is never inferred or merged with recorded server/workstation modes. Available memory is the runtime's memory budget, which may differ from installed RAM. Drive kinds, power state, exclusions and commit are included in the environment key when present.\n");
+        markdown.AppendLine("\nSeries are separated by catalog backend, measurement schema, effective GC configuration, page size, optional background/drive waits, environment, cache status and simulated/real data. Missing backend labels remain unknown and are not mixed with recorded SQLite/Turso runs. Legacy GC mode is unknown and is never inferred or merged with recorded server/workstation modes. Available memory is the runtime's memory budget, which may differ from installed RAM. Drive kinds, power state, exclusions and commit are included in the environment key when present.\n");
         markdown.AppendLine("![Measured open times](open.svg)\n\n![Open steps by catalog records](open-steps-records.svg)\n\n![Open steps by catalog bytes](open-steps-catalog-bytes.svg)\n");
         if (profiles.Count > 0)
         {
@@ -54,11 +54,11 @@ internal static class ReportCommand
         {
             var rows = group.ToArray();
             markdown.AppendLine($"Timing target: `{MeasurementSeries.OpenStep(rows[0])}`.\n");
-            markdown.AppendLine($"### {Cell(group.Key)}\n\n| Label | Records | Catalog bytes (median) | Runs | Open min | Median | Max |\n|---|---:|---:|---:|---:|---:|---:|");
+            markdown.AppendLine($"### {Cell(group.Key)}\n\n| Label | Records | Catalog + WAL bytes (median) | Runs | Open min | Median | Max |\n|---|---:|---:|---:|---:|---:|---:|");
             foreach (var target in rows.GroupBy(row => (Label: Text(row, "label"), Records: Number(row, "records"))).OrderBy(group => group.Key.Records))
             {
                 var totals = target.Select(MeasurementSeries.OpenMilliseconds).ToArray();
-                markdown.AppendLine($"| {Cell(target.Key.Label)} | {F(target.Key.Records)} | {F(Median(target.Select(row => Number(row, "catalogBytes"))))} | {target.Count()} | {F(totals.Min())} | {F(Median(totals))} | {F(totals.Max())} |");
+                markdown.AppendLine($"| {Cell(target.Key.Label)} | {F(target.Key.Records)} | {F(Median(target.Select(CatalogStorageBytes)))} | {target.Count()} | {F(totals.Min())} | {F(Median(totals))} | {F(totals.Max())} |");
             }
             markdown.AppendLine("\n| Records | Step | Median ms | p95 ms |\n|---:|---|---:|---:|");
             foreach (var target in rows.GroupBy(row => Number(row, "records")).OrderBy(group => group.Key))
@@ -69,7 +69,7 @@ internal static class ReportCommand
             }
             markdown.AppendLine("\nLeast-squares models: `t = intercept + slope × predictor`. Three distinct measured sizes are required. Prediction intervals assume independent errors of constant variance and a linear relationship; memory exhaustion and cache changes can invalidate them. Lower limits are clamped to zero.\n\n| Step | Predictor | Samples | Intercept ms | Slope | R² | Extrapolated 1M ms (95% PI) | Extrapolated 2M ms (95% PI) |\n|---|---|---:|---:|---:|---:|---|---|");
             foreach (var step in StepNames(rows))
-            foreach (var predictor in new[] { "records", "record_bytes", "catalog_bytes" })
+            foreach (var predictor in new[] { "records", "record_bytes", "catalog_storage_bytes" })
             {
                 var points = rows.Where(row => HasStep(row, step)).Select(row => (X: Predictor(row, predictor), Y: Step(row, step))).Where(point => point.X > 0).ToArray();
                 var fit = rows.Select(row => Number(row, "records")).Distinct().Count() < 3 ? null : Fit.Create(points);
@@ -92,16 +92,17 @@ internal static class ReportCommand
                 }
                 fits.Add(new(group.Key, rows[0], step, predictor, fit));
             }
-            markdown.AppendLine("\nByte-model extrapolations use the median measured bytes per record; they assume record shape stays constant. The CSV also includes the 2.1M-record (approximately 5 TB of real media) estimate. No UI-rendering prediction is implied.\n");
+            markdown.AppendLine("\nCatalog-storage predictors include the database file plus its recorded WAL; raw sizes remain separate in JSON/CSV. Byte-model extrapolations use the median measured bytes per record; they assume record shape stays constant. The CSV also includes the 2.1M-record (approximately 5 TB of real media) estimate. No UI-rendering prediction is implied.\n");
             foreach (var row in rows)
             foreach (var step in StepNames([row]))
                 Csv(openCsv, group.Key, Text(row, "label"), Number(row, "run"), Number(row, "pid"), Number(row, "records"),
-                    Number(row, "catalogBytes"), RecordBytes(row), Number(row, "walBytes"), step, Step(row, step));
+                    Number(row, "catalogBytes"), Property(row, "recordBytes").ValueKind == JsonValueKind.Number || HasTelemetry(row, "gallery.load.record_bytes")
+                        ? RecordBytes(row).ToString(CultureInfo.InvariantCulture) : "", Number(row, "walBytes"), step, Step(row, step));
         }
         AddMemoryAndFailures(markdown, open, failures);
         AddHypotheses(markdown, open);
         AddAgreement(markdown, fits);
-        var ingestionCsv = new StringBuilder("environment,batch,cumulative_files,cumulative_media_bytes,catalog_bytes,generation_ms,files_per_second,mib_per_second,stage,count,p50_ms,p95_ms,max_ms\n");
+        var ingestionCsv = new StringBuilder("environment,batch,cumulative_files,cumulative_media_bytes,catalog_bytes,wal_bytes,generation_ms,files_per_second,mib_per_second,stage,count,p50_ms,p95_ms,max_ms\n");
         AddIngestion(markdown, ingestionCsv, ingestion);
         var largeCsv = new StringBuilder("environment,tier,workers,bytes,pixels,stage,p50_ms,p95_ms,max_ms\n");
         AddLargeImages(markdown, largeCsv, large);
@@ -114,8 +115,8 @@ internal static class ReportCommand
         foreach (var predictor in new[] { "records", "catalog-bytes" })
         {
             var points = open.Where(row => Property(row, "steps").ValueKind == JsonValueKind.Object)
-                .SelectMany(row => StepNames([row]).Select(step => (Series(row) + " / " + step, Number(row, predictor == "records" ? "records" : "catalogBytes"), Step(row, step))));
-            await File.WriteAllTextAsync(Path.Combine(directory, $"open-steps-{predictor}.svg"), ScatterPlot(points, "Open steps (ms)", predictor == "records" ? "Catalog records" : "Catalog bytes"), token);
+                .SelectMany(row => StepNames([row]).Select(step => (Series(row) + " / " + step, predictor == "records" ? Number(row, "records") : CatalogStorageBytes(row), Step(row, step))));
+            await File.WriteAllTextAsync(Path.Combine(directory, $"open-steps-{predictor}.svg"), ScatterPlot(points, "Open steps (ms)", predictor == "records" ? "Catalog records" : "Catalog + WAL bytes"), token);
         }
         foreach (var measure in new[] { "files-per-second", "mib-per-second", "stage-p95" })
         {
@@ -227,7 +228,7 @@ internal static class ReportCommand
             text.AppendLine($"| {EnvironmentKey(row)} | {F(Number(row, "batch"))} | {F(Number(row, "cumulativeFiles"))} | {F(Number(row, "cumulativeMediaBytes"))} | {F(files)} | {F(mib)} | {F(Number(row, "generationMs"))} |");
             foreach (var stage in Array(Property(report, "stages")))
                 Csv(csv, EnvironmentKey(row), Number(row, "batch"), Number(row, "cumulativeFiles"), Number(row, "cumulativeMediaBytes"),
-                    Number(row, "catalogBytes"), Number(row, "generationMs"), files, mib, Text(stage, "stage"), Number(stage, "count"),
+                    Number(row, "catalogBytes"), Property(row, "walBytes").ValueKind == JsonValueKind.Number ? Text(row, "walBytes") : "", Number(row, "generationMs"), files, mib, Text(stage, "stage"), Number(stage, "count"),
                     Number(stage, "p50Ms"), Number(stage, "p95Ms"), Number(stage, "maxMs"));
         }
         text.AppendLine("\n![Ingestion files per second](ingestion-files-per-second.svg)\n\n![Ingestion MiB per second](ingestion-mib-per-second.svg)\n\n![Ingestion stage p95](ingestion-stage-p95.svg)\n");
@@ -310,7 +311,7 @@ internal static class ReportCommand
     private static string EnvironmentKey(JsonElement row) => MeasurementSeries.EnvironmentKey(row);
     private static string CacheKey(JsonElement row) => Text(row, "cache") + "/" + Text(row, "cachePurge");
     private static bool Simulated(JsonElement row) => Property(row, "simulated").ValueKind == JsonValueKind.True;
-    private static string Series(JsonElement row) => $"{(Simulated(row) ? "simulated" : "real")} / {CacheKey(row)} / GC {Text(Property(row, "env"), "gcMode")} / {MeasurementSeries.OpenStep(row)} / env {EnvironmentKey(row)}";
+    private static string Series(JsonElement row) => $"{Text(Property(row, "env"), "catalogBackend")} / {(Simulated(row) ? "simulated" : "real")} / {CacheKey(row)} / GC {Text(Property(row, "env"), "gcMode")} / {MeasurementSeries.OpenStep(row)} / env {EnvironmentKey(row)}";
     private static JsonElement Property(JsonElement row, string key) => row.ValueKind == JsonValueKind.Object && row.TryGetProperty(key, out var value) ? value : default;
     private static double Number(JsonElement row, string key) => Property(row, key).ValueKind == JsonValueKind.Number && Property(row, key).TryGetDouble(out var value) && double.IsFinite(value) ? value : 0;
     private static string Text(JsonElement row, string key) => Property(row, key).ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "unknown" : Property(row, key).ToString();
@@ -320,9 +321,10 @@ internal static class ReportCommand
     private static double Step(JsonElement row, string step) => Number(Property(row, "steps"), step);
     private static bool HasTelemetry(JsonElement row, string tag) => Property(Property(row, "telemetry"), tag).ValueKind == JsonValueKind.Number;
     private static double Telemetry(JsonElement row, string tag) => Number(Property(row, "telemetry"), tag);
+    private static double CatalogStorageBytes(JsonElement row) => Number(row, "catalogBytes") + Number(row, "walBytes");
     private static double RecordBytes(JsonElement row) => Math.Max(Number(row, "recordBytes"), Telemetry(row, "gallery.load.record_bytes"));
     private static double MetricSum(JsonElement row, string instrument) => Number(Property(Property(row, "metrics"), instrument), "sum");
-    private static double Predictor(JsonElement row, string predictor) => predictor switch { "records" => Number(row, "records"), "record_bytes" => RecordBytes(row), _ => Number(row, "catalogBytes") };
+    private static double Predictor(JsonElement row, string predictor) => predictor switch { "records" => Number(row, "records"), "record_bytes" => RecordBytes(row), _ => CatalogStorageBytes(row) };
     private static double Median(IEnumerable<double> values) => Quantile(values.Order().ToArray(), .5);
     private static double Quantile(double[] sorted, double percentile)
     {

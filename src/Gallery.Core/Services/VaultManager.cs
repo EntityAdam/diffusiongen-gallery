@@ -69,7 +69,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         try
         {
             var stagedVaultStore = new VaultStore(staging);
-            var createdVault = await stagedVaultStore.CreateAsync(passphrase, galleryName);
+            var createdVault = await stagedVaultStore.CreateAsync(passphrase, galleryName, galleryLifetime.StoreFactory.NewCatalogBackend);
             createdKey = createdVault.Key;
             await InitializeStagedCatalogAsync(staging, storageOptions, createdKey);
             EnsureActive();
@@ -109,13 +109,14 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
     private static string CreateStagingDirectory(string vaultRoot) =>
         Path.Combine(vaultRoot, CreationStagingPrefix + Guid.NewGuid().ToString("N"));
 
-    private static async Task InitializeStagedCatalogAsync(
+    private async Task InitializeStagedCatalogAsync(
         string staging, MediaStorageOptions? storageOptions, byte[] createdKey)
     {
-        var stagedStore = new GalleryStore(Path.Combine(staging, GalleryService.CatalogFileName));
-        await stagedStore.InitializeAsync();
+        var stagedStore = galleryLifetime.StoreFactory.Create(staging);
+        await stagedStore.InitializeAsync(createdKey);
         if (storageOptions is not null)
             await stagedStore.SaveSettingsAsync(storageOptions, "media-storage", "media-storage:v1", createdKey);
+        await stagedStore.PrepareForPublicationAsync(createdKey);
     }
 
     private void SaveVaultHistory(string vaultRoot) => galleryLifetime.History?.Save(vaultRoot);

@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using System.Security.Cryptography;
 using System.Runtime.ExceptionServices;
@@ -193,7 +193,7 @@ public sealed partial class GalleryService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or InvalidOperationException or GalleryException or CryptographicException or UnknownImageFormatException
-            or InvalidImageContentException or Microsoft.Data.Sqlite.SqliteException)
+            or InvalidImageContentException or System.Data.Common.DbException or CatalogStorageException)
         {
             var message = (originalDeleted ? OriginalDeletedMessage : "") + exception.Message;
             throw CreateRemovalFailure($"Could not remove media item '{removalItem.Id}': {message}",
@@ -270,7 +270,7 @@ public sealed partial class GalleryService
     // The catalog row and the queued ciphertext delete commit together; the drive queue deletes the file.
     private Task DeleteGalleryRecordAsync(ImageRecord imageRecord, byte[] key) =>
         galleryStore.DeleteImageAndEnqueueAsync(imageRecord.Id,
-            CreateDriveOperation(DriveOperationKind.DeleteFile, imageRecord.StoredPath, imageRecord.Id, key));
+            CreateDriveOperation(DriveOperationKind.DeleteFile, imageRecord.StoredPath, imageRecord.Id, key), key);
 
     private static bool ShouldDeleteExistingOriginal(RemovalItem removalItem, ExistingOriginalAction existingAction) =>
         RemovalRules.ShouldDeleteOriginal(removalItem, existingAction);

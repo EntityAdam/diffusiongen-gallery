@@ -1,8 +1,9 @@
+using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Processors.Codecs;
 using System.Collections.Immutable;
 using Gallery.Core.Services.Validators;
 using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Gateways;
 using Gallery.Core.Services.DataManagers;
 using Gallery.Core.Services.Sessions;
@@ -37,7 +38,7 @@ public sealed partial class GalleryService
     private readonly GalleryLifetime galleryLifetime;
     private readonly VaultManager vaultManager;
     private readonly RemovalManager removalManager;
-    private GalleryStore galleryStore => galleryLifetime.Current.GalleryStore;
+    private IGalleryStore galleryStore => galleryLifetime.Current.GalleryStore;
     private VaultStore vaultStore => galleryLifetime.Current.VaultStore;
     private readonly VaultSession vaultSession;
     private readonly VideoTools? videoTools;
@@ -94,10 +95,10 @@ public sealed partial class GalleryService
 
     }
 
-    internal GalleryService(GalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools? videoTools = null,
-        VisionManager? visionManager = null)
+    internal GalleryService(IGalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools? videoTools = null,
+        VisionManager? visionManager = null, IGalleryStoreFactory? storeFactory = null)
     {
-        galleryLifetime = new GalleryLifetime(galleryStore, vaultStore);
+        galleryLifetime = new GalleryLifetime(galleryStore, vaultStore, storeFactory);
         this.vaultSession = vaultSession;
         vaultManager = new VaultManager(galleryLifetime, vaultSession);
         removalManager = new RemovalManager(this);
@@ -305,6 +306,17 @@ public sealed partial class GalleryService
     public static string FormatBytes(long bytes) => GalleryDisplayFormatter.FormatBytes(bytes);
     public static string FormatModelFilename(string model) => GalleryDisplayFormatter.FormatModelFilename(model);
 
+    /// <summary>Counts catalog entries without reading or decoding media records.</summary>
+    public async Task<long> CountRecordsAsync(CancellationToken cancellationToken = default)
+    {
+        var generation = vaultSession.AcquireUnlockedSession();
+        using var key = generation.Borrow();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, generation.RevocationToken);
+        var count = await galleryStore.CountRecordsAsync(key.Bytes, linked.Token);
+        linked.Token.ThrowIfCancellationRequested();
+        return count;
+    }
+
     public async Task<List<ImageRecord>> ListAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
@@ -416,6 +428,7 @@ public sealed partial class GalleryService
     {
         ValidateImportName(name);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        await using var catalogOperation = await galleryStore.OpenOperationAsync(key.Bytes);
         await PrepareFingerprintIndexAsync(key.Bytes);
         return await ImportWithKeyAsync(input, name, sourceFolder, sourcePath, key.Bytes, null);
     }
@@ -984,6 +997,7 @@ public sealed partial class GalleryService
         ValidateOperationChoice(searchScope);
         ValidateOperationChoice(sourceRetention);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        await using var catalogOperation = await galleryStore.OpenOperationAsync(key.Bytes);
         options ??= await galleryStore.ReadSettingsAsync<IngestionOptions>("ingestion-options", "ingestion-options:v1", key.Bytes)
             ?? new IngestionOptions();
         Gallery.Core.Services.Validators.IngestionOptionsValidator.Validate(options);
@@ -1155,7 +1169,7 @@ public sealed partial class GalleryService
     {
         var deleteOldCopy = CreateDriveOperation(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key);
         var queuedDelete = await galleryStore.FindPendingDriveOperationAsync(
-            DriveOperationKind.DeleteFile, DriveOperationProcessor.PathFingerprint(key, target));
+            DriveOperationKind.DeleteFile, DriveOperationProcessor.PathFingerprint(key, target), key);
         if (queuedDelete is not null)
         {
             if (queuedDelete.ImageId == record.Id && File.Exists(target))
@@ -1168,7 +1182,7 @@ public sealed partial class GalleryService
             if (await CanDeleteQueuedFileAsync(galleryStore, queuedDelete.ImageId, target, key))
             {
                 await DeleteQueuedFileAsync(galleryStore, queuedDelete, target, key);
-                await galleryStore.RemoveDriveOperationAsync(queuedDelete.Sequence);
+                await galleryStore.RemoveDriveOperationAsync(queuedDelete.Sequence, key);
             }
         }
 

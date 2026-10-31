@@ -1,3 +1,4 @@
+using Gallery.Core.Services.Ports;
 using System.Security.Cryptography;
 using Gallery.Core.Services.Gateways;
 using Gallery.Core.Services.Processors;
@@ -24,11 +25,11 @@ public sealed partial class GalleryService : IDisposable
     }
 
     private static GalleryService CreateGalleryService(
-        VaultHistory vaultHistory, string vaultRoot, VideoTools videoTools, HttpClient ownedHttpClient)
+        VaultHistory vaultHistory, string vaultRoot, VideoTools videoTools, HttpClient ownedHttpClient, IGalleryStoreFactory storeFactory)
     {
         var root = vaultHistory.Read() ?? vaultRoot;
-        return CreateOwnedScope(new GalleryStore(Path.Combine(root, CatalogFileName)),
-            new VaultStore(root), videoTools, ownedHttpClient);
+        return CreateOwnedScope(storeFactory.Create(root),
+            new VaultStore(root), videoTools, ownedHttpClient, storeFactory);
     }
 
     public bool IsUnlocked => vaultSession.IsUnlocked;
@@ -45,7 +46,8 @@ public sealed partial class GalleryService : IDisposable
         {
             var vaultHistory = CreateVaultHistory(galleryRuntimeOptions);
             var videoTools = CreateVideoTools(galleryRuntimeOptions);
-            var galleryService = CreateGalleryService(vaultHistory, vaultRoot, videoTools, ownedHttpClient);
+            var galleryService = CreateGalleryService(vaultHistory, vaultRoot, videoTools, ownedHttpClient,
+                new GalleryStoreFactory(galleryRuntimeOptions.CatalogBackend));
             galleryService.galleryLifetime.InitializeHistory(vaultHistory);
             return galleryService;
         }
@@ -57,19 +59,19 @@ public sealed partial class GalleryService : IDisposable
     }
 
     private GalleryService(
-        GalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools videoTools, HttpClient httpClient)
-        : this(galleryStore, vaultStore, vaultSession, videoTools, new VisionManager(httpClient))
+        IGalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools videoTools, HttpClient httpClient, IGalleryStoreFactory storeFactory)
+        : this(galleryStore, vaultStore, vaultSession, videoTools, new VisionManager(httpClient), storeFactory)
     {
         ownedHttpClient = httpClient;
     }
 
     private static GalleryService CreateOwnedScope(
-     GalleryStore galleryStore, VaultStore vaultStore, VideoTools videoTools, HttpClient httpClient)
+     IGalleryStore galleryStore, VaultStore vaultStore, VideoTools videoTools, HttpClient httpClient, IGalleryStoreFactory storeFactory)
     {
      var vaultSession = new VaultSession();
      try
      {
-         return new GalleryService(galleryStore, vaultStore, vaultSession, videoTools, httpClient);
+         return new GalleryService(galleryStore, vaultStore, vaultSession, videoTools, httpClient, storeFactory);
      }
      catch
      {

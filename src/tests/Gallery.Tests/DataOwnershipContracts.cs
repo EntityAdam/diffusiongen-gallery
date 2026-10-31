@@ -1,6 +1,6 @@
 using System.Reflection;
 using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 
 namespace Gallery.Tests;
 

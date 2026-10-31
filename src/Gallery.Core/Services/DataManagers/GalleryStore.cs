@@ -7,24 +7,34 @@ using Gallery.Core.Services.DataManagers.Processors;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.DataManagers.CommandFactories;
 using Microsoft.Data.Sqlite;
 using Gallery.Migrations;
+using Gallery.Core.Services.Ports;
 
 namespace Gallery.Core.Services.DataManagers;
 
-internal sealed partial class GalleryStore(string databasePath)
+internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
 {
 
     private readonly string databasePath = Path.GetFullPath(databasePath);
     public SemaphoreSlim Gate { get; } = new(1);
     public SemaphoreSlim BackupGate { get; } = new(1);
 
-    public async Task InitializeAsync()
+    public Task PrepareForPublicationAsync(byte[]? key = null) => Task.CompletedTask;
+
+    public Task InitializeAsync() => InitializeAsync(null);
+
+    public async Task InitializeAsync(byte[]? key)
     {
         await using var sqliteConnection = await OpenAsync();
     }
+
+    public Task DeleteSettingsAsync(byte[] key, params string[] ids) => DeleteSettingsAsync(ids);
+
+    public Task<string> ComputeSnapshotFingerprintAsync(string snapshotPath, string excludedSettingId, byte[]? key = null) =>
+        ComputeContentFingerprintAsync(snapshotPath, excludedSettingId);
 
     public async Task DeleteSettingsAsync(params string[] ids)
     {
@@ -41,7 +51,7 @@ internal sealed partial class GalleryStore(string databasePath)
         }
     }
 
-    public async Task<long> ReadStorageRevisionAsync()
+    public async Task<long> ReadStorageRevisionAsync(byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadStorageRevision(sqliteConnection);
@@ -83,7 +93,7 @@ internal sealed partial class GalleryStore(string databasePath)
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    public async Task CreateSnapshotAsync(string destinationPath)
+    public async Task CreateSnapshotAsync(string destinationPath, byte[]? key = null)
     {
         await using var source = await OpenAsync();
         await using var destination = await OpenConnectionAsync(destinationPath, SqliteOpenMode.ReadWriteCreate);
@@ -193,11 +203,15 @@ internal sealed partial class GalleryStore(string databasePath)
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    internal static bool IsNetworkDirectory(string directory)
+    internal static bool IsNetworkDirectory(string directory) => CatalogDirectoryRules.IsNetworkDirectory(directory);
+
+    public async Task<long> CountRecordsAsync(byte[] key, CancellationToken token = default)
     {
-        var root = Path.GetPathRoot(Path.GetFullPath(directory))!;
-        return root.StartsWith(@"\\", StringComparison.Ordinal)
-            || OperatingSystem.IsWindows() && new DriveInfo(root).DriveType == DriveType.Network;
+        await using var connection = await OpenExistingAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM images";
+        using var cancellation = token.Register(command.Cancel);
+        return Convert.ToInt64(await command.ExecuteScalarAsync(token));
     }
 
     public async Task<List<ImageRecord>> ReadRecordsAsync(byte[] key)
@@ -479,7 +493,7 @@ internal sealed partial class GalleryStore(string databasePath)
         transaction.Commit();
     }
 
-    public async Task DeleteAsync(string id)
+    public async Task DeleteAsync(string id, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateDeleteImage(sqliteConnection, id);

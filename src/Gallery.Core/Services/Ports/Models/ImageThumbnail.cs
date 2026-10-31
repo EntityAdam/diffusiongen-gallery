@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace Gallery.Core.Services.DataManagers.Models;
+namespace Gallery.Core.Services.Ports.Models;
 
 /// <summary>Owns one decoded thumbnail; disposal clears its buffer before releasing ownership.</summary>
 internal sealed class ImageThumbnail(byte[] ownedPngBytes) : IDisposable

@@ -1,6 +1,7 @@
+using System.Data.Common;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers.CommandFactories;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Core.Services.DataManagers;
@@ -9,7 +10,7 @@ namespace Gallery.Core.Services.DataManagers;
 // with the queued operation, so the catalog and the queue can never disagree after a crash.
 internal sealed partial class GalleryStore
 {
-    public async Task EnqueueDriveOperationsAsync(IReadOnlyCollection<NewDriveOperation> operations)
+    public async Task EnqueueDriveOperationsAsync(IReadOnlyCollection<NewDriveOperation> operations, byte[]? key = null)
     {
         if (operations.Count == 0) return;
         await using var sqliteConnection = await OpenAsync();
@@ -18,7 +19,7 @@ internal sealed partial class GalleryStore
         sqliteTransaction.Commit();
     }
 
-    public async Task DeleteImageAndEnqueueAsync(string id, NewDriveOperation newDriveOperation)
+    public async Task DeleteImageAndEnqueueAsync(string id, NewDriveOperation newDriveOperation, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
@@ -82,28 +83,28 @@ internal sealed partial class GalleryStore
         }
     }
 
-    public async Task<List<DriveOperation>> ReadDueDriveOperationsAsync(int limit, long now)
+    public async Task<List<DriveOperation>> ReadDueDriveOperationsAsync(int limit, long now, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateReadDue(sqliteConnection, limit, now);
         return await ReadOperationsAsync(sqliteCommand);
     }
 
-    public async Task<List<DriveOperation>> ReadOutstandingDeletesAsync()
+    public async Task<List<DriveOperation>> ReadOutstandingDeletesAsync(byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateReadOutstandingDeletes(sqliteConnection);
         return await ReadOperationsAsync(sqliteCommand);
     }
 
-    public async Task<DriveOperation?> FindPendingDriveOperationAsync(string kind, byte[] target)
+    public async Task<DriveOperation?> FindPendingDriveOperationAsync(string kind, byte[] target, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateFind(sqliteConnection, kind, target);
         return (await ReadOperationsAsync(sqliteCommand)).SingleOrDefault();
     }
 
-    private static async Task<List<DriveOperation>> ReadOperationsAsync(SqliteCommand sqliteCommand)
+    private static async Task<List<DriveOperation>> ReadOperationsAsync(DbCommand sqliteCommand)
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         var operations = new List<DriveOperation>();
@@ -113,7 +114,7 @@ internal sealed partial class GalleryStore
         return operations;
     }
 
-    public async Task RemoveDriveOperationAsync(long sequence)
+    public async Task RemoveDriveOperationAsync(long sequence, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateDelete(sqliteConnection, null, sequence);
@@ -121,7 +122,7 @@ internal sealed partial class GalleryStore
     }
 
     /// <summary>Records a played batch in one transaction: finished operations leave the queue, others are rescheduled.</summary>
-    public async Task CompleteDriveOperationsAsync(IReadOnlyCollection<DriveOperationResult> driveOperationResults)
+    public async Task CompleteDriveOperationsAsync(IReadOnlyCollection<DriveOperationResult> driveOperationResults, byte[]? key = null)
     {
         if (driveOperationResults.Count == 0) return;
         await using var sqliteConnection = await OpenAsync();
@@ -130,14 +131,16 @@ internal sealed partial class GalleryStore
         sqliteTransaction.Commit();
     }
 
-    public async Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
+    public Task<DriveQueueCounts> ReadDriveQueueCountsAsync() => ReadDriveQueueCountsAsync(null);
+
+    public async Task<DriveQueueCounts> ReadDriveQueueCountsAsync(byte[]? key)
     {
         await using var sqliteConnection = await OpenExistingAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateCounts(sqliteConnection);
         return await ReadQueueCountsAsync(sqliteCommand);
     }
 
-    private static async Task<DriveQueueCounts> ReadQueueCountsAsync(SqliteCommand sqliteCommand)
+    private static async Task<DriveQueueCounts> ReadQueueCountsAsync(DbCommand sqliteCommand)
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         if (!await sqliteDataReader.ReadAsync())
@@ -145,21 +148,21 @@ internal sealed partial class GalleryStore
         return new(sqliteDataReader.GetInt32(0), sqliteDataReader.GetInt32(1), sqliteDataReader.IsDBNull(2) ? null : sqliteDataReader.GetInt64(2));
     }
 
-    public async Task<int> CountDriveOperationsAsync(string kind)
+    public async Task<int> CountDriveOperationsAsync(string kind, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateCountKind(sqliteConnection, kind);
         return Convert.ToInt32(await sqliteCommand.ExecuteScalarAsync());
     }
 
-    public async Task CancelUnfinishedDriveOperationsAsync()
+    public async Task CancelUnfinishedDriveOperationsAsync(byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateCancelUnfinished(sqliteConnection);
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    public async Task RetryFailedDriveOperationsAsync()
+    public async Task RetryFailedDriveOperationsAsync(byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateRetryFailed(sqliteConnection);
@@ -167,14 +170,14 @@ internal sealed partial class GalleryStore
     }
 
     /// <summary>Drops queued work and the index; both describe paths of a gallery location that no longer applies.</summary>
-    public async Task ClearDriveStateAsync()
+    public async Task ClearDriveStateAsync(byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateClear(sqliteConnection);
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    public async Task ClearMediaIndexAsync()
+    public async Task ClearMediaIndexAsync(byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
@@ -185,7 +188,7 @@ internal sealed partial class GalleryStore
 
     /// <summary>Replaces one directory's cached listing and enqueues the work it discovered, atomically.</summary>
     public async Task ReplaceDirectoryIndexAsync(byte[] directory, IReadOnlyCollection<IndexedFile> files,
-        IReadOnlyCollection<NewDriveOperation> discoveredDriveOperations)
+        IReadOnlyCollection<NewDriveOperation> discoveredDriveOperations, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
@@ -195,7 +198,7 @@ internal sealed partial class GalleryStore
         sqliteTransaction.Commit();
     }
 
-    public async Task IndexFilesAsync(IReadOnlyCollection<(byte[] Directory, IndexedFile File)> files)
+    public async Task IndexFilesAsync(IReadOnlyCollection<(byte[] Directory, IndexedFile File)> files, byte[]? key = null)
     {
         if (files.Count == 0) return;
         await using var sqliteConnection = await OpenAsync();
@@ -232,21 +235,21 @@ internal sealed partial class GalleryStore
         }
     }
 
-    public async Task RemoveIndexedFileAsync(byte[] target)
+    public async Task RemoveIndexedFileAsync(byte[] target, byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateDeleteIndexedFile(sqliteConnection, target);
         await sqliteCommand.ExecuteNonQueryAsync();
     }
 
-    public async Task<Dictionary<string, long>> ReadMediaIndexAsync()
+    public async Task<Dictionary<string, long>> ReadMediaIndexAsync(byte[]? key = null)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateReadIndex(sqliteConnection);
         return await ReadIndexedLengthsAsync(sqliteCommand);
     }
 
-    private static async Task<Dictionary<string, long>> ReadIndexedLengthsAsync(SqliteCommand sqliteCommand)
+    private static async Task<Dictionary<string, long>> ReadIndexedLengthsAsync(DbCommand sqliteCommand)
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         var lengthsByTarget = new Dictionary<string, long>(StringComparer.Ordinal);

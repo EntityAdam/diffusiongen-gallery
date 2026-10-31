@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Processors.Codecs;
 using Microsoft.Data.Sqlite;

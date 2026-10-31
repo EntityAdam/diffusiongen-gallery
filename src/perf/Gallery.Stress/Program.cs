@@ -20,7 +20,7 @@ try
             Safety.ValidateOutputPath(options.Workspace);
             var writer = new ResultWriter(options.Workspace);
             var profile = await CatalogProfiler.ProfileAsync(options.Required("db"), cancellation.Token);
-            await writer.AppendAsync("catalog-profile", new { env = writer.Environment, profile }, cancellation.Token);
+            await writer.AppendAsync("catalog-profile", new { env = writer.Environment with { CatalogBackend = "sqlite" }, profile }, cancellation.Token);
             Console.WriteLine(JsonSerializer.Serialize(profile, ResultWriter.JsonOptions)); break;
         case "simulate-catalog": await SimulateCatalogCommand.RunAsync(options, cancellation.Token); break;
         case "large-images": await LargeImageSuiteCommand.RunAsync(options, cancellation.Token); break;
@@ -34,14 +34,17 @@ try
                   profile-catalog --db <gallery.db>       Read-only catalog distributions
                   build --vault <dir> --staging <dir>     Generate and ingest; resumable
                     [--targets 100k,200k,400k --batch-files 10000 --size-dist fixed:1MB]
-                    [--seed 42 --workers 4 --catalog-batch 16 --gen-threads N]
+                    [--catalog-backend sqlite|turso --seed 42 --workers 4 --catalog-batch 16 --gen-threads N]
                     [--metadata-dist uniform:8KB-60KB --media-directory <dir>]
                     [--measure-open-at-targets --open-runs 3 --cache both]
                   measure-open --vault <dir> [--runs 5 --cache cold|warm|both --page-size <count>]
-                    [--label <name> --wait-for-drive-idle]
+                    [--label <name> --wait-for-drive-idle --wait-for-catalog]
+                    [--catalog-backend sqlite|turso] Optional assertion; otherwise detect from vault header
                     [--allow-real-vault --passphrase-file <file>] Explicit real-vault measurement
                   simulate-catalog --vault <dir> [--rows 500k,1M,2.1M --sparse-media]
+                    [--catalog-backend sqlite|turso]
                   large-images [--tiers L1,L2,L3,L4,L5 --images-per-tier 50 --decouple]
+                    [--catalog-backend sqlite|turso]
                   report                                  Markdown, CSV and plots
                   cleanup [--delete-vault]                 Marker-protected cleanup
                 See src/perf/Gallery.Stress/README.md for operational guidance.

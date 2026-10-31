@@ -1,5 +1,5 @@
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors.Hashing;
 using Gallery.Core.Services.Processors.Models;
 using SixLabors.ImageSharp;

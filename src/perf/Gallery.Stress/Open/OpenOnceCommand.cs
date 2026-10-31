@@ -16,6 +16,7 @@ public static class OpenOnceCommand
         Safety.ValidateOutputPath(vault);
         // Measurement may inspect a real vault only when explicitly requested. Build/cleanup always require a marker.
         if (!options.Flag("allow-real-vault")) Safety.RequireStressVault(vault);
+        var backend = StressVault.ResolveBackend(options, vault);
         int? requestedPageSize = options.Get("page-size", "").Length == 0 ? null : options.Int("page-size", 49);
         if (requestedPageSize is < 1 or > 1000) throw new ArgumentException("Page size must be 1–1000.");
         var passphrase = await File.ReadAllTextAsync(options.Get("passphrase-file", StressVault.PassphrasePath(options.Workspace)), token);
@@ -96,7 +97,7 @@ public static class OpenOnceCommand
         }
         var result = new
         {
-            env = results.Environment with { VaultDrive = ResultWriter.DescribeDrive(vault), MediaDrive = ResultWriter.DescribeDrive(mediaDirectory), DefenderExclusion = "user-declared:" + options.Get("defender-exclusion", "unknown") }, label = options.Get("label", "unlabelled"), run = options.Int("run", 1), pid = Environment.ProcessId,
+            env = results.Environment with { CatalogBackend = StressVault.BackendName(backend), VaultDrive = ResultWriter.DescribeDrive(vault), MediaDrive = ResultWriter.DescribeDrive(mediaDirectory), DefenderExclusion = "user-declared:" + options.Get("defender-exclusion", "unknown") }, label = options.Get("label", "unlabelled"), run = options.Int("run", 1), pid = Environment.ProcessId,
             cache = options.Get("cache", "warm"), cachePurge = options.Get("cache-purge", "none"), simulated,
             records = initial.TotalRecords, loadedRecords = records.Count, firstPageCacheHit = initial.CacheHit, catalogCompleteAtOpen = initial.IsComplete, catalogBytes = FileSize(Path.Combine(vault, "gallery.db")), walBytes = FileSize(Path.Combine(vault, "gallery.db-wal")),
             recordBytes = listener.Tags.GetValueOrDefault("gallery.first_page.record_bytes") ?? listener.Tags.GetValueOrDefault("gallery.load.record_bytes"), steps, milestones, pageSize,

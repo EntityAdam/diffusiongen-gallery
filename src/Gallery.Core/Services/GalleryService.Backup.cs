@@ -1,3 +1,4 @@
+using Gallery.Core.Services.DataManagers;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -6,7 +7,8 @@ using System.Diagnostics;
 using Gallery.Core.Services.Gateways;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
+using Gallery.Core.Exceptions;
 
 namespace Gallery.Core.Services;
 
@@ -144,9 +146,9 @@ public sealed partial class GalleryService
                 var vaultHeaderPath = Path.Combine(stagingDirectory, VaultHeaderFileName);
                 var databasePath = Path.Combine(stagingDirectory, CatalogFileName);
                 await headerStore.CopyHeaderAsync(vaultHeaderPath);
-                await store.CreateSnapshotAsync(databasePath);
+                await store.CreateSnapshotAsync(databasePath, keyLease.Bytes);
                 vaultHeaderSha256 = await HashFileAsync(vaultHeaderPath);
-                DatabaseFingerprint = await Gallery.Core.Services.DataManagers.GalleryStore.ComputeContentFingerprintAsync(databasePath, BackupSettingsId);
+                DatabaseFingerprint = await store.ComputeSnapshotFingerprintAsync(databasePath, BackupSettingsId, keyLease.Bytes);
 
                 long mediaHashedBytes = 0;
                 var mediaHashTimer = Stopwatch.StartNew();
@@ -267,7 +269,7 @@ public sealed partial class GalleryService
         return prefix;
     }
 
-    private static async Task<BackupManifest> ValidateBackupChainAsync(
+    private async Task<BackupManifest> ValidateBackupChainAsync(
         IBackupTarget target, string latestName, string stagingDirectory, byte[] key)
     {
         using var activity = BackupActivitySource.StartActivity("backup.chain.validate");
@@ -335,7 +337,7 @@ public sealed partial class GalleryService
                     }
                 }
                 catch (Exception error) when (error is InvalidDataException or IOException or CryptographicException
-                    or InvalidOperationException or JsonException or SqliteException)
+                    or InvalidOperationException or JsonException or DbException or CatalogStorageException)
                 {
                     throw new InvalidOperationException(
                         $"Backup '{archiveName}' is damaged or disagrees with its manifest. Create a new full backup.", error);
@@ -382,7 +384,7 @@ public sealed partial class GalleryService
 
     private static string ManifestName(string archiveName) => archiveName + ".manifest";
 
-    private static async Task<(long VerifiedBytes, int MediaEntryCount)> ValidateParentArchiveAsync(
+    private async Task<(long VerifiedBytes, int MediaEntryCount)> ValidateParentArchiveAsync(
         string archivePath, string sidecarPath, BackupManifest manifest, byte[] key,
         HashSet<string> availableMedia, string stagingDirectory)
     {
@@ -402,6 +404,9 @@ public sealed partial class GalleryService
         var header = archive.GetEntry(VaultHeaderFileName)
             ?? throw new InvalidDataException("The archive is missing 'vault.json'.");
         var verifiedBytes = await VerifyArchiveEntryAsync(header, manifest.VaultHeaderSha256);
+        if (header.Length > MaximumVaultHeaderBytes) throw new InvalidDataException("The backup header is too large.");
+        using var headerReader = new StreamReader(header.Open());
+        var backend = VaultStore.ReadCatalogBackend(await headerReader.ReadToEndAsync());
         var database = archive.GetEntry(CatalogFileName)
             ?? throw new InvalidDataException("The archive is missing 'gallery.db'.");
         var databasePath = Path.Combine(stagingDirectory, "parent-gallery.db");
@@ -409,8 +414,8 @@ public sealed partial class GalleryService
         {
             verifiedBytes += await VerifyArchiveEntryAsync(database, expectedHash: null, databasePath);
             if (manifest.DatabaseFingerprint is not null
-                && manifest.DatabaseFingerprint != await Gallery.Core.Services.DataManagers.GalleryStore
-                    .ComputeContentFingerprintAsync(databasePath, BackupSettingsId))
+                && manifest.DatabaseFingerprint != await galleryLifetime.StoreFactory.CreateForDatabase(databasePath, backend)
+                    .ComputeSnapshotFingerprintAsync(databasePath, BackupSettingsId, key))
                 throw new InvalidDataException("The archive database disagrees with its manifest.");
         }
         finally { File.Delete(databasePath); }

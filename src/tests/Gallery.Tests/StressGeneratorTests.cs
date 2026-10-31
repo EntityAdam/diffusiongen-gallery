@@ -8,6 +8,43 @@ namespace Gallery.Tests;
 public sealed class StressGeneratorTests
 {
     [Fact]
+    public async Task Generation_receipts_reuse_only_matching_bytes_and_recover_after_a_partial_append()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "gallery-stress-receipts-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var file = Path.Combine(root, "source.png");
+        var log = Path.Combine(root, "generation.jsonl");
+        try
+        {
+            var generated = await SyntheticPngWriter.WriteAsync(file, 42, 0, SizeDistribution.Parse("fixed:128KB"), SizeDistribution.Parse("fixed:8KB"));
+            Assert.Equal(Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(file))), generated.Sha256);
+            await using (var receipts = await GenerationReceipts.OpenAsync(log, 42, 0, 2, "fixed:128KB", "fixed:8KB", default))
+                await receipts.RecordAsync(0, generated, default);
+            await File.AppendAllTextAsync(log, "{\"incomplete\":");
+            await using (var receipts = await GenerationReceipts.OpenAsync(log, 42, 0, 2, "fixed:128KB", "fixed:8KB", default))
+            {
+                Assert.Equal(generated.Bytes, await receipts.TryReuseAsync(0, file, default));
+                Assert.Null(await receipts.TryReuseAsync(1, file, default));
+                // Same-size corruption must fail; length alone is not a valid generation receipt.
+                var bytes = await File.ReadAllBytesAsync(file);
+                bytes[^1] ^= 1;
+                await File.WriteAllBytesAsync(file, bytes);
+                Assert.Null(await receipts.TryReuseAsync(0, file, default));
+                File.Delete(file);
+                Assert.Null(await receipts.TryReuseAsync(0, file, default));
+                await receipts.RecordAsync(1, generated, default);
+            }
+            await using (var receipts = await GenerationReceipts.OpenAsync(log, 42, 0, 2, "fixed:128KB", "fixed:8KB", default))
+            {
+                await SyntheticPngWriter.WriteAsync(file, 42, 0, SizeDistribution.Parse("fixed:128KB"), SizeDistribution.Parse("fixed:8KB"));
+                Assert.Equal(generated.Bytes, await receipts.TryReuseAsync(1, file, default));
+            }
+            await Assert.ThrowsAsync<InvalidOperationException>(() => GenerationReceipts.OpenAsync(log, 43, 0, 2, "fixed:128KB", "fixed:8KB", default));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task Finder_metadata_does_not_block_staging_initialization_or_batch_completion()
     {
         var staging = Path.Combine(Path.GetTempPath(), "gallery-stress-finder-" + Guid.NewGuid().ToString("N"));

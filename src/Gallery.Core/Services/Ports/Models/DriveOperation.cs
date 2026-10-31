@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace Gallery.Core.Services.DataManagers.Models;
+namespace Gallery.Core.Services.Ports.Models;
 
 internal static class DriveOperationKind
 {

@@ -7,7 +7,7 @@ namespace Gallery.Core.Services;
 
 public sealed partial class GalleryService
 {
-    public bool CatalogIsOnNetworkDrive => GalleryStore.IsNetworkDirectory(VaultRoot);
+    public bool CatalogIsOnNetworkDrive => Processors.CatalogDirectoryRules.IsNetworkDirectory(VaultRoot);
 
     /// <summary>Relocates only the encrypted catalog and header; all encrypted media stays at its existing paths.</summary>
     public async Task RelocateCatalogAsync(string directory)
@@ -36,20 +36,21 @@ public sealed partial class GalleryService
             staging = Path.Combine(destination, ".catalog-stage-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(staging);
             await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
-            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName));
-            var stagedStore = new GalleryStore(Path.Combine(staging, CatalogFileName));
+            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName), key);
+            var stagedStore = galleryLifetime.StoreFactory.Create(staging);
             await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
                 "media-storage", "media-storage:v1", key);
-            await stagedStore.DeleteSettingsAsync(StorageOverviewId);
+            await stagedStore.DeleteSettingsAsync(key, StorageOverviewId);
             var records = await stagedStore.ReadRecordsAsync(key);
             var sourceRecords = await galleryStore.ReadRecordsAsync(key);
             if (!CatalogRecordsMatch(records, sourceRecords))
                 throw new IOException("The copied catalog did not match the original; relocation was stopped.");
             EnsureActive();
+            await stagedStore.PrepareForPublicationAsync(key);
             PublishStagedVault(staging, destination);
             published = true;
             var sourceCheckout = galleryLifetime.PublishLocation(
-                new GalleryStore(Path.Combine(destination, CatalogFileName)), new VaultStore(destination), destinationCheckout);
+                galleryLifetime.StoreFactory.Create(destination), new VaultStore(destination), destinationCheckout);
             destinationCheckout = null;
             try
             {
@@ -119,7 +120,7 @@ public sealed partial class GalleryService
 
     internal static void RequireLocalCatalogDirectory(string directory)
     {
-        if (GalleryStore.IsNetworkDirectory(directory))
+        if (Processors.CatalogDirectoryRules.IsNetworkDirectory(directory))
             throw new InvalidOperationException(
                 $"Catalog directory '{directory}' is on a network drive. Keep gallery.db on the host's local drive. Choose a local catalog directory; encrypted media may use a NAS/SMB directory.");
     }

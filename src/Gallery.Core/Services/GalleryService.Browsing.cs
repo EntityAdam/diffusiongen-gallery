@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Gallery.Core.Models;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
+using Gallery.Core.Exceptions;
 
 namespace Gallery.Core.Services;
 
@@ -31,7 +32,7 @@ public sealed partial class GalleryService
             if (snapshot.IsComplete && snapshot.IsCurrent) snapshot = await Task.Run(() => CompleteBrowseCatalogAsync(snapshot, lease.Bytes, cancellationToken), cancellationToken);
             return snapshot;
         }
-        catch (SqliteException) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+        catch (Exception error) when (cancellationToken.IsCancellationRequested && error is DbException or CatalogStorageException) { throw new OperationCanceledException(cancellationToken); }
     }
 
     public async Task<GalleryCatalog> LoadCatalogAsync(CancellationToken cancellationToken = default)
@@ -55,7 +56,7 @@ public sealed partial class GalleryService
             if (snapshot.IsCurrent) snapshot = await Task.Run(() => CompleteBrowseCatalogAsync(snapshot, lease.Bytes, cancellationToken), cancellationToken);
             return snapshot;
         }
-        catch (SqliteException) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+        catch (Exception error) when (cancellationToken.IsCancellationRequested && error is DbException or CatalogStorageException) { throw new OperationCanceledException(cancellationToken); }
     }
 
     public async Task<List<ImageRecord>> ReloadRecordsAsync(IEnumerable<string> ids, CancellationToken cancellationToken = default)
@@ -75,13 +76,13 @@ public sealed partial class GalleryService
         await galleryStore.Gate.WaitAsync(token);
         try
         {
-            if (await galleryStore.ReadStorageRevisionAsync() != snapshot.Revision) return snapshot with { IsCurrent = false };
+            if (await galleryStore.ReadStorageRevisionAsync(key) != snapshot.Revision) return snapshot with { IsCurrent = false };
             var changed = snapshot.Records.Count(record => record.MetadataVersion < Processors.ComfyMetadata.Version);
             await BackfillFingerprintsAsync(key);
             await BackfillGenerationAsync(snapshot.Records, key, token);
             if (changed > 0)
             {
-                var revision = checked(snapshot.Revision + changed);
+                var revision = await galleryStore.ReadStorageRevisionAsync(key);
                 var current = await galleryStore.SaveBrowseIndexAsync(snapshot.Records, revision, key, token);
                 snapshot = snapshot with { Revision = revision, IsCurrent = current };
             }

@@ -1,5 +1,5 @@
 using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 
 namespace Gallery.Tests;
 

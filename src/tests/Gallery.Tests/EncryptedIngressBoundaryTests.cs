@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using Microsoft.Data.Sqlite;
 

@@ -9,6 +9,25 @@ namespace Gallery.Tests;
 public sealed class SessionLeaseOwnershipTests
 {
     [Fact]
+    public void BackgroundKeyBorrow_DoesNotResetInactivityAndStillParticipatesInDrain()
+    {
+        var lastActivity = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var state = new VaultLeaseState { LastAccessUtc = lastActivity, InactivityTimeout = TimeSpan.FromHours(1) };
+        var generation = new UnlockedVaultSession(Enumerable.Repeat((byte)7, 32).ToArray(), state);
+        using var lease = generation.TryBorrow(recordActivity: false);
+        Assert.NotNull(lease);
+        Assert.Equal(lastActivity, state.LastAccessUtc);
+        Assert.Equal(1, state.ActiveLeases);
+        generation.Revoke();
+        Assert.Null(generation.TryBorrow(recordActivity: false));
+        Assert.Equal(Enumerable.Repeat((byte)7, 32), lease.Bytes);
+        var buffer = lease.Bytes;
+        lease.Dispose();
+        Assert.Equal(new byte[32], buffer);
+        Assert.Equal(0, state.ActiveLeases);
+    }
+
+    [Fact]
     public async Task ReplacedGeneration_DrainsBothGenerationsAndReleasesEachLeaseExactlyOnce()
     {
         using var session = new VaultSession(Timeout.InfiniteTimeSpan);

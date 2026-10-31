@@ -1,9 +1,10 @@
+using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Sessions.Locations;
 using Gallery.Core.Services.DataManagers;
 
 namespace Gallery.Core.Services.Sessions;
 
-internal sealed record GalleryLocation(GalleryStore GalleryStore, VaultStore VaultStore, VaultCheckout? Checkout);
+internal sealed record GalleryLocation(IGalleryStore GalleryStore, VaultStore VaultStore, VaultCheckout? Checkout);
 
 /// <summary>
 /// Owns the location generations and checkout for one gallery scope. The lifecycle gate serializes
@@ -12,7 +13,7 @@ internal sealed record GalleryLocation(GalleryStore GalleryStore, VaultStore Vau
 /// Current publishes the paired stores and checkout atomically. Retired checkouts remain owned by the
 /// publishing operation until it finishes old-location cleanup. Disposal admission is thread safe.
 /// </summary>
-internal sealed class GalleryLifetime(GalleryStore galleryStore, VaultStore vaultStore)
+internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vaultStore, IGalleryStoreFactory? storeFactory = null)
 {
     // Serializes disposal admission with checkout publication so disposal cleanup observes every published checkout.
     private readonly object publicationGate = new();
@@ -20,6 +21,8 @@ internal sealed class GalleryLifetime(GalleryStore galleryStore, VaultStore vaul
     private int disposalStarted;
     private VaultHistory? history;
     private long driveRetryDelayTicks = TimeSpan.FromSeconds(2).Ticks;
+
+    internal IGalleryStoreFactory StoreFactory { get; } = storeFactory ?? new GalleryStoreFactory();
 
     internal SemaphoreSlim Gate { get; } = new(1, 1);
     internal GalleryLocation Current => Volatile.Read(ref current);
@@ -69,7 +72,7 @@ internal sealed class GalleryLifetime(GalleryStore galleryStore, VaultStore vaul
         Volatile.Write(ref current, location with { Checkout = null });
     }
 
-    internal VaultCheckout? PublishLocation(GalleryStore nextGalleryStore, VaultStore nextVaultStore, VaultCheckout? nextCheckout)
+    internal VaultCheckout? PublishLocation(IGalleryStore nextGalleryStore, VaultStore nextVaultStore, VaultCheckout? nextCheckout)
     {
         lock (publicationGate)
         {

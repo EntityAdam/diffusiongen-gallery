@@ -110,8 +110,8 @@ public sealed partial class GalleryService
                     latestManifest = manifest;
                     await ExtractRequiredEntryAsync(archive, CatalogFileName, Path.Combine(staging, CatalogFileName), archiveLength);
                     if (manifest.VaultHeaderSha256 != await HashFileAsync(Path.Combine(staging, VaultHeaderFileName))
-                        || manifest.DatabaseFingerprint != await GalleryStore.ComputeContentFingerprintAsync(
-                            Path.Combine(staging, CatalogFileName), BackupSettingsId))
+                        || manifest.DatabaseFingerprint != await galleryLifetime.StoreFactory.Create(staging).ComputeSnapshotFingerprintAsync(
+                            Path.Combine(staging, CatalogFileName), BackupSettingsId, key))
                         throw new CryptographicException("Backup header or database integrity check failed.");
                 }
                 if (manifest.BackupType == "full")
@@ -125,7 +125,7 @@ public sealed partial class GalleryService
                 current = manifest.ParentBackupName;
             }
 
-            var store = new GalleryStore(Path.Combine(staging, CatalogFileName));
+            var store = galleryLifetime.StoreFactory.Create(staging);
             var records = await store.ReadRecordsAsync(key);
             if (records.Count != latestManifest!.Media.Count)
                 throw new CryptographicException("The backup catalog and manifest disagree.");
@@ -168,8 +168,9 @@ public sealed partial class GalleryService
             await StopDriveOperationPlayerAsync();
             await vaultSession.LockAndDrainAsync();
             EnsureActive();
+            await store.PrepareForPublicationAsync(key);
             PublishStagedVault(staging, destination);
-            galleryLifetime.PublishLocation(new GalleryStore(Path.Combine(destination, CatalogFileName)),
+            galleryLifetime.PublishLocation(galleryLifetime.StoreFactory.Create(destination),
                 new VaultStore(destination), destinationCheckout)?.Dispose();
             destinationCheckout = null;
             history?.Save(destination);

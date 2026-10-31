@@ -1,3 +1,4 @@
+using Gallery.Core.Models;
 using Gallery.Stress.Core;
 
 namespace Gallery.Stress.Cli;
@@ -6,6 +7,13 @@ public sealed class StressOptions
 {
     private readonly Dictionary<string, string> values;
     public string Command { get; }
+    public CatalogBackend? RequestedCatalogBackend => Get("catalog-backend", "").ToLowerInvariant() switch
+    {
+        "" => null,
+        "sqlite" => CatalogBackend.Sqlite,
+        "turso" => CatalogBackend.Turso,
+        _ => throw new ArgumentException("--catalog-backend must be sqlite or turso.")
+    };
     public string Workspace => Path.GetFullPath(Required("workspace"));
 
     public StressOptions(string[] args)
@@ -31,9 +39,12 @@ public sealed class StressOptions
             "cleanup" => "delete-vault",
             _ => ""
         };
+        if (Command is "build" or "simulate-catalog" or "large-images" or "large-ingest-once" or "viewer-once" or "measure-open" or "open-once")
+            allowed += " catalog-backend";
         var supported = allowed.Split(' ', StringSplitOptions.RemoveEmptyEntries).Append("workspace").Append("defender-exclusion").ToHashSet(StringComparer.Ordinal);
         foreach (var key in values.Keys)
             if (!supported.Contains(key)) throw new ArgumentException($"Unknown option --{key} for {Command}.");
+        _ = RequestedCatalogBackend;
         if (Get("defender-exclusion", "unknown") is not ("yes" or "no" or "unknown"))
             throw new ArgumentException("--defender-exclusion must be yes, no, or unknown.");
     }
