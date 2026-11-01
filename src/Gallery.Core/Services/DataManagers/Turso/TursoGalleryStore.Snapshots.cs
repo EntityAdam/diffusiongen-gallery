@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using Gallery.Migrations.Turso;
 
 namespace Gallery.Core.Services.DataManagers.Turso;
 
@@ -30,7 +31,7 @@ internal sealed partial class TursoGalleryStore
     }
 
     public Task<string> ComputeSnapshotFingerprintAsync(string snapshotPath, string excludedSettingId, byte[]? key = null) =>
-        ExecuteAsync(key, connection => ComputeFingerprintAsync(connection, excludedSettingId), path: snapshotPath);
+        ExecuteAsync(key, connection => ComputeFingerprintAsync(connection, excludedSettingId), path: snapshotPath, upgrade: false);
 
     private static async Task<string> ComputeFingerprintAsync(DbConnection connection, string excludedSettingId)
     {
@@ -38,7 +39,9 @@ internal sealed partial class TursoGalleryStore
         AddFingerprintValue(hash, "turso-catalog:v1");
         var tables = new List<string>();
         using (var command = Command(connection,
-            "SELECT type,name,COALESCE(sql,'') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"))
+            // Journaling schema upgrades must not change legacy logical backup fingerprints.
+            "SELECT type,name,COALESCE(sql,'') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name<>$journal AND tbl_name<>$journal ORDER BY type,name",
+            null, ("$journal", TursoGalleryDatabase.JournalTableName)))
         {
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())

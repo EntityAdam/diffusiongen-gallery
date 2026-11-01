@@ -58,8 +58,9 @@ convert an existing gallery. Turso vaults use header version 2 and
 
 The application calls `IGalleryStore` and `IGalleryStoreFactory` ports. The
 existing `GalleryStore` adapter retains SQLite/DbUp and its encrypted-record
-format. `TursoGalleryStore` owns its native connection handling, schema, typed
+format. `TursoGalleryStore` owns its native connection handling, operational SQL, typed
 record mapping, indexed first-page reads, snapshots, and logical fingerprints.
+`Gallery.Migrations` owns schema scripts and DbUp upgrades for both adapters.
 Catalog edits and their queued drive work still share a transaction.
 
 The Turso catalog has ordinary typed media columns, separate metadata,
@@ -519,19 +520,40 @@ encryption, filesystem/media processing, and external gateways. Web contains
 Blazor components, host/request policies, and dependency-injection composition.
 UI components use Core models directly. Test projects are under `src/tests`.
 
-`Gallery.Migrations` owns the default SQLite adapter's schema and runs through DbUp whenever a
-catalog connection is opened. Applied migrations are recorded in `SchemaVersions`.
-The idempotent baseline also supports pre-DbUp catalogs, including catalogs without
-the image fingerprint column. All pending migrations and journal entries commit
-in one immediate SQLite transaction; failures roll back the entire upgrade and
-independent connections wait before reading the journal.
+`Gallery.Migrations` owns schema definitions and DbUp upgrade execution for both
+catalog adapters. The adapters open/configure their connections, then invoke the
+matching migration runner. Script selection and journals are isolated by provider;
+opening one format never executes the other format's migrations.
 
-The experimental Turso adapter owns separate schema resources under
-`Gallery.Core/Services/DataManagers/Turso/Schema`; its initialization never runs
-the SQLite migrations or changes an existing SQLite vault. Future Turso schema
-upgrades must preserve this separation and version its `catalog_format` table.
+`GalleryDatabase.Upgrade` runs the SQLite scripts in `Gallery.Migrations.Scripts`
+and records their existing names in `SchemaVersions`. The idempotent baseline
+also supports pre-DbUp catalogs, including catalogs without the image fingerprint
+column. All pending migrations and journal entries commit in one immediate SQLite
+transaction; failures roll back the entire upgrade and independent connections
+wait before reading the journal.
 
-Add new SQL migrations to `src\Gallery.Migrations\Scripts` using the next
+`TursoGalleryDatabase.Upgrade` uses the already-open encrypted Turso connection
+and records scripts from `Gallery.Migrations.Turso.Scripts` in
+`turso_schema_versions`. The baseline DDL is embedded from
+`Gallery.Migrations/Turso/Schema/M0001_Catalog.sql`; the baseline code migration
+creates a fresh catalog or adopts an existing version-1 catalog without replaying
+its DDL. Later changes belong in `Gallery.Migrations/Turso/Scripts` using ordered
+`M0002_Description.sql` names or public parameterless `IScript` classes. Separate statements
+with a standalone `-- next` line: the native driver prepares one statement per
+command, and trigger bodies must remain intact. Code scripts must use their
+supplied command factory and include SQL prefixes in parameter names.
+
+Turso schema changes and journal writes share one transaction. New catalog
+creation must be explicitly allowed; an uninitialized/foreign schema or unknown
+`catalog_format` version is rejected. The format marker describes the storage
+contract, while the DbUp journal tracks individual schema changes. SQLite-to-Turso
+conversion remains a separate, explicit operation and is not implemented here.
+
+Backup fingerprints validate Turso archives in their original schema before
+upgrading them. Journal metadata is excluded from logical fingerprints so
+adopting existing version-1 catalogs preserves their backup fingerprints.
+
+Add new SQLite SQL migrations to `src\Gallery.Migrations\Scripts` using the next
 zero-padded name, such as `M0003_Description.sql`. They are embedded automatically.
 For conditional changes SQLite cannot express in SQL, add a public parameterless
 `IScript` class in `Gallery.Migrations.Scripts` with the same naming scheme.

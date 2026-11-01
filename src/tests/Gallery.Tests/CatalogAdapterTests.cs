@@ -12,6 +12,7 @@ using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Processors.Codecs;
 using Microsoft.Data.Sqlite;
+using Gallery.Migrations.Turso;
 
 namespace Gallery.Tests;
 
@@ -159,6 +160,64 @@ public sealed class CatalogAdapterTests
         MediaType = "video", ContentType = "video/mp4", DurationSeconds = 1.25, MetadataVersion = ComfyMetadata.Version,
         Generation = new() { Prompt = "positive λ", NegativePrompt = "negative", Cfg = 7.5, Steps = 20, Model = "model", ModelKind = "Checkpoint", Sampler = "euler", Scheduler = "normal", HasWorkflow = true, HasApiPrompt = true }
     };
+
+    [Fact]
+    public async Task Turso_adopts_a_pre_journal_catalog_without_changing_its_backup_fingerprint()
+    {
+        using var fixture = new AdapterFixture(CatalogBackend.Turso);
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var record = Record();
+        using var thumbnail = new ImageThumbnail([1, 2, 3]);
+        await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
+        // Removing the new journal leaves the exact schema/content of the pre-DbUp adapter.
+        await WithNative(async connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "DROP TABLE turso_schema_versions";
+            await command.ExecuteNonQueryAsync();
+        });
+        var path = Path.Combine(fixture.Root, "gallery.db");
+        await using var operation = await fixture.Store.OpenOperationAsync(fixture.Key);
+        var legacyFingerprint = await fixture.Store.ComputeSnapshotFingerprintAsync(path, "backup", fixture.Key);
+        await WithNative(async connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE name='turso_schema_versions'";
+            Assert.Equal(0L, await command.ExecuteScalarAsync()); // Archive verification must not migrate.
+        });
+
+        Assert.Equal(1, await fixture.Store.CountRecordsAsync(fixture.Key)); // Normal opens adopt it.
+        AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(record),
+            await fixture.Store.ReadRecordAsync(record.Id, fixture.Key));
+        using var actual = await fixture.Store.ReadThumbnailAsync(record.Id, fixture.Key);
+        Assert.Equal(thumbnail.Content.ToArray(), actual.Content.ToArray());
+        await operation.DisposeAsync();
+        Assert.Equal(legacyFingerprint, await fixture.Store.ComputeSnapshotFingerprintAsync(path, "backup", fixture.Key));
+        await WithNative(async connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM " + TursoGalleryDatabase.JournalTableName;
+            Assert.Equal(1L, await command.ExecuteScalarAsync());
+        });
+
+        async Task WithNative(Func<System.Data.Common.DbConnection, Task> operation)
+        {
+            var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, fixture.Key, 32,
+                info: "DiffusionGenGallery/catalog/turso/v1"u8.ToArray());
+            try
+            {
+                var builder = new System.Data.Common.DbConnectionStringBuilder
+                {
+                    ["Data Source"] = Path.Combine(fixture.Root, "gallery.db"), ["Pooling"] = false,
+                    ["Encryption Cipher"] = "aes256gcm", ["Encryption Key"] = Convert.ToHexString(key)
+                };
+                await using var connection = new Turso.TursoConnection(builder.ConnectionString);
+                await connection.OpenAsync();
+                await operation(connection);
+            }
+            finally { CryptographicOperations.ZeroMemory(key); }
+        }
+    }
 
     [Fact]
     public async Task Turso_reuses_one_connection_across_concurrent_calls_and_nested_operations_then_releases_the_file()

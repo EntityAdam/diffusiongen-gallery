@@ -11,7 +11,9 @@ public static class GalleryDatabase
     {
         var upgrader = DeployChanges.To
             .SqliteDatabase(new SharedConnection(connection))
-            .WithScriptsAndCodeEmbeddedInAssembly(typeof(GalleryDatabase).Assembly)
+            .WithScriptsAndCodeEmbeddedInAssembly(typeof(GalleryDatabase).Assembly,
+                name => name.StartsWith("Gallery.Migrations.Scripts.", StringComparison.Ordinal),
+                name => name.StartsWith("Gallery.Migrations.Scripts.", StringComparison.Ordinal))
             // Microsoft.Data.Sqlite starts an immediate transaction before DbUp reads its journal.
             .WithTransaction()
             .Build();

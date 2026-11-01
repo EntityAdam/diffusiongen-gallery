@@ -12,6 +12,7 @@ using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.DataManagers.Processors;
 using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Processors.Codecs;
+using Gallery.Migrations.Turso;
 using Turso;
 using Turso.Raw.Public;
 
@@ -93,7 +94,7 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
     }
 
     private async Task<T> ExecuteAsync<T>(byte[]? key, Func<DbConnection, Task<T>> operation,
-        bool initialize = false, string? path = null)
+        bool initialize = false, string? path = null, bool upgrade = true)
     {
         ValidateKey(key);
         var waitStarted = Stopwatch.GetTimestamp();
@@ -109,8 +110,9 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
             var connection = reuse ? retainedConnection : null;
             if (connection is null)
             {
-                connection = await OpenConnectionAsync(catalogPath, key!, initialize);
-                if (reuse) retainedConnection = connection;
+                connection = await OpenConnectionAsync(catalogPath, key!, initialize, upgrade);
+                // Verification-only opens must not cache an unupgraded connection for later writes.
+                if (reuse && upgrade) retainedConnection = connection;
                 else transient = connection;
                 if (primary) await MaintainWalAsync(connection);
             }
@@ -141,7 +143,7 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         }
     }
 
-    private static async Task<DbConnection> OpenConnectionAsync(string catalogPath, byte[] key, bool initialize)
+    private static async Task<DbConnection> OpenConnectionAsync(string catalogPath, byte[] key, bool initialize, bool upgrade)
     {
         if (!initialize && !File.Exists(catalogPath)) throw new FileNotFoundException("The catalog is missing.", catalogPath);
         if (File.Exists(catalogPath) && new FileInfo(catalogPath).Length > 0)
@@ -171,9 +173,13 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
                 await NonQueryAsync(connection, "PRAGMA foreign_keys=ON");
                 await NonQueryAsync(connection, "PRAGMA temp_store=MEMORY");
                 await NonQueryAsync(connection, "PRAGMA synchronous=FULL");
-                if (initialize) await InitializeSchemaAsync(connection);
-                else if (Convert.ToInt64(await ScalarAsync(connection, "SELECT version FROM catalog_format WHERE id=1")) != 1)
-                    throw new InvalidOperationException("Unsupported Turso catalog version.");
+                var migrationStarted = Stopwatch.GetTimestamp();
+                try
+                {
+                    if (upgrade) TursoGalleryDatabase.Upgrade(connection, allowCreate: initialize);
+                    else TursoGalleryDatabase.Validate(connection);
+                }
+                finally { CatalogMetrics.MigrationDuration.Record(Stopwatch.GetElapsedTime(migrationStarted).TotalMilliseconds); }
                 return connection;
             }
             catch { await connection.DisposeAsync(); throw; }

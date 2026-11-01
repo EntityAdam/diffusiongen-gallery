@@ -18,6 +18,5 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Gallery.Migrations\Gallery.Migrations.csproj" />
-    <EmbeddedResource Include="Services/DataManagers/Turso/Schema/*.sql" />
   </ItemGroup>
 </Project>

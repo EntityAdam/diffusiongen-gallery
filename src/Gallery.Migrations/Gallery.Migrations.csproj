@@ -8,5 +8,7 @@
     <PackageReference Include="dbup-sqlite" Version="6.0.4" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <EmbeddedResource Include="Scripts\*.sql" />
+    <EmbeddedResource Include="Turso\Schema\*.sql" />
+    <EmbeddedResource Include="Turso\Scripts\*.sql" />
   </ItemGroup>
 </Project>
