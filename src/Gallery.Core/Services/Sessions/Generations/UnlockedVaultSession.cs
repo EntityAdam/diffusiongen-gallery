@@ -40,19 +40,19 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
         }
     }
 
-    internal KeyLease? TryBorrow()
+    internal KeyLease? TryBorrow(bool recordActivity = true)
     {
         lock (vaultLeaseState.SyncRoot)
         {
             if (HasExpired(DateTimeOffset.UtcNow)) Expire();
-            return IsRevoked ? null : CreateKeyLease();
+            return IsRevoked ? null : CreateKeyLease(recordActivity);
         }
     }
 
-    private KeyLease CreateKeyLease()
+    private KeyLease CreateKeyLease(bool recordActivity = true)
     {
         var leasedKeyBytes = key.ToArray();
-        vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+        if (recordActivity) vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
         vaultLeaseState.ActiveLeases++;
         return new KeyLease(leasedKeyBytes, vaultLeaseState);
     }

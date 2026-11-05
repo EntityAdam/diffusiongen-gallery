@@ -44,13 +44,67 @@ dotnet src/perf/Gallery.Stress/bin/Release/net10.0/Gallery.Stress.dll build \
 
 Windows paths work too, for example `D:\stress\workspace`; use your shell's continuation syntax. `k`/`M` counts are decimal (100k = 100,000), while KB/MB/GB and KiB/MiB/GiB are powers of 1024. `fixed:`, `uniform:min-max`, and `tier:bytes@WIDTHxHEIGHT` size distributions are supported. The generator uses seeded per-file randomness, an SD-sized colour field/noise pattern and valid ComfyUI API/workflow PNG text chunks. Generation and ingestion run sequentially so their CPU costs are separate.
 
-One vault grows through every target. Sources are deleted only by production ingestion after verification. Finder's `.DS_Store` files are ignored during staging initialization and batch-completion checks; other unexpected files still block completion. A batch's seed range is saved before work begins; the completed checkpoint is replaced atomically. After an interruption, the entire pending batch is regenerated deterministically. Already committed sources are reconciled by original path and SHA-256, and stored media is verified before removing the regenerated source. Retried result rows have a stable batch number and are deduplicated by `report`. A recovered fully committed batch has no new ingestion timing report. Do not edit the vault, remove its records, change its media setting, or run another mutating harness command while a build is in progress.
+One vault grows through every target. Sources are deleted only by production ingestion after verification. Finder's `.DS_Store` files are ignored during staging initialization and batch-completion checks; other unexpected files still block completion. A batch's seed range is saved before work begins; the completed checkpoint is replaced atomically. After an interruption, committed items are matched by original source path and their stored media is verified; deleted committed sources are not regenerated. Existing committed sources must match the catalog SHA-256 before deletion. Uncommitted staging files with workspace generation receipts are reused only after their length and SHA-256 match. Missing, changed, or unreceipted uncommitted files regenerate deterministically. Older interrupted builds have no receipts, so their uncommitted sources regenerate once. Receipts are bound to the saved seed range and distributions and removed after the batch checkpoint advances. Retried result rows have a stable batch number and are deduplicated by `report`. A recovered fully committed batch has no new ingestion timing report. Do not edit the vault, remove its records, change its media setting, or run another mutating harness command while a build is in progress.
 
-Ingestion result rows are saved after each completed batch. Open measurements run at the configured targets (100k, 200k and 400k by default). If the first batch fails before saving its result, `report` has no timing data to display even when records have already been imported; rerun the build to reconcile the pending batch and continue.
+Count-only phase progress prints every five seconds during opening, generation, recovery, ingestion and target measurements; results and `state.json` still describe completed batches. `Pending` retains the original batch size on resume even when `--batch-files` changes. Ingestion result rows are saved after each completed batch. Open measurements run at the configured targets (100k, 200k and 400k by default). If the first batch fails before saving its result, `report` has no timing data to display even when records have already been imported; rerun the build to reconcile the pending batch and continue.
 
 Ctrl+C cancels generation or stops ingestion through its progress callback, after active production work drains. Resume with the same workspace, paths, seed and distributions; target counts can be extended. A hard kill can leave uncommitted ciphertext orphan files, just as an interrupted production import can; counts and fingerprints still reconcile on resume.
 
 For a local acceptance smoke run, replace targets with `1k,2k` and `--batch-files 500`. Check four ingestion rows, 2,000 catalog rows, no remaining PNG sources, distinct open PIDs and matching `gallery.load.record_count`. To exercise recovery, terminate during a batch and rerun the identical command.
+
+### Measure a new Turso gallery
+
+Add `--catalog-backend turso` when creating a gallery. SQLite remains the default
+for new galleries. This creates and measures a disposable Turso gallery through
+the normal generation/import pipeline:
+
+```sh
+dotnet src/perf/Gallery.Stress/bin/Release/net10.0/Gallery.Stress.dll build \
+  --workspace /outside/stress/turso-workspace --vault /outside/stress/turso-vault \
+  --staging /outside/stress/turso-staging --catalog-backend turso \
+  --targets 1k,2k --batch-files 500 --size-dist fixed:1MB \
+  --metadata-dist uniform:8KB-60KB --seed 42 --workers 4 --catalog-batch 16 \
+  --measure-open-at-targets --open-runs 3 --cache warm --page-size 49
+```
+
+Use separate workspace/vault/staging directories and `--catalog-backend sqlite`
+for a comparison. Align seed, distributions, counts, workers, page size, GC/cache
+conditions, and optional waits. `simulate-catalog` and `large-images` also accept
+the option; large-image children inherit it.
+
+Existing galleries are detected from their vault header when the option is
+omitted. An explicit backend must match that header, and checkpoints retain the
+backend so a resume cannot silently switch formats. Old checkpoints without a
+backend retain their SQLite meaning. This option never converts a gallery.
+
+Later measurements detect Turso automatically:
+
+```sh
+dotnet src/perf/Gallery.Stress/bin/Release/net10.0/Gallery.Stress.dll measure-open \
+  --workspace /outside/stress/turso-workspace --vault /outside/stress/turso-vault \
+  --runs 3 --cache warm --page-size 49 --wait-for-catalog --label turso-2k
+```
+
+Result rows record `env.catalogBackend`; reports, CSV series, and plots keep
+`sqlite`, `turso`, and older unrecorded backends separate. Turso selects the first
+page with an SQL index, so `firstPageCacheHit: false` does not imply a full scan.
+`--wait-for-catalog` measures the existing full-record background load.
+SQLite record-decryption/JSON byte and phase telemetry is unavailable for Turso;
+its `recordBytes` remains null and the CSV field is empty. Use shared opening
+milestones, process I/O, memory, and catalog/WAL sizes for comparisons. Reports
+use database-plus-WAL bytes for catalog-storage plots/models; raw database and
+WAL sizes remain separate in JSON/CSV, since Turso can retain changes in the WAL.
+
+Turso reuses one serialized native connection throughout an explicit leased import/recovery operation. The connection closes before its vault-key lease is released, so vault close and relocation drain it normally. Settings and isolated reads outside such operations use transient connections. FULL durability and encrypted-media read-back verification remain enabled.
+
+The adapter requests a truncating WAL checkpoint at completed-operation boundaries when the WAL reaches 64 MiB, including when opening an older large WAL. One transaction can exceed that threshold; a large simulated-catalog commit can therefore produce a larger temporary WAL. Automatic maintenance makes one attempt and, if it fails, records a failure and waits at least 30 seconds before retrying on a later operation. It cannot turn a successful catalog commit into an import failure. Snapshot/publication checkpoints are mandatory and still fail the operation if unsuccessful. An older multi-gigabyte WAL can make the first startup/checkpoint slow; the heartbeat continues during that work.
+
+Build rows include `catalogMetrics`: native connection opens/duration, serialized gate wait, observed WAL bytes, checkpoint count/duration and automatic checkpoint failures. `regeneratedFiles` counts newly generated or regenerated sources, `reusedFiles` counts receipt-validated files, and `committedFiles` counts sources already catalogued on recovery. These counters do not replace completed-batch checkpoints. The row includes `generationMs` and `recoveryMs`; ingestion `report.wallMs` includes maintenance performed during that import. Compare those phases and checkpoint costs separately; opening an old WAL before the batch starts is outside its metrics.
+
+Turso remains experimental. `profile-catalog` still supports only the legacy
+SQLite format and its encrypted-blob distributions; it does not unlock a Turso
+database. The synthetic `--record-dist` approximation is calibrated to those
+legacy blob lengths, so do not claim matching Turso record sizes from it.
 
 ## Open measurement
 
@@ -64,7 +118,7 @@ Each run is a fresh child process, including the untimed warm-up before the warm
 
 Steps mirror `Home.razor` `UnlockAsync` / `OpenGalleryAsync`: service creation, open, unlock, preferences/auto-lock, initial page, storage/ingestion options, dictionary, vision settings, cached overview, first-page selection, and thumbnails. Unless `--page-size` is supplied, the saved density selects 12 items (detail) or 49 (compact), matching the UI. The saved trash tool selects marked records. Use `--page-size 49` to retain the older harness's thumbnail count.
 
-Schema 3's primary metric is `steps.passphrase_to_gallery_ready`: time from passphrase submission until first-page records are selected and settings are available, **before** fetching thumbnails. A valid encrypted browse index bounds this work to page records. Missing or invalidated indexes require a full snapshot to rebuild; an untimed warm-up can pay that one-time cost. Inspect `firstPageCacheHit`, `loadedRecords`, `records` (full catalog count), and `catalogCompleteAtOpen` to distinguish these paths. Schema 2 measured full-catalog readiness before thumbnails; reports keep it separate from schema 3 and the older startup-through-thumbnail target.
+Schema 3's primary metric is `steps.passphrase_to_gallery_ready`: time from passphrase submission until first-page records are selected and settings are available, **before** fetching thumbnails. For SQLite, a valid encrypted browse index bounds this work to page records. Missing or invalidated SQLite indexes require a full snapshot to rebuild; an untimed warm-up can pay that one-time cost. Turso uses indexed SQL instead. Inspect `env.catalogBackend`, `firstPageCacheHit`, `loadedRecords`, `records` (full catalog count), and `catalogCompleteAtOpen` to distinguish these paths. Schema 2 measured full-catalog readiness before thumbnails; reports keep it separate from schema 3 and the older startup-through-thumbnail target.
 
 `milestones` records `key_unlocked`, `gallery_ready`, and `thumbnails_ready`, relative to passphrase submission. `catalog_loaded` appears only when the full catalog is loaded. `first_page_selection` separates filtering/sorting from `first_page_thumbnails`. The legacy `total_to_interactive` field still includes startup and thumbnails. Browser paint, grouping and user interaction are not simulated; Core readiness is not a browser-render measurement.
 
@@ -114,7 +168,7 @@ dotnet src/perf/Gallery.Stress/bin/Release/net10.0/Gallery.Stress.dll simulate-c
   --measure-open-at-targets --open-runs 3 --cache both
 ```
 
-The command creates a normal vault, then writes production-encrypted records and thumbnails in 5,000-row transactions with unique fingerprints. It resumes from committed row count and validates stored configuration. `--sparse-media` creates NTFS sparse placeholder files on Windows only; otherwise no full media files are generated. Placeholder thumbnails/media are for catalog measurements and cannot be opened as real images. Do not use this vault for viewer testing. All results carry `simulated: true`; report series remain separate from real ingestion. `--rows 10k --metadata-dist fixed:8KB --thumbnail-kb 1-2` is a small simulation smoke run.
+The command creates a normal vault using the selected backend, then writes through its production catalog adapter in 5,000-row transactions with unique source hashes. SQLite stores encrypted JSON records/thumbnails; Turso stores typed records and thumbnails under native database encryption. It resumes from committed row count and validates stored configuration. `--sparse-media` creates NTFS sparse placeholder files on Windows only; otherwise no full media files are generated. Placeholder thumbnails/media are for catalog measurements and cannot be opened as real images. Do not use this vault for viewer testing. All results carry `simulated: true`; report series remain separate from real ingestion. `--rows 10k --metadata-dist fixed:8KB --thumbnail-kb 1-2` is a small simulation smoke run.
 
 At nearby sizes compare real and simulated slopes. A disagreement over 15% means the simulated shape needs calibration. Extrapolation cannot predict memory exhaustion or a catalog that outgrows RAM, and sparse enumeration does not reproduce media reads. If a tier will not fit, stop at the previous tier and report its failure/limit.
 
@@ -127,7 +181,7 @@ dotnet src/perf/Gallery.Stress/bin/Release/net10.0/Gallery.Stress.dll cleanup --
 dotnet src/perf/Gallery.Stress/bin/Release/net10.0/Gallery.Stress.dll cleanup --workspace /outside/stress/count-workspace --delete-vault
 ```
 
-Reports write Markdown, CSV and SVG plots under `results`. Schema 2 and legacy results, effective GC modes, GC latency modes, page sizes, environments, cache-purge status and simulation remain separate series. Old results without recorded GC mode remain **unknown**; they are never retroactively labelled workstation GC. Hypothesis evidence is evaluated separately for each compatible series. Reports show H1–H6 evidence conservatively, and fit time against records/record bytes/catalog bytes with R² and 95% prediction intervals. Fits require three distinct sizes. Predictions at 1M, 2M and 2.1M records are explicitly extrapolations; they assume a stable record shape and linear behavior. Review allocation/peak-memory growth before trusting them. Incomplete JSONL lines are skipped with a warning.
+Reports write Markdown, CSV and SVG plots under `results`. Catalog backends, schema versions, effective GC modes, GC latency modes, page sizes, environments, cache-purge status and simulation remain separate series. Old results without recorded GC mode remain **unknown**; they are never retroactively labelled workstation GC. Hypothesis evidence is evaluated separately for each compatible series. Reports show H1–H6 evidence conservatively, and fit time against records/record bytes/catalog bytes with R² and 95% prediction intervals. Fits require three distinct sizes. Predictions at 1M, 2M and 2.1M records are explicitly extrapolations; they assume a stable record shape and linear behavior. Review allocation/peak-memory growth before trusting them. Incomplete JSONL lines are skipped with a warning.
 
 Cleanup uses ownership manifests and markers. It removes registered staging; `--delete-vault` also removes marked vaults, including simulation and nested large-image vaults. It keeps the workspace/results/credentials. External media is retained: review and remove its dedicated directory manually after deleting the associated vault. Parent containers and empty suite folders can remain. A cleaned build needs fresh directories/workspace before rebuilding.
 

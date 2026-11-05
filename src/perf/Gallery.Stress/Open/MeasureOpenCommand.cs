@@ -14,6 +14,7 @@ public static class MeasureOpenCommand
         Safety.ValidateOutputPath(options.Workspace);
         Safety.ValidateOutputPath(vault);
         if (!options.Flag("allow-real-vault")) Safety.RequireStressVault(vault);
+        var backend = StressVault.ResolveBackend(options, vault);
         var runs = options.Int("runs", 5);
         if (runs <= 0) throw new ArgumentException("--runs must be positive.");
         var cache = options.Get("cache", "both");
@@ -55,8 +56,8 @@ public static class MeasureOpenCommand
         async Task FailureAsync(Exception exception, string mode, string purge, int run, bool warmup)
         {
             long? records = null;
-            try { records = await BuildCommand.CountRecordsAsync(vault, token); }
-            catch (Exception e) when (e is IOException or Microsoft.Data.Sqlite.SqliteException) { }
+            try { records = await StressVault.CountExistingAsync(options, vault, token); }
+            catch (Exception e) when (e is not OperationCanceledException) { }
             var simulated = false;
             var marker = Path.Combine(vault, "stress-vault.json");
             if (File.Exists(marker))
@@ -67,7 +68,7 @@ public static class MeasureOpenCommand
             var catalog = Path.Combine(vault, "gallery.db");
             await results.AppendAsync("open-failures", new
             {
-                env = results.Environment with { VaultDrive = ResultWriter.DescribeDrive(vault), DefenderExclusion = "user-declared:" + options.Get("defender-exclusion", "unknown") },
+                env = results.Environment with { CatalogBackend = StressVault.BackendName(backend), VaultDrive = ResultWriter.DescribeDrive(vault), DefenderExclusion = "user-declared:" + options.Get("defender-exclusion", "unknown") },
                 label = options.Get("label", "unlabelled"), cache = mode, cachePurge = purge, run, warmup,
                 failed = true, simulated, records, catalogBytes = File.Exists(catalog) ? new FileInfo(catalog).Length : 0,
                 measurementTarget = "passphrase_to_gallery_ready",
@@ -87,7 +88,7 @@ public static class MeasureOpenCommand
     private static async Task<JsonElement> ChildAsync(StressOptions options, string cache, string purge, int run, CancellationToken token)
     {
         var start = ChildStart("open-once");
-        foreach (var key in new[] { "workspace", "vault", "page-size", "label", "passphrase-file", "defender-exclusion" })
+        foreach (var key in new[] { "workspace", "vault", "page-size", "label", "passphrase-file", "defender-exclusion", "catalog-backend" })
         {
             var value = options.Get(key, "");
             if (value.Length == 0) continue;

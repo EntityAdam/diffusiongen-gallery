@@ -39,7 +39,7 @@ public sealed class VaultOpenListener : IDisposable
     public Dictionary<string, object> Metrics() => measurements.ToDictionary(pair => pair.Key, pair =>
     {
         var sorted = pair.Value.Order().ToArray();
-        return (object)new { count = sorted.Length, sum = sorted.Sum(), p50 = sorted[(int)Math.Ceiling(sorted.Length * .5) - 1], p95 = sorted[(int)Math.Ceiling(sorted.Length * .95) - 1] };
+        return (object)new { count = sorted.Length, sum = sorted.Sum(), p50 = sorted[(int)Math.Ceiling(sorted.Length * .5) - 1], p95 = sorted[(int)Math.Ceiling(sorted.Length * .95) - 1], max = sorted[^1] };
     });
     public void Dispose() { activities.Dispose(); meter.Dispose(); }
 }

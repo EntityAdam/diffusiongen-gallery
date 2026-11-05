@@ -1,3 +1,4 @@
+using Gallery.Core.Models;
 using System.Diagnostics;
 using Gallery.Core.Services.Processors.Validators;
 using Gallery.Core.Services.Processors.Codecs;
@@ -17,7 +18,8 @@ internal sealed record VaultHeader(
     KeySlot Passphrase,
     KeySlot Recovery,
     ImmutableArray<byte> KeyCheck,
-    string Name = VaultStore.DefaultGalleryName);
+    string Name = VaultStore.DefaultGalleryName,
+    string? CatalogFormat = null);
 
 internal sealed class VaultStore
 {
@@ -36,6 +38,15 @@ internal sealed class VaultStore
     public string Root { get; }
     private string HeaderPath => Path.Combine(Root, "vault.json");
     public bool Exists => File.Exists(HeaderPath);
+    public CatalogBackend CatalogBackend => ReadCatalogBackend(File.ReadAllText(HeaderPath));
+
+    internal static CatalogBackend ReadCatalogBackend(string headerJson)
+    {
+        var header = JsonSerializer.Deserialize<VaultHeader>(headerJson, jsonSerializerOptions)
+            ?? throw new InvalidOperationException(EmptyHeaderMessage);
+        ValidateHeader(header);
+        return header.CatalogFormat == "turso-v1" ? CatalogBackend.Turso : CatalogBackend.Sqlite;
+    }
     public string Name => Exists
         ? JsonSerializer.Deserialize<VaultHeader>(File.ReadAllText(HeaderPath), jsonSerializerOptions)?.Name
             ?? throw new InvalidOperationException(EmptyHeaderMessage)
@@ -68,14 +79,14 @@ internal sealed class VaultStore
     private void CopyExistingHeader(string destinationPath) =>
         File.Copy(HeaderPath, destinationPath, overwrite: false);
 
-    public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase, string name = DefaultGalleryName)
+    public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase, string name = DefaultGalleryName, CatalogBackend backend = CatalogBackend.Sqlite)
     {
         await semaphoreSlim.WaitAsync();
-        try { return await CreateWithOwnedKeyAsync(passphrase, name); }
+        try { return await CreateWithOwnedKeyAsync(passphrase, name, backend); }
         finally { semaphoreSlim.Release(); }
     }
 
-    private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase, string name)
+    private async Task<(byte[] Key, string Recovery)> CreateWithOwnedKeyAsync(string passphrase, string name, CatalogBackend backend)
     {
         var key = RandomNumberGenerator.GetBytes(VaultKeySizeBytes);
         try
@@ -84,7 +95,13 @@ internal sealed class VaultStore
             VaultHeader vaultHeader;
             string recoveryPhrase;
             (vaultHeader, recoveryPhrase) = CreateInitialVaultHeader(key, passphrase);
-            await CreateHeaderAsync(vaultHeader with { Name = name });
+            if (!Enum.IsDefined(backend)) throw new ArgumentOutOfRangeException(nameof(backend));
+            await CreateHeaderAsync(vaultHeader with
+            {
+                Name = name,
+                Version = backend == CatalogBackend.Turso ? 2 : VaultHeaderVersion,
+                CatalogFormat = backend == CatalogBackend.Turso ? "turso-v1" : null
+            });
             return (key, recoveryPhrase);
         }
         catch
@@ -230,7 +247,8 @@ internal sealed class VaultStore
     }
 
     private static bool IsValidVaultHeader(VaultHeader vaultHeader) =>
-        vaultHeader.Version == VaultHeaderVersion &&
+        ((vaultHeader.Version == VaultHeaderVersion && vaultHeader.CatalogFormat is null)
+            || (vaultHeader.Version == 2 && vaultHeader.CatalogFormat == "turso-v1")) &&
         IsValidKeySlot(vaultHeader.Passphrase) &&
         IsValidKeySlot(vaultHeader.Recovery) &&
         !vaultHeader.KeyCheck.IsDefaultOrEmpty;

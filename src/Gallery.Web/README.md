@@ -41,6 +41,67 @@ move destinations must be local; UNC and mapped network drives are rejected.
 Existing network catalogs can be opened for migration, but local catalogs are
 recommended.
 
+## Experimental Turso catalog adapter
+
+SQLite remains the default storage adapter. To create an experimental local
+Turso vault, set `Gallery__CatalogBackend=Turso` before starting the application:
+
+```sh
+Gallery__CatalogBackend=Turso dotnet run --project src/Gallery.Web/Gallery.Web.csproj
+```
+
+For PowerShell, set `$env:Gallery__CatalogBackend = 'Turso'` and run the usual
+startup command. The setting applies to **new vaults**. Existing vaults select
+their adapter from their header, independently of this setting. It does not
+convert an existing gallery. Turso vaults use header version 2 and
+`CatalogFormat: "turso-v1"`; older application versions reject this format.
+
+The application calls `IGalleryStore` and `IGalleryStoreFactory` ports. The
+existing `GalleryStore` adapter retains SQLite/DbUp and its encrypted-record
+format. `TursoGalleryStore` owns its native connection handling, operational SQL, typed
+record mapping, indexed first-page reads, snapshots, and logical fingerprints.
+`Gallery.Migrations` owns schema scripts and DbUp upgrades for both adapters.
+Catalog edits and their queued drive work still share a transaction.
+
+The Turso catalog has ordinary typed media columns, separate metadata,
+generation, collection membership, and thumbnail tables, and no `images.record`
+column. Turso encrypts database/WAL pages using AES-256-GCM and a separate key
+derived from the vault master key. Catalog records, settings, and thumbnails
+do not use application-level encryption envelopes in this adapter. External
+media, queued-operation payloads, vault key wrapping, and backup manifests
+retain their existing application encryption. Passphrase changes and recovery
+continue to unlock the same vault key.
+
+This uses the published `Turso.Data.Common` 0.8.3 driver directly: that release's
+SQLite facade does not accept the local encryption keywords. Connections are
+unpooled and serialized per store. Explicit import/recovery operations reuse a
+connection that closes before their vault-key leases are released; isolated calls
+close their connections after use. Automatic WAL maintenance requests a truncating checkpoint
+at 64 MiB between completed operations, allowing one transaction of overshoot.
+Failed maintenance is counted and retried on a later call after at least 30
+seconds; it cannot turn a successful import commit into a failure. The adapter
+checkpoints and closes a catalog before copying a snapshot or publishing staged
+files, because the native driver retains an exclusive file handle while open.
+No remote connection, cloud account, or replication is configured.
+
+This is an experiment with [Turso's native encryption](https://docs.turso.tech/tursodb/encryption),
+which upstream still marks experimental. The database header, filesystem sizes,
+and modification timing remain visible. Decrypted pages/keys exist in process
+memory; lock is not a memory-erasure guarantee. Temporary-store configuration
+uses memory, but this is not a security audit of the native driver or its output
+paths. Use disposable data or independently retained backups while evaluating it.
+
+The first page is selected through a persistent SQL index. The existing
+full-catalog UI load/filter/search path is retained for compatibility; this
+experiment does not yet deliver SQL paging for every view or eliminate global
+full-record memory use. The stress harness supports `--catalog-backend turso` for new build, simulation,
+and large-image galleries and detects the backend for opening measurements. Its
+read-only catalog profiler still targets the SQLite format. A local macOS run
+reached 200,000 items at approximately 102 imports/second, with warm first-page
+readiness of 206 ms at 200k. See the [measurements and comparison](../../docs/performance/2026-10-31-turso-results.md).
+Windows native execution, cold-cache opening, and full-catalog loading need
+separate validation.
+
 To override the initial gallery directory:
 
 ```powershell
@@ -413,12 +474,15 @@ existing gallery or backups. Sign in normally afterward.
   partially published catalog only when its durable creation receipt and staged
   header identify it. Existing unrelated or changed files are preserved; an
   ownership conflict is reported instead of deleting them.
-- **Encryption at rest:** media, catalog record/thumbnail blobs, settings, and
+- **Encryption at rest (default SQLite adapter):** media, catalog record/thumbnail blobs, settings, and
   saved credentials are encrypted with authenticated AES-256-GCM. The header
   stores wrapped keys, not the passphrase or plaintext master key. SQLite and
   the filesystem still reveal information such as opaque IDs, sizes, timestamps,
   and encrypted-file locations. Gallery names and the last-used catalog location
   are not secret.
+- **Experimental Turso adapter:** database contents, including typed catalog
+  values and indexes, use native encrypted pages. See the adapter section above
+  for its format, privacy boundaries, and evaluation limits.
 - **Recovery:** the 32 words are application-specific, not a BIP39 wallet seed.
   Use them to unlock, then change the passphrase in **Gallery security**. They
   remain valid and cannot be displayed again. There is no password reset or
@@ -456,14 +520,40 @@ encryption, filesystem/media processing, and external gateways. Web contains
 Blazor components, host/request policies, and dependency-injection composition.
 UI components use Core models directly. Test projects are under `src/tests`.
 
-`Gallery.Migrations` owns the SQLite schema and runs through DbUp whenever a
-catalog connection is opened. Applied migrations are recorded in `SchemaVersions`.
-The idempotent baseline also supports pre-DbUp catalogs, including catalogs without
-the image fingerprint column. All pending migrations and journal entries commit
-in one immediate SQLite transaction; failures roll back the entire upgrade and
-independent connections wait before reading the journal.
+`Gallery.Migrations` owns schema definitions and DbUp upgrade execution for both
+catalog adapters. The adapters open/configure their connections, then invoke the
+matching migration runner. Script selection and journals are isolated by provider;
+opening one format never executes the other format's migrations.
 
-Add new SQL migrations to `src\Gallery.Migrations\Scripts` using the next
+`GalleryDatabase.Upgrade` runs the SQLite scripts in `Gallery.Migrations.Scripts`
+and records their existing names in `SchemaVersions`. The idempotent baseline
+also supports pre-DbUp catalogs, including catalogs without the image fingerprint
+column. All pending migrations and journal entries commit in one immediate SQLite
+transaction; failures roll back the entire upgrade and independent connections
+wait before reading the journal.
+
+`TursoGalleryDatabase.Upgrade` uses the already-open encrypted Turso connection
+and records scripts from `Gallery.Migrations.Turso.Scripts` in
+`turso_schema_versions`. The baseline DDL is embedded from
+`Gallery.Migrations/Turso/Schema/M0001_Catalog.sql`; the baseline code migration
+creates a fresh catalog or adopts an existing version-1 catalog without replaying
+its DDL. Later changes belong in `Gallery.Migrations/Turso/Scripts` using ordered
+`M0002_Description.sql` names or public parameterless `IScript` classes. Separate statements
+with a standalone `-- next` line: the native driver prepares one statement per
+command, and trigger bodies must remain intact. Code scripts must use their
+supplied command factory and include SQL prefixes in parameter names.
+
+Turso schema changes and journal writes share one transaction. New catalog
+creation must be explicitly allowed; an uninitialized/foreign schema or unknown
+`catalog_format` version is rejected. The format marker describes the storage
+contract, while the DbUp journal tracks individual schema changes. SQLite-to-Turso
+conversion remains a separate, explicit operation and is not implemented here.
+
+Backup fingerprints validate Turso archives in their original schema before
+upgrading them. Journal metadata is excluded from logical fingerprints so
+adopting existing version-1 catalogs preserves their backup fingerprints.
+
+Add new SQLite SQL migrations to `src\Gallery.Migrations\Scripts` using the next
 zero-padded name, such as `M0003_Description.sql`. They are embedded automatically.
 For conditional changes SQLite cannot express in SQL, add a public parameterless
 `IScript` class in `Gallery.Migrations.Scripts` with the same naming scheme.

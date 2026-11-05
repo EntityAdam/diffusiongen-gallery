@@ -1,6 +1,6 @@
 using System.Runtime.ExceptionServices;
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 
 namespace Gallery.Core.Services.Processors;
 

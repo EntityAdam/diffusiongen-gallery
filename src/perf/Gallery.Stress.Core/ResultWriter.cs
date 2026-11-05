@@ -11,6 +11,7 @@ namespace Gallery.Stress.Core;
 public sealed record ResultEnvironment(int SchemaVersion, string RunId, DateTimeOffset Utc, string GitCommit, string HarnessVersion,
     string Os, string Dotnet, int Cpus, long RamBytes, string DefenderExclusion, string Power)
 {
+    public string CatalogBackend { get; init; } = "unknown";
     public string VaultDrive { get; init; } = "unknown";
     public string MediaDrive { get; init; } = "unknown";
     public string StagingDrive { get; init; } = "unknown";

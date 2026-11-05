@@ -10,7 +10,7 @@ public static class MeasurementSeries
     public static string EnvironmentKey(JsonElement row)
     {
         var env = Property(row, "env");
-        var values = new[] { "schemaVersion", "gcMode", "gcLatencyMode", "os", "dotnet", "cpus", "ramBytes",
+        var values = new[] { "schemaVersion", "catalogBackend", "gcMode", "gcLatencyMode", "os", "dotnet", "cpus", "ramBytes",
             "vaultDrive", "mediaDrive", "stagingDrive", "power", "defenderExclusion", "gitCommit", "harnessVersion" }
             .Select(key => Text(env, key)).Concat(new[] { Text(row, "vaultDrive"), Text(row, "mediaDrive"),
                 Text(row, "pageSize"), Text(row, "measurementTarget"),

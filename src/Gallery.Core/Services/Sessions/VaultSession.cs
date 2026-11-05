@@ -88,12 +88,12 @@ internal sealed class VaultSession : IDisposable
         }
     }
 
-    internal KeyLease? TryBorrowUnlockedKey()
+    internal KeyLease? TryBorrowUnlockedKey(bool recordActivity = true)
     {
         CheckInactivityTimeout();
         KeyLease? keyLease;
         lock (vaultLeaseState.SyncRoot)
-            keyLease = vaultLeaseState.UnlockedVaultSession?.TryBorrow();
+            keyLease = vaultLeaseState.UnlockedVaultSession?.TryBorrow(recordActivity);
         if (keyLease is null) CheckInactivityTimeout();
         return keyLease;
     }

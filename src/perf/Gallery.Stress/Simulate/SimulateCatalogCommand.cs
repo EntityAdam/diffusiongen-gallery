@@ -5,12 +5,11 @@ using System.Text;
 using System.Text.Json;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Processors.Codecs;
 using Gallery.Stress.Cli;
 using Gallery.Stress.Core;
-using Microsoft.Data.Sqlite;
 using Microsoft.Win32.SafeHandles;
 
 namespace Gallery.Stress;
@@ -29,6 +28,7 @@ internal static class SimulateCatalogCommand
         var sparse = options.Flag("sparse-media");
         if (sparse && (!OperatingSystem.IsWindows() || new DriveInfo(Path.GetPathRoot(vault)!).DriveFormat != "NTFS"))
             throw new InvalidOperationException("--sparse-media requires a Windows NTFS volume.");
+        var backend = StressVault.ResolveBackend(options, vault);
         var seed = options.Int("seed", 42);
         var targets = options.Targets("rows", "500k,1M,2.1M");
         var thumbnails = ParseThumbnailRange(options.Get("thumbnail-kb", "40-120"));
@@ -37,7 +37,7 @@ internal static class SimulateCatalogCommand
         var recordDistribution = profile.Length == 0 ? null : await ReadRecordDistributionAsync(profile, cancellationToken);
         var configPath = Path.Combine(options.Workspace, "simulation-state.json");
         var configuration = new SimulationState(vault, seed, sparse, options.Get("metadata-dist", "uniform:8KB-60KB"),
-            options.Get("thumbnail-kb", "40-120"), recordDistribution);
+            options.Get("thumbnail-kb", "40-120"), recordDistribution, backend);
         if (File.Exists(configPath))
         {
             var previous = JsonSerializer.Deserialize<SimulationState>(await File.ReadAllTextAsync(configPath, cancellationToken))!;
@@ -50,15 +50,16 @@ internal static class SimulateCatalogCommand
         Directory.CreateDirectory(options.Workspace);
         await AtomicWriteAsync(configPath, configuration, cancellationToken);
         using var gallery = await StressVault.OpenOrCreateAsync(options, vault, cancellationToken);
-        await AtomicWriteAsync(Path.Combine(vault, "stress-vault.json"), new { simulated = true, sparseMedia = sparse, seed }, cancellationToken);
+        await AtomicWriteAsync(Path.Combine(vault, "stress-vault.json"), new { simulated = true, sparseMedia = sparse, seed, catalogBackend = StressVault.BackendName(backend) }, cancellationToken);
         var key = await new VaultStore(vault).UnlockWithPassphraseAsync(await File.ReadAllTextAsync(StressVault.PassphrasePath(options.Workspace), cancellationToken));
         try
         {
-            var store = new GalleryStore(Path.Combine(vault, "gallery.db"));
-            long count = await CountRowsAsync(vault, cancellationToken);
+            var store = new GalleryStoreFactory().Create(vault);
+            long count = await gallery.CountRecordsAsync(cancellationToken);
             var writer = new ResultWriter(options.Workspace);
             var environment = writer.Environment with
             {
+                CatalogBackend = StressVault.BackendName(backend),
                 VaultDrive = ResultWriter.DescribeDrive(vault), MediaDrive = ResultWriter.DescribeDrive(vault),
                 DefenderExclusion = "user-declared:" + options.Get("defender-exclusion", "unknown")
             };
@@ -105,6 +106,7 @@ internal static class SimulateCatalogCommand
                     {
                         env = environment, simulated = true, records = count,
                         catalogBytes = new FileInfo(Path.Combine(vault, "gallery.db")).Length,
+                        walBytes = File.Exists(Path.Combine(vault, "gallery.db-wal")) ? new FileInfo(Path.Combine(vault, "gallery.db-wal")).Length : 0,
                         wallMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds,
                         batchRows = batchCount, recordCalibration = recordDistribution is null ? "metadata-distribution" : "profile-size-approximation"
                     }, cancellationToken);
@@ -134,16 +136,6 @@ internal static class SimulateCatalogCommand
             || !int.TryParse(values[^1], out var max) || min < 1 || max < min || max > 1024)
             throw new ArgumentException("--thumbnail-kb must be a range from 1 to 1024, such as 40-120.");
         return (min * 1024, max * 1024);
-    }
-
-    private static async Task<long> CountRowsAsync(string vault, CancellationToken token)
-    {
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        { DataSource = Path.Combine(vault, "gallery.db"), Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
-        await connection.OpenAsync(token);
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM images";
-        return (long)(await command.ExecuteScalarAsync(token))!;
     }
 
     private static async Task<int[]> ReadRecordDistributionAsync(string path, CancellationToken token)
@@ -186,7 +178,7 @@ internal static class SimulateCatalogCommand
         File.Move(temporary, path, overwrite: true);
     }
 
-    private sealed record SimulationState(string Vault, int Seed, bool SparseMedia, string Metadata, string Thumbnails, int[]? RecordDistribution);
+    private sealed record SimulationState(string Vault, int Seed, bool SparseMedia, string Metadata, string Thumbnails, int[]? RecordDistribution, CatalogBackend CatalogBackend = CatalogBackend.Sqlite);
 }
 
 internal static class SparseMedia

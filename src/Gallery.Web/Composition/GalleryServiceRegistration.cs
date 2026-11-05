@@ -24,10 +24,17 @@ public static class GalleryServiceRegistration
         return new GalleryRuntimeOptions
         {
             StateDirectory = configuration["Gallery:StateDirectory"],
+            CatalogBackend = ParseCatalogBackend(configuration["Gallery:CatalogBackend"]),
             FFmpegPath = configuration[FFmpegPathSettingName],
             ToolSearchPaths = DiscoverToolSearchPaths(configuration).ToImmutableArray()
         };
     }
+
+    private static CatalogBackend ParseCatalogBackend(string? value) => string.IsNullOrWhiteSpace(value)
+        ? CatalogBackend.Sqlite
+        : Enum.TryParse<CatalogBackend>(value, ignoreCase: true, out var backend) && Enum.IsDefined(backend)
+            ? backend
+            : throw new InvalidOperationException("Gallery:CatalogBackend must be Sqlite or Turso.");
 
     private static IEnumerable<string> DiscoverToolSearchPaths(IConfiguration configuration)
     {

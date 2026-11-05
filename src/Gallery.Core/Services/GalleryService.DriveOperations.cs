@@ -1,3 +1,4 @@
+using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Processors.Validators;
 using Gallery.Core.Services.Processors.Codecs;
 using System.Security.Cryptography;
@@ -5,7 +6,7 @@ using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Sessions.Generations.Leases;
 
@@ -58,7 +59,8 @@ public sealed partial class GalleryService
             EnsureCheckout();
             var galleryStore = this.galleryStore;
             await driveOperationPlayer.StopAsync();
-            await galleryStore.CancelUnfinishedDriveOperationsAsync();
+            using var key = vaultSession.AcquireUnlockedSession().Borrow();
+            await galleryStore.CancelUnfinishedDriveOperationsAsync(key.Bytes);
             await driveOperationPlayer.RefreshAsync();
         }
         finally { lifecycleGate.Release(); }
@@ -71,7 +73,8 @@ public sealed partial class GalleryService
         {
             EnsureCheckout();
             var galleryStore = this.galleryStore;
-            await galleryStore.RetryFailedDriveOperationsAsync();
+            using var key = vaultSession.AcquireUnlockedSession().Borrow();
+            await galleryStore.RetryFailedDriveOperationsAsync(key.Bytes);
             driveOperationPlayer.Start();
             await driveOperationPlayer.RefreshAsync();
         }
@@ -91,12 +94,13 @@ public sealed partial class GalleryService
         finally { lifecycleGate.Release(); }
     }
 
-    private Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
+    private async Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
     {
+        using var key = vaultSession.TryBorrowUnlockedKey(recordActivity: false);
         var location = galleryLifetime.Current;
-        return location.VaultStore.Exists
-            ? location.GalleryStore.ReadDriveQueueCountsAsync()
-            : Task.FromResult(new DriveQueueCounts(0, 0, null));
+        return location.VaultStore.Exists && key is not null
+            ? await location.GalleryStore.ReadDriveQueueCountsAsync(key.Bytes)
+            : new DriveQueueCounts(0, 0, null);
     }
 
     /// <summary>Discards the cached file index and schedules a fresh background scan of the media folders.</summary>
@@ -104,8 +108,8 @@ public sealed partial class GalleryService
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var records = await ListWithKeyAsync(keyLease.Bytes);
-        await galleryStore.ClearMediaIndexAsync();
-        await galleryStore.DeleteSettingsAsync(MediaIndexId);
+        await galleryStore.ClearMediaIndexAsync(keyLease.Bytes);
+        await galleryStore.DeleteSettingsAsync(keyLease.Bytes, MediaIndexId);
         await ScheduleMediaIndexAsync(records, keyLease.Bytes);
         driveOperationPlayer.Start();
     }
@@ -133,14 +137,14 @@ public sealed partial class GalleryService
         var scans = new List<NewDriveOperation> { CreateDriveOperation(DriveOperationKind.ScanDirectory, imageRoot, null, key, recursive: true) };
         scans.AddRange(ExternalMediaDirectories(records.Select(record => record.StoredPath), imageRoot)
             .Select(directory => CreateDriveOperation(DriveOperationKind.ScanDirectory, directory, null, key)));
-        await galleryStore.EnqueueDriveOperationsAsync(scans);
+        await galleryStore.EnqueueDriveOperationsAsync(scans, key);
         await galleryStore.SaveSettingsAsync(new MediaIndexMarker(DateTimeOffset.UtcNow), MediaIndexId, MediaIndexPurpose, key);
         activity?.SetTag("gallery.load.media_index_scheduled", true);
     }
 
     private async Task<bool> IsMediaIndexPendingAsync(byte[] key) =>
         await galleryStore.ReadSettingsAsync<MediaIndexMarker>(MediaIndexId, MediaIndexPurpose, key) is null
-        || await galleryStore.CountDriveOperationsAsync(DriveOperationKind.ScanDirectory) > 0;
+        || await galleryStore.CountDriveOperationsAsync(DriveOperationKind.ScanDirectory, key) > 0;
 
     private static NewDriveOperation CreateDriveOperation(string kind, string path, string? imageId, byte[] key, bool recursive = false)
         => DriveOperationProcessor.Create(kind, path, imageId, key, recursive);
@@ -165,7 +169,7 @@ public sealed partial class GalleryService
     /// An operation whose path is owned again is obsolete and completes without deleting that path.
     /// </summary>
     private static async Task DeleteQueuedFileAsync(
-        GalleryStore galleryStore, DriveOperation driveOperation, string path, byte[] key)
+        IGalleryStore galleryStore, DriveOperation driveOperation, string path, byte[] key)
     {
         if (!await CanDeleteQueuedFileAsync(galleryStore, driveOperation.ImageId, path, key)) return;
         try { await DeleteObsoleteCiphertextAsync(galleryStore, driveOperation, path, key); }
@@ -176,7 +180,7 @@ public sealed partial class GalleryService
     }
 
     private static async Task<bool> CanDeleteQueuedFileAsync(
-        GalleryStore galleryStore, string? imageId, string path, byte[] key) =>
+        IGalleryStore galleryStore, string? imageId, string path, byte[] key) =>
         imageId is null || await galleryStore.TryReadRecordAsync(imageId, key) is not { } owner
         || !PathEquals(owner.StoredPath, path);
 
@@ -201,17 +205,17 @@ public sealed partial class GalleryService
 
     /// <summary>Plays due operations for one gallery store with one key lease.</summary>
     private sealed class DriveOperationSession(
-        GalleryStore galleryStore, string imageRoot, KeyLease keyLease, TimeSpan retryDelay)
+        IGalleryStore galleryStore, string imageRoot, KeyLease keyLease, TimeSpan retryDelay)
         : IDriveOperationSession
     {
         private byte[] Key => keyLease.Bytes;
 
         public async Task<DriveBatchReport> PlayBatchAsync(CancellationToken cancellationToken)
         {
-            var dueDriveOperations = await galleryStore.ReadDueDriveOperationsAsync(DriveBatchSize, NowMilliseconds());
+            var dueDriveOperations = await galleryStore.ReadDueDriveOperationsAsync(DriveBatchSize, NowMilliseconds(), Key);
             var driveOperationResults = new List<DriveOperationResult>(dueDriveOperations.Count);
             var activity = await PlayDueOperationsAsync(dueDriveOperations, driveOperationResults, cancellationToken);
-            await galleryStore.CompleteDriveOperationsAsync(driveOperationResults);
+            await galleryStore.CompleteDriveOperationsAsync(driveOperationResults, Key);
             return new(driveOperationResults.Count,
                 driveOperationResults.Count(driveOperationResult => driveOperationResult.Outcome == DriveOperationOutcome.Done),
                 activity);
@@ -320,7 +324,7 @@ public sealed partial class GalleryService
             var indexedFiles = CreateDirectoryIndex(directoryEntries);
             var discoveredDriveOperations = CreateDiscoveredDriveOperations(directoryEntries, driveOperationPayload.Recursive);
             await galleryStore.ReplaceDirectoryIndexAsync(
-                VaultCrypto.PathFingerprint(Key, driveOperationPayload.Path), indexedFiles, discoveredDriveOperations);
+                VaultCrypto.PathFingerprint(Key, driveOperationPayload.Path), indexedFiles, discoveredDriveOperations, Key);
         }
 
         private static List<FileSystemInfo> EnumerateDirectoryEntries(string directoryPath)

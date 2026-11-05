@@ -1,5 +1,5 @@
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 
 namespace Gallery.Core.Services;
@@ -15,23 +15,23 @@ public sealed partial class GalleryService
         var overview = await galleryStore.ReadSettingsAsync<StorageOverview>(StorageOverviewId, StorageOverviewPurpose, keyLease.Bytes);
         return overview is null ? null : overview with
         {
-            IsStale = overview.CatalogRevision != await galleryStore.ReadStorageRevisionAsync()
+            IsStale = overview.CatalogRevision != await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes)
         };
     }
 
     public async Task<StorageOverview> RefreshStorageOverviewAsync()
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var revision = await galleryStore.ReadStorageRevisionAsync();
+        var revision = await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes);
         var records = await ListWithKeyAsync(keyLease.Bytes);
-        var indexedLengths = await galleryStore.ReadMediaIndexAsync();
+        var indexedLengths = await galleryStore.ReadMediaIndexAsync(keyLease.Bytes);
         var indexPending = await IsMediaIndexPendingAsync(keyLease.Bytes);
         var (overview, measured) = await Task.Run(() =>
             StorageOverviewCalculator.Measure(vaultStore.Root, records, indexedLengths, keyLease.Bytes));
-        await galleryStore.IndexFilesAsync(measured);
+        await galleryStore.IndexFilesAsync(measured, keyLease.Bytes);
         var storageOverview = overview with { IsIndexPending = indexPending, CatalogRevision = revision };
         await galleryStore.SaveSettingsAsync(storageOverview, StorageOverviewId, StorageOverviewPurpose, keyLease.Bytes);
-        return storageOverview with { IsStale = revision != await galleryStore.ReadStorageRevisionAsync() };
+        return storageOverview with { IsStale = revision != await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes) };
     }
 
     private static class StorageOverviewCalculator

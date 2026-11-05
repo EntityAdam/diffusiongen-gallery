@@ -3,10 +3,11 @@ using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
 
 using SixLabors.ImageSharp.PixelFormats;
+using System.Security.Cryptography;
 
 namespace Gallery.Stress.Core;
 
-public sealed record GeneratedPng(long Bytes, int Width, int Height);
+public sealed record GeneratedPng(long Bytes, int Width, int Height, string Sha256);
 
 public static class SyntheticPngWriter
 {
@@ -45,7 +46,8 @@ public static class SyntheticPngWriter
         await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan);
         encoded.Position = 0;
         await encoded.CopyToAsync(file, cancellationToken);
-        return new(encoded.Length, image.Width, image.Height);
+        return new(encoded.Length, image.Width, image.Height,
+            Convert.ToHexString(SHA256.HashData(encoded.GetBuffer().AsSpan(0, checked((int)encoded.Length)))));
     }
 
     private static void Fill(Image<Rgb24> image, int seed, double fraction)

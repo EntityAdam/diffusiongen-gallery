@@ -1,8 +1,9 @@
+using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Sessions.Locations;
 using System.Security.Cryptography;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 
 namespace Gallery.Core.Services;
@@ -70,7 +71,7 @@ public sealed partial class GalleryService
                 await StopDriveOperationPlayerAsync();
                 await vaultSession.LockAndDrainAsync();
                 EnsureActive();
-                galleryLifetime.PublishLocation(new GalleryStore(Path.Combine(root, CatalogFileName)), store, nextCheckout)?.Dispose();
+                galleryLifetime.PublishLocation(galleryLifetime.StoreFactory.Create(root), store, nextCheckout)?.Dispose();
             }
             catch { nextCheckout.Dispose(); throw; }
         }
@@ -121,8 +122,8 @@ public sealed partial class GalleryService
             staging = Path.Combine(destination, ".vault-stage-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(staging);
             await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
-            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName));
-            var stagedStore = new GalleryStore(Path.Combine(staging, CatalogFileName));
+            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName), key);
+            var stagedStore = galleryLifetime.StoreFactory.Create(staging);
             foreach (var record in records)
             {
                 ValidateMediaPath(record);
@@ -136,10 +137,11 @@ public sealed partial class GalleryService
             }
             await ClearLocationSettingsAsync(stagedStore, key);
             EnsureActive();
+            await stagedStore.PrepareForPublicationAsync(key);
             PublishStagedVault(staging, destination);
             published = true;
             var sourceCheckout = galleryLifetime.PublishLocation(
-                new GalleryStore(Path.Combine(destination, CatalogFileName)), new VaultStore(destination), destinationCheckout);
+                galleryLifetime.StoreFactory.Create(destination), new VaultStore(destination), destinationCheckout);
             destinationCheckout = null;
             try
             {
@@ -197,7 +199,7 @@ public sealed partial class GalleryService
             var ownedPaths = (await galleryStore.ReadRecordsAsync(key))
                 .Select(record => Path.GetFullPath(record.StoredPath))
                 .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-            foreach (var operation in await galleryStore.ReadOutstandingDeletesAsync())
+            foreach (var operation in await galleryStore.ReadOutstandingDeletesAsync(key))
             {
                 var payload = DriveOperationProcessor.Read(operation, key);
                 var path = Path.GetFullPath(payload.Path);
@@ -206,14 +208,14 @@ public sealed partial class GalleryService
                 if (!ownedPaths.Contains(path))
                     await DeleteObsoleteCiphertextAsync(galleryStore, operation, path, key);
                 await galleryStore.CompleteDriveOperationsAsync(
-                    [new DriveOperationResult(operation.Sequence, operation.Revision, DriveOperationOutcome.Done)]);
+                    [new DriveOperationResult(operation.Sequence, operation.Revision, DriveOperationOutcome.Done)], key);
             }
         }
         finally { galleryStore.Gate.Release(); }
     }
 
     private static async Task DeleteObsoleteCiphertextAsync(
-        GalleryStore store, DriveOperation operation, string path, byte[] key)
+        IGalleryStore store, DriveOperation operation, string path, byte[] key)
     {
         if (Directory.Exists(path)) throw new IOException("Queued ciphertext deletion points to a directory.");
         if (File.Exists(path))
@@ -224,7 +226,7 @@ public sealed partial class GalleryService
             try { File.Delete(path); }
             catch (DirectoryNotFoundException) { }
         }
-        await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path));
+        await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path), key);
     }
 
     private static async Task VerifyCiphertextAsync(string path, string imageId, byte[] key)
@@ -333,10 +335,10 @@ public sealed partial class GalleryService
     }
 
     // Queued drive work and the file index describe paths at the old location, so they never travel with a copy.
-    private static async Task ClearLocationSettingsAsync(GalleryStore store, byte[] key)
+    private static async Task ClearLocationSettingsAsync(IGalleryStore store, byte[] key)
     {
-        await store.DeleteSettingsAsync(StorageOverviewId, MediaIndexId, "media-storage");
-        await store.ClearDriveStateAsync();
+        await store.DeleteSettingsAsync(key, StorageOverviewId, MediaIndexId, "media-storage");
+        await store.ClearDriveStateAsync(key);
         var settings = await store.ReadSettingsAsync<StoredBackupSettings>(BackupSettingsId, BackupSettingsPurpose, key);
         if (settings is not null)
             await store.SaveSettingsAsync(settings with { LastBackupName = null, LastBackupType = null },

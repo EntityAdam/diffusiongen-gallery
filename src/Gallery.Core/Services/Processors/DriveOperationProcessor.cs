@@ -2,7 +2,7 @@ using Gallery.Core.Services.Processors.Validators;
 using Gallery.Core.Services.Processors.Codecs;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 
 namespace Gallery.Core.Services.Processors;
 

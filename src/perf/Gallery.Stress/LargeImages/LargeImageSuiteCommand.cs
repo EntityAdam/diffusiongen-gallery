@@ -42,9 +42,11 @@ internal static class LargeImageSuiteCommand
             throw new ArgumentException("--tiers must contain L1,L2,L3,L4,L5.");
         var tiers = DefaultTiers.Where(tier => selected.Contains(tier.Label)).ToList();
         if (options.Flag("decouple")) tiers.AddRange([new("D1", "8MB", 4096, 4096), new("D2", "32MB", 4096, 4096)]);
+        var backend = options.RequestedCatalogBackend ?? CatalogBackend.Sqlite;
         var results = new ResultWriter(options.Workspace);
         var environment = results.Environment with
         {
+            CatalogBackend = StressVault.BackendName(backend),
             VaultDrive = ResultWriter.DescribeDrive(root),
             MediaDrive = ResultWriter.DescribeDrive(options.Get("media-directory", "").Length == 0 ? root : options.Get("media-directory", "")),
             StagingDrive = ResultWriter.DescribeDrive(stagingRoot),
@@ -134,6 +136,7 @@ internal static class LargeImageSuiteCommand
         var info = GC.GetGCMemoryInfo();
         var row = new
         {
+            catalogBackend = StressVault.BackendName(StressVault.ResolveBackend(options, vault)),
             pid = Environment.ProcessId, report,
             memory = new
             {
@@ -190,6 +193,7 @@ internal static class LargeImageSuiteCommand
         await gallery.CloseVaultAsync();
         Console.WriteLine(JsonSerializer.Serialize(new
         {
+            catalogBackend = StressVault.BackendName(StressVault.ResolveBackend(options, vault)),
             pid = Environment.ProcessId, cache, cachePurge = purge, purgeBeforeEachOperation = cache == "cold", samples = records.Length,
             viewer = new { preview = Summarize(preview), fit = Summarize(fit), original = Summarize(original), verify = Summarize(verify) }
         }, ResultWriter.JsonOptions));
@@ -205,7 +209,7 @@ internal static class LargeImageSuiteCommand
     private static async Task<JsonElement> ChildAsync(string command, StressOptions options, CancellationToken token)
     {
         var start = MeasureOpenCommand.ChildStart(command);
-        foreach (var name in new[] { "workspace", "vault", "staging", "workers", "catalog-batch", "delete-sources", "viewer-samples", "cache", "media-directory", "defender-exclusion" })
+        foreach (var name in new[] { "workspace", "vault", "staging", "workers", "catalog-batch", "delete-sources", "viewer-samples", "cache", "media-directory", "defender-exclusion", "catalog-backend" })
         {
             var value = name == "workspace" ? options.Workspace : options.Get(name, "");
             if (value.Length == 0) continue;
@@ -265,7 +269,7 @@ internal static class LargeImageSuiteCommand
                     || Directory.Exists(Path.Combine(vault, "images")) && Directory.EnumerateFiles(Path.Combine(vault, "images"), "*", SearchOption.AllDirectories).Any())
                     throw new InvalidOperationException($"The {edge} rejection edge case did not preserve the expected invariants.");
             }
-            await results.AppendAsync("large-image-rejections", new { env = results.Environment, edge, samples = 5, rejected = true }, token);
+            await results.AppendAsync("large-image-rejections", new { env = results.Environment with { CatalogBackend = StressVault.BackendName(options.RequestedCatalogBackend ?? CatalogBackend.Sqlite) }, edge, samples = 5, rejected = true }, token);
         }
         await gallery.CloseVaultAsync();
     }

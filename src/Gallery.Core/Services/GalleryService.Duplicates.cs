@@ -1,4 +1,5 @@
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.DataManagers;
@@ -65,7 +66,7 @@ public sealed partial class GalleryService
         return (hashesByImageId, pendingImageRecords);
     }
 
-    private static async Task ComputePendingHashesAsync(GalleryStore scanStore, byte[] key, IReadOnlyList<ImageRecord> pendingImageRecords,
+    private static async Task ComputePendingHashesAsync(IGalleryStore scanStore, byte[] key, IReadOnlyList<ImageRecord> pendingImageRecords,
         IDictionary<string, PerceptualHash> perceptualHashesByImageId, int totalImageCount,
         IProgress<(int Completed, int Total)>? progress)
     {
@@ -96,7 +97,7 @@ public sealed partial class GalleryService
         foreach (var (_, imageThumbnail) in imageThumbnails) imageThumbnail.Dispose();
     }
 
-    private static async Task ReadHashThumbnailsAsync(GalleryStore scanStore, IReadOnlyList<ImageRecord> imageRecords,
+    private static async Task ReadHashThumbnailsAsync(IGalleryStore scanStore, IReadOnlyList<ImageRecord> imageRecords,
         byte[] key, List<(ImageRecord ImageRecord, ImageThumbnail ImageThumbnail)> imageThumbnails)
     {
         foreach (var imageRecord in imageRecords)

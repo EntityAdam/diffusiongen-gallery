@@ -1,6 +1,6 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Microsoft.Data.Sqlite;
 using System.Security.Cryptography;
 

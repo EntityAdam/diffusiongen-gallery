@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.DataManagers.Models;
+using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Sessions;
 using Gallery.Core.Services.Sessions.Locations;

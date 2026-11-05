@@ -7,6 +7,15 @@ namespace Gallery.Tests;
 public sealed class StressMeasurementTests
 {
     [Fact]
+    public void SQLite_Turso_and_unrecorded_backends_are_separate_series()
+    {
+        var unknown = JsonSerializer.SerializeToElement(new { env = new { schemaVersion = 3, gcMode = "server" } });
+        var sqlite = JsonSerializer.SerializeToElement(new { env = new { schemaVersion = 3, gcMode = "server", catalogBackend = "sqlite" } });
+        var turso = JsonSerializer.SerializeToElement(new { env = new { schemaVersion = 3, gcMode = "server", catalogBackend = "turso" } });
+        Assert.Equal(3, new[] { unknown, sqlite, turso }.Select(MeasurementSeries.EnvironmentKey).Distinct().Count());
+    }
+
+    [Fact]
     public void Legacy_unknown_and_explicit_GC_modes_are_separate_series()
     {
         var legacy = JsonSerializer.SerializeToElement(new { env = new { schemaVersion = 1, os = "same" } });
