@@ -492,7 +492,11 @@ else
     }
     @if (workflow == "settings" && settingsTab == "endpoints")
     {
-        <LlmEndpointSettings SavedSettings="settings" Saved="value => settings = value" />
+        <LlmEndpointSettings KnownTags="AllTags" SavedSettings="settings" Saved="value => settings = value" />
+    }
+    @if (workflow == "settings" && settingsTab == "tags")
+    {
+        <TagManagement Changed="TagsManagedAsync" />
     }
     @if (workflow == "settings" && settingsTab == "backups")
     {
@@ -674,7 +678,7 @@ else
         }
         @if (activeTool == "filters" && !catalogPartial)
         {
-            <GalleryFilterPanel Filter="filter" Images="images" ResultCount="Filtered.Count" Changed="ApplyFilterPanelAsync" Reset="ResetFilters" Disabled="busy" ResetVersion="filterInputRevision" />
+            <GalleryFilterPanel KnownTags="AllTags" Filter="filter" Images="images" ResultCount="Filtered.Count" Changed="ApplyFilterPanelAsync" Reset="ResetFilters" Disabled="busy" ResetVersion="filterInputRevision" />
         }
         @if (activeTool == "review" && !catalogPartial)
         {
@@ -717,7 +721,7 @@ else
                 }
             </div>
         }
-        <LibraryWorkbench @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "search" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
+        <LibraryWorkbench KnownTags="AllTags" @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "search" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
                           Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
                           SuggestionsChanged="SuggestionsChanged" />
     </GalleryToolbox>
@@ -789,7 +793,7 @@ else
 
 @if (Gallery.IsUnlocked && viewerImages.Count > 0)
 {
-    <FullscreenViewer Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
+    <FullscreenViewer KnownTags="AllTags" Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
                       Suggestions="aiSuggestions" ApproveSuggestion="ApproveSuggestionAsync" DismissSuggestion="DismissSuggestionAsync" />
 }
 @if (Gallery.IsUnlocked && reviewGroups.Count > 0)
@@ -992,7 +996,7 @@ else
     };
     private static readonly (string Id, string Name)[] SettingsTabs =
     [
-        ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("security", "Gallery security")
+        ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("tags", "Tags"), ("security", "Gallery security")
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
@@ -1054,6 +1058,16 @@ else
     private GalleryFilter filter = new();
     private long filterInputRevision;
     private VisionSettings settings = new();
+    private IReadOnlyList<string> catalogTags = [];
+    private IEnumerable<string> AllTags => catalogTags.Concat(images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
+        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+    private async Task TagsManagedAsync(TagCatalogChange change)
+    {
+        if (change.PreviousName is not null && change.Name is not null && filter.Tag.Equals(change.PreviousName, StringComparison.OrdinalIgnoreCase))
+            filter = filter with { Tag = change.Name };
+        if (change.PreviousName is not null && workbench is not null) await workbench.DiscardTagSuggestionsAsync();
+        await ReloadAsync();
+    }
     private List<ImageRecord> images = [];
     private List<string> importFailures = [];
     private ImportProgress? importProgress;
@@ -1456,6 +1470,12 @@ else
     }
     private Task SwitchSettingsTabAsync(string value)
     {
+        if (value == "endpoints")
+            return RunAsync("Loading LLM settings...", async () =>
+            {
+                settings = await Gallery.SettingsAsync();
+                settingsTab = value;
+            });
         settingsTab = value;
         return value == "overview"
             ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync())
@@ -1617,6 +1637,8 @@ else
     private void ClearSelection() { librarySelection.Clear(); removalSelection.Clear(); selectionAnchor = null; }
     private void ViewerImageChanged(ImageRecord updated)
     {
+        catalogTags = AllTags.Concat(updated.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         imagesById[updated.Id] = updated;
         var imageIndex = images.FindIndex(image => image.Id == updated.Id);
         if (imageIndex >= 0) images[imageIndex] = updated;
@@ -2068,10 +2090,11 @@ else
     private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>
     {
         if (selected is null) return;
-        var result = await Gallery.AnalyzeImageAsync(settings, preview);
+        var analysisSettings = await Gallery.SettingsAsync();
+        var result = await Gallery.AnalyzeImageAsync(analysisSettings, preview);
         await Gallery.UpdateAsync(selected.Id, image =>
         {
-            return image with { Description = result.Description, UserDescription = editUserDescription.Trim(), Tags = result.Tags, AnalysisModel = settings.Model };
+            return image with { Description = result.Description, UserDescription = editUserDescription.Trim(), Tags = result.Tags, AnalysisModel = analysisSettings.Model };
         });
         await ReloadAsync();
         editDescription = selected!.Description;
@@ -2176,6 +2199,7 @@ else
             timingReport = null;
         }
         settings = new();
+        catalogTags = [];
         filter = new();
         page = 0;
         useRecovery = recoverySaved = false;

@@ -33,6 +33,7 @@ internal interface IGalleryStore
     Task<ImageRecord> ReadRecordAsync(string id, byte[] key);
     Task UpdateAsync(ImageRecord imageRecord, byte[] key, bool preserveBrowseIndex = true);
     Task DeleteAsync(string id, byte[] key);
+    Task CommitTagCatalogAsync(IReadOnlyList<ImageRecord> records, TagCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);
     Task<T?> ReadSettingsAsync<T>(string id, string purpose, byte[] key) where T : class;
     Task SaveSettingsAsync<T>(T value, string id, string purpose, byte[] key);
     Task<List<SavedView>> LoadViewsAsync(byte[] key);

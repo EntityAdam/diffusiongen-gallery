@@ -14,7 +14,9 @@ public sealed class VisionConnectionSelectionContracts
         // Arrange
         var visionRequestRecorder = new VisionRequestRecorder();
         using var httpClient = new HttpClient(visionRequestRecorder);
-        using var galleryService = CreateGalleryService(httpClient);
+        using var fixture = new VisionGalleryFixture(httpClient);
+        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var galleryService = fixture.Service;
         var firstSettings = new VisionSettings { ApiKey = "first-token", Model = "first-model", RequestTimeoutSeconds = 10 };
         var secondSettings = new VisionSettings { Endpoint = "http://192.168.1.2:8080/api/", ApiKey = "second-token", Model = "second-model", RequestTimeoutSeconds = 20 };
         var expectedRequests = new[]
@@ -40,7 +42,9 @@ public sealed class VisionConnectionSelectionContracts
         // Arrange
         var visionRequestRecorder = new VisionRequestRecorder();
         using var httpClient = new HttpClient(visionRequestRecorder);
-        using var galleryService = CreateGalleryService(httpClient);
+        using var fixture = new VisionGalleryFixture(httpClient);
+        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var galleryService = fixture.Service;
         var visionSettings = new VisionSettings { Model = "vision", RequestTimeoutSeconds = 10 };
         var expectedRequests = new[]
         {
@@ -58,10 +62,18 @@ public sealed class VisionConnectionSelectionContracts
         Assert.Equal(("A landscape.", "green", "Worlds", ""), collectionAnalysis);
     }
 
-    private static GalleryService CreateGalleryService(HttpClient httpClient)
+    private sealed class VisionGalleryFixture : IDisposable
     {
-        string root = Path.Combine(Path.GetTempPath(), "vision-connection-" + Guid.NewGuid().ToString("N"));
-        return GalleryService.Create(root, new GalleryRuntimeOptions { StateDirectory = root }, httpClient);
+        private readonly string root = Path.Combine(Path.GetTempPath(), "vision-connection-" + Guid.NewGuid().ToString("N"));
+        public GalleryService Service { get; }
+        public VisionGalleryFixture(HttpClient client) => Service = GalleryService.Create(Path.Combine(root, "vault"),
+            new GalleryRuntimeOptions { StateDirectory = Path.Combine(root, "state") }, client);
+        public void Dispose()
+        {
+            Service.Dispose();
+            Service.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
     }
 
     private sealed class VisionRequestRecorder : HttpMessageHandler

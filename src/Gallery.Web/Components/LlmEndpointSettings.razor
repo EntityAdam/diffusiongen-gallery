@@ -25,6 +25,30 @@
             <Input id="model-select" @bind-Value="draft.Model" Disabled="@working" Placeholder="Fetch models or enter a model ID" required />
         }
         <p class="text-muted-foreground">Choose a vision-capable model for image analysis. Model discovery does not verify vision support. Text search interpretation uses this model too.</p>
+        <Label For="vision-system-prompt" Class="mt-4 mb-2 block">Vision system prompt</Label>
+        <textarea id="vision-system-prompt" rows="8" @bind="draft.SystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="vision-system-prompt-help"></textarea>
+        <p id="vision-system-prompt-help" class="text-muted-foreground">Used by image analysis in the detail view and toolbox. Responses must be JSON with description (a string) and tags (an array of strings). Toolbox collection suggestions and full organization analysis also append the collection instructions below. Tag suggestions use this prompt plus the tag vocabulary instructions below.</p>
+        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultPrompt">Restore default prompt</Button>
+        <Label For="tag-vocabulary-instructions" Class="mt-4 mb-2 block">Tag vocabulary instructions</Label>
+        <textarea id="tag-vocabulary-instructions" rows="5" @bind="draft.TagVocabularyInstructions" @bind:event="oninput" disabled="@working" class="prompt-editor"></textarea>
+        <p class="text-muted-foreground">Image analysis receives the entire registered tag vocabulary, including unused tags. These instructions are appended when the catalog is nonempty. The toolbox keeps new tags as suggestions until approved.</p>
+        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="() => draft.TagVocabularyInstructions = VisionSettings.DefaultTagVocabularyInstructions">Restore default tag vocabulary instructions</Button>
+        <Label For="collection-analysis-instructions" Class="mt-4 mb-2 block">Collection analysis instructions</Label>
+        <textarea id="collection-analysis-instructions" rows="5" @bind="draft.CollectionAnalysisInstructions" @bind:event="oninput" disabled="@working" class="prompt-editor" aria-describedby="collection-analysis-instructions-help"></textarea>
+        <p id="collection-analysis-instructions-help" class="text-muted-foreground">Appended to the vision system prompt for toolbox collection suggestions and full organization analysis. Leave empty to append nothing. Collection suggestions expect a collection string of 1–80 characters in the JSON response.</p>
+        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultCollectionInstructions">Restore default collection instructions</Button>
+        <details>
+            <summary>Effective system prompt for collection-aware analysis</summary>
+            <pre>@draft.ToSettings().BuildImageAnalysisSystemPrompt(KnownTags.Any(), true)</pre>
+        </details>
+        <Label For="collection-suggestion-prompt" Class="mt-4 mb-2 block">Collection suggestion system prompt</Label>
+        <textarea id="collection-suggestion-prompt" rows="5" @bind="draft.CollectionSuggestionSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="collection-suggestion-prompt-help"></textarea>
+        <p id="collection-suggestion-prompt-help" class="text-muted-foreground">Used by the text-only collection suggestion request. Expects JSON with a collection string of 1–80 characters.</p>
+        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultCollectionPrompt">Restore default collection suggestion prompt</Button>
+        <Label For="search-system-prompt" Class="mt-4 mb-2 block">Search interpretation system prompt</Label>
+        <textarea id="search-system-prompt" rows="8" @bind="draft.SearchSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="search-system-prompt-help"></textarea>
+        <p id="search-system-prompt-help" class="text-muted-foreground">Used by natural-language search. Expects JSON with search, tag, collection, minRating, favoritesOnly, orientation and review.</p>
+        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultSearchPrompt">Restore default search prompt</Button>
         <div class="flex flex-wrap items-center gap-2">
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@working" OnClick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</Button>
             <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="submit" Disabled="@working">Save LLM settings</Button>
@@ -37,12 +61,24 @@
 
 @code {
     [Parameter, EditorRequired] public VisionSettings SavedSettings { get; set; } = new();
+    [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     [Parameter] public EventCallback<VisionSettings> Saved { get; set; }
     private VisionSettingsDraft draft = new();
-    protected override void OnInitialized() => draft = VisionSettingsDraft.From(SavedSettings);
+    private VisionSettings? observedSettings;
+    protected override void OnParametersSet()
+    {
+        if (Equals(observedSettings, SavedSettings)) return;
+        draft = VisionSettingsDraft.From(SavedSettings);
+        observedSettings = SavedSettings;
+    }
     private IReadOnlyList<string> models = [];
     private string message = "", error = "";
     private bool working;
+
+    private void RestoreDefaultPrompt() => draft.SystemPrompt = VisionSettings.DefaultSystemPrompt;
+    private void RestoreDefaultCollectionInstructions() => draft.CollectionAnalysisInstructions = VisionSettings.DefaultCollectionAnalysisInstructions;
+    private void RestoreDefaultCollectionPrompt() => draft.CollectionSuggestionSystemPrompt = VisionSettings.DefaultCollectionSuggestionSystemPrompt;
+    private void RestoreDefaultSearchPrompt() => draft.SearchSystemPrompt = VisionSettings.DefaultSearchSystemPrompt;
 
     private void EndpointChanged() { models = []; message = error = ""; }
     private Task FetchModelsAsync() => RunAsync(async () =>
@@ -84,6 +120,11 @@
         public string Endpoint { get; set; } = "";
         public string Model { get; set; } = "";
         public string ApiKey { get; set; } = "";
+        public string SystemPrompt { get; set; } = VisionSettings.DefaultSystemPrompt;
+        public string TagVocabularyInstructions { get; set; } = VisionSettings.DefaultTagVocabularyInstructions;
+        public string CollectionAnalysisInstructions { get; set; } = VisionSettings.DefaultCollectionAnalysisInstructions;
+        public string CollectionSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultCollectionSuggestionSystemPrompt;
+        public string SearchSystemPrompt { get; set; } = VisionSettings.DefaultSearchSystemPrompt;
         public int RequestTimeoutSeconds { get; set; }
 
         public static VisionSettingsDraft From(VisionSettings settings) => new()
@@ -91,6 +132,11 @@
             Endpoint = settings.Endpoint,
             Model = settings.Model,
             ApiKey = settings.ApiKey,
+            SystemPrompt = settings.SystemPrompt,
+            TagVocabularyInstructions = settings.TagVocabularyInstructions,
+            CollectionAnalysisInstructions = settings.CollectionAnalysisInstructions,
+            CollectionSuggestionSystemPrompt = settings.CollectionSuggestionSystemPrompt,
+            SearchSystemPrompt = settings.SearchSystemPrompt,
             RequestTimeoutSeconds = settings.RequestTimeoutSeconds
         };
 
@@ -99,6 +145,11 @@
             Endpoint = Endpoint,
             Model = Model,
             ApiKey = ApiKey,
+            SystemPrompt = SystemPrompt,
+            TagVocabularyInstructions = TagVocabularyInstructions,
+            CollectionAnalysisInstructions = CollectionAnalysisInstructions,
+            CollectionSuggestionSystemPrompt = CollectionSuggestionSystemPrompt,
+            SearchSystemPrompt = SearchSystemPrompt,
             RequestTimeoutSeconds = RequestTimeoutSeconds
         };
     }

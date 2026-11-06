@@ -98,6 +98,7 @@ public partial class Home
         UpdateDuplicateGroups();
         if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
         settings = await Gallery.SettingsAsync();
+        catalogTags = await Gallery.LoadTagNamesAsync();
         storageOverview = await Gallery.CachedStorageOverviewAsync();
         selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
         if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }

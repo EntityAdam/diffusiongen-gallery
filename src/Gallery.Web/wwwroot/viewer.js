@@ -33,6 +33,7 @@ window.galleryGrid = {
         const onHover = event => { hoveredId = cardOf(event.target)?.dataset.imageId ?? null; };
         const onKey = event => {
             if (event.ctrlKey || event.altKey || event.metaKey || event.defaultPrevented) return;
+            if (event.target?.closest?.("[data-advanced-select]")) return;
             const key = event.code === "Backquote" ? "`" : (event.key ?? "").toLowerCase();
             if (!grid.keys.includes(key)) return;
             const editing = event.target?.closest?.("input,textarea,select,[contenteditable=true]");
@@ -339,6 +340,19 @@ window.galleryViewer = {
             else URL.revokeObjectURL(url);
         });
     },
+    quickEditDialogs: new Map(),
+    openQuickEdit: function (dialog, key) {
+        window.galleryViewer.quickEditDialogs.set(key, { dialog, previousFocus: document.activeElement });
+        dialog.showModal();
+        (dialog.querySelector(".advanced-select-value") ?? dialog.querySelector("input"))?.focus();
+    },
+    closeQuickEdit: function (key) {
+        const entry = window.galleryViewer.quickEditDialogs.get(key);
+        if (!entry) return;
+        window.galleryViewer.quickEditDialogs.delete(key);
+        entry.dialog.close();
+        if (entry.previousFocus?.isConnected) entry.previousFocus.focus();
+    },
     attach: function (element, reference) {
         const previousFocus = document.activeElement;
         const previousOverflow = document.body.style.overflow;
@@ -348,8 +362,10 @@ window.galleryViewer = {
         let active = true;
         const listener = async event => {
             if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
+            // Native modal dialogs own focus, Tab and Escape until they close.
+            if (element.querySelector?.("dialog[open]") || event.target?.closest?.("[data-advanced-select]")) return;
             const key = event.key.toLowerCase();
-            const reviewKeys = element.dataset.review === "true" ? ["k", "s", "1", "2", "3", "4", "5"] : [];
+            const reviewKeys = element.dataset.review === "true" ? ["k", "s"] : [];
             const extraKeys = (element.dataset.keys || "").split(" ").filter(Boolean);
             if (!["arrowleft", "arrowright", "d", "f", "o", "p", "escape", "tab", ...reviewKeys, ...extraKeys].includes(key)) return;
             if (key === "tab") {

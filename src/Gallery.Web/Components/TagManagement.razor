@@ -1,0 +1,101 @@
+@inject GalleryService Gallery
+@inject ILogger<TagManagement> Logger
+
+<Card Class="mb-6 space-y-4 p-5 md:p-6">
+    <h3>Manage tags</h3>
+    <p class="text-muted-foreground">Create tags before assigning them to media. Renaming updates every assignment and exact-tag saved view; renaming to an existing tag merges them. Deleting removes the tag from all media, without deleting media files.</p>
+    <div class="tag-management-add flex flex-wrap gap-2">
+        <div class="min-w-0 flex-1">
+            <Label For="new-catalog-tag" Class="mb-2 block">Add a tag</Label>
+            <AdvancedSelect Id="new-catalog-tag" Label="Tags" ItemLabel="tag" Placeholder="Choose or create a tag…" Options="@TagNames" MaxLength="100" @bind-Value="newTag" Disabled="@working" />
+        </div>
+        <Button Type="button" Disabled="@(working || string.IsNullOrWhiteSpace(newTag))" OnClick="AddAsync">Add tag</Button>
+    </div>
+    <Label For="catalog-tag-search" Class="mb-2 block">Find tags</Label>
+    <input id="catalog-tag-search" type="search" @bind="search" @bind:event="oninput" disabled="@working" class="prompt-editor tag-manager-input" />
+    @if (message.Length > 0) { <p role="status">@message</p> }
+    @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
+    @if (entries.Count == 0 && !working) { <p class="text-muted-foreground">No tags yet. Create your first tag above.</p> }
+    <ul class="space-y-2" aria-label="Tag catalog">
+        @foreach (var entry in entries.Where(entry => entry.Name.Contains(search, StringComparison.OrdinalIgnoreCase)))
+        {
+            <li class="rounded-lg border border-border p-3" @key="entry.Name">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div><strong>@entry.Name</strong> <span class="text-muted-foreground">@(entry.MediaCount == 0 ? "Unused" : $"{entry.MediaCount} media item(s)")</span></div>
+                    <div class="flex gap-2">
+                        <Button Type="button" Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@working" aria-label="@($"Rename tag {entry.Name}")" OnClick="() => Edit(entry.Name, false)">Rename</Button>
+                        <Button Type="button" Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@working" aria-label="@($"Delete tag {entry.Name}")" OnClick="() => Edit(entry.Name, true)">Delete</Button>
+                    </div>
+                </div>
+                @if (editing == entry.Name)
+                {
+                    @if (deleting)
+                    {
+                        <p role="alert">Remove “@entry.Name” from @entry.MediaCount media item(s) and delete its definition? Saved filters using this name will match no media.</p>
+                        <Button Type="button" Variant="ButtonVariant.Destructive" Disabled="@working" OnClick="DeleteAsync">Delete tag and assignments</Button>
+                    }
+                    else
+                    {
+                        <Label For="rename-catalog-tag" Class="mb-2 block">New tag name</Label>
+                        <input id="rename-catalog-tag" type="text" maxlength="100" @bind="replacement" @bind:event="oninput" disabled="@working" class="prompt-editor tag-manager-input" />
+                        <Button Type="button" Disabled="@(working || string.IsNullOrWhiteSpace(replacement))" OnClick="RenameAsync">Rename or merge</Button>
+                    }
+                    <Button Type="button" Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="() => editing = null">Cancel</Button>
+                }
+            </li>
+        }
+    </ul>
+</Card>
+
+@code {
+    [Parameter] public EventCallback<TagCatalogChange> Changed { get; set; }
+    private IReadOnlyList<TagDefinition> entries = [];
+    private IEnumerable<string> TagNames => entries.Select(entry => entry.Name);
+    private string newTag = "", search = "", replacement = "", message = "", error = "";
+    private string? editing;
+    private bool working, deleting;
+    protected override Task OnInitializedAsync() => RunAsync(async () => entries = await Gallery.LoadTagCatalogAsync());
+    private void Edit(string name, bool delete) { editing = replacement = name; deleting = delete; error = message = ""; }
+    private Task AddAsync() => RunAsync(async () =>
+    {
+        var name = newTag.Trim();
+        await Gallery.AddTagAsync(name);
+        await RefreshAsync(new(null, name));
+        newTag = "";
+        message = $"Tag '{name}' is available, including before it is assigned to any media.";
+    });
+    private Task RenameAsync() => RunAsync(async () =>
+    {
+        if (editing is null) return;
+        var previous = editing;
+        await Gallery.RenameTagAsync(previous, replacement);
+        await RefreshAsync(new(previous, replacement.Trim()));
+        message = "Tag renamed across the library. Existing target tags were merged.";
+    });
+    private Task DeleteAsync() => RunAsync(async () =>
+    {
+        if (editing is null) return;
+        var previous = editing;
+        await Gallery.DeleteTagAsync(previous);
+        await RefreshAsync(new(previous, null));
+        message = "Tag definition and media assignments deleted.";
+    });
+    private async Task RefreshAsync(TagCatalogChange change)
+    {
+        editing = null;
+        entries = await Gallery.LoadTagCatalogAsync();
+        await Changed.InvokeAsync(change);
+    }
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (working) return;
+        working = true; error = message = "";
+        try { await action(); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Tag management operation failed");
+            error = exception is InvalidOperationException ? exception.Message : "Could not update tags. Check the application console.";
+        }
+        finally { working = false; }
+    }
+}

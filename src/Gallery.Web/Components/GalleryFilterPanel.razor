@@ -29,15 +29,12 @@
                         {
                             case "organization":
                                 <Label For="collection-filter" Class="mb-2 block">Collection</Label>
-                                <Select Disabled="@Disabled" id="collection-filter" @bind-Value="draft.Collection" @bind-Value:after="NotifyChangedAsync">
-                                    <option value="">All collections</option>
-                                    @foreach (var name in Collections)
-                                    { <option value="@name">@name</option> }
-                                </Select>
+                                <AdvancedSelect Disabled="@Disabled" Id="collection-filter" Label="Collections" ItemLabel="collection" Placeholder="All collections"
+                                                Options="@Collections" AllowCreate="false" @bind-Value="draft.Collection" @bind-Value:after="NotifyChangedAsync" />
                                 <div class="mt-3 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.IncludesUnorganizedOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
                                 <Label For="tag" Class="mt-4 mb-2 block">Tag</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="tag" ResetVersion="@ResetVersion" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" Placeholder="Exact tag" List="tags" />
-                                <datalist id="tags">@foreach (var tag in Tags) { <option value="@tag"></option> }</datalist>
+                                <AdvancedSelect Disabled="@Disabled" Id="tag" Label="Tags" ItemLabel="tag" Placeholder="All tags" MaxLength="4000"
+                                                Options="@Tags" AllowCreate="false" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" />
                                 <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
                                 <DebouncedFilterInput Disabled="@Disabled" Id="folder" ResetVersion="@ResetVersion" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
                                 <div class="grid grid-cols-2 gap-3">
@@ -162,9 +159,10 @@
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections)
         .Distinct(StringComparer.OrdinalIgnoreCase).Order();
 
-    private IEnumerable<string> Tags => Images.SelectMany(image =>
-            image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        .Distinct().Order();
+    [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
+    private IEnumerable<string> Tags => KnownTags.Concat(Images.SelectMany(image =>
+            image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
+        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
 
     private IEnumerable<string> DiffusionModels => Images.Select(image => image.Generation?.Model.Trim() ?? "")
         .Where(model => model.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);

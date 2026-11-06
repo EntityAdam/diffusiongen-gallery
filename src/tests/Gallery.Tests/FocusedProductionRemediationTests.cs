@@ -86,7 +86,7 @@ public sealed class FocusedProductionRemediationTests
         var response = JsonNode.Parse("""{"search":"","tag":"","collection":"","minRating":0,"favoritesOnly":false,"orientation":"all","review":"all"}""")!.AsObject();
         response[fieldName] = JsonNode.Parse(jsonValue);
         using var httpClient = new HttpClient(new ModelResponseHandler(response.ToJsonString()));
-        var visionService = new VisionService(httpClient);
+        var visionService = new VisionService(httpClient, new VisionSettings());
 
         // Act
         var error = await Assert.ThrowsAsync<VisionResponseFormatException>(() =>
@@ -101,7 +101,7 @@ public sealed class FocusedProductionRemediationTests
     {
         // Arrange
         using var httpClient = new HttpClient(new ModelResponseHandler("""{"search":"","tag":"","collection":"","minRating":0,"favoritesOnly":false,"orientation":"all","review":"all"}"""));
-        var visionService = new VisionService(httpClient);
+        var visionService = new VisionService(httpClient, new VisionSettings());
 
         // Act
         var galleryFilter = await visionService.InterpretSearchAsync("local", 180, "show images", []);

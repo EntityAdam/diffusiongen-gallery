@@ -184,6 +184,65 @@ test("full screen viewer forwards declared extra keys only", async () => {
     assert.equal(keydown, null);
 });
 
+for (const review of ["false", "true"]) {
+    test(`viewer forwards rating keys in review=${review} and ignores editing and modified keys`, async () => {
+        let keydown;
+        const document = {
+            body: { style: {} }, activeElement: null,
+            addEventListener(name, handler) { if (name === "keydown") keydown = handler; },
+            removeEventListener() {}
+        };
+        const window = {};
+        vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+            window, document, Element: class {}
+        });
+        const calls = [];
+        const element = { dataset: { review, keys: "1 2 3 4 5 t c" }, focus() {}, querySelectorAll() { return []; }, querySelector() { return this.modalOpen ? {} : null; } };
+        window.galleryViewer.attach(element, { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } });
+        const press = async (key, extra = {}) => {
+            const event = { key, target: { closest() { return null; } }, defaultPrevented: false,
+                preventDefault() { this.defaultPrevented = true; }, ...extra };
+            await keydown(event);
+            return event.defaultPrevented;
+        };
+        for (const key of ["1", "2", "3", "4", "5"]) assert.equal(await press(key), true);
+        for (const extra of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { repeat: true },
+            { target: { closest() { return {}; } } }]) assert.equal(await press("3", extra), false);
+        assert.equal(await press("k"), review === "true");
+        assert.equal(await press("s"), review === "true");
+        assert.deepEqual(calls.slice(0, 5), ["1", "2", "3", "4", "5"].map(key => ["HandleKey", key]));
+        assert.equal(await press("T"), true);
+        assert.equal(await press("C"), true);
+        assert.deepEqual(calls.slice(-2), [["HandleKey", "t"], ["HandleKey", "c"]]);
+        const callCount = calls.length;
+        element.modalOpen = true;
+        for (const key of ["Escape", "Tab", "ArrowRight", "1", "f", "d", "t", "c"])
+            assert.equal(await press(key), false);
+        assert.equal(calls.length, callCount);
+        window.galleryViewer.detach(element);
+    });
+}
+
+test("quick edit focuses its input and returns focus when dismissed", () => {
+    let focused = "viewer";
+    const previous = { isConnected: true, focus() { focused = "viewer"; } };
+    const document = { activeElement: previous, addEventListener() {} };
+    const window = {};
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, document, Element: class {}
+    });
+    const dialog = {
+        showModal() { this.open = true; }, close() { this.open = false; },
+        querySelector() { return { focus() { focused = "input"; } }; }
+    };
+    window.galleryViewer.openQuickEdit(dialog, "edit");
+    assert.equal(dialog.open, true);
+    assert.equal(focused, "input");
+    window.galleryViewer.closeQuickEdit("edit");
+    assert.equal(dialog.open, false);
+    assert.equal(focused, "viewer");
+});
+
 test("gallerySecurity recognizes panic hotkeys and triggers panic lock", () => {
     const listeners = new Map();
     const calls = [];
