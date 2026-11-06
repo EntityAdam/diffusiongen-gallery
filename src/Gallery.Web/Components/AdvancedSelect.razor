@@ -1,0 +1,247 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="advanced-select @(open ? "is-open" : "") @(Disabled ? "is-disabled" : "")" @ref="element" data-advanced-select>
+    <div class="advanced-select-trigger">
+        <button id="@Id" type="button" class="advanced-select-value @(Multiple && Selection.Count > 0 ? "has-chips" : "")" disabled="@Disabled" @onclick="ToggleAsync"
+                aria-label="@Label" aria-haspopup="listbox" aria-expanded="@open.ToString().ToLowerInvariant()" aria-controls="@ListId">
+            @if (Selection.Count == 0) { <span class="advanced-select-placeholder">@Placeholder</span> }
+            else if (!Multiple)
+            {
+                <img src="images/advanced-select/users.svg" alt="" width="16" height="16" />
+                <span class="advanced-select-single">@Selection[0]</span>
+            }
+            else
+            {
+                <span class="advanced-select-selected-label">@Selection.Count selected</span>
+            }
+        </button>
+        @if (Multiple && Selection.Count > 0)
+        {
+            <div class="advanced-select-chips">
+                @foreach (var selected in Selection)
+                {
+                    <span class="advanced-select-chip" @key="selected">
+                        <span>@selected</span>
+                        <button type="button" disabled="@Disabled" aria-label="@($"Remove {ItemLabel} {selected}")" @onclick="() => RemoveAsync(selected)">
+                            <img src="images/advanced-select/chip-x.svg" alt="" width="12" height="12" />
+                        </button>
+                    </span>
+                }
+            </div>
+        }
+        @if (Selection.Count > 0)
+        {
+            <button type="button" class="advanced-select-icon-button" disabled="@Disabled" aria-label="@($"Clear {Label}")" @onclick="ClearAsync">
+                <img src="images/advanced-select/x.svg" alt="" width="14" height="14" />
+            </button>
+        }
+        <span class="advanced-select-divider"></span>
+        <button type="button" class="advanced-select-icon-button" disabled="@Disabled" aria-label="@($"{(open ? "Close" : "Open")} {Label}")" @onclick="ToggleAsync" aria-expanded="@open.ToString().ToLowerInvariant()">
+            <img src="@(open ? "images/advanced-select/chevron-up.svg" : "images/advanced-select/chevron-down.svg")" alt="" width="14" height="14" />
+        </button>
+    </div>
+    <div class="advanced-select-menu" popover="manual" @ref="menu" hidden="@(!open)">
+        <div class="advanced-select-search">
+            <img src="images/advanced-select/search.svg" alt="" width="16" height="16" />
+            @* Keep the rendered value constant so delayed renders cannot rewind browser typing. JS handles intentional resets. *@
+            <input @ref="searchInput" type="text" role="combobox" aria-label="@($"Search {Label}")" aria-autocomplete="list" aria-expanded="true"
+                   aria-controls="@ListId" aria-activedescendant="@ActiveId" autocomplete="off" maxlength="@MaxLength"
+                   placeholder="@($"Search {Label.ToLowerInvariant()}…")" value="" @oninput="Search" disabled="@Disabled" />
+            @if (query.Length > 0)
+            {
+                <button type="button" class="advanced-select-icon-button" aria-label="Clear search" disabled="@Disabled" @onmousedown:preventDefault @onclick="ClearSearch">
+                    <img src="images/advanced-select/x.svg" alt="" width="14" height="14" />
+                </button>
+            }
+            else { <kbd>⌘ K</kbd> }
+        </div>
+        <div id="@ListId" class="advanced-select-list" role="listbox" aria-label="@Label" aria-multiselectable="@Multiple.ToString().ToLowerInvariant()">
+          <div class="advanced-select-options">
+            @for (var i = 0; i < Matches.Count; i++)
+            {
+                var position = i;
+                var option = Matches[i];
+                var selected = Selection.Contains(option, StringComparer.OrdinalIgnoreCase);
+                <button id="@OptionId(position)" type="button" role="option" tabindex="-1" disabled="@Disabled"
+                        class="advanced-select-option @(selected ? "is-selected" : "") @(activeIndex == position ? "is-active" : "")"
+                        aria-selected="@selected.ToString().ToLowerInvariant()" @onmousedown:preventDefault @onclick="() => ChooseAsync(option)">
+                    <span class="advanced-select-monogram">@Monogram(option)</span>
+                    <span class="advanced-select-option-label">@option</span>
+                    @if (Counts?.TryGetValue(option, out var count) == true) { <span class="advanced-select-count">@count</span> }
+                    @if (Multiple)
+                    {
+                        <span class="advanced-select-checkbox">
+                            @if (selected) { <img src="images/advanced-select/checkbox-check.svg" alt="" width="12" height="12" /> }
+                        </span>
+                    }
+                    else if (selected) { <img src="images/advanced-select/check.svg" alt="" width="16" height="16" /> }
+                    else { <span class="advanced-select-check-space"></span> }
+                </button>
+            }
+          </div>
+        @if (Matches.Count == 0)
+        {
+            <div class="advanced-select-empty" role="status">
+                <strong>No @Label.ToLowerInvariant() found</strong>
+                @if (CanCreate) { <span>Create “@query.Trim()” to get started.</span> }
+            </div>
+        }
+        @if (AllowCreate && !ExactMatch)
+        {
+            <div class="advanced-select-create">
+                <button id="@OptionId(Matches.Count)" type="button" role="option" aria-selected="false" tabindex="-1" class="advanced-select-create-button @(activeIndex == Matches.Count ? "is-active" : "")"
+                        disabled="@Disabled" @onmousedown:preventDefault @onclick="CreateAsync">
+                    <img src="images/advanced-select/plus.svg" alt="" width="16" height="16" />
+                    <span>@(query.Trim().Length > 0 ? $"Create “{query.Trim()}”" : $"Create new {ItemLabel}")</span>
+                    @if (Matches.Count == 0 && CanCreate) { <img src="images/advanced-select/enter.svg" alt="" width="14" height="14" /> }
+                </button>
+            </div>
+        }
+        </div>
+        <div class="advanced-select-summary" aria-live="polite">
+            <span>@(Matches.Count == 0 ? $"No matching {Label.ToLowerInvariant()}" : $"{Matches.Count} {(query.Length > 0 ? "results" : Label.ToLowerInvariant())}")</span>
+            <span>@Selection.Count selected</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Id { get; set; } = $"select-{Guid.NewGuid():N}";
+    [Parameter] public string Label { get; set; } = "Items";
+    [Parameter] public string ItemLabel { get; set; } = "item";
+    [Parameter] public string Placeholder { get; set; } = "Select…";
+    [Parameter] public IEnumerable<string> Options { get; set; } = [];
+    [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
+    [Parameter] public bool Multiple { get; set; }
+    [Parameter] public bool AllowCreate { get; set; } = true;
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public int MaxLength { get; set; } = 80;
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public IReadOnlyList<string> Values { get; set; } = [];
+    [Parameter] public EventCallback<IReadOnlyList<string>> ValuesChanged { get; set; }
+    private ElementReference element, menu, searchInput;
+    private DotNetObjectReference<AdvancedSelect>? reference;
+    private readonly string instanceKey = Guid.NewGuid().ToString("N");
+    private bool open, focusSearch, focusTrigger, resetSearch;
+    private string query = "";
+    private int activeIndex;
+    private IReadOnlyList<string> Selection => Multiple ? Values : string.IsNullOrEmpty(Value) ? [] : new[] { Value };
+    private List<string> AllOptions = [], Matches = [];
+    private void RefreshOptions()
+    {
+        AllOptions = Options.Concat(Selection).Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        RefreshMatches();
+    }
+    private void RefreshMatches() => Matches = AllOptions.Where(value => value.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+    private bool ExactMatch => AllOptions.Contains(query.Trim(), StringComparer.OrdinalIgnoreCase);
+    private bool CanCreate => AllowCreate && query.Trim().Length > 0 && !ExactMatch;
+    private string ListId => $"{Id}-options";
+    private string OptionId(int position) => $"{Id}-option-{position}";
+    private string? ActiveId => activeIndex < Matches.Count || CanCreate ? OptionId(activeIndex) : null;
+    private static string Monogram(string value) => System.Globalization.StringInfo.GetNextTextElement(value).ToUpperInvariant();
+
+    protected override void OnParametersSet()
+    {
+        RefreshOptions();
+        activeIndex = Math.Clamp(activeIndex, 0, Math.Max(0, Matches.Count - (CanCreate ? 0 : 1)));
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            reference = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("galleryAdvancedSelect.attach", element, menu, searchInput, reference, instanceKey);
+        }
+        var shouldFocusSearch = focusSearch;
+        var shouldFocusTrigger = focusTrigger;
+        var shouldResetSearch = resetSearch;
+        focusSearch = focusTrigger = resetSearch = false;
+        await JS.InvokeVoidAsync("galleryAdvancedSelect.sync", instanceKey, open, shouldFocusSearch, shouldFocusTrigger, shouldResetSearch);
+    }
+
+    private Task ToggleAsync()
+    {
+        if (Disabled) return Task.CompletedTask;
+        open = !open;
+        if (open) { query = ""; RefreshMatches(); activeIndex = 0; focusSearch = resetSearch = true; }
+        return Task.CompletedTask;
+    }
+
+    private void Search(ChangeEventArgs args) { query = args.Value?.ToString() ?? ""; RefreshMatches(); activeIndex = 0; }
+    private void ClearSearch() { query = ""; RefreshMatches(); activeIndex = 0; focusSearch = resetSearch = true; }
+    private async Task ClearAsync()
+    {
+        await PublishAsync([]);
+        focusSearch = open;
+        focusTrigger = !open;
+    }
+    private async Task RemoveAsync(string value)
+    {
+        await PublishAsync(Selection.Where(selected => !selected.Equals(value, StringComparison.OrdinalIgnoreCase)).ToArray());
+        focusSearch = open;
+        focusTrigger = !open;
+    }
+
+    private async Task ChooseAsync(string value)
+    {
+        if (Disabled) return;
+        await PublishAsync(Multiple
+            ? Selection.Contains(value, StringComparer.OrdinalIgnoreCase)
+                ? Selection.Where(selected => !selected.Equals(value, StringComparison.OrdinalIgnoreCase)).ToArray()
+                : Selection.Append(value).ToArray()
+            : new[] { value });
+        if (!Multiple) { open = false; focusTrigger = true; }
+        else { query = ""; RefreshMatches(); activeIndex = 0; focusSearch = resetSearch = true; }
+    }
+
+    private Task CreateAsync()
+    {
+        if (CanCreate) return ChooseAsync(query.Trim());
+        focusSearch = true;
+        return Task.CompletedTask;
+    }
+
+    private async Task PublishAsync(IReadOnlyList<string> values)
+    {
+        if (Disabled) return;
+        if (Multiple) { Values = values; await ValuesChanged.InvokeAsync(values); }
+        else { Value = values.FirstOrDefault() ?? ""; await ValueChanged.InvokeAsync(Value); }
+        RefreshOptions();
+    }
+
+    [JSInvokable]
+    public async Task HandleKey(string key)
+    {
+        if (Disabled) return;
+        if (key == "escape") { open = false; focusTrigger = true; }
+        else if (key == "focus") { open = true; focusSearch = true; }
+        else if (!open) { await ToggleAsync(); }
+        else if (key is "arrowdown" or "arrowup")
+        {
+            var length = Matches.Count + (CanCreate ? 1 : 0);
+            if (length > 0) activeIndex = (activeIndex + (key == "arrowdown" ? 1 : length - 1)) % length;
+        }
+        else if (key == "home") activeIndex = 0;
+        else if (key == "end") activeIndex = Math.Max(0, Matches.Count + (CanCreate ? 1 : 0) - 1);
+        else if (key == "enter")
+        {
+            if (activeIndex < Matches.Count) await ChooseAsync(Matches[activeIndex]);
+            else await CreateAsync();
+        }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void CloseMenu() { open = false; StateHasChanged(); }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("galleryAdvancedSelect.detach", instanceKey); }
+        catch (JSDisconnectedException) { }
+        finally { reference?.Dispose(); }
+    }
+}

@@ -28,6 +28,9 @@ public sealed record ImageRecord
     [System.Text.Json.Serialization.JsonPropertyName("MarkedForDeletion")]
     public bool IsMarkedForDeletion { get; init; }
     public ImmutableArray<string> Collections { get; init; } = [];
+    public string? SetId { get; init; }
+    public long SetOrder { get; init; }
+    public ImmutableArray<string> LegacyCollections { get; init; } = [];
     public int Rating { get; init; }
     [System.Text.Json.Serialization.JsonPropertyName("Reviewed")]
     public bool IsReviewed { get; init; }

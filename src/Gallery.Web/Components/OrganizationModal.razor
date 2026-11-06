@@ -1,0 +1,24 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+<dialog @ref="element" class="collection-dialog" aria-labelledby="@titleId" @oncancel="CloseAsync" @oncancel:preventDefault>
+<form @onsubmit="Submit" @onsubmit:preventDefault>
+<h2 id="@titleId">@Title</h2>@ChildContent
+@if (Error.Length > 0) { <p role="alert" class="text-destructive">@Error</p> }
+<div class="collection-dialog-actions"><Button Type="button" Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="CloseAsync" autofocus="@Destructive">Cancel</Button><Button Type="submit" Variant="@(Destructive ? ButtonVariant.Destructive : ButtonVariant.Default)" Disabled="@(Busy || Disabled)">@(Busy ? "Saving…" : Action)</Button></div>
+</form></dialog>
+@code {
+[Parameter] public string Title { get; set; } = "";
+[Parameter] public string Action { get; set; } = "Save";
+[Parameter] public string Error { get; set; } = "";
+[Parameter] public bool Busy { get; set; }
+[Parameter] public bool Disabled { get; set; }
+[Parameter] public bool Destructive { get; set; }
+[Parameter] public RenderFragment? ChildContent { get; set; }
+[Parameter] public EventCallback Submit { get; set; }
+[Parameter] public EventCallback Close { get; set; }
+private ElementReference element;
+private readonly string key = Guid.NewGuid().ToString("N"), titleId = "organization-" + Guid.NewGuid().ToString("N");
+protected override async Task OnAfterRenderAsync(bool firstRender) { if (firstRender) await JS.InvokeVoidAsync("galleryViewer.openQuickEdit", element, key); }
+private Task CloseAsync() => Busy ? Task.CompletedTask : Close.InvokeAsync();
+public async ValueTask DisposeAsync() { try { await JS.InvokeVoidAsync("galleryViewer.closeQuickEdit", key); } catch (JSDisconnectedException) { } }
+}

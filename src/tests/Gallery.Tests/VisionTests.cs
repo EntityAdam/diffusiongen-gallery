@@ -11,6 +11,102 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public static class VisionTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public static async Task ImageAnalysis_UsesConfiguredSystemPromptAndKeepsTextSuggestionInstructionsSeparate(bool withCollection)
+    {
+        const string customPrompt = "Describe composition and lighting.\nReturn JSON with description and tags.";
+        var systems = new List<string>();
+        using var client = new HttpClient(new FakeHandler(async request =>
+        {
+            using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            systems.Add(body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!);
+            return new(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Worlds\"}"}}]}""")
+            };
+        }));
+        var manager = new VisionManager(client);
+        var settings = new VisionSettings { Model = "vision", SystemPrompt = customPrompt };
+
+        if (withCollection) await manager.AnalyzeImageWithCollectionAsync(settings, "image", ["Worlds"]);
+        else await manager.AnalyzeImageAsync(settings, "image");
+        await manager.SuggestCollectionAsync(settings, "A landscape.", "green", ["Worlds"]);
+
+        if (withCollection)
+        {
+            Assert.StartsWith(customPrompt, systems[0]);
+            Assert.Contains("Also include collection", systems[0]);
+        }
+        else Assert.Equal(customPrompt, systems[0]);
+        Assert.StartsWith("Suggest one concise collection name", systems[1]);
+        Assert.DoesNotContain(customPrompt, systems[1]);
+    }
+
+    [Theory]
+    [InlineData("Use broader collection names.")]
+    [InlineData("")]
+    public static async Task ConfiguredTaskPrompts_AreSentExactlyWithoutHiddenCollectionInstructions(string collectionInstructions)
+    {
+        var sent = new List<string>();
+        using var client = new HttpClient(new FakeHandler(async request =>
+        {
+            using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            sent.Add(body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!);
+            var content = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                description = "A landscape.", tags = new[] { "green" }, collection = "Worlds",
+                search = "", tag = "", minRating = 0, favoritesOnly = false, orientation = "all", review = "all"
+            });
+            return new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } }))
+            };
+        }));
+        var manager = new VisionManager(client);
+        var settings = new VisionSettings
+        {
+            Model = "vision", SystemPrompt = "Custom image instructions.", CollectionAnalysisInstructions = collectionInstructions,
+            CollectionSuggestionSystemPrompt = "Custom collection instructions.", SearchSystemPrompt = "Custom search instructions."
+        };
+
+        await manager.AnalyzeImageAsync(settings, "image");
+        await manager.AnalyzeImageWithCollectionAsync(settings, "image", ["Worlds"]);
+        await manager.SuggestCollectionAsync(settings, "Landscape", "green", ["Worlds"]);
+        await manager.InterpretSearchAsync(settings, "landscapes", ["Worlds"]);
+
+        Assert.Equal(new[]
+        {
+            settings.SystemPrompt,
+            settings.SystemPrompt + (collectionInstructions.Length == 0 ? "" : " " + collectionInstructions),
+            settings.CollectionSuggestionSystemPrompt,
+            settings.SearchSystemPrompt
+        }, sent);
+    }
+
+    [Fact]
+    public static void LegacyVisionSettings_UseTheExistingDefaultSystemPrompt()
+    {
+        var settings = System.Text.Json.JsonSerializer.Deserialize<VisionSettings>("""{"Model":"vision","Endpoint":"http://127.0.0.1:1234/v1/"}""");
+        Assert.NotNull(settings);
+        Assert.Equal(VisionSettings.DefaultSystemPrompt, settings.SystemPrompt);
+        Assert.Equal(VisionSettings.DefaultCollectionAnalysisInstructions, settings.CollectionAnalysisInstructions);
+        Assert.Equal(VisionSettings.DefaultCollectionSuggestionSystemPrompt, settings.CollectionSuggestionSystemPrompt);
+        Assert.Equal(VisionSettings.DefaultSearchSystemPrompt, settings.SearchSystemPrompt);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \n ")]
+    [InlineData(null)]
+    public static void VisionSettings_RejectEmptySystemPrompts(string? prompt)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            VisionService.Validate(new VisionSettings { Model = "vision", SystemPrompt = prompt! }));
+        Assert.Contains("Vision system prompt must not be empty", error.Message);
+    }
+
     [Fact]
     public static async Task BulkAnalysis_WhenCollectionsAreAvailable_ThenUsesOneVisionRequestWithCollectionContext()
     {
@@ -25,7 +121,7 @@ public static class VisionTests
             {
                 Content = new StringContent("""{"choices":[{"message":{"content":" \n```json\n{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Worlds\"}\n``` "}}]}""")
             };
-        })));
+        })), new VisionSettings());
         var expected = ExpectedVisionScenario.Create("one collection-aware request returns the complete analysis",
             new ExpectedVisionObligation("image payload", "image_url", VisionComparison.Contains), new ExpectedVisionObligation("available collections", "Worlds", VisionComparison.Contains),
             new ExpectedVisionObligation("collection instruction", "collection", VisionComparison.Contains), new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green", "Worlds", "" }), new ExpectedVisionObligation("requests", 1));
@@ -53,7 +149,7 @@ public static class VisionTests
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
-            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) }))));
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) }))), new VisionSettings());
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []));
@@ -71,7 +167,7 @@ public static class VisionTests
             new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""")
-            }))));
+            }))), new VisionSettings());
         var expected = ExpectedVisionScenario.Create("missing collection preserves description and tags and explains the omission",
             new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green", "" }), new ExpectedVisionObligation("warning", "missing collection", VisionComparison.Contains));
         // Act
@@ -108,7 +204,7 @@ public static class VisionTests
                         }
                     }
                 }))
-            }))));
+            }))), new VisionSettings());
 
         // Act
         var result = await service.AnalyzeImageWithCollectionAsync("vision", 180, "image", ["Worlds"]);
@@ -125,7 +221,7 @@ public static class VisionTests
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-        { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") }))));
+        { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") }))), new VisionSettings());
         var expected = ExpectedVisionScenario.Create("basic analysis does not require a collection", new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
         var analysis = await service.AnalyzeAsync("vision", 180, "image");
@@ -146,7 +242,7 @@ public static class VisionTests
         // Arrange
         var envelope = System.Text.Json.JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } });
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
-            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(envelope) }))));
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(envelope) }))), new VisionSettings());
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []));
@@ -254,7 +350,7 @@ public static class VisionTests
                     ? """{"data":[{"id":"vision"}]}"""
                     : """{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""")
             });
-        })), settings.Endpoint, settings.ApiKey);
+        })), settings);
 
         var expected = ExpectedVisionScenario.Create("private-LAN discovery uses the configured origin",
             new ExpectedVisionObligation("models", new[] { "vision" }), new ExpectedVisionObligation("request origins", new[] { new Uri(new Uri(endpoint), "models").AbsoluteUri }));
@@ -280,7 +376,7 @@ public static class VisionTests
         {
             requestUri = request.RequestUri!.AbsoluteUri;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") });
-        })), settings.Endpoint, settings.ApiKey);
+        })), settings);
         var expected = ExpectedVisionScenario.Create("private-LAN analysis uses the configured origin and parses the response",
             new ExpectedVisionObligation("request origin", new Uri(new Uri(endpoint), "chat/completions").AbsoluteUri), new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
@@ -304,7 +400,7 @@ public static class VisionTests
                 Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A green landscape.\",\"tags\":[\"green\",\"landscape\",\"green\"]}"}}]}""")
             };
         });
-        var service = new VisionService(new HttpClient(handler));
+        var service = new VisionService(new HttpClient(handler), new VisionSettings());
         var expected = ExpectedVisionScenario.Create("structured vision requests preserve origin, model, payload and parsed analysis",
             new ExpectedVisionObligation("origin", "http://127.0.0.1:1234/v1/chat/completions"), new ExpectedVisionObligation("analysis", new[] { "A green landscape.", "green, landscape" }),
             new ExpectedVisionObligation("model", "local-vision", VisionComparison.Contains), new ExpectedVisionObligation("payload", "data:image/png;base64,example", VisionComparison.Contains));
@@ -321,7 +417,7 @@ public static class VisionTests
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
-            new HttpResponseMessage(HttpStatusCode.BadRequest)))));
+            new HttpResponseMessage(HttpStatusCode.BadRequest)))), new VisionSettings());
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.AnalyzeAsync("local", 180, "image"));
 
@@ -344,14 +440,14 @@ public static class VisionTests
                 Content = new StringContent("""{"data":[{"id":"z-model"},{"id":"a-model"},{"id":"z-model"}]}""")
             });
         }));
-        var service = new VisionService(httpClient);
+        var service = new VisionService(httpClient, new VisionSettings());
         var authenticatedSettings = new VisionSettings { ApiKey = "private-token" };
 
         var expected = ExpectedVisionScenario.Create("model discovery orders unique identifiers and authentication never leaks to the next request",
             new ExpectedVisionObligation("models", new[] { "a-model", "z-model" }), new ExpectedVisionObligation("requests", new[]
             { new string?[] { "GET", "http://127.0.0.1:1234/v1/models", "Bearer", authenticatedSettings.ApiKey },
               new string?[] { "GET", "http://127.0.0.1:1234/v1/models", null, null } }));
-        await new VisionService(httpClient, authenticatedSettings.Endpoint, authenticatedSettings.ApiKey)
+        await new VisionService(httpClient, authenticatedSettings)
             .GetModelsAsync(authenticatedSettings.RequestTimeoutSeconds);
 
         // Act - authentication from the preceding request must not persist
@@ -367,7 +463,7 @@ public static class VisionTests
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
-            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"data":[]}""") }))));
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"data":[]}""") }))), new VisionSettings());
         var expectedVisionScenario = ExpectedVisionScenario.Create("valid empty model lists succeed without an error",
             new ExpectedVisionObligation("models", Array.Empty<string>()));
 
@@ -388,7 +484,7 @@ public static class VisionTests
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
-            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) }))));
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) }))), new VisionSettings());
         string[] expectedMessagePhrases = json.Contains("\"models\"", StringComparison.Ordinal)
             ? ["{\"models\":[]}", "OpenAI-compatible object", "data array"]
             : ["model element", "nonempty string id", json.Contains("\"id\":\"\"", StringComparison.Ordinal) ? "\"\"" : "{}"];
@@ -406,8 +502,7 @@ public static class VisionTests
         // Arrange
         var calls = 0;
         var settings = new VisionSettings { Endpoint = "https://example.com/v1/" };
-        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })),
-            settings.Endpoint, settings.ApiKey);
+        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })), settings);
         ExpectedVisionScenario expectedVisionScenario = EndpointExpectation(settings.Endpoint);
         expectedVisionScenario = expectedVisionScenario with
         {
@@ -434,8 +529,7 @@ public static class VisionTests
         // Arrange
         var calls = 0;
         var settings = new VisionSettings { RequestTimeoutSeconds = timeoutSeconds };
-        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })),
-            settings.Endpoint, settings.ApiKey);
+        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })), settings);
         var expectedVisionScenario = ExpectedVisionScenario.Create("invalid timeout settings explain both bounds before sending",
             new ExpectedVisionObligation("exception type", typeof(InvalidOperationException).FullName),
             new ExpectedVisionObligation("requests", 0));
@@ -456,8 +550,7 @@ public static class VisionTests
         // Arrange
         var calls = 0;
         var settings = new VisionSettings { ApiKey = "bad\r\nkey" };
-        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })),
-            settings.Endpoint, settings.ApiKey);
+        var service = new VisionService(new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); })), settings);
         var expectedVisionScenario = ExpectedVisionScenario.Create("API-key control characters are rejected before sending",
             new ExpectedVisionObligation("exception type", typeof(InvalidOperationException).FullName),
             new ExpectedVisionObligation("requests", 0),
@@ -484,7 +577,7 @@ public static class VisionTests
             {
                 Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Landscapes\"}"}}]}""")
             });
-        })), settings.Endpoint, settings.ApiKey);
+        })), settings);
 
         var expected = ExpectedVisionScenario.Create("saved authentication is applied to vision and text requests", new ExpectedVisionObligation("collection", "Landscapes"),
             new ExpectedVisionObligation("authorization", new[] { new[] { "Bearer", settings.ApiKey }, new[] { "Bearer", settings.ApiKey } }));

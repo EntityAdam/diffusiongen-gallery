@@ -1,0 +1,62 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<dialog @ref="element" class="viewer-quick-edit rounded-lg border border-border bg-background p-4 text-foreground" aria-labelledby="quick-organization-title" @oncancel="CancelAsync" @oncancel:preventDefault>
+    <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
+        <h2 id="quick-organization-title" class="text-lg font-semibold">Quick tag</h2>
+        @if (!CurrentTags.Any())
+        {
+            <p class="text-sm text-muted-foreground">No tags yet.</p>
+        }
+        <label for="quick-organization-value">Tags</label>
+        <AdvancedSelect Id="quick-organization-value" Label="Tags" ItemLabel="tag" Placeholder="Select tags…" Multiple="true" MaxLength="4000"
+                            Options="@Options" Counts="@Counts" Values="@SelectedTags" ValuesChanged="TagsChangedAsync" Disabled="@Busy" />
+        @if (Error.Length > 0) { <p role="alert" class="text-destructive">@Error</p> }
+        <div class="mt-3 flex justify-end gap-2">
+            <button type="button" class="rounded-md border border-border px-3 py-2 text-sm" disabled="@Busy" @onclick="CancelAsync">Cancel</button>
+            <button type="submit" class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" disabled="@(Busy || string.IsNullOrWhiteSpace(value))">@(Busy ? "Saving..." : "Add")</button>
+        </div>
+    </form>
+</dialog>
+
+@code {
+    [Parameter] public string Tags { get; set; } = "";
+    [Parameter] public EventCallback<string> RemoveTag { get; set; }
+    [Parameter] public string ImageName { get; set; } = "";
+    [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
+    [Parameter] public IEnumerable<string> Options { get; set; } = [];
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public EventCallback<string> Save { get; set; }
+    [Parameter] public EventCallback Cancel { get; set; }
+    private ElementReference element;
+    private readonly string dialogKey = Guid.NewGuid().ToString("N");
+    private string value = "";
+    private IEnumerable<string> CurrentTags => Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await JS.InvokeVoidAsync("galleryViewer.openQuickEdit", element, dialogKey);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("galleryViewer.closeQuickEdit", dialogKey); }
+        catch (JSDisconnectedException) { }
+    }
+
+    private IReadOnlyList<string> SelectedTags => CurrentTags.Concat(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private async Task TagsChangedAsync(IReadOnlyList<string> selected)
+    {
+        if (Busy) return;
+        var existing = CurrentTags.ToArray();
+        foreach (var removed in existing.Except(selected, StringComparer.OrdinalIgnoreCase))
+            await RemoveTag.InvokeAsync(removed);
+        value = string.Join(", ", selected.Except(existing, StringComparer.OrdinalIgnoreCase));
+    }
+    private Task SaveAsync() => Busy || string.IsNullOrWhiteSpace(value) ? Task.CompletedTask : Save.InvokeAsync(value.Trim());
+    private Task CancelAsync() => Busy ? Task.CompletedTask : Cancel.InvokeAsync();
+}

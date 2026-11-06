@@ -27,9 +27,11 @@ public sealed class ReviewTests
         type.GetProperty("Logger", flags)!.SetValue(workbench,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.LibraryWorkbench>.Instance);
         type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { image.Id });
-        type.GetField("collection", flags)!.SetValue(workbench, "new collection");
+        var collection = await fixture.Service.CreateCollectionAsync("new collection");
+        var set = await fixture.Service.CreateSetAsync(collection.Id, "New set");
         type.GetField("tags", flags)!.SetValue(workbench, "new tag");
-        await (Task)type.GetMethod("ApplyCollectionAsync", flags)!.Invoke(workbench, null)!;
+        var moved = await fixture.Service.MoveMediaToSetAsync([image.Id], set.Id);
+        await (Task)type.GetMethod("DestinationSavedAsync", flags)!.Invoke(workbench, [moved])!;
         var collected = Assert.Single(await fixture.Service.ListAsync());
         Assert.Contains("new collection", collected.Collections);
         Assert.Equal("existing", collected.Tags);
@@ -38,6 +40,7 @@ public sealed class ReviewTests
         Assert.Contains("existing", tagged.Tags);
         Assert.Contains("new tag", tagged.Tags);
         Assert.Equal(collected.Collections.ToArray(), tagged.Collections.ToArray());
+        Assert.Equal(set.Id, tagged.SetId);
         Assert.Equal(image.Description, tagged.Description);
         Assert.Equal(image.Rating, tagged.Rating);
         Assert.Equal(image.IsReviewed, tagged.IsReviewed);

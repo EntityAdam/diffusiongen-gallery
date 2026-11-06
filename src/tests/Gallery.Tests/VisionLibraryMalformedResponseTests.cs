@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Services.Gateways;
+using Gallery.Core.Models;
 
 namespace Gallery.Tests;
 
@@ -33,7 +34,7 @@ public sealed class VisionLibraryMalformedResponseTests
             choices = new[] { new { message = new { content = response.ToJsonString() } } }
         });
         using var client = new HttpClient(new ResponseHandler(completion));
-        var service = new VisionService(client);
+        var service = new VisionService(client, new VisionSettings());
 
         var exception = await Assert.ThrowsAsync<VisionResponseFormatException>(
             () => service.InterpretSearchAsync("model", 180, "show pictures", []));
@@ -48,7 +49,7 @@ public sealed class VisionLibraryMalformedResponseTests
             {"choices":[{"message":{"content":"{\"search\":\"\",\"tag\":\"\",\"collection\":\"\",\"minRating\":5,\"favoritesOnly\":true,\"orientation\":\"all\",\"review\":\"all\"}"}}]}
             """;
         using var client = new HttpClient(new ResponseHandler(completion));
-        var service = new VisionService(client);
+        var service = new VisionService(client, new VisionSettings());
 
         var filter = await service.InterpretSearchAsync("model", 180, "favorites", []);
 

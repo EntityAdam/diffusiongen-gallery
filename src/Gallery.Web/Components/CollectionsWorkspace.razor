@@ -1,0 +1,193 @@
+@implements IDisposable
+@inject GalleryService Gallery
+<div class="collections-workspace">
+    <nav class="collection-breadcrumb" aria-label="Collection breadcrumb"><button @onclick="() => Navigate(new())">Collections</button>
+    @if (Location.Unorganized) { <span>/ Unorganized</span> }
+    @if (Collection is not null) { <span>/</span><button @onclick="() => Navigate(new(Collection.Id))">@Collection.Name</button> }
+    @if (Set is not null) { <span>/ @Set.Name</span> }
+    @if (Location.AllMedia) { <span>/ All media</span> }
+    </nav>
+    <header class="collection-page-heading"><h2 tabindex="-1">@Title</h2><div class="flex flex-wrap gap-2">
+        @if (Set is not null) { <Button Variant="ButtonVariant.Outline" OnClick="() => BeginChooseMedia()">Choose media</Button> }
+        @if (!Location.Unorganized && !Location.AllMedia && Set is null) { <Button OnClick="() => BeginName(null, Collection is not null)">+ New @(Collection is null ? "collection" : "set")</Button> }
+    </div></header>
+    <p class="collection-subtitle">@Subtitle</p>
+    @if (Location.Unorganized && Images.Any(image => !image.LegacyCollections.IsEmpty))
+    { <div class="collection-inbox-banner"><span>Some media had multiple collection assignments. Their previous names are preserved below each item; choose one destination set.</span></div> }
+    @if (Collection is not null && Set is null && !choosingMedia)
+    { <div class="collection-tabs" role="group" aria-label="Collection view"><Button Variant="@(!Location.AllMedia ? ButtonVariant.Secondary : ButtonVariant.Ghost)" OnClick="() => Navigate(new(Collection.Id))">Sets @CollectionSets.Count()</Button><Button Variant="@(Location.AllMedia ? ButtonVariant.Secondary : ButtonVariant.Ghost)" OnClick="() => Navigate(new(Collection.Id, AllMedia: true))">All media @CollectionMedia.Count()</Button><Button Variant="ButtonVariant.Ghost" OnClick="() => BeginName(Collection.Id, false)">Rename collection</Button><Button Variant="ButtonVariant.Ghost" OnClick="() => BeginDelete(Collection.Id, false)">Delete collection</Button></div> }
+    @if (choosingMedia) { <div class="collection-inbox-banner"><strong>Choose media to move to @Collection?.Name / @Set?.Name</strong><Button Variant="ButtonVariant.Outline" OnClick="EndChooseMedia">Cancel</Button></div> }
+    <div class="collection-tools"><input aria-label="@SearchLabel" placeholder="@SearchLabel" value="@query" @oninput="SearchChanged" />
+        <select aria-label="Sort" value="@sort" @onchange="SortChanged">
+            @if (ShowsMedia) { @if (Set is not null && !choosingMedia) { <option value="sequence">Sequence</option> }<option value="newest">Newest first</option><option value="name">Name</option> }
+            else if (Collection is null) { <option value="updated">Recently updated</option><option value="name">Name</option> }
+            else { <option value="sequence">Manual order</option><option value="name">Name</option> }
+        </select>
+        @if (ShowsMedia) { <select aria-label="Minimum rating" value="@minRating" @onchange="RatingFilterChanged"><option value="0">All ratings</option>@for (var i = 1; i <= 5; i++) { <option value="@i">@i+ stars</option> }</select><label class="collection-favorite-filter"><input type="checkbox" @bind="favoritesOnly" @bind:after="ResetPageAsync" />Favorites</label><Button Variant="ButtonVariant.Ghost" OnClick="SelectAll">Select all</Button> }
+        else { <Button Variant="ButtonVariant.Ghost" OnClick="() => listView = !listView">@(listView ? "Grid view" : "List view")</Button> }
+    </div>
+    @if (notice.Length > 0) { <div class="collection-notice" role="status" aria-live="polite">@notice @if (undo is not null) { <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="UndoAsync">Undo</Button> }</div> }
+    @if (error.Length > 0 && modal is null) { <div role="alert" class="text-destructive">@error <Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick="RefreshAsync">Retry</Button></div> }
+    @if (!ShowsMedia)
+    {
+        @if (Collection is null) { <div class="collection-inbox-banner"><div><strong>@Images.Count(image => image.SetId is null) media are waiting for a set</strong><p>Organize incoming media without losing your place.</p></div><Button Variant="ButtonVariant.Outline" OnClick="() => Navigate(new(Unorganized: true))">Open Unorganized</Button></div> }
+        <div class="collection-container-grid @(listView ? "is-list" : "")">
+        @if (Collection is null)
+        { @foreach (var item in VisibleCollections) { <CollectionContainerCard @key="item.Id" Name="@item.Name" Summary="@CollectionSummary(item.Id)" Busy="@working" Open="() => Navigate(new(item.Id))" Rename="() => BeginName(item.Id, false)" Delete="() => BeginDelete(item.Id, false)" /> } }
+        else
+        { @foreach (var item in VisibleSets) { <CollectionContainerCard @key="item.Id" Name="@item.Name" Summary="@($"{Images.Count(image => image.SetId == item.Id)} media")" IsSet="true" Busy="@working" Open="() => Navigate(new(Collection.Id, item.Id))" Rename="() => BeginName(item.Id, true)" Delete="() => BeginDelete(item.Id, true)" Move="() => BeginMoveSet(item.Id)" Up="() => ReorderSet(item.Id, -1)" Down="() => ReorderSet(item.Id, 1)" Drag="() => draggedSet = item.Id" Drop="() => DropSetAsync(item.Id)" /> } }
+        </div>
+        @if (!(Collection is null ? VisibleCollections.Any() : VisibleSets.Any()))
+        { <div class="collection-empty"><h3>@(query.Length > 0 ? "No matches" : Collection is null ? "Create your first collection" : "Create your first set")</h3><p>Collections bring related sets together. Sets hold your media.</p>@if (query.Length > 0) { <Button OnClick="ClearFiltersAsync">Clear filters</Button> } else { <Button OnClick="() => BeginName(null, Collection is not null)">+ New @(Collection is null ? "collection" : "set")</Button> }</div> }
+    }
+    else
+    {
+        @if (selection.Count > 0) { <div class="collection-selection" role="region" aria-label="Selected media actions"><strong aria-live="polite">@selection.Count selected</strong><Button Disabled="@working" OnClick="OpenDestination">@(choosingMedia ? $"Move {selection.Count} media here" : "Move to set")</Button><Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick="OpenTags">Edit tags</Button><Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick="RemoveFromSetAsync">Remove from set</Button><Button Variant="ButtonVariant.Ghost" OnClick="() => selection.Clear()">Clear selection</Button></div> }
+        <p class="collection-result-count">@Media.Count of @ScopedMedia.Count() media</p>
+        <div class="image-grid density-detail">
+        @foreach (var image in PageMedia)
+        { <div @key="image.Id" class="collection-media-wrap"><GalleryImageCard Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)" ThumbnailFailed="@thumbnailFailures.Contains(image.Id)" Busy="@working" Selected="@selection.Contains(image.Id)" ShowSelection="true" Select="args => Select(image.Id, args.ShiftKey)" Open="() => Open.InvokeAsync((PageMedia.ToArray(), image.Id))" Rate="value => RateAsync(image, value)" Favorite="() => FavoriteAsync(image)" Mark="() => MarkAsync(image)" />
+            @if (choosingMedia || Location.AllMedia) { <small class="collection-media-path">@Catalog.PathOf(image)</small> }
+            @if (!image.LegacyCollections.IsEmpty) { <small class="collection-media-path">Previous collections: @string.Join(", ", image.LegacyCollections)</small> }
+            @if (Set is not null && !choosingMedia && sort == "sequence" && !HasFilters) { <div class="collection-order-actions"><button disabled="@working" @onclick="() => ReorderMedia(image.Id, -1)">Move earlier</button><button disabled="@working" @onclick="() => ReorderMedia(image.Id, 1)">Move later</button></div> }
+          </div> }
+        </div>
+        @if (Media.Count == 0) { <div class="collection-empty"><h3>@(HasFilters ? "No matches in this view" : Location.Unorganized ? "Everything has a place" : "This set is ready for media")</h3>
+        @if (HasFilters) { <Button OnClick="ClearFiltersAsync">Clear filters</Button> } else if (Location.Unorganized) { <Button OnClick="() => Navigate(new())">Browse collections</Button><Button Variant="ButtonVariant.Outline" OnClick="BackToGallery">Back to gallery</Button> } else { <p>Choose existing media or organize items from Unorganized.</p><Button OnClick="() => BeginChooseMedia()">Choose media</Button><Button Variant="ButtonVariant.Outline" OnClick="() => Navigate(new(Unorganized: true))">Open Unorganized</Button> }</div> }
+        @if (Media.Count > PageSize) { <div class="collection-pagination"><Button Variant="ButtonVariant.Outline" Disabled="@(page == 0)" OnClick="PreviousPageAsync">Previous</Button><span>Page @(page + 1) of @PageCount</span><Button Variant="ButtonVariant.Outline" Disabled="@(page + 1 >= PageCount)" OnClick="NextPageAsync">Next</Button></div> }
+    }
+</div>
+@if (destination) { <CollectionDestinationDialog Images="@SelectedMedia" InitialCollectionId="@Collection?.Id" InitialSetId="@(choosingMedia ? Set?.Id : null)" Saved="MovedAsync" Cancel="CloseDestinationAsync" /> }
+@if (quickTags) { <QuickOrganizationDialog Tags="@CommonTags" ImageName="" Options="@KnownTags" RemoveTag="RemoveTagAsync" Busy="@working" Error="@error" Save="SaveTagsAsync" Cancel="() => quickTags = false" /> }
+@if (modal is not null)
+{ <OrganizationModal Title="@ModalTitle" Action="@(modal == "delete" ? (modalIsSet ? "Delete set" : "Delete collection") : modal == "move" ? "Move set" : modalId is null ? "Create" : "Save")" Error="@error" Busy="@working" Disabled="@(modal != "delete" && string.IsNullOrWhiteSpace(name))" Destructive='@(modal == "delete")' Submit="SubmitModalAsync" Close="CloseModal">
+    @if (modal == "delete") { <p>@AffectedMedia media will move to Unorganized.@(modalIsSet ? "" : $" {Catalog.Sets.Count(set => set.CollectionId == modalId)} sets will be deleted.")</p><p class="text-muted-foreground">The media files, tags and ratings are preserved.</p> }
+    else if (modal == "move") { <label for="move-set-collection">Destination collection</label><AdvancedSelect Id="move-set-collection" Label="Collections" AllowCreate="false" Options="@Catalog.Collections.Select(item => item.Name)" @bind-Value="name" Disabled="@working" /><p>@AffectedMedia media will move with this set.</p> }
+    else { @if (modalIsSet) { <p>In @Collection?.Name</p> }<label for="container-name">@(modalIsSet ? "Set" : "Collection") name</label><input id="container-name" @bind="name" @bind:event="oninput" maxlength="80" required disabled="@working" /><p class="text-muted-foreground">Empty @(modalIsSet ? "sets" : "collections") are welcome. Add media later.</p> }
+  </OrganizationModal> }
+@code {
+    [Parameter] public CollectionCatalog Catalog { get; set; } = CollectionCatalog.Empty;
+    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
+    [Parameter] public CollectionLocation Location { get; set; } = new();
+    [Parameter] public EventCallback<CollectionLocation> LocationChanged { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback BackToGallery { get; set; }
+    [Parameter] public EventCallback<(ImageRecord[] Images, string InitialId)> Open { get; set; }
+    private CollectionDefinition? Collection => Catalog.Collections.FirstOrDefault(item => item.Id == Location.CollectionId);
+    private MediaSet? Set => Catalog.Sets.FirstOrDefault(item => item.Id == Location.SetId && item.CollectionId == Collection?.Id);
+    private IEnumerable<MediaSet> CollectionSets => Catalog.Sets.Where(item => item.CollectionId == Collection?.Id).OrderBy(item => item.Order);
+    private IEnumerable<ImageRecord> CollectionMedia => Images.Where(image => Catalog.Sets.Any(set => set.CollectionId == Collection?.Id && set.Id == image.SetId));
+    private IEnumerable<CollectionDefinition> VisibleCollections => (sort == "name" ? Catalog.Collections.OrderBy(item => item.Name) : Catalog.Collections.OrderByDescending(item => item.UpdatedAt)).Where(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
+    private IEnumerable<MediaSet> VisibleSets => (sort == "name" ? CollectionSets.OrderBy(item => item.Name) : CollectionSets).Where(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
+    private bool ShowsMedia => choosingMedia || Set is not null || Location.Unorganized || Location.AllMedia;
+    private string Title => choosingMedia ? "Choose media" : Location.Unorganized ? "Unorganized" : Set?.Name ?? Collection?.Name ?? "Collections";
+    private string Subtitle => Location.Unorganized ? $"{ScopedMedia.Count()} media without a set. Select items, then choose their destination." : Set is not null ? $"{ScopedMedia.Count()} media · {Collection?.Name}" : Collection is not null ? CollectionSummary(Collection.Id) : "A home for related sets. Tags work across every collection.";
+    private string SearchLabel => ShowsMedia ? $"Search {(choosingMedia ? "library" : Title)}…" : Collection is null ? "Search collections…" : "Search sets…";
+    private IEnumerable<ImageRecord> ScopedMedia => choosingMedia ? Images : Location.Unorganized ? Images.Where(image => image.SetId is null) : Set is not null ? Images.Where(image => image.SetId == Set.Id) : CollectionMedia;
+    private List<ImageRecord> Media
+    {
+        get
+        {
+            var filtered = ScopedMedia.Where(image => image.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || image.Tags.Contains(query, StringComparison.OrdinalIgnoreCase)).Where(image => image.Rating >= minRating && (!favoritesOnly || image.IsFavorite));
+            return (sort == "name" ? filtered.OrderBy(image => image.Name) : sort == "sequence" ? filtered.OrderBy(image => image.SetOrder).ThenBy(image => image.Id) : filtered.OrderByDescending(image => image.ImportedAt)).ToList();
+        }
+    }
+    private const int PageSize = 12;
+    private int page, minRating;
+    private bool favoritesOnly, listView, choosingMedia, destination, quickTags, working, disposed;
+    private string query = "", sort = "updated", error = "", notice = "", name = "";
+    private string? modal, modalId, anchor, draggedSet;
+    private bool modalIsSet;
+    private CollectionUndo? undo;
+    private string[] quickTagIds = [];
+    private void OpenTags() { quickTagIds = SelectedMedia.Select(image => image.Id).ToArray();quickTags = true; }
+    private CollectionLocation? previousLocation;
+    private readonly HashSet<string> selection = [];
+    private readonly Dictionary<string, string> thumbnails = [];
+    private readonly HashSet<string> thumbnailFailures = [];
+    private long thumbnailGeneration;
+    private int PageCount => Math.Max(1, (Media.Count + PageSize - 1) / PageSize);
+    private IEnumerable<ImageRecord> PageMedia => Media.Skip(page * PageSize).Take(PageSize);
+    private IReadOnlyList<ImageRecord> SelectedMedia => Media.Where(image => selection.Contains(image.Id)).ToArray();
+    private bool HasFilters => query.Length > 0 || minRating > 0 || favoritesOnly;
+    private string CommonTags => string.Join(", ", Images.Where(image => quickTagIds.Contains(image.Id)).SelectMany(image => image.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)).Distinct(StringComparer.OrdinalIgnoreCase));
+    private string CollectionSummary(string id) => $"{Catalog.Sets.Count(set => set.CollectionId == id)} sets · {Images.Count(image => Catalog.Sets.Any(set => set.CollectionId == id && set.Id == image.SetId))} media";
+    private string ModalName => modalIsSet ? Catalog.Sets.FirstOrDefault(item => item.Id == modalId)?.Name ?? "" : Catalog.Collections.FirstOrDefault(item => item.Id == modalId)?.Name ?? "";
+    private string ModalTitle => modal == "delete" ? $"Delete “{ModalName}”?" : modal == "move" ? $"Move “{ModalName}”" : $"{(modalId is null ? "New" : "Rename")} {(modalIsSet ? "set" : "collection")}";
+    private int AffectedMedia => Images.Count(image => modalIsSet ? image.SetId == modalId : Catalog.Sets.Any(set => set.CollectionId == modalId && set.Id == image.SetId));
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Location != previousLocation) { previousLocation = Location; query = ""; page = 0; selection.Clear(); choosingMedia = false; sort = Location.SetId is not null || Location.CollectionId is not null ? "sequence" : Location.Unorganized ? "newest" : "updated"; }
+        selection.IntersectWith(Media.Select(image => image.Id)); page = Math.Min(page, PageCount - 1); await LoadThumbnailsAsync();
+    }
+    private async Task LoadThumbnailsAsync()
+    {
+        var generation = ++thumbnailGeneration;
+        foreach (var image in PageMedia.ToArray())
+        {
+            if (thumbnails.ContainsKey(image.Id) || thumbnailFailures.Contains(image.Id)) continue;
+            try { var thumbnail = await Gallery.ThumbnailAsync(image.Id); if (disposed || generation != thumbnailGeneration) return; thumbnails[image.Id] = thumbnail; }
+            catch (Exception) { if (disposed || generation != thumbnailGeneration) return; thumbnailFailures.Add(image.Id); }
+        }
+        var retained = PageMedia.Select(image => image.Id).ToHashSet();foreach (var id in thumbnails.Keys.Where(id => !retained.Contains(id)).ToArray()) thumbnails.Remove(id);
+    }
+    private Task Navigate(CollectionLocation location) => LocationChanged.InvokeAsync(location);
+    private async Task ResetPageAsync() { page = 0; selection.Clear(); await LoadThumbnailsAsync(); }
+    private async Task SearchChanged(ChangeEventArgs e) { query = e.Value?.ToString() ?? ""; await ResetPageAsync(); }
+    private async Task SortChanged(ChangeEventArgs e) { sort = e.Value?.ToString() ?? "name"; await ResetPageAsync(); }
+    private async Task RatingFilterChanged(ChangeEventArgs e) { minRating = int.TryParse(e.Value?.ToString(), out var value) ? value : 0; await ResetPageAsync(); }
+    private async Task ClearFiltersAsync() { query = ""; minRating = 0; favoritesOnly = false; await ResetPageAsync(); }
+    private async Task PreviousPageAsync() { page--; await LoadThumbnailsAsync(); }
+    private async Task NextPageAsync() { page++; await LoadThumbnailsAsync(); }
+    private void SelectAll() { foreach (var image in Media) selection.Add(image.Id); }
+    private void Select(string id, bool range)
+    {
+        var ordered = Media.Select(image => image.Id).ToList();
+        if (range && anchor is not null && ordered.Contains(anchor)) { var a = ordered.IndexOf(anchor);var b = ordered.IndexOf(id);foreach (var item in ordered.Skip(Math.Min(a,b)).Take(Math.Abs(a-b)+1)) selection.Add(item); }
+        else if (!selection.Add(id)) selection.Remove(id);
+        anchor = id;
+    }
+    private void BeginName(string? id, bool isSet) { modal = "name"; modalId = id; modalIsSet = isSet; name = ModalName; error = ""; }
+    private void BeginDelete(string id, bool isSet) { modal = "delete"; modalId = id; modalIsSet = isSet; error = ""; }
+    private void BeginMoveSet(string id) { modal = "move"; modalId = id; modalIsSet = true; name = ""; error = ""; }
+    private void CloseModal() { modal = null; error = ""; }
+    private async Task SubmitModalAsync() => await RunAsync(async () =>
+    {
+        if (modal == "delete") await ApplyAsync(await Gallery.DeleteContainerAsync(modalId!, modalIsSet), $"Deleted {ModalName}. {AffectedMedia} media moved to Unorganized.");
+        else if (modal == "move") await ApplyAsync(await Gallery.MoveSetAsync(modalId!, Catalog.Collections.First(item => item.Name == name).Id), "Set moved.");
+        else if (modalId is not null) await ApplyAsync(modalIsSet ? await Gallery.RenameSetAsync(modalId, name) : await Gallery.RenameCollectionAsync(modalId, name), "Name updated.");
+        else { if (modalIsSet) await Gallery.CreateSetAsync(Collection!.Id, name); else await Gallery.CreateCollectionAsync(name);undo = null;notice = "Created. Add media whenever you are ready.";await RefreshParentAsync(); }
+        modal = null;
+        if (Location.SetId is not null && !Catalog.Sets.Any(item => item.Id == Location.SetId)) await Navigate(new(Location.CollectionId));
+        if (Location.CollectionId is not null && !Catalog.Collections.Any(item => item.Id == Location.CollectionId)) await Navigate(new());
+    });
+    private async Task RefreshParentAsync()
+    {
+        await Changed.InvokeAsync();
+        Catalog = await Gallery.LoadCollectionCatalogAsync();
+        Images = await Gallery.ListAsync();
+    }
+    private async Task RunAsync(Func<Task> action) { if (working) return; working = true; error = ""; try { await action(); } catch (Exception e) { error = e.Message; } finally { working = false; } }
+    private async Task ApplyAsync(CollectionMutation result, string message) { Catalog = result.Catalog;undo = result.Undo;notice = message;await RefreshParentAsync();selection.IntersectWith(Media.Select(image => image.Id));await LoadThumbnailsAsync(); }
+    private Task UndoAsync() => RunAsync(async () => { if (undo is null) return;await Gallery.UndoCollectionChangeAsync(undo);undo = null;notice = "Organization restored.";await RefreshParentAsync(); });
+    private Task RefreshAsync() => RunAsync(async () => { thumbnailFailures.Clear(); await RefreshParentAsync();await LoadThumbnailsAsync(); });
+    private Task RemoveFromSetAsync() => RunAsync(async () => { await ApplyAsync(await Gallery.MoveMediaToSetAsync(SelectedMedia.Select(image => image.Id), null), "Media moved to Unorganized.");selection.Clear(); });
+    private Task ReorderSet(string id, int offset) => RunAsync(async () => await ApplyAsync(await Gallery.ReorderSetAsync(id, offset), "Set order updated."));
+    private Task ReorderMedia(string id, int offset) => RunAsync(async () => await ApplyAsync(await Gallery.ReorderMediaAsync(Set!.Id, id, offset), "Media sequence updated."));
+    private Task DropSetAsync(string targetId) => RunAsync(async () => { if (draggedSet is null || draggedSet == targetId || sort != "sequence" || query.Length > 0) return;var siblings = CollectionSets.ToList();var delta = siblings.FindIndex(item => item.Id == targetId) - siblings.FindIndex(item => item.Id == draggedSet);await Gallery.ReorderSetAsync(draggedSet, delta);draggedSet = null;undo = null;await RefreshParentAsync(); });
+    private async Task BeginChooseMedia() { choosingMedia = true;sort = "newest";await ResetPageAsync(); }
+    private async Task EndChooseMedia() { choosingMedia = false;sort = "sequence";await ResetPageAsync(); }
+    private void OpenDestination() { if (selection.Count > 0) destination = true; }
+    private async Task CloseDestinationAsync() { destination = false;await RefreshParentAsync(); }
+    private async Task MovedAsync(CollectionMutation result) { destination = false;var targetId = result.Undo.AfterMedia.FirstOrDefault()?.SetId;
+        var target = result.Catalog.Sets.FirstOrDefault(item => item.Id == targetId);
+        var path = target is null ? "Unorganized" : $"{result.Catalog.Collections.First(item => item.Id == target.CollectionId).Name} / {target.Name}";
+        await ApplyAsync(result, $"{result.Undo.AfterMedia.Length} media moved to {path}.");selection.Clear();choosingMedia = false; }
+    private Task RateAsync(ImageRecord image, int rating) => RunAsync(async () => { await Gallery.UpdateAsync(image.Id, edit => Gallery.SetCuration(edit, image.Rating == rating ? 0 : rating, null));await RefreshParentAsync(); });
+    private Task FavoriteAsync(ImageRecord image) => RunAsync(async () => { await Gallery.UpdateAsync(image.Id, edit => edit with { IsFavorite = !image.IsFavorite });await RefreshParentAsync(); });
+    private Task MarkAsync(ImageRecord image) => RunAsync(async () => { await Gallery.UpdateAsync(image.Id, edit => Gallery.SetDeletionMark(edit, !image.IsMarkedForDeletion));await RefreshParentAsync(); });
+    private Task SaveTagsAsync(string tags) => RunAsync(async () => { await Gallery.UpdateManyAsync(quickTagIds, edit => edit with { Tags = Gallery.MergeTags(edit.Tags, tags) });quickTags = false;await RefreshParentAsync(); });
+    private Task RemoveTagAsync(string tag) => RunAsync(async () => { await Gallery.UpdateManyAsync(quickTagIds, edit => edit with { Tags = Gallery.RemoveTag(edit.Tags, tag) });await RefreshParentAsync(); });
+    public void Dispose() { disposed = true;thumbnailGeneration++;thumbnails.Clear(); }
+}

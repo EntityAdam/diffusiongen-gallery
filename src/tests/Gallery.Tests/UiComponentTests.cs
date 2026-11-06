@@ -16,6 +16,58 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class UiComponentTests
 {
+    [Fact]
+    public async Task TagManagement_ShowsUnusedDefinitionsAndCascadingActions()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await vault.Service.AddTagAsync("Unused vocabulary");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        string html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await fixture.HtmlRenderer.RenderComponentAsync<TagManagement>();
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Contains("Manage tags", html);
+        Assert.Contains(">Unused vocabulary</strong>", html);
+        Assert.Contains(">Unused</span>", html);
+        Assert.Contains("aria-label=\"Rename tag Unused vocabulary\"", html);
+        Assert.Contains("aria-label=\"Delete tag Unused vocabulary\"", html);
+    }
+
+    [Fact]
+    public async Task LlmEndpointSettings_ShowsTheSavedVisionPromptAndRestoreAction()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        const string prompt = "Describe lighting.\nReturn JSON with description and tags.";
+        string html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await fixture.HtmlRenderer.RenderComponentAsync<LlmEndpointSettings>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(LlmEndpointSettings.SavedSettings)] = new VisionSettings
+                {
+                    Model = "vision", SystemPrompt = prompt, CollectionAnalysisInstructions = "Additional analysis directions.",
+                    CollectionSuggestionSystemPrompt = "Collection directions.", SearchSystemPrompt = "Search directions."
+                }
+            }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Contains("Vision system prompt", html);
+        Assert.Contains("id=\"vision-system-prompt\"", html);
+        Assert.Contains(prompt, html);
+        Assert.Contains("Restore default prompt", html);
+        Assert.Contains("Toolbox collection suggestions and full organization analysis also append the collection instructions below", html);
+        Assert.Contains("id=\"collection-analysis-instructions\"", html);
+        Assert.Contains("id=\"collection-suggestion-prompt\"", html);
+        Assert.Contains("id=\"search-system-prompt\"", html);
+        Assert.Contains("Effective system prompt for collection-aware analysis", html);
+        Assert.Contains(prompt + " Additional analysis directions.", html);
+        Assert.Contains("Collection directions.", html);
+        Assert.Contains("Search directions.", html);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -463,6 +515,177 @@ public sealed class UiComponentTests
         foreach (Match button in buttons) Assert.Contains("disabled", button.Value);
     }
 
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(false, 2)]
+    [InlineData(false, 3)]
+    [InlineData(false, 4)]
+    [InlineData(false, 5)]
+    [InlineData(true, 1)]
+    [InlineData(true, 2)]
+    [InlineData(true, 3)]
+    [InlineData(true, 4)]
+    [InlineData(true, 5)]
+    public async Task Viewer_RatingShortcut_SavesAndOnlyAdvancesInReview(bool reviewMode, int rating)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var first = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        FullscreenViewer? viewer = null;
+        ImageRecord? changed = null;
+        var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
+            fixture.HtmlRenderer.RenderComponentAsync<FullscreenViewerTestHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(FullscreenViewerTestHost.Images)] = new[] { first, second },
+                [nameof(FullscreenViewerTestHost.ReviewMode)] = reviewMode,
+                [nameof(FullscreenViewerTestHost.Capture)] = (Action<FullscreenViewer>)(value => viewer = value),
+                [nameof(FullscreenViewerTestHost.Changed)] = (Action<ImageRecord>)(value => changed = value)
+            })));
+        var cache = (Dictionary<string, (string Url, long Bytes)>)typeof(FullscreenViewer)
+            .GetField("fitCache", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(viewer)!;
+        cache[first.Id] = ("blob:first", 0);
+        cache[second.Id] = ("blob:second", 0);
+
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(rating.ToString()));
+
+        var saved = Assert.Single(await vault.Service.ListAsync(), image => image.Id == first.Id);
+        Assert.Equal(rating, saved.Rating);
+        Assert.True(saved.IsReviewed);
+        Assert.Equal(saved, changed);
+        string html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => WebUtility.HtmlDecode(root.ToHtmlString()));
+        Assert.Contains(reviewMode ? "2 / 2" : "1 / 2", html);
+        Assert.Contains("data-keys=\"1 2 3 4 5 t c\"", html);
+        Assert.Contains("1-5: rate", html);
+        Assert.Contains("Quick edit media", html);
+        Assert.Equal(5, Regex.Matches(html, "aria-label=\"Rate [1-5] out of 5 stars\"").Count);
+    }
+
+    [Theory]
+    [InlineData(false, "t")]
+    [InlineData(false, "c")]
+    [InlineData(true, "t")]
+    [InlineData(true, "c")]
+    public async Task Viewer_QuickOrganization_AddsWithoutAdvancingAndCancelDoesNotSave(bool reviewMode, string key)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        image = await vault.Service.UpdateAsync(image.Id, edit => vault.Service.AddCollection(edit with { Tags = "existing" }, "Existing"));
+        var collection = await vault.Service.CreateCollectionAsync("Destination");
+        var destinationSet = await vault.Service.CreateSetAsync(collection.Id, "New set");
+        image = (await vault.Service.ListAsync()).Single();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        FullscreenViewer? viewer = null;
+        ImageRecord? changed = null;
+        var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
+            fixture.HtmlRenderer.RenderComponentAsync<FullscreenViewerTestHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(FullscreenViewerTestHost.Images)] = new[] { image },
+                [nameof(FullscreenViewerTestHost.ReviewMode)] = reviewMode,
+                [nameof(FullscreenViewerTestHost.Capture)] = (Action<FullscreenViewer>)(value => viewer = value),
+                [nameof(FullscreenViewerTestHost.Changed)] = (Action<ImageRecord>)(value => changed = value)
+            })));
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Task<string> Html() => fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => WebUtility.HtmlDecode(root.ToHtmlString()));
+        Task Save(string value) => fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await (Task)typeof(FullscreenViewer).GetMethod("SaveQuickEditAsync", flags)!.Invoke(viewer, [value])!;
+            typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
+        });
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(key));
+        Assert.Contains("<dialog", await Html());
+        Assert.Contains(key == "c" ? "Move 1 media to a set" : "Quick tag", await Html());
+        Assert.Contains(key == "c" ? "Existing / Imported media" : ">existing</span>", await Html());
+        foreach (var shortcut in new[] { "arrowright", "1", "f", "d", "escape" })
+            await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(shortcut));
+        Assert.Contains("<dialog", await Html());
+        Assert.Null(changed);
+
+        if (key == "c")
+        {
+            await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+            {
+                var result = await vault.Service.MoveMediaToSetAsync([image.Id], destinationSet.Id);
+                await (Task)typeof(FullscreenViewer).GetMethod("CollectionMovedAsync", flags)!.Invoke(viewer, [result])!;
+                typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
+            });
+        }
+        else await Save("EXISTING, new tag");
+
+        var saved = Assert.Single(await vault.Service.ListAsync());
+        Assert.Equal(key == "c" ? "existing" : "existing, new tag", saved.Tags);
+        Assert.Equal(key == "c" ? new[] { "Destination" } : new[] { "Existing" }, saved.Collections.ToArray());
+        Assert.False(saved.IsReviewed);
+        Assert.NotNull(changed);
+        Assert.Equal(saved.Tags, changed.Tags);
+        Assert.Equal(saved.Collections.ToArray(), changed.Collections.ToArray());
+        Assert.DoesNotContain("<dialog", await Html());
+        Assert.Contains("1 / 1", await Html());
+        if (reviewMode) Assert.Contains("0 Reviewed + 0 Skipped / 1", await Html());
+
+        changed = null;
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(key));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => typeof(FullscreenViewer).GetMethod("CancelQuickEdit", flags)!.Invoke(viewer, null));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey("ignored"));
+        Assert.DoesNotContain("<dialog", await Html());
+        Assert.Null(changed);
+        var afterCancel = Assert.Single(await vault.Service.ListAsync());
+        Assert.Equal(saved.Tags, afterCancel.Tags);
+        Assert.Equal(saved.Collections.ToArray(), afterCancel.Collections.ToArray());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Viewer_QuickTag_RemovesChipsImmediatelyWithoutClosingOrAdvancing(bool reviewMode)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        image = await vault.Service.UpdateAsync(image.Id, edit => edit with { Tags = "cat, dog" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        FullscreenViewer? viewer = null;
+        ImageRecord? changed = null;
+        var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
+            fixture.HtmlRenderer.RenderComponentAsync<FullscreenViewerTestHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(FullscreenViewerTestHost.Images)] = new[] { image },
+                [nameof(FullscreenViewerTestHost.ReviewMode)] = reviewMode,
+                [nameof(FullscreenViewerTestHost.Capture)] = (Action<FullscreenViewer>)(value => viewer = value),
+                [nameof(FullscreenViewerTestHost.Changed)] = (Action<ImageRecord>)(value => changed = value)
+            })));
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Task<string> Html() => fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => WebUtility.HtmlDecode(root.ToHtmlString()));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey("t"));
+        string dialog = Regex.Match(await Html(), @"<dialog\b[\s\S]*?</dialog>").Value;
+        Assert.Contains("aria-label=\"Remove tag cat\"", dialog);
+        Assert.Contains("aria-label=\"Remove tag dog\"", dialog);
+        Assert.DoesNotContain(image.Name, dialog);
+        Assert.Matches(@"<button[^>]*type=""button""[^>]*aria-label=""Remove tag cat""", dialog);
+
+        foreach (var tag in new[] { "cat", "dog" })
+        {
+            await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+            {
+                await (Task)typeof(FullscreenViewer).GetMethod("RemoveQuickTagAsync", flags)!.Invoke(viewer, [tag])!;
+                typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
+            });
+            string expectedTags = tag == "cat" ? "dog" : "";
+            Assert.Equal(expectedTags, Assert.Single(await vault.Service.ListAsync()).Tags);
+            Assert.NotNull(changed);
+            Assert.Equal(expectedTags, changed.Tags);
+            Assert.False(changed.IsReviewed);
+            string html = await Html();
+            Assert.Contains("<dialog", html);
+            Assert.DoesNotContain($"aria-label=\"Remove tag {tag}\"", html);
+            if (tag == "cat") Assert.Contains("aria-label=\"Remove tag dog\"", html);
+            else Assert.Contains("No tags yet.", html);
+            if (reviewMode) Assert.Contains("0 Reviewed + 0 Skipped / 1", html);
+        }
+    }
+
     [Fact]
     public async Task DuplicateReviewer_EscapeWhileBusy_ThenClosesWithoutWaitingForLoading()
     {
@@ -717,6 +940,25 @@ public sealed class UiComponentTests
         }
         else
             Assert.DoesNotContain("overview-stale", actualHtml);
+    }
+
+    private sealed class FullscreenViewerTestHost : ComponentBase
+    {
+        [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+        [Parameter] public bool ReviewMode { get; set; }
+        [Parameter] public Action<FullscreenViewer>? Capture { get; set; }
+        [Parameter] public Action<ImageRecord>? Changed { get; set; }
+
+        protected override void BuildRenderTree(RenderTreeBuilder builder)
+        {
+            builder.OpenComponent<FullscreenViewer>(0);
+            builder.AddAttribute(1, nameof(FullscreenViewer.Images), Images);
+            builder.AddAttribute(2, nameof(FullscreenViewer.ReviewMode), ReviewMode);
+            builder.AddAttribute(3, nameof(FullscreenViewer.OnImageChanged), EventCallback.Factory.Create<ImageRecord>(this,
+                value => Changed?.Invoke(value)));
+            builder.AddComponentReferenceCapture(4, instance => Capture?.Invoke((FullscreenViewer)instance));
+            builder.CloseComponent();
+        }
     }
 
     private sealed class DuplicateReviewerTestHost : ComponentBase

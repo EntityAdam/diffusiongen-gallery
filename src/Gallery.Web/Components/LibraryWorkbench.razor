@@ -38,55 +38,25 @@
         <div class="grid grid-cols-1 items-start gap-6 md:grid-cols-2 [&>div]:min-w-0 [&>div]:space-y-3">
             <div>
                 <h4>Collections</h4>
-                <Label For="bulk-collection" Class="mt-4 mb-2 block">Add to collection</Label>
-                <Select id="bulk-collection" @bind-Value="CollectionChoice" Disabled="@working">
-                    <option value="">Choose a collection</option>
-                    @foreach (var name in Collections) { <option value="@("value:" + name)">@name</option> }
-                    <option value="new">Create new collection...</option>
-                </Select>
-                @if (newCollection)
-                {
-                    <Label For="new-collection" Class="mb-2 block">New collection name</Label>
-                    <Input id="new-collection" @bind-Value="collection" Disabled="@working" maxlength="80" Placeholder="Worlds, portraits, final picks..." />
-                }
-                <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Outline" Disabled="@(working || SelectedIds.Count == 0 || string.IsNullOrWhiteSpace(collection))" OnClick="ApplyCollectionAsync">Apply</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick='() => CollectionChoice = ""'>Clear</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@(working || SelectedIds.Count is 0 or > 24)" OnClick="() => AnalyzeSelectionAsync(collectionSuggestions)">Suggest (AI Vision)</Button>
-                </div>
-                @foreach (var suggestion in collectionSuggestions.ToArray())
-                {
-                    <div class="rounded-lg border border-border p-3">
-                        <strong>@suggestion.Name</strong><p>@suggestion.Collection</p>
-                        @if (suggestion.Warning.Length > 0) { <Alert Variant="AlertVariant.Destructive">@suggestion.Warning</Alert> }
-                        <Button Variant="ButtonVariant.Outline" Disabled="@(working || string.IsNullOrWhiteSpace(suggestion.Collection))" OnClick="() => ApplyOrganizationSuggestionAsync(suggestion, true)">Apply</Button>
-                        <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="() => collectionSuggestions.Remove(suggestion)">Dismiss</Button>
-                    </div>
-                }
+                <p class="text-muted-foreground">Move selected media to one set within a collection.</p>
+                <Button Variant="ButtonVariant.Outline" Disabled="@(working || SelectedIds.Count == 0)" OnClick="() => showDestination = true">Move to set</Button>
+                <Button Variant="ButtonVariant.Ghost" Disabled="@(working || SelectedIds.Count == 0)" OnClick="RemoveFromSetAsync">Remove from set</Button>
             </div>
             <div>
                 <h4>Tags</h4>
                 <Label For="bulk-tags" Class="mt-4 mb-2 block">Add tags</Label>
-                <Select id="bulk-tags" @bind-Value="TagChoice" Disabled="@working">
-                    <option value="">Choose a tag</option>
-                    @foreach (var tag in Tags) { <option value="@("value:" + tag)">@tag</option> }
-                    <option value="new">Create new tags...</option>
-                </Select>
-                @if (newTags)
-                {
-                    <Label For="new-tags" Class="mb-2 block">New tags (comma-separated)</Label>
-                    <Input id="new-tags" @bind-Value="tags" Disabled="@working" maxlength="4000" Placeholder="cinematic, warm light" />
-                }
+                <AdvancedSelect Id="bulk-tags" Label="Tags" ItemLabel="tag" Placeholder="Select tags…" Multiple="true" MaxLength="4000"
+                                Options="@Tags" Counts="@TagCounts" Values="@TagValues" ValuesChanged="SetTagValues" Disabled="@working" />
                 <div class="flex flex-wrap items-center gap-2">
                     <Button Variant="ButtonVariant.Outline" Disabled="@(working || SelectedIds.Count == 0 || string.IsNullOrWhiteSpace(tags))" OnClick="ApplyTagsAsync">Apply</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick='() => TagChoice = ""'>Clear</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@(working || SelectedIds.Count is 0 or > 24)" OnClick="() => AnalyzeSelectionAsync(tagSuggestions)">Suggest (AI Vision)</Button>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick='() => tags = ""'>Clear</Button>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@(working || SelectedIds.Count is 0 or > 24)" OnClick="SuggestTagsAsync">Suggest (AI Vision)</Button>
                 </div>
                 @foreach (var suggestion in tagSuggestions.ToArray())
                 {
                     <div class="rounded-lg border border-border p-3">
                         <strong>@suggestion.Name</strong><p>@suggestion.Tags</p>
-                        <Button Variant="ButtonVariant.Outline" Disabled="@(working || string.IsNullOrWhiteSpace(suggestion.Tags))" OnClick="() => ApplyOrganizationSuggestionAsync(suggestion, false)">Apply</Button>
+                        <Button Variant="ButtonVariant.Outline" Disabled="@(working || string.IsNullOrWhiteSpace(suggestion.Tags))" OnClick="() => ApplyTagSuggestionAsync(suggestion)">Apply</Button>
                         <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="() => tagSuggestions.Remove(suggestion)">Dismiss</Button>
                     </div>
                 }
@@ -170,18 +140,25 @@
     [Parameter] public EventCallback ClearSelection { get; set; }
     [Parameter] public EventCallback<LibraryJobStatus> JobChanged { get; set; }
     [Parameter] public EventCallback<IReadOnlyList<OrganizationSuggestion>> SuggestionsChanged { get; set; }
-    private string collection = "", tags = "", viewName = "", query = "", error = "", notice = "", status = "";
+    [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
+    private bool showDestination;
+    private CollectionUndo? collectionUndo;
+    private async Task DestinationSavedAsync(CollectionMutation result) { collectionUndo = result.Undo;showDestination = false;notice = "Media moved to set.";await Changed.InvokeAsync(); }
+    private async Task DestinationCanceledAsync() { showDestination = false;await Changed.InvokeAsync(); }
+    private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await Gallery.MoveMediaToSetAsync(SelectedIds, null);collectionUndo = result.Undo;notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
+    private Task UndoCollectionAsync() => RunAsync("Restoring organization...", async () => { if (collectionUndo is null) return;await Gallery.UndoCollectionChangeAsync(collectionUndo);collectionUndo = null;await Changed.InvokeAsync();notice = "Organization restored."; });
+    private string tags = "", viewName = "", query = "", error = "", notice = "", status = "";
     private int rating = -1;
     private string reviewStatus = "unchanged", jobWorkflow = "", jobMessage = "";
     private bool working, analyzing, reportingJob, cancelRequested, disposed;
     private List<SavedView> views = [];
     private List<OrganizationSuggestion> suggestions = [];
-    private readonly List<OrganizationSuggestion> collectionSuggestions = [], tagSuggestions = [];
+    private readonly List<OrganizationSuggestion> tagSuggestions = [];
     private GalleryFilter? suggestedFilter;
     private List<ImageRecord> compareImages = [];
     private readonly Dictionary<string, string> comparison = [];
     private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
-    private IEnumerable<string> Tags => Images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    private IEnumerable<string> Tags => KnownTags.Concat(Images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
         .Distinct(StringComparer.OrdinalIgnoreCase).Order();
     private static string[] TagsOf(ImageRecord image) => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private IReadOnlyList<(string Tag, int Count)> SelectedTags => Images.Where(image => SelectedIds.Contains(image.Id))
@@ -192,21 +169,13 @@
     private IEnumerable<ImageRecord> UnanalyzedImages => Images.Where(image => image.Description.Length == 0 && !image.IsMarkedForDeletion
         && !suggestions.Any(suggestion => suggestion.Id == image.Id));
     private int UnanalyzedCount => UnanalyzedImages.Count();
-    private bool newCollection, newTags;
-    private string CollectionChoice
-    {
-        get => newCollection ? "new" : collection.Length > 0 ? "value:" + collection : "";
-        set { newCollection = value == "new"; collection = value.StartsWith("value:", StringComparison.Ordinal) ? value[6..] : ""; }
-    }
-    private string TagChoice
-    {
-        get => newTags ? "new" : tags.Length > 0 ? "value:" + tags : "";
-        set { newTags = value == "new"; tags = value.StartsWith("value:", StringComparison.Ordinal) ? value[6..] : ""; }
-    }
+    private IReadOnlyList<string> TagValues => tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    private void SetTagValues(IReadOnlyList<string> values) => tags = string.Join(", ", values);
+    private IReadOnlyDictionary<string, int> TagCounts => Images.SelectMany(image => TagsOf(image).Distinct(StringComparer.OrdinalIgnoreCase))
+        .GroupBy(value => value, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
     protected override void OnParametersSet()
     {
         if (suggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id)) > 0) _ = PublishSuggestionsAsync();
-        collectionSuggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
         tagSuggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
         var imagesById = Images.ToDictionary(image => image.Id);
         for (var index = 0; index < compareImages.Count; index++)
@@ -239,7 +208,7 @@
 
     private Task PublishJobAsync() => disposed ? Task.CompletedTask : JobChanged.InvokeAsync(
         new LibraryJobStatus(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
-            suggestions.Count + collectionSuggestions.Count + tagSuggestions.Count, analyzing && !cancelRequested));
+            suggestions.Count + tagSuggestions.Count, analyzing && !cancelRequested));
 
     public async Task StopAnalysisAsync()
     {
@@ -247,6 +216,15 @@
         cancelRequested = true;
         status = "Stopping after the current media item...";
         await PublishJobAsync();
+    }
+
+    public async Task DiscardTagSuggestionsAsync()
+    {
+        tagSuggestions.Clear();
+        suggestions.Clear();
+        await PublishSuggestionsAsync();
+        await PublishJobAsync();
+        StateHasChanged();
     }
 
     public async Task DismissSuggestionAsync(OrganizationSuggestion suggestion)
@@ -276,20 +254,6 @@
         error = string.Join(" / ", failures);
     }
 
-    private Task OrganizeAsync() => RunAsync("Organizing selection...", async () =>
-    {
-        if (collection.Trim().Length > 80 || tags.Length > 4000)
-            throw new InvalidOperationException("Collection or tags are too long.");
-        if (collection.Trim().Length == 0 && tags.Trim().Length == 0)
-            throw new InvalidOperationException("Enter a collection or tags.");
-        await ApplyBulkAsync(image =>
-        {
-            var updated = image with { Tags = Gallery.MergeTags(image.Tags, tags) };
-            return collection.Trim().Length > 0
-                ? Gallery.SetOrganization(updated, updated.Rating, updated.IsReviewed, collection) : updated;
-        });
-    });
-
     private Task RemoveTagAsync(string tag) => RunAsync($"Removing tag {tag}...", async () =>
     {
         var failures = new List<string>();
@@ -308,9 +272,6 @@
         notice = $"Removed \"{tag}\" from {ids.Length - failures.Count} media item(s).";
         error = string.Join(" / ", failures);
     });
-
-    private Task RemoveCollectionAsync() => RunAsync("Updating collections...", () => ApplyBulkAsync(image =>
-        Gallery.RemoveCollection(image, collection)));
 
     private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
         Gallery.SetCuration(image, rating == -1 ? null : rating,
@@ -341,17 +302,18 @@
         suggestedFilter = null;
     }
 
-    private Task SuggestAsync() => AnalyzeSelectionAsync(suggestions);
+    private Task SuggestAsync() => AnalyzeSelectionAsync(suggestions, includeCollection: false);
+    private Task SuggestTagsAsync() => AnalyzeSelectionAsync(tagSuggestions, includeCollection: false);
 
-    private Task AnalyzeSelectionAsync(List<OrganizationSuggestion> target)
+    private Task AnalyzeSelectionAsync(List<OrganizationSuggestion> target, bool includeCollection = true)
     {
         if (SelectedIds.Count is 0 or > 24) return RunAsync("Analyzing selection...", () => throw new InvalidOperationException("Select between 1 and 24 media items."));
-        return AnalyzeAsync(Images.Where(image => SelectedIds.Contains(image.Id)).ToArray(), target, "Analyzing selection...");
+        return AnalyzeAsync(Images.Where(image => SelectedIds.Contains(image.Id)).ToArray(), target, "Analyzing selection...", includeCollection);
     }
 
-    private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing media without a description...");
+    private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing media without a description...", includeCollection: false);
 
-    private Task AnalyzeAsync(ImageRecord[] selected, List<OrganizationSuggestion> target, string message) => RunAsync(message, async () =>
+    private Task AnalyzeAsync(ImageRecord[] selected, List<OrganizationSuggestion> target, string message, bool includeCollection = true) => RunAsync(message, async () =>
     {
         if (selected.Length == 0) throw new InvalidOperationException("There is no media to analyze.");
         cancelRequested = false;
@@ -367,12 +329,12 @@
             await InvokeAsync(StateHasChanged);
             try
             {
-                var result = await Gallery.AnalyzeImageWithCollectionAsync(settings, await Gallery.PreviewAsync(image.Id), Collections.ToArray());
+                var suggestion = await AnalyzeSuggestionAsync(image, settings, includeCollection);
                 if (disposed) break;
                 target.RemoveAll(suggestion => suggestion.Id == image.Id);
-                target.Add(new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model, result.Warning));
+                target.Add(suggestion);
                 if (ReferenceEquals(target, suggestions)) await PublishSuggestionsAsync();
-                if (result.Warning.Length > 0) Logger.LogWarning("Analysis collection warning for {ImageId}: {Warning}", image.Id, result.Warning);
+                if (suggestion.Warning.Length > 0) Logger.LogWarning("Analysis collection warning for {ImageId}: {Warning}", image.Id, suggestion.Warning);
             }
             catch (Exception exception)
             {
@@ -385,11 +347,17 @@
         error = string.Join(" / ", failures);
     }, reportJob: true);
 
-    private Task ApplyCollectionAsync() => RunAsync("Applying collection...", async () =>
+    private async Task<OrganizationSuggestion> AnalyzeSuggestionAsync(ImageRecord image, VisionSettings settings, bool includeCollection)
     {
-        if (collection.Trim().Length is 0 or > 80) throw new InvalidOperationException("Enter a collection of 1 to 80 characters.");
-        await ApplyBulkAsync(image => Gallery.AddCollection(image, collection));
-    });
+        var preview = await Gallery.PreviewAsync(image.Id);
+        if (includeCollection)
+        {
+            var result = await Gallery.AnalyzeImageWithCollectionAsync(settings, preview, Collections.ToArray());
+            return new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model, result.Warning);
+        }
+        var tags = await Gallery.AnalyzeImageAsync(settings, preview);
+        return new(image.Id, image.Name, tags.Description, tags.Tags, "", settings.Model, "");
+    }
 
     private Task ApplyTagsAsync() => RunAsync("Applying tags...", async () =>
     {
@@ -397,12 +365,10 @@
         await ApplyBulkAsync(image => image with { Tags = Gallery.MergeTags(image.Tags, tags) });
     });
 
-    private Task ApplyOrganizationSuggestionAsync(OrganizationSuggestion suggestion, bool forCollection) => RunAsync("Saving approved suggestion...", async () =>
+    private Task ApplyTagSuggestionAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved tags...", async () =>
     {
-        await Gallery.UpdateAsync(suggestion.Id, image => forCollection
-            ? Gallery.AddCollection(image, suggestion.Collection)
-            : image with { Tags = Gallery.MergeTags(image.Tags, suggestion.Tags) });
-        (forCollection ? collectionSuggestions : tagSuggestions).Remove(suggestion);
+        await Gallery.UpdateAsync(suggestion.Id, image => image with { Tags = Gallery.MergeTags(image.Tags, suggestion.Tags) });
+        tagSuggestions.Remove(suggestion);
         await Changed.InvokeAsync();
     });
 
@@ -429,10 +395,7 @@
                 Tags = galleryService.MergeTags(image.Tags, organizationSuggestion.Tags),
                 AnalysisModel = organizationSuggestion.Model
             };
-            return organizationSuggestion.Collection.Length > 0
-                ? galleryService.SetOrganization(updatedImageRecord, updatedImageRecord.Rating,
-                    updatedImageRecord.IsReviewed, organizationSuggestion.Collection)
-                : updatedImageRecord;
+            return updatedImageRecord;
         });
 
     private Task PublishSuggestionsAsync() => disposed ? Task.CompletedTask : SuggestionsChanged.InvokeAsync(suggestions.ToArray());
@@ -457,3 +420,6 @@
     private void CloseComparison() { compareImages.Clear(); comparison.Clear(); }
     public void Dispose() { disposed = true; cancelRequested = true; suggestions.Clear(); CloseComparison(); }
 }
+
+@if (collectionUndo is not null && Visible) { <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="UndoCollectionAsync">Undo organization change</Button> }
+@if (showDestination) { <CollectionDestinationDialog Images="@Images.Where(image => SelectedIds.Contains(image.Id)).ToArray()" Saved="DestinationSavedAsync" Cancel="DestinationCanceledAsync" /> }

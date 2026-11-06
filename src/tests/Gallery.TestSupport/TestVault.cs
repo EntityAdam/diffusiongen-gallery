@@ -17,7 +17,7 @@ internal sealed class TestVault : IDisposable
     public VaultSession Session { get; } = new();
     public GalleryService Service { get; }
 
-    public TestVault(VideoTools? video = null)
+    public TestVault(VideoTools? video = null, VisionManager? vision = null)
     {
         Configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -27,7 +27,7 @@ internal sealed class TestVault : IDisposable
         Vault = new(Root);
         Store = new(Path.Combine(Root, "gallery.db"));
         RawStore = new(Path.Combine(Root, "gallery.db"));
-        Service = new(Store, Vault, Session, video);
+        Service = new(Store, Vault, Session, video, vision);
     }
 
     public async Task InitializeAsync()

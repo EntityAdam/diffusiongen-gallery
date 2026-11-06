@@ -284,15 +284,25 @@ public sealed partial class GalleryService
     }
     public Task<IReadOnlyList<string>> GetVisionModelsAsync(VisionSettings settings) =>
         RequiredVisionManager().GetModelsAsync(settings);
-    public Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData) =>
-        RequiredVisionManager().AnalyzeImageAsync(settings, imageData);
+    public async Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData)
+    {
+        var manager = RequiredVisionManager();
+        var names = await LoadTagNamesAsync();
+        var result = await manager.AnalyzeImageAsync(settings, imageData, names);
+        return (result.Description, CanonicalVisionTags(result.Tags, names));
+    }
     public Task<string> SuggestCollectionAsync(VisionSettings settings, string description, string tags,
         IEnumerable<string> collections) => RequiredVisionManager().SuggestCollectionAsync(settings, description, tags, collections);
     public Task<GalleryFilter> InterpretSearchAsync(VisionSettings settings, string query, IEnumerable<string> collections) =>
         RequiredVisionManager().InterpretSearchAsync(settings, query, collections);
-    public Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
-        VisionSettings settings, string imageData, IEnumerable<string> collections) =>
-        RequiredVisionManager().AnalyzeImageWithCollectionAsync(settings, imageData, collections);
+    public async Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
+        VisionSettings settings, string imageData, IEnumerable<string> collections)
+    {
+        var manager = RequiredVisionManager();
+        var names = await LoadTagNamesAsync();
+        var result = await manager.AnalyzeImageWithCollectionAsync(settings, imageData, collections, names);
+        return (result.Description, CanonicalVisionTags(result.Tags, names), result.Collection, result.Warning);
+    }
 
     private VisionManager RequiredVisionManager() => visionManager
         ?? throw new InvalidOperationException("The vision manager is not configured.");
@@ -1136,7 +1146,13 @@ public sealed partial class GalleryService
     {
         var record = await FindAsync(imageId, key);
         var updated = ApplyEdit(record, update);
-        await galleryStore.UpdateAsync(updated, key);
+        // Placement is changed only by atomic hierarchy operations, never by legacy edit callbacks.
+        if (!updated.Collections.SequenceEqual(record.Collections)
+            && (record.SetId is not null || await galleryStore.ReadSettingsAsync<CollectionCatalog>(
+                CollectionCatalog.SettingId, CollectionCatalog.SettingPurpose, key) is not null))
+            throw new InvalidOperationException("Choose a destination set to change organization.");
+        if (record.Tags == updated.Tags) await galleryStore.UpdateAsync(updated, key);
+        else await SaveEditedTagsAsync(record, updated, key);
         return updated;
     }
 

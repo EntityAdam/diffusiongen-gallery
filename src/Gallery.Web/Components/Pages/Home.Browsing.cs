@@ -22,6 +22,7 @@ public partial class Home
     {
         CancelCatalogLoad();
         var generation = catalogGeneration;
+        collectionCatalog = await Gallery.LoadCollectionCatalogAsync();
         var snapshot = await Gallery.LoadInitialPageAsync(PageSize, TrashActive);
         if (!IsCatalogGenerationCurrent(generation)) return;
         catalogPartial = !snapshot.IsComplete || !snapshot.IsCurrent;
@@ -98,6 +99,12 @@ public partial class Home
         UpdateDuplicateGroups();
         if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
         settings = await Gallery.SettingsAsync();
+        catalogTags = await Gallery.LoadTagNamesAsync();
+        var nextCollections = await Gallery.LoadCollectionCatalogAsync();
+        var currentCollection = collectionCatalog.Collections.FirstOrDefault(item => item.Name.Equals(filter.Collection, StringComparison.OrdinalIgnoreCase));
+        if (currentCollection is not null && nextCollections.Collections.FirstOrDefault(item => item.Id == currentCollection.Id) is { } renamed)
+            filter = filter with { Collection = renamed.Name };
+        collectionCatalog = nextCollections;
         storageOverview = await Gallery.CachedStorageOverviewAsync();
         selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
         if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }

@@ -19,8 +19,9 @@ public sealed class TursoDatabaseMigrationTests
 
         Assert.Equal(ConnectionState.Open, fixture.Connection.State);
         Assert.Equal(1L, Scalar(fixture.Connection, "SELECT version FROM catalog_format WHERE id=1"));
-        Assert.Equal(Baseline, Scalar(fixture.Connection, "SELECT ScriptName FROM turso_schema_versions"));
-        Assert.Equal(1L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM turso_schema_versions"));
+        Assert.Equal(Baseline, Scalar(fixture.Connection, "SELECT ScriptName FROM turso_schema_versions ORDER BY ScriptName LIMIT 1"));
+        Assert.Equal(3L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM pragma_table_info('media') WHERE name IN ('set_id','set_order','legacy_collections')"));
+        Assert.Equal(2L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM turso_schema_versions"));
         Assert.Equal(0L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('images','SchemaVersions')"));
         Assert.Equal(3L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'media_revision_%'"));
     }
@@ -42,7 +43,7 @@ public sealed class TursoDatabaseMigrationTests
         Assert.Equal(1L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM drive_operations WHERE sequence=1 AND attempts=3 AND revision=7 AND target=X'01' AND payload=X'02'"));
         Assert.Equal(123L, Scalar(fixture.Connection, "SELECT length FROM media_index WHERE target=X'03' AND directory=X'04'"));
         Assert.Equal(42L, Scalar(fixture.Connection, "SELECT revision FROM storage_overview_state WHERE id=1"));
-        Assert.Equal(1L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM turso_schema_versions"));
+        Assert.Equal(2L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM turso_schema_versions"));
     }
 
     [Fact]
@@ -54,7 +55,7 @@ public sealed class TursoDatabaseMigrationTests
         Assert.Equal(0L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"));
 
         TursoGalleryDatabase.Upgrade(fixture.Connection, allowCreate: true);
-        Assert.Equal(1L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM turso_schema_versions"));
+        Assert.Equal(2L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM turso_schema_versions"));
         Assert.Equal(1L, Scalar(fixture.Connection, "SELECT COUNT(*) FROM sqlite_master WHERE name='media_revision_delete'"));
     }
 

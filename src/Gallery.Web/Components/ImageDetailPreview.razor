@@ -13,17 +13,7 @@
         </Button>
     </div>
     <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div class="inline-flex min-w-0 items-center" role="group" aria-label="@($"Rating for {Image.Name}: {Image.Rating} out of 5 stars")">
-            @for (var score = 1; score <= 5; score++)
-            {
-                var value = score;
-                var label = Image.Rating == value ? "Clear rating" : $"Rate {value} out of 5 stars";
-                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" Class="@(value <= Image.Rating ? "h-7! w-7! text-primary" : "h-7! w-7! text-muted-foreground")"
-                        aria-label="@label" title="@label" aria-pressed="@(Image.Rating == value ? "true" : "false")" OnClick="() => Rate.InvokeAsync(value)">
-                    <StarIcon Size="16" Fill="@(value <= Image.Rating ? "currentColor" : "none")" aria-hidden="true" />
-                </Button>
-            }
-        </div>
+        <ImageRating Image="@Image" Disabled="@Busy" Rate="@Rate" />
         <div class="flex flex-wrap items-center gap-1">
             <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@Busy" Class="@(Image.IsFavorite ? "text-primary" : "")"
                     OnClick="Favorite" aria-label="Toggle favorite" aria-pressed="@(Image.IsFavorite ? "true" : "false")">
