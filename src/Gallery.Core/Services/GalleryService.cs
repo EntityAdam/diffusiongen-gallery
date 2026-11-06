@@ -1146,6 +1146,11 @@ public sealed partial class GalleryService
     {
         var record = await FindAsync(imageId, key);
         var updated = ApplyEdit(record, update);
+        // Placement is changed only by atomic hierarchy operations, never by legacy edit callbacks.
+        if (!updated.Collections.SequenceEqual(record.Collections)
+            && (record.SetId is not null || await galleryStore.ReadSettingsAsync<CollectionCatalog>(
+                CollectionCatalog.SettingId, CollectionCatalog.SettingPurpose, key) is not null))
+            throw new InvalidOperationException("Choose a destination set to change organization.");
         if (record.Tags == updated.Tags) await galleryStore.UpdateAsync(updated, key);
         else await SaveEditedTagsAsync(record, updated, key);
         return updated;

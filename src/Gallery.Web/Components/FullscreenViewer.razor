@@ -76,9 +76,11 @@
     </footer>
     @if (quickEdit is not null)
     {
-        <QuickOrganizationDialog ForCollection='@(quickEdit == "collection")' ImageName="@Current.Name" Tags="@Current.Tags" RemoveTag="RemoveQuickTagAsync" Options="@QuickEditOptions" Counts="@QuickEditCounts"
-                                 Busy="@busy" Error="@error" Save="SaveQuickEditAsync" Cancel="CancelQuickEdit" />
+        @if (quickEdit == "collection") { <CollectionDestinationDialog Images="@(new[] { Current })" Saved="CollectionMovedAsync" Cancel="CancelQuickEdit" /> }
+        else { <QuickOrganizationDialog ImageName="@Current.Name" Tags="@Current.Tags" RemoveTag="RemoveQuickTagAsync" Options="@QuickEditOptions" Counts="@QuickEditCounts"
+                                 Busy="@busy" Error="@error" Save="SaveQuickEditAsync" Cancel="CancelQuickEdit" /> }
     }
+    @if (collectionUndo is not null && quickEdit is null) { <div class="viewer-collection-notice" role="status">Media moved to set. <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="UndoCollectionAsync">Undo</Button></div> }
     @if (quickEdit is null && error.Length > 0) { <Alert Variant="AlertVariant.Destructive" Class="absolute right-4 bottom-16 left-4">@error</Alert> }
 </section>
 
@@ -361,13 +363,27 @@
         await OnImageChanged.InvokeAsync(Current);
     });
 
+    private CollectionUndo? collectionUndo;
+    private async Task CollectionMovedAsync(CollectionMutation result)
+    {
+        collectionUndo = result.Undo;
+        var current = (await Gallery.ListAsync()).First(image => image.Id == Current.Id);
+        latestImagesById[current.Id] = current;
+        await OnImageChanged.InvokeAsync(current);
+        quickEdit = null;
+    }
+    private Task UndoCollectionAsync() => RunAsync(async () =>
+    {
+        if (collectionUndo is null) return;
+        await Gallery.UndoCollectionChangeAsync(collectionUndo);collectionUndo = null;
+        var current = (await Gallery.ListAsync()).First(image => image.Id == Current.Id);
+        latestImagesById[current.Id] = current;await OnImageChanged.InvokeAsync(current);
+    });
     private Task SaveQuickEditAsync(string value) => RunAsync(async () =>
     {
-        if (quickEdit is null || string.IsNullOrWhiteSpace(value)) return;
+        if (quickEdit != "tag" || string.IsNullOrWhiteSpace(value)) return;
         var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id, image => quickEdit == "collection"
-            ? Gallery.AddCollection(image, value.Trim())
-            : image with { Tags = Gallery.MergeTags(image.Tags, value) });
+        latestImagesById[id] = await Gallery.UpdateAsync(id, image => image with { Tags = Gallery.MergeTags(image.Tags, value) });
         await OnImageChanged.InvokeAsync(Current);
         quickEdit = null;
     });

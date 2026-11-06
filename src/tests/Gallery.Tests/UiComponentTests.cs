@@ -573,6 +573,9 @@ public sealed class UiComponentTests
         await vault.InitializeAsync();
         var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
         image = await vault.Service.UpdateAsync(image.Id, edit => vault.Service.AddCollection(edit with { Tags = "existing" }, "Existing"));
+        var collection = await vault.Service.CreateCollectionAsync("Destination");
+        var destinationSet = await vault.Service.CreateSetAsync(collection.Id, "New set");
+        image = (await vault.Service.ListAsync()).Single();
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         FullscreenViewer? viewer = null;
         ImageRecord? changed = null;
@@ -593,8 +596,8 @@ public sealed class UiComponentTests
         });
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(key));
         Assert.Contains("<dialog", await Html());
-        Assert.Contains(key == "c" ? "Quick collection" : "Quick tag", await Html());
-        Assert.Contains(key == "c" ? ">Existing</span>" : ">existing</span>", await Html());
+        Assert.Contains(key == "c" ? "Move 1 media to a set" : "Quick tag", await Html());
+        Assert.Contains(key == "c" ? "Existing / Imported media" : ">existing</span>", await Html());
         foreach (var shortcut in new[] { "arrowright", "1", "f", "d", "escape" })
             await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(shortcut));
         Assert.Contains("<dialog", await Html());
@@ -602,16 +605,18 @@ public sealed class UiComponentTests
 
         if (key == "c")
         {
-            await Save(new string('x', 81));
-            Assert.Contains("role=\"alert\"", await Html());
-            Assert.Contains("<dialog", await Html());
-            Assert.Null(changed);
+            await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+            {
+                var result = await vault.Service.MoveMediaToSetAsync([image.Id], destinationSet.Id);
+                await (Task)typeof(FullscreenViewer).GetMethod("CollectionMovedAsync", flags)!.Invoke(viewer, [result])!;
+                typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
+            });
         }
-        await Save(key == "c" ? " New collection " : "EXISTING, new tag");
+        else await Save("EXISTING, new tag");
 
         var saved = Assert.Single(await vault.Service.ListAsync());
         Assert.Equal(key == "c" ? "existing" : "existing, new tag", saved.Tags);
-        Assert.Equal(key == "c" ? new[] { "Existing", "New collection" } : new[] { "Existing" }, saved.Collections.ToArray());
+        Assert.Equal(key == "c" ? new[] { "Destination" } : new[] { "Existing" }, saved.Collections.ToArray());
         Assert.False(saved.IsReviewed);
         Assert.NotNull(changed);
         Assert.Equal(saved.Tags, changed.Tags);

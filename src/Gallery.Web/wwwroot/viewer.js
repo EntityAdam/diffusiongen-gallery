@@ -340,6 +340,9 @@ window.galleryViewer = {
             else URL.revokeObjectURL(url);
         });
     },
+    focusCollectionNavigation: function (open) {
+        document.querySelector(open ? ".collection-nav-open .workspace-navigation button" : ".collection-navigation-toggle")?.focus();
+    },
     quickEditDialogs: new Map(),
     openQuickEdit: function (dialog, key) {
         window.galleryViewer.quickEditDialogs.set(key, { dialog, previousFocus: document.activeElement });
@@ -352,6 +355,7 @@ window.galleryViewer = {
         window.galleryViewer.quickEditDialogs.delete(key);
         entry.dialog.close();
         if (entry.previousFocus?.isConnected) entry.previousFocus.focus();
+        else document.querySelector?.(".collection-page-heading h2")?.focus();
     },
     attach: function (element, reference) {
         const previousFocus = document.activeElement;

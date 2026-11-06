@@ -197,7 +197,7 @@ public sealed class CatalogAdapterTests
         {
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT COUNT(*) FROM " + TursoGalleryDatabase.JournalTableName;
-            Assert.Equal(1L, await command.ExecuteScalarAsync());
+            Assert.Equal(2L, await command.ExecuteScalarAsync());
         });
 
         async Task WithNative(Func<System.Data.Common.DbConnection, Task> operation)

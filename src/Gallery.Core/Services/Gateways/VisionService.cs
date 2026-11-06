@@ -29,6 +29,7 @@ internal sealed partial class VisionService
         ValidateModel(visionSettings.Model);
         ValidateSystemPrompt(visionSettings.SystemPrompt);
         ValidateSystemPrompt(visionSettings.CollectionSuggestionSystemPrompt, "Collection suggestion system prompt");
+        ValidateSystemPrompt(visionSettings.SetSuggestionSystemPrompt, "Set suggestion system prompt");
         ValidateSystemPrompt(visionSettings.SearchSystemPrompt, "Search system prompt");
         return uri;
     }

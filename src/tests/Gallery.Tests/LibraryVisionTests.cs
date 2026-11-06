@@ -14,9 +14,9 @@ public sealed class LibraryVisionTests
 {
     [Theory]
     [InlineData("SuggestTagsAsync", "tagSuggestions", false)]
-    [InlineData("SuggestCollectionsAsync", "collectionSuggestions", true)]
-    [InlineData("SuggestAsync", "suggestions", true)]
-    public async Task WorkbenchSuggestions_OnlySendCollectionContextForCollectionAwareActions(
+    [InlineData("AnalyzeUnanalyzedAsync", "suggestions", false)]
+    [InlineData("SuggestAsync", "suggestions", false)]
+    public async Task WorkbenchTagAndDescriptionSuggestions_DoNotUseCollectionNamesAsTagVocabulary(
         string action, string suggestionField, bool expectsCollection)
     {
         using var handler = new CapturingVisionHandler();

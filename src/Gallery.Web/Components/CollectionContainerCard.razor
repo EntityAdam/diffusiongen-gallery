@@ -1,0 +1,24 @@
+<article class="collection-container-card" draggable="@IsSet" @ondragstart="Drag" @ondragover:preventDefault="IsSet" @ondrop="Drop">
+    <button class="collection-container-open" @onclick="Open" disabled="@Busy">
+        <small>@(IsSet ? "SET" : "COLLECTION")</small><h3>@Name</h3><p>@Summary</p><span>Open @(IsSet ? "set" : "collection") →</span>
+    </button>
+    <details class="collection-card-menu"><summary aria-label="@($"Options for {Name}")">···</summary><div>
+        <button disabled="@Busy" @onclick="Rename">Rename</button>
+        @if (IsSet) { <button disabled="@Busy" @onclick="Move">Move to collection</button><button disabled="@Busy" @onclick="Up">Move up</button><button disabled="@Busy" @onclick="Down">Move down</button> }
+        <button disabled="@Busy" @onclick="Delete">Delete @(IsSet ? "set" : "collection")</button>
+    </div></details>
+</article>
+@code {
+    [Parameter] public string Name { get; set; } = "";
+    [Parameter] public string Summary { get; set; } = "";
+    [Parameter] public bool IsSet { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback Open { get; set; }
+    [Parameter] public EventCallback Rename { get; set; }
+    [Parameter] public EventCallback Delete { get; set; }
+    [Parameter] public EventCallback Move { get; set; }
+    [Parameter] public EventCallback Up { get; set; }
+    [Parameter] public EventCallback Down { get; set; }
+    [Parameter] public EventCallback Drag { get; set; }
+    [Parameter] public EventCallback Drop { get; set; }
+}

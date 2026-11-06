@@ -151,7 +151,7 @@ else if (recoveryPhrase.Length > 0)
 }
 else
 {
-    <AppLayout Class="workspace-layout">
+    <AppLayout Class="@($"workspace-layout {(collectionNavigationOpen ? "collection-nav-open" : "")}")" @onkeydown="HandleCollectionNavigationKey">
     <Sidebar Collapsible="true" @bind-Collapsed="sidebarCollapsed" ExpandedWidth="250px" CollapsedWidth="64px" Class="@($"workspace-sidebar {(sidebarCollapsed ? "is-collapsed" : "")}")" aria-label="Gallery workflows">
         <div class="workspace-sidebar-heading">
             <span class="eyebrow sidebar-label">YOUR WORKSPACE</span>
@@ -160,11 +160,23 @@ else
         <nav class="workspace-navigation" aria-label="Gallery workflows">
         @foreach (var item in Workflows)
         {
-            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || catalogPartial && item.Id is "ingest" or "duplicates" || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name</span></Button>
+            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || catalogPartial && item.Id is "ingest" or "duplicates" || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name @if (item.Id == "unorganized" && !catalogPartial) { <small>(@images.Count(image => image.SetId is null))</small> }</span></Button>
         }
         <Button Variant="@(ToolboxShown ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@busy" Class="workspace-nav-button" aria-pressed="@(ToolboxShown ? "true" : "false")"
                 aria-label="Toolbox (`)" title="Show or hide the toolbox (`). Shift+` resets its position." OnClick="ToggleToolboxAsync"><WrenchIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Toolbox <kbd>`</kbd></span></Button>
         </nav>
+        @if (workflow is "collections" or "unorganized" && !sidebarCollapsed)
+        {
+            <nav class="collection-hierarchy" aria-label="Collection hierarchy"><small>COLLECTIONS</small>
+            @foreach (var collection in collectionCatalog.Collections.OrderBy(item => item.Name))
+            {
+                <button class="@(collectionLocation.CollectionId == collection.Id ? "is-current" : "")" title="@collection.Name" aria-current="@(collectionLocation.CollectionId == collection.Id && collectionLocation.SetId is null ? "page" : null)" @onclick="() => NavigateCollectionsAsync(new(collection.Id))"><span>@collection.Name</span><small>@images.Count(image => collectionCatalog.Sets.Any(set => set.CollectionId == collection.Id && set.Id == image.SetId))</small></button>
+                @if (collectionLocation.CollectionId == collection.Id)
+                { @foreach (var set in collectionCatalog.Sets.Where(item => item.CollectionId == collection.Id).OrderBy(item => item.Order))
+                  { <button class="collection-hierarchy-set @(collectionLocation.SetId == set.Id ? "is-current" : "")" title="@set.Name" aria-current="@(collectionLocation.SetId == set.Id ? "page" : null)" @onclick="() => NavigateCollectionsAsync(new(collection.Id, set.Id))"><span>@set.Name</span><small>@images.Count(image => image.SetId == set.Id)</small></button> } }
+            }
+            </nav>
+        }
         <div class="workspace-sidebar-details" hidden="@sidebarCollapsed">
         @if (libraryJob.IsRunning || libraryJob.Suggestions > 0 || libraryJob.Message.Length > 0)
         {
@@ -222,7 +234,7 @@ else
     </Sidebar>
     <AppLayoutMain Class="workspace-main">
     <AppLayoutBody Class="workspace-body">
-    @if (workflow != "gallery")
+    @if (workflow is not ("gallery" or "collections" or "unorganized"))
     {
     <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2></div></div>
@@ -562,6 +574,14 @@ else
         </Card>
     }
 
+    @if (workflow is "collections" or "unorganized")
+    {
+        @if (catalogPartial) { <div class="collection-empty" role="status"><p>Loading the full collection library…</p>@if (catalogLoadError.Length > 0) { <p role="alert">@catalogLoadError</p><Button OnClick="RetryCatalogLoadAsync">Retry</Button> }</div> }
+        else {
+            <Button Variant="ButtonVariant.Outline" Class="collection-navigation-toggle" aria-label="Show collection navigation" aria-expanded="@(collectionNavigationOpen ? "true" : "false")" OnClick="ToggleCollectionNavigation">Collections navigation</Button>
+            @if (collectionNavigationOpen) { <button class="collection-nav-backdrop" aria-label="Close collection navigation" @onclick="CloseCollectionNavigation"></button> }
+            <CollectionsWorkspace Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="NavigateCollectionsAsync" Changed="ReloadAsync" Open="OpenCollectionViewer" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
+    }
     @if (workflow == "gallery")
     {
     <div class="gallery-layout grid min-w-0 grid-cols-1" data-has-selection="@((librarySelection.Count > 0 || removalSelection.Count > 0) ? "true" : "false")">
@@ -970,6 +990,24 @@ else
     private bool useRecovery, recoverySaved, busy;
     private bool recursive = true;
     private string workflow = "gallery";
+    private CollectionCatalog collectionCatalog = CollectionCatalog.Empty;
+    private CollectionLocation collectionLocation = new();
+    private bool collectionNavigationOpen;
+    private bool? focusCollectionNavigation;
+    private void ToggleCollectionNavigation() { collectionNavigationOpen = !collectionNavigationOpen;focusCollectionNavigation = collectionNavigationOpen; }
+    private void CloseCollectionNavigation() { collectionNavigationOpen = false;focusCollectionNavigation = false; }
+    private void HandleCollectionNavigationKey(KeyboardEventArgs args) { if (args.Key == "Escape" && collectionNavigationOpen) CloseCollectionNavigation(); }
+    private Task NavigateCollectionsAsync(CollectionLocation location)
+    {
+        collectionLocation = location;
+        collectionNavigationOpen = false;
+        workflow = location.Unorganized ? "unorganized" : "collections";
+        return Task.CompletedTask;
+    }
+    private void OpenCollectionViewer((ImageRecord[] Images, string InitialId) request)
+    {
+        reviewMode = false;viewerImages = request.Images.ToList();viewerInitialId = request.InitialId;
+    }
     private bool sidebarCollapsed;
     private LibraryWorkbench? workbench;
     private GalleryToolbox? toolbox;
@@ -987,11 +1025,11 @@ else
     private GalleryFilter? browsingFilter;
     private static readonly (string Id, string Name)[] Workflows =
     [
-        ("gallery", "Gallery"), ("duplicates", "Duplicate finder"), ("ingest", "Ingest media"), ("settings", "Settings")
+        ("gallery", "Gallery"), ("review", "Review"), ("collections", "Collections"), ("unorganized", "Unorganized"), ("tags", "Tags"), ("duplicates", "Duplicate finder"), ("ingest", "Ingest media"), ("settings", "Settings")
     ];
     private static string WorkflowIcon(string workflow) => workflow switch
     {
-        "gallery" => "images", "duplicates" => "copy", "ingest" => "image-plus", "settings" => "settings",
+        "review" => "circle-check", "tags" => "tags", "collections" => "folders", "unorganized" => "inbox", "gallery" => "images", "duplicates" => "copy", "ingest" => "image-plus", "settings" => "settings",
         _ => throw new ArgumentOutOfRangeException(nameof(workflow))
     };
     private static readonly (string Id, string Name)[] SettingsTabs =
@@ -1445,7 +1483,16 @@ else
     private Task SwitchWorkflowAsync(string value)
     {
         if (busy && value != workflow) return Task.CompletedTask;
+        collectionNavigationOpen = false;
+        if (value == "review")
+        {
+            workflow = "gallery";activeTool = "review";toolboxVisible = true;
+            return FilterChangedAsync();
+        }
+        if (value == "tags") { workflow = "settings";settingsTab = "tags";return Task.CompletedTask; }
         workflow = value;
+        if (value == "collections") collectionLocation = new();
+        if (value == "unorganized") collectionLocation = new(Unorganized: true);
         ClearSelection();
         if (value == "duplicates")
         {
@@ -1746,6 +1793,11 @@ else
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         PublishToasts();
+        if (focusCollectionNavigation is { } open)
+        {
+            focusCollectionNavigation = null;
+            await JS.InvokeVoidAsync("galleryViewer.focusCollectionNavigation", open);
+        }
         if (!firstRender) return;
         gridReference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("galleryGrid.attach", gridReference);
@@ -2182,6 +2234,9 @@ else
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
         Gallery.LockVault();
         images.Clear();
+        collectionCatalog = CollectionCatalog.Empty;
+        collectionLocation = new();
+        collectionNavigationOpen = false;
         browsingProjection = GalleryBrowsingProjection.Empty;
         browsingSource = null;
         StopThumbnailLoad();

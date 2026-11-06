@@ -17,6 +17,9 @@ internal sealed class VisionManager(HttpClient httpClient)
         CreateGateway(settings).SuggestCollectionAsync(
             settings.Model, settings.RequestTimeoutSeconds, description, tags, collections);
 
+    public Task<string> SuggestSetAsync(VisionSettings settings, string collection, IReadOnlyList<MediaSet> sets, IReadOnlyList<ImageRecord> images) =>
+        CreateGateway(settings).SuggestSetAsync(collection, sets, images);
+
     public Task<GalleryFilter> InterpretSearchAsync(
         VisionSettings settings, string query, IEnumerable<string> collections)
     {

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using System.Data.Common;
 using System.Globalization;
 using Gallery.Core.Models;
@@ -10,6 +11,9 @@ internal sealed partial class TursoGalleryStore
     private sealed record MediaColumn(string Name, Func<ImageRecord, object?> Value);
     private static readonly MediaColumn[] MediaColumns =
     [
+        new("set_id", r => r.SetId),
+        new("set_order", r => r.SetOrder),
+        new("legacy_collections", r => JsonSerializer.Serialize(r.LegacyCollections)),
         new("name", r => r.Name),
         new("original_name", r => r.OriginalName),
         new("stored_path", r => r.StoredPath),
@@ -84,6 +88,9 @@ internal sealed partial class TursoGalleryStore
         return new ImageRecord
         {
             Id = Text("id"),
+            SetId = Missing("set_id") ? null : Text("set_id"),
+            SetOrder = Number("set_order"),
+            LegacyCollections = JsonSerializer.Deserialize<ImmutableArray<string>>(Text("legacy_collections")),
             Name = Text("name"),
             OriginalName = Text("original_name"),
             StoredPath = Text("stored_path"),

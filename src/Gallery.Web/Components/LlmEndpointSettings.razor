@@ -45,6 +45,10 @@
         <textarea id="collection-suggestion-prompt" rows="5" @bind="draft.CollectionSuggestionSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="collection-suggestion-prompt-help"></textarea>
         <p id="collection-suggestion-prompt-help" class="text-muted-foreground">Used by the text-only collection suggestion request. Expects JSON with a collection string of 1–80 characters.</p>
         <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultCollectionPrompt">Restore default collection suggestion prompt</Button>
+        <Label For="set-suggestion-prompt" Class="mt-4 mb-2 block">Set destination suggestion system prompt</Label>
+        <textarea id="set-suggestion-prompt" rows="5" @bind="draft.SetSuggestionSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required></textarea>
+        <p class="text-muted-foreground">Used by the shared move dialog. Chooses an existing set in the selected collection; returns JSON with setId. Suggestions never move media automatically.</p>
+        <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="() => draft.SetSuggestionSystemPrompt = VisionSettings.DefaultSetSuggestionSystemPrompt">Restore default set prompt</Button>
         <Label For="search-system-prompt" Class="mt-4 mb-2 block">Search interpretation system prompt</Label>
         <textarea id="search-system-prompt" rows="8" @bind="draft.SearchSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="search-system-prompt-help"></textarea>
         <p id="search-system-prompt-help" class="text-muted-foreground">Used by natural-language search. Expects JSON with search, tag, collection, minRating, favoritesOnly, orientation and review.</p>
@@ -124,6 +128,7 @@
         public string TagVocabularyInstructions { get; set; } = VisionSettings.DefaultTagVocabularyInstructions;
         public string CollectionAnalysisInstructions { get; set; } = VisionSettings.DefaultCollectionAnalysisInstructions;
         public string CollectionSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultCollectionSuggestionSystemPrompt;
+        public string SetSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultSetSuggestionSystemPrompt;
         public string SearchSystemPrompt { get; set; } = VisionSettings.DefaultSearchSystemPrompt;
         public int RequestTimeoutSeconds { get; set; }
 
@@ -136,6 +141,7 @@
             TagVocabularyInstructions = settings.TagVocabularyInstructions,
             CollectionAnalysisInstructions = settings.CollectionAnalysisInstructions,
             CollectionSuggestionSystemPrompt = settings.CollectionSuggestionSystemPrompt,
+            SetSuggestionSystemPrompt = settings.SetSuggestionSystemPrompt,
             SearchSystemPrompt = settings.SearchSystemPrompt,
             RequestTimeoutSeconds = settings.RequestTimeoutSeconds
         };
@@ -149,6 +155,7 @@
             TagVocabularyInstructions = TagVocabularyInstructions,
             CollectionAnalysisInstructions = CollectionAnalysisInstructions,
             CollectionSuggestionSystemPrompt = CollectionSuggestionSystemPrompt,
+            SetSuggestionSystemPrompt = SetSuggestionSystemPrompt,
             SearchSystemPrompt = SearchSystemPrompt,
             RequestTimeoutSeconds = RequestTimeoutSeconds
         };

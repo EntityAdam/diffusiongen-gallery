@@ -114,6 +114,17 @@ internal sealed partial class VisionService
         return GetSuggestedCollectionName(jsonDocument);
     }
 
+    public async Task<string> SuggestSetAsync(string collection, IReadOnlyList<MediaSet> sets, IReadOnlyList<ImageRecord> images)
+    {
+        ValidateSystemPrompt(settings.SetSuggestionSystemPrompt, "Set suggestion system prompt");
+        var payload = JsonSerializer.Serialize(new { collection, sets = sets.Select(set => new { set.Id, set.Name }),
+            media = images.Select(image => new { image.Description, image.Tags }) });
+        using var json = await CompleteTextAsync(settings.Model, settings.RequestTimeoutSeconds, settings.SetSuggestionSystemPrompt, payload);
+        var id = ReadRequiredResponseString(json.RootElement, "setId");
+        if (id.Length > 0 && !sets.Any(set => set.Id == id)) throw new InvalidOperationException("The model suggested a set outside this collection. No media were moved.");
+        return id;
+    }
+
     private static string GetSuggestedCollectionName(JsonDocument jsonDocument)
     {
         var suggestedCollection = jsonDocument.RootElement.GetProperty("collection").GetString();
