@@ -3,6 +3,9 @@ using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Web.Components;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using ShadCn.Blazor.Components;
 
 namespace Gallery.Tests;
 
@@ -20,12 +23,12 @@ public sealed class ReviewTests
         {
             Description = "preserve", Tags = "existing", Rating = 3, IsFavorite = true
         });
-        var workbench = new Gallery.Web.Components.LibraryWorkbench();
+        var services = new ServiceCollection();
+        services.AddShadCnBlazorComponents();
+        using var provider = services.BuildServiceProvider();
+        using var workbench = CreateWorkbench(fixture.Service, provider.GetRequiredService<ISonnerService>());
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = workbench.GetType();
-        type.GetProperty("Gallery", flags)!.SetValue(workbench, fixture.Service);
-        type.GetProperty("Logger", flags)!.SetValue(workbench,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.LibraryWorkbench>.Instance);
         type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { image.Id });
         var collection = await fixture.Service.CreateCollectionAsync("new collection");
         var set = await fixture.Service.CreateSetAsync(collection.Id, "New set");
@@ -36,6 +39,7 @@ public sealed class ReviewTests
         Assert.Contains("new collection", collected.Collections);
         Assert.Equal("existing", collected.Tags);
         await (Task)type.GetMethod("ApplyTagsAsync", flags)!.Invoke(workbench, null)!;
+        Assert.Equal("", type.GetField("error", flags)!.GetValue(workbench));
         var tagged = Assert.Single(await fixture.Service.ListAsync());
         Assert.Contains("existing", tagged.Tags);
         Assert.Contains("new tag", tagged.Tags);
@@ -87,12 +91,12 @@ public sealed class ReviewTests
         first = await fixture.Service.UpdateAsync(first.Id, edit => edit with { Tags = "warm, Portrait", Rating = 4 });
         second = await fixture.Service.UpdateAsync(second.Id, edit => edit with { Tags = "portrait" });
         other = await fixture.Service.UpdateAsync(other.Id, edit => edit with { Tags = "warm" });
-        var workbench = new Gallery.Web.Components.LibraryWorkbench();
+        var services = new ServiceCollection();
+        services.AddShadCnBlazorComponents();
+        using var provider = services.BuildServiceProvider();
+        using var workbench = CreateWorkbench(fixture.Service, provider.GetRequiredService<ISonnerService>());
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = workbench.GetType();
-        type.GetProperty("Gallery", flags)!.SetValue(workbench, fixture.Service);
-        type.GetProperty("Logger", flags)!.SetValue(workbench,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.LibraryWorkbench>.Instance);
         type.GetProperty(nameof(workbench.Images))!.SetValue(workbench, new List<ImageRecord> { first, second, other });
         type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { first.Id, second.Id });
 
@@ -100,11 +104,24 @@ public sealed class ReviewTests
         Assert.Equal([("Portrait", 2), ("warm", 1)], chips);
 
         await (Task)type.GetMethod("RemoveTagAsync", flags)!.Invoke(workbench, ["warm"])!;
+        Assert.Equal("", type.GetField("error", flags)!.GetValue(workbench));
         var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
         Assert.Equal("Portrait", stored[first.Id].Tags);
         Assert.Equal(4, stored[first.Id].Rating);
         Assert.Equal("portrait", stored[second.Id].Tags);
         Assert.Equal("warm", stored[other.Id].Tags);
+    }
+
+    private static LibraryWorkbench CreateWorkbench(GalleryService gallery, ISonnerService toasts)
+    {
+        var workbench = new LibraryWorkbench();
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var type = typeof(LibraryWorkbench);
+        type.GetProperty("Gallery", flags)!.SetValue(workbench, gallery);
+        type.GetProperty("OrganizationHistory", flags)!.SetValue(workbench, new OrganizationHistory(gallery));
+        type.GetProperty("Toasts", flags)!.SetValue(workbench, toasts);
+        type.GetProperty("Logger", flags)!.SetValue(workbench, NullLogger<LibraryWorkbench>.Instance);
+        return workbench;
     }
 
     [Theory]
