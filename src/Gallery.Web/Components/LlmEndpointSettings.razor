@@ -1,5 +1,6 @@
 @inject GalleryService Gallery
 @inject ILogger<LlmEndpointSettings> Logger
+@inject ISonnerService Toasts
 
 <Card Class="mb-6 p-5 md:p-6 space-y-4">
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Connect your local LLM</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">OPENAI-COMPATIBLE</Badge></div>
@@ -56,11 +57,10 @@
         <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultSearchPrompt">Restore default search prompt</Button>
         <div class="flex flex-wrap items-center gap-2">
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@working" OnClick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</Button>
-            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="submit" Disabled="@working">Save LLM settings</Button>
+            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="submit" Disabled="@(working || !HasUnsavedChanges)">Save LLM settings</Button>
         </div>
     </form>
-    @if (message.Length > 0) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@message</p> }
-    @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
+
     <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground">Settings, including the optional API key, are encrypted in your gallery. Fetch models tests the entered endpoint without saving it. Save to apply changes to subsequent requests.</div>
 </Card>
 
@@ -70,7 +70,7 @@
     [Parameter] public EventCallback<VisionSettings> Saved { get; set; }
     private VisionSettingsDraft draft = new();
     private VisionSettings? observedSettings;
-    private bool HasUnsavedChanges => draft.ToSettings() != observedSettings;
+    public bool HasUnsavedChanges => draft.ToSettings() != observedSettings;
     protected override void OnParametersSet()
     {
         if (Equals(observedSettings, SavedSettings)) return;
@@ -80,6 +80,15 @@
     private IReadOnlyList<string> models = [];
     private string message = "", error = "";
     private bool working;
+    public bool IsBusy => working;
+    public string ErrorMessage => error;
+    public void DiscardDraft() => draft = VisionSettingsDraft.From(SavedSettings);
+    public async Task<bool> SaveDraftAsync()
+    {
+        if (working) return false;
+        await SaveAsync();
+        return error.Length == 0 && !HasUnsavedChanges;
+    }
 
     private void RestoreDefaultPrompt() => draft.SystemPrompt = VisionSettings.DefaultSystemPrompt;
     private void RestoreDefaultCollectionInstructions() => draft.CollectionAnalysisInstructions = VisionSettings.DefaultCollectionAnalysisInstructions;
@@ -119,7 +128,12 @@
             error = exception is InvalidOperationException or HttpRequestException or System.Text.Json.JsonException
                 ? exception.Message : "Could not update LLM settings. Check the application console.";
         }
-        finally { working = false; }
+        finally
+        {
+            working = false;
+            if (error.Length > 0) Toasts.Show("Could not update LLM settings", error, SonnerToastVariant.Destructive, 8000);
+            if (message.Length > 0) Toasts.Show(message, "", SonnerToastVariant.Default, 4000);
+        }
     }
 
     private sealed class VisionSettingsDraft

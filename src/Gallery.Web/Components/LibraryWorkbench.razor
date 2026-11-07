@@ -1,5 +1,6 @@
 @using Gallery.Core.Exceptions
 @inject GalleryService Gallery
+@inject ISonnerService Toasts
 @inject ILogger<LibraryWorkbench> Logger
 @implements IDisposable
 
@@ -101,8 +102,7 @@
         <p class="text-muted-foreground text-sm">@UnanalyzedCount without a description · @suggestions.Count awaiting approval</p>
     }
     @if (working) { <p class="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm break-words" role="status">@status</p> }
-    @if (notice.Length > 0) { <p class="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm break-words" role="status">@notice</p> }
-    @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
+
     @if (compareImages.Count == 2)
     {
         <div class="fixed inset-0 z-40 overflow-y-auto bg-black/90 p-3 md:p-7">
@@ -201,6 +201,8 @@
         finally
         {
             if (reportJob) jobMessage = error.Length > 0 ? "Operation reported errors. Open workflow for details." : notice;
+            if (error.Length > 0) Toasts.Show("Something went wrong", error, SonnerToastVariant.Destructive, 8000);
+            if (notice.Length > 0) Toasts.Show(notice, "", SonnerToastVariant.Default, 4000);
             working = analyzing = reportingJob = false;
             await PublishJobAsync();
         }

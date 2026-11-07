@@ -208,6 +208,111 @@ public sealed class UiSaveBehaviorTests
         });
     }
 
+    [Theory]
+    [InlineData("KeepEditingSettings", false, false)]
+    [InlineData("DiscardSettingsAndContinueAsync", true, false)]
+    [InlineData("SaveSettingsAndContinueAsync", true, true)]
+    public async Task LeavingLlmSettingsOffersKeepDiscardOrSave(string choice, bool leaves, bool saves)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "original" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        Home home = null!;
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<Home>>(
+            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<Home>)(value => home = value) })));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await Invoke(home, "SwitchWorkflowAsync", "settings");
+            await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
+            Call(home, "StateHasChanged");
+        });
+        var component = Get<LlmEndpointSettings>(home, "llmEndpointSettings");
+        var draft = Get<object>(component, "draft");
+        draft.GetType().GetProperty("Model")!.SetValue(draft, "edited");
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await Invoke(home, "SwitchSettingsTabAsync", "overview");
+            Assert.NotNull(Get<Func<Task>?>(home, "pendingSettingsAction"));
+            Assert.Equal("endpoints", Get<string>(home, "settingsTab"));
+            if (Call(home, choice) is Task task) await task;
+        });
+        Assert.Equal(leaves ? "overview" : "endpoints", Get<string>(home, "settingsTab"));
+        Assert.Equal(saves ? "edited" : "original", (await vault.Service.SettingsAsync()).Model);
+        Assert.Null(Get<Func<Task>?>(home, "pendingSettingsAction"));
+        Assert.Equal(!leaves, component.HasUnsavedChanges);
+    }
+
+    [Fact]
+    public async Task InvalidLlmSaveKeepsDraftAndPendingNavigation()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "original" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        Home home = null!;
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<Home>>(
+            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<Home>)(value => home = value) })));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await Invoke(home, "SwitchWorkflowAsync", "settings");
+            await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
+            Call(home, "StateHasChanged");
+        });
+        var component = Get<LlmEndpointSettings>(home, "llmEndpointSettings");
+        var draft = Get<object>(component, "draft");
+        draft.GetType().GetProperty("Endpoint")!.SetValue(draft, "invalid-url");
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await Invoke(home, "SwitchWorkflowAsync", "gallery");
+            await Invoke(home, "SaveSettingsAndContinueAsync");
+        });
+        Assert.Equal("settings", Get<string>(home, "workflow"));
+        Assert.Equal("endpoints", Get<string>(home, "settingsTab"));
+        Assert.NotNull(Get<Func<Task>?>(home, "pendingSettingsAction"));
+        Assert.True(component.HasUnsavedChanges);
+        Assert.Equal("invalid-url", draft.GetType().GetProperty("Endpoint")!.GetValue(draft));
+        Assert.Equal("original", (await vault.Service.SettingsAsync()).Model);
+    }
+
+    [Theory]
+    [InlineData("ingest", false)]
+    [InlineData("ingest", true)]
+    [InlineData("backups", false)]
+    [InlineData("backups", true)]
+    public async Task LeavingIngestionOrBackupsProtectsDrafts(string section, bool save)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        Home home = null!;
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<Home>>(
+            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<Home>)(value => home = value) })));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await Invoke(home, "ReloadAsync");
+            if (section == "ingest")
+            {
+                await Invoke(home, "SwitchWorkflowAsync", "ingest");
+                Set(home, "ingestionWorkers", 2);
+            }
+            else
+            {
+                await Invoke(home, "SwitchWorkflowAsync", "settings");
+                await Invoke(home, "SwitchSettingsTabAsync", "backups");
+                Set(home, "backupLocalDirectory", vault.Root + "-backups");
+            }
+            await Invoke(home, "SwitchWorkflowAsync", "gallery");
+            Assert.NotNull(Get<Func<Task>?>(home, "pendingSettingsAction"));
+            Assert.NotEqual("gallery", Get<string>(home, "workflow"));
+            await Invoke(home, save ? "SaveSettingsAndContinueAsync" : "DiscardSettingsAndContinueAsync");
+        });
+        Assert.Equal("gallery", Get<string>(home, "workflow"));
+        Assert.Null(Get<Func<Task>?>(home, "pendingSettingsAction"));
+        if (section == "ingest") Assert.Equal(save, (await vault.Service.LoadIngestionOptionsAsync()).Workers == 2);
+        else Assert.Equal(save ? vault.Root + "-backups" : "", (await vault.Service.LoadBackupOptionsAsync()).LocalDirectory);
+    }
+
     private sealed class AnalysisHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) =>

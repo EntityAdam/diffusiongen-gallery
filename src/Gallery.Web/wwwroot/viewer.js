@@ -52,7 +52,7 @@ window.galleryGrid = {
                 const cards = Array.from(doc.querySelectorAll(".image-card[data-image-id]"));
                 if (cards.length === 0) return;
                 const current = cards.findIndex(card => card.dataset.imageId === id);
-                const columns = columnsOf(cards[0].parentElement);
+                const columns = columnsOf(cards[0].closest(".image-grid") ?? cards[0].parentElement);
                 const step = { arrowleft: -1, arrowright: 1, arrowup: -columns, arrowdown: columns }[key];
                 const next = cards[current < 0 ? 0 : Math.min(cards.length - 1, Math.max(0, current + step))];
                 event.preventDefault();

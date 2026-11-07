@@ -506,7 +506,7 @@ else
     }
     @if (workflow == "settings" && settingsTab == "endpoints")
     {
-        <LlmEndpointSettings KnownTags="AllTags" SavedSettings="settings" Saved="value => settings = value" />
+        <LlmEndpointSettings @ref="llmEndpointSettings" KnownTags="AllTags" SavedSettings="settings" Saved="value => settings = value" />
     }
     @if (workflow == "settings" && settingsTab == "tags")
     {
@@ -584,7 +584,7 @@ else
         else {
             <Button Variant="ButtonVariant.Outline" Class="collection-navigation-toggle" aria-label="Show collection navigation" aria-expanded="@(collectionNavigationOpen ? "true" : "false")" OnClick="ToggleCollectionNavigation">Collections navigation</Button>
             @if (collectionNavigationOpen) { <button class="collection-nav-backdrop" aria-label="Close collection navigation" @onclick="CloseCollectionNavigation"></button> }
-            <CollectionsWorkspace Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="NavigateCollectionsAsync" Changed="ReloadAsync" Open="OpenCollectionViewer" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
+            <CollectionsWorkspace @ref="collectionsWorkspace" Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="NavigateCollectionsAsync" Changed="ReloadAsync" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
     }
     @if (workflow == "gallery")
     {
@@ -769,6 +769,21 @@ else
                         @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                     </div>
                 </div>
+            </Card>
+        </ModalDialog>
+    }
+    @if (pendingSettingsAction is not null)
+    {
+        <ModalDialog LabelledBy="unsaved-settings-title" Busy="@(busy || llmEndpointSettings?.IsBusy == true)" Close="KeepEditingSettings">
+            <Card Class="mx-auto max-w-lg space-y-4 p-5">
+                <h2 id="unsaved-settings-title">Save your settings?</h2>
+                <p>These settings have unsaved changes.</p>
+                <div class="flex flex-wrap gap-2">
+                    <Button Variant="ButtonVariant.Outline" Disabled="@(busy || llmEndpointSettings?.IsBusy == true)" OnClick="KeepEditingSettings" autofocus>Keep editing</Button>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@(busy || llmEndpointSettings?.IsBusy == true)" OnClick="DiscardSettingsAndContinueAsync">Discard changes</Button>
+                    <Button Disabled="@(busy || llmEndpointSettings?.IsBusy == true)" OnClick="SaveSettingsAndContinueAsync">Save changes</Button>
+                </div>
+                @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
             </Card>
         </ModalDialog>
     }
@@ -1028,9 +1043,13 @@ else
         workflow = location.Unorganized ? "unorganized" : "collections";
         return Task.CompletedTask;
     }
-    private void OpenCollectionViewer((ImageRecord[] Images, string InitialId) request)
+    private CollectionsWorkspace? collectionsWorkspace;
+    private IReadOnlyList<ImageRecord>? detailViewerImages;
+    private async Task OpenCollectionDetailsAsync((ImageRecord[] Images, string InitialId) request)
     {
-        reviewMode = false;viewerImages = request.Images.ToList();viewerInitialId = request.InitialId;
+        var image = request.Images.First(item => item.Id == request.InitialId);
+        await OpenAsync(image);
+        if (selected?.Id == image.Id) detailViewerImages = request.Images;
     }
     private bool sidebarCollapsed;
     private LibraryWorkbench? workbench;
@@ -1043,8 +1062,8 @@ else
     private bool progressToastScheduled;
     private bool TrashActive => activeTool == "trash";
     private bool ToolboxShown => toolboxVisible && workflow == "gallery";
-    // Gallery feedback is shown as toasts so the main content holds only media cards; dialogs keep their inline messages.
-    private bool UsesToasts => Gallery.IsUnlocked && workflow == "gallery" && selected is null && removalPlan.Count == 0;
+    // Action feedback uses toasts across workflows; native dialogs retain inline validation.
+    private bool UsesToasts => selected is null && removalPlan.Count == 0 && pendingSettingsAction is null;
     private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
     private GalleryFilter? browsingFilter;
     private static readonly (string Id, string Name)[] Workflows =
@@ -1509,7 +1528,10 @@ else
             Logger.LogWarning(exception, "Toolbox preferences were not saved");
         }
     }
-    private Task SwitchWorkflowAsync(string value)
+    private Task SwitchWorkflowAsync(string value) => value == workflow
+        ? Task.CompletedTask : RequestSettingsActionAsync(() => SwitchWorkflowCoreAsync(value));
+
+    private Task SwitchWorkflowCoreAsync(string value)
     {
         if (busy && value != workflow) return Task.CompletedTask;
         collectionNavigationOpen = false;
@@ -1544,7 +1566,10 @@ else
         }
         return FilterChangedAsync();
     }
-    private Task SwitchSettingsTabAsync(string value)
+    private Task SwitchSettingsTabAsync(string value) => value == settingsTab
+        ? Task.CompletedTask : RequestSettingsActionAsync(() => SwitchSettingsTabCoreAsync(value));
+
+    private Task SwitchSettingsTabCoreAsync(string value)
     {
         if (value == "endpoints")
             return RunAsync("Loading LLM settings...", async () =>
@@ -1719,6 +1744,8 @@ else
         var imageIndex = images.FindIndex(image => image.Id == updated.Id);
         if (imageIndex >= 0) images[imageIndex] = updated;
         if (selected?.Id == updated.Id) selected = updated;
+        if (detailViewerImages is not null)
+            detailViewerImages = detailViewerImages.Select(image => image.Id == updated.Id ? updated : image).ToArray();
         browsingSource = null;
         if (catalogPartial) StartCatalogLoad();
     }
@@ -1789,7 +1816,14 @@ else
             StateHasChanged();
             return;
         }
-        if (!Gallery.IsUnlocked || busy || !ShowsGallery || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
+        if (!Gallery.IsUnlocked || busy || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || reviewGroups.Count > 0) return;
+        if (workflow is "collections" or "unorganized" && collectionsWorkspace is not null)
+        {
+            await collectionsWorkspace.HandleGridKeyAsync(key, id, shift);
+            StateHasChanged();
+            return;
+        }
+        if (!ShowsGallery) return;
         if (key == "escape") { ClearSelection(); selectionAnchor = null; StateHasChanged(); return; }
         if (!imagesById.TryGetValue(id, out var image)) return;
         if (key == "x")
@@ -1798,23 +1832,9 @@ else
             StateHasChanged();
             return;
         }
-        Func<ImageRecordEdit, ImageRecordEdit>? update = key switch
-        {
-            "0" or "1" or "2" or "3" or "4" or "5" => current => Gallery.SetCuration(current, key[0] - '0', null),
-            "f" when !image.IsFavorite => current => current with { IsFavorite = true },
-            "f" => current => current with { IsFavorite = false },
-            "d" when !image.IsMarkedForDeletion => current => Gallery.SetDeletionMark(current, true),
-            "d" => current => Gallery.SetDeletionMark(current, false),
-            _ => null
-        };
+        var update = GalleryKeyboardCuration.ForKey(Gallery, key, image);
         if (update is null) return;
-        var done = key switch
-        {
-            "f" => image.IsFavorite ? "Removed from favorites." : "Added to favorites.",
-            "d" => image.IsMarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.",
-            "0" => "Rating cleared.",
-            _ => $"Rated {key} stars."
-        };
+        var done = GalleryKeyboardCuration.Message(key, image);
         await RunAsync("Saving...", () => CurateAsync([id], update, $"{image.Name}: {done}"));
         StateHasChanged();
     }
@@ -2057,6 +2077,7 @@ else
             using var reference = new DotNetStreamReference(content);
             videoUrl = await JS.InvokeAsync<string>("galleryMedia.createStreamUrl", reference, type);
         }
+        detailViewerImages = null;
         selected = image;
         preview = data;
         editDescription = image.Description;
@@ -2068,6 +2089,7 @@ else
     private void CloseDetail()
     {
         pendingDetailAction = null;
+        detailViewerImages = null;
         selected = null;
         preview = editDescription = editUserDescription = destination = rename = "";
         _ = ReleaseVideoAsync();
@@ -2089,12 +2111,13 @@ else
         info.Cfg is double cfg ? $"CFG {cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}" : ""
     }.Where(part => part.Length > 0));
 
-    private Task ShowPromptAsync(string prompt)
+    private async Task ShowPromptAsync(string prompt)
     {
-        if (catalogPartial) return Task.CompletedTask;
+        if (catalogPartial) return;
         CloseDetail();
+        if (!ShowsGallery) await SwitchWorkflowAsync("gallery");
         filter = filter with { Prompt = prompt };
-        return FilterChangedAsync();
+        await FilterChangedAsync();
     }
 
     private async Task DownloadAsync(ExportFile file)
@@ -2129,7 +2152,7 @@ else
     private void OpenViewer(string? initialId = null)
     {
         reviewMode = false;
-        viewerImages = PageImages.Select(image => image with { }).ToList();
+        viewerImages = (detailViewerImages ?? PageImages).Select(image => image with { }).ToList();
         if (initialId is not null && !viewerImages.Any(image => image.Id == initialId) && selected is not null)
             viewerImages.Add(selected with { });
         viewerInitialId = initialId ?? viewerImages.FirstOrDefault()?.Id ?? "";
@@ -2288,6 +2311,8 @@ else
         aiSuggestions = new Dictionary<string, OrganizationSuggestion>();
         DismissProgressToast();
         settingsTab = "overview";
+        pendingSettingsAction = null;
+        llmEndpointSettings = null;
         storageOverview = null;
         backupOptions = null;
         backupDestinationType = "local";

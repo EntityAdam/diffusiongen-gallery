@@ -443,3 +443,21 @@ test("Escape leaves native dialogs open until the save/discard decision closes t
     details.dispatchEvent(afterClose);
     assert.equal(afterClose.defaultPrevented, false);
 });
+
+test("vertical card navigation uses grid columns through collection wrappers", () => {
+    const { window, doc, card, key } = setup();
+    const grid = {};
+    const focused = [];
+    const cards = Array.from({ length: 6 }, (_, index) => {
+        const element = card(String(index));
+        element.parentElement = {};
+        element.closest = selector => selector === ".image-grid" ? grid : selector.startsWith(".image-card") ? element : null;
+        element.querySelector = () => ({ focus() { focused.push(index); } });
+        return element;
+    });
+    window.getComputedStyle = element => ({ gridTemplateColumns: element === grid ? "100px 100px 100px" : "100px" });
+    doc.querySelectorAll = () => cards;
+    doc.activeElement = cards[0];
+    assert.equal(key("ArrowDown", {}).defaultPrevented, true);
+    assert.deepEqual(focused, [3]);
+});

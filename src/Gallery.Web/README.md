@@ -177,6 +177,15 @@ or folder names.
 
 ## Browsing and organizing
 
+Action successes and failures appear as toasts across workflows. Dialog validation
+and ongoing job status stay beside their controls. Collection organization changes
+offer **Undo organization change** in the toolbar, including changes made by dragging
+sets. **Refresh** reloads data without repeating a failed mutation.
+
+Unsaved LLM, backup destination, and ingestion settings offer **Save changes**,
+**Discard changes**, or **Keep editing** before changing sections. Escape keeps the
+draft open; a failed save preserves the draft and pending navigation.
+
 The sidebar contains **Gallery**, **Duplicate finder**, **Ingest media**,
 **Settings**, and a **Toolbox** toggle. Collapse it to an icon rail when you need
 more space.
@@ -258,14 +267,18 @@ dimensions, orientation, analysis status, and import dates. Text search includes
 user descriptions. **Group by same prompt** groups exact positive-prompt matches;
 **Group by diffusion model** groups embedded model names. Prompt groups can be
 filtered with **Show only these**. Model-name filtering is partial and
-case-insensitive. Text fields wait 300 ms after typing stops before filtering;
+case-insensitive. Collections and Unorganized use the same media search matching
+within the displayed scope, including original names, metadata, tags, and both kinds
+of notes. Text fields wait 300 ms after typing stops before filtering;
 Enter or leaving the field applies the pending value immediately. While a filter
 is processing, newer text stays visible and only its latest value is queued.
 **Reset filters** cancels pending text updates.
 
 ### Media details
 
-Click a thumbnail to open details. The preview has a download icon at the top
+Click a thumbnail in Gallery, Collections, or Unorganized to open the same details
+dialog. Full-screen viewing is an explicit action and keeps the originating page’s
+media sequence. The preview has a download icon at the top
 right and a full-screen icon at the bottom right. Rating, favorite, and trash
 controls sit below it.
 
@@ -305,7 +318,8 @@ On a focused gallery card, or the card under the pointer:
 | Escape | Clear selection. |
 | Arrow keys | Move card focus. |
 
-These shortcuts are ignored while typing or while a dialog/viewer is open.
+The same shortcuts work in Collections and Unorganized. They are ignored while
+typing or while a dialog/viewer is open.
 
 **Full screen view** in Change view opens the current page; the details preview
 also provides access. Left/Right navigate within that page, D toggles deletion,
