@@ -372,6 +372,15 @@
         await Changed.InvokeAsync();
     });
 
+    public async Task StageSuggestionAsync(OrganizationSuggestion suggestion)
+    {
+        suggestions.RemoveAll(item => item.Id == suggestion.Id);
+        suggestions.Add(suggestion);
+        await PublishSuggestionsAsync();
+        await PublishJobAsync();
+        StateHasChanged();
+    }
+
     // Approval runs outside RunAsync so suggestions can be reviewed while a Play analysis is still running.
     public async Task<ImageRecord?> ApproveSuggestionAsync(OrganizationSuggestion suggestion)
     {

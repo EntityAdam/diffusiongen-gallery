@@ -355,7 +355,11 @@ window.galleryViewer = {
     openQuickEdit: function (dialog, key) {
         const previousFocus = document.activeElement && document.activeElement !== document.body
             ? document.activeElement : window.galleryFocus.lastElement;
-        window.galleryViewer.quickEditDialogs.set(key, { dialog, previousFocus });
+        // Cancel must be prevented synchronously, before the server handles Escape.
+        // Otherwise a notes confirmation can leave its underlying details dialog hidden.
+        const preventNativeClose = event => event.preventDefault();
+        dialog.addEventListener("cancel", preventNativeClose);
+        window.galleryViewer.quickEditDialogs.set(key, { dialog, previousFocus, preventNativeClose });
         dialog.showModal();
         (dialog.querySelector("[autofocus]") ?? dialog.querySelector(".advanced-select-value") ?? dialog.querySelector("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)"))?.focus();
     },
@@ -363,6 +367,7 @@ window.galleryViewer = {
         const entry = window.galleryViewer.quickEditDialogs.get(key);
         if (!entry) return;
         window.galleryViewer.quickEditDialogs.delete(key);
+        entry.dialog.removeEventListener("cancel", entry.preventNativeClose);
         entry.dialog.close();
         if (entry.previousFocus?.isConnected) entry.previousFocus.focus();
         else document.querySelector?.(".collection-page-heading h2")?.focus();

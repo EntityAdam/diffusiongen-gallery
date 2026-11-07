@@ -81,7 +81,7 @@ public sealed class UiConsistencyTests
     }
 
     [Fact]
-    public async Task DestinationCreation_IsExplicitlySavedEvenWhenMoveIsCancelled()
+    public async Task DestinationCreation_IsStagedAndDiscardedWhenMoveIsCancelled()
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
@@ -94,13 +94,13 @@ public sealed class UiConsistencyTests
         await Invoke(fixture, dialog, "SelectCollectionAsync", "New collection");
         await Invoke(fixture, dialog, "SelectSetAsync", "New set");
         var html = await Html(fixture, root);
-        Assert.Contains("Created: Collection New collection; Set New collection / New set", html);
-        Assert.Contains("remain available if you cancel", html);
+        Assert.Contains("Destination: New collection / New set", html);
+        Assert.Contains("Cancel discards this destination", html);
         await Invoke(fixture, dialog, "CancelAsync");
         Assert.True(cancelled);
         var catalog = await vault.Service.LoadCollectionCatalogAsync();
-        Assert.Equal("New collection", Assert.Single(catalog.Collections).Name);
-        Assert.Equal("New set", Assert.Single(catalog.Sets).Name);
+        Assert.Empty(catalog.Collections);
+        Assert.Empty(catalog.Sets);
     }
 
     [Theory]

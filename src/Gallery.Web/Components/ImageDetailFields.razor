@@ -47,14 +47,29 @@
     }
     <Card Class="@($"detail-section p-4 space-y-3 {(section == "notes" ? "detail-section-active" : "")}")">
         <h3>Notes</h3>
+        <p class="text-muted-foreground" role="status">@(Dirty ? "Unsaved changes" : "Notes are saved. Changes require Save notes.")</p>
         <Label For="description">Description</Label>
         <Textarea id="description" Rows="3" Value="@UserDescription" ValueChanged="UserDescriptionChanged" Disabled="@Busy" />
         <Label For="vision-notes">Vision notes</Label>
         <Textarea id="vision-notes" Rows="3" Value="@Description" ValueChanged="DescriptionChanged" Disabled="@Busy" />
         <div class="flex flex-wrap gap-2">
-            <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Save">Save notes</Button>
+            <Button Variant="ButtonVariant.Outline" Disabled="@(Busy || !Dirty)" OnClick="Save">Save notes</Button>
+            <Button Variant="ButtonVariant.Outline" Disabled="@(Busy || !Dirty)" OnClick="Discard">Discard changes</Button>
             <Button Disabled="@Busy" OnClick="Analyze">Analyze locally</Button>
         </div>
+        <p class="text-muted-foreground">Analysis creates a suggestion. Nothing is saved until you approve.</p>
+        @if (Suggestion is { } suggestion)
+        {
+            <aside class="space-y-2 rounded-lg border border-border p-3" aria-label="AI suggestion">
+                <h4>AI suggestion</h4>
+                <p class="whitespace-pre-wrap">@suggestion.Description</p>
+                <p>Tags: @suggestion.Tags</p>
+                <p class="text-muted-foreground">Approval replaces vision notes and adds suggested tags. Your description is saved separately.</p>
+                @if (Dirty) { <p>Save or discard your notes before approving this suggestion.</p> }
+                <Button Disabled="@(Busy || Dirty)" OnClick="Approve">Approve &amp; save</Button>
+                <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Dismiss">Dismiss</Button>
+            </aside>
+        }
         @if (Image.AnalysisModel.Length > 0) { <p class="text-xs text-muted-foreground">Analyzed by @Image.AnalysisModel</p> }
     </Card>
 </div>
@@ -72,6 +87,11 @@
     [Parameter] public EventCallback Remove { get; set; }
     [Parameter] public EventCallback DownloadWorkflow { get; set; }
     [Parameter] public EventCallback ShowPrompt { get; set; }
+    [Parameter] public bool Dirty { get; set; }
+    [Parameter] public EventCallback Discard { get; set; }
+    [Parameter] public OrganizationSuggestion? Suggestion { get; set; }
+    [Parameter] public EventCallback Approve { get; set; }
+    [Parameter] public EventCallback Dismiss { get; set; }
     private string section = "file";
     private string OriginalSourcePath => Image.SourcePath.Length > 0 ? Image.SourcePath
         : Image.SourceFolder.Length > 0 ? Path.Combine(Image.SourceFolder, Image.OriginalName) : "Unknown";

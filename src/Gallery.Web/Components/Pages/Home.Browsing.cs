@@ -94,7 +94,8 @@ public partial class Home
         browsingSource = null;
         mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
         catalogDirectory = "";
-        ApplyIngestionProfile(await Gallery.LoadIngestionOptionsAsync());
+        savedIngestionOptions = await Gallery.LoadIngestionOptionsAsync();
+        ApplyIngestionProfile(savedIngestionOptions);
         imagesById = images.ToDictionary(image => image.Id);
         UpdateDuplicateGroups();
         if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();

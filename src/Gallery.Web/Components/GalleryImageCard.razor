@@ -62,10 +62,10 @@
                 }
             </div>
         </div>
-        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" Class="@(Image.IsFavorite ? "h-7! w-7! shrink-0 text-primary" : "h-7! w-7! shrink-0")" OnClick="Favorite" aria-label="Toggle favorite" title="@(Image.IsFavorite ? "Remove favorite" : "Favorite")" aria-pressed="@(Image.IsFavorite ? "true" : "false")">
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" Class="@(Image.IsFavorite ? "h-7! w-7! shrink-0 text-primary" : "h-7! w-7! shrink-0")" OnClick="Favorite" aria-label="@(Image.IsFavorite ? "Remove favorite" : "Favorite")" title="@(Image.IsFavorite ? "Remove favorite" : "Favorite")" aria-pressed="@(Image.IsFavorite ? "true" : "false")">
             <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" />
         </Button>
-        <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Icon" Disabled="@Busy" Class="h-7! w-7! shrink-0" OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Trash")" title="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Trash")" aria-pressed="@(Image.IsMarkedForDeletion ? "true" : "false")">
+        <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Icon" Disabled="@Busy" Class="h-7! w-7! shrink-0" OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Restore from Trash" : "Move to Trash")" title="@(Image.IsMarkedForDeletion ? "Restore from Trash" : "Move to Trash")" aria-pressed="@(Image.IsMarkedForDeletion ? "true" : "false")">
             <TrashIcon Size="16" aria-hidden="true" />
         </Button>
     </div>
