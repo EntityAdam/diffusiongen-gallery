@@ -126,15 +126,16 @@ internal sealed partial class VisionService
         return text.Length <= 160 ? text : text[..160] + "...";
     }
 
-    private async Task<HttpResponseMessage> SendAsync(int requestTimeoutSeconds, HttpRequestMessage httpRequestMessage)
+    private async Task<HttpResponseMessage> SendAsync(int requestTimeoutSeconds, HttpRequestMessage httpRequestMessage, CancellationToken cancellationToken = default)
     {
         ValidateTimeout(requestTimeoutSeconds);
         if (!string.IsNullOrWhiteSpace(settings.ApiKey))
             httpRequestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
-        using var cancellationTokenSource = new CancellationTokenSource(TimeSpan.FromSeconds(requestTimeoutSeconds));
+        using var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(requestTimeoutSeconds));
         HttpResponseMessage httpResponseMessage;
         try { httpResponseMessage = await httpClient.SendAsync(httpRequestMessage, cancellationTokenSource.Token); }
-        catch (OperationCanceledException operationCanceledException)
+        catch (OperationCanceledException operationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new InvalidOperationException($"Local LLM request timed out after {requestTimeoutSeconds} seconds.", operationCanceledException);
         }
@@ -144,19 +145,21 @@ internal sealed partial class VisionService
         throw new InvalidOperationException($"Local LLM endpoint returned HTTP {status}. Check the endpoint, API key, model and server logs.");
     }
 
-    public async Task<(string Description, string Tags)> AnalyzeAsync(string model, int requestTimeoutSeconds, string imageData, IReadOnlyList<string>? existingTags = null)
+    public async Task<(string Description, string Tags)> AnalyzeAsync(string model, int requestTimeoutSeconds, string imageData, IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default)
     {
-        var result = await AnalyzeStructuredAsync(model, requestTimeoutSeconds, imageData, null, existingTags);
+        var result = await AnalyzeStructuredAsync(model, requestTimeoutSeconds, imageData, null, existingTags, cancellationToken);
         return (result.Description, result.Tags);
     }
 
     private async Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeStructuredAsync(
-        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string>? collections, IReadOnlyList<string>? existingTags)
+        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string>? collections, IReadOnlyList<string>? existingTags, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ValidateSystemPrompt(settings.SystemPrompt);
         var analysisMode = GetAnalysisMode(collections);
         using var httpRequestMessage = CreateAnalysisRequest(model, requestTimeoutSeconds, imageData, collections, analysisMode, existingTags);
-        using var httpResponseMessage = await SendAsync(requestTimeoutSeconds, httpRequestMessage);
+        using var httpResponseMessage = await SendAsync(requestTimeoutSeconds, httpRequestMessage, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         if (analysisMode == AnalysisMode.WithCollection) return await ReadAnalysisWithCollectionAsync(httpResponseMessage);
         var analysis = await ReadAnalysisAsync(httpResponseMessage);
         return (analysis.Description, analysis.Tags, "", "");

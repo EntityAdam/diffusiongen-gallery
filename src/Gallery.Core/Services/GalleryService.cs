@@ -284,11 +284,13 @@ public sealed partial class GalleryService
     }
     public Task<IReadOnlyList<string>> GetVisionModelsAsync(VisionSettings settings) =>
         RequiredVisionManager().GetModelsAsync(settings);
-    public async Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData)
+    public async Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData, CancellationToken cancellationToken = default)
     {
         var manager = RequiredVisionManager();
         var names = await LoadTagNamesAsync();
-        var result = await manager.AnalyzeImageAsync(settings, imageData, names);
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = await manager.AnalyzeImageAsync(settings, imageData, names, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return (result.Description, CanonicalVisionTags(result.Tags, names));
     }
     public Task<string> SuggestCollectionAsync(VisionSettings settings, string description, string tags,
@@ -296,11 +298,13 @@ public sealed partial class GalleryService
     public Task<GalleryFilter> InterpretSearchAsync(VisionSettings settings, string query, IEnumerable<string> collections) =>
         RequiredVisionManager().InterpretSearchAsync(settings, query, collections);
     public async Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
-        VisionSettings settings, string imageData, IEnumerable<string> collections)
+        VisionSettings settings, string imageData, IEnumerable<string> collections, CancellationToken cancellationToken = default)
     {
         var manager = RequiredVisionManager();
         var names = await LoadTagNamesAsync();
-        var result = await manager.AnalyzeImageWithCollectionAsync(settings, imageData, collections, names);
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = await manager.AnalyzeImageWithCollectionAsync(settings, imageData, collections, names, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return (result.Description, CanonicalVisionTags(result.Tags, names), result.Collection, result.Warning);
     }
 

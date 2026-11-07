@@ -59,7 +59,7 @@
                     <div class="rounded-lg border border-border p-3">
                         <strong>@suggestion.Name</strong><p>@suggestion.Tags</p>
                         <Button Variant="ButtonVariant.Outline" Disabled="@(working || string.IsNullOrWhiteSpace(suggestion.Tags))" OnClick="() => ApplyTagSuggestionAsync(suggestion)">Apply</Button>
-                        <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="() => tagSuggestions.Remove(suggestion)">Dismiss</Button>
+                        <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="() => DismissTagSuggestionAsync(suggestion)">Dismiss</Button>
                     </div>
                 }
             </div>
@@ -85,7 +85,7 @@
     }
     @if (Workflow == "intelligence")
     {
-        <p class="text-muted-foreground text-sm">Describe and tag media with your local vision model. Nothing is saved until you approve: cards with a suggestion show a <SparklesIcon Size="12" aria-hidden="true" /> badge, which opens the media item in full screen for review.</p>
+        <p class="text-muted-foreground text-sm">Describe and tag media with your local vision model. Suggestions are saved as encrypted drafts until you approve: cards with a suggestion show a <SparklesIcon Size="12" aria-hidden="true" /> badge, which opens the media item in full screen for review.</p>
         <div class="flex flex-wrap items-center gap-2">
             @if (analyzing)
             {
@@ -101,6 +101,14 @@
                     title="Analyze up to 24 selected media items">Analyze selected (@SelectedIds.Count)</Button>
         </div>
         <p class="text-muted-foreground text-sm">@UnanalyzedCount without a description · @suggestions.Count awaiting approval</p>
+    }
+    @if (!working && PendingAnalysisCount > 0)
+    {
+        <div class="flex flex-wrap items-center gap-2" role="status">
+            <p>@PendingAnalysisCount unfinished analysis item(s). Completed suggestions are saved.</p>
+            <Button Variant="ButtonVariant.Outline" OnClick="ResumeAnalysisAsync">Resume analysis</Button>
+            <Button Variant="ButtonVariant.Ghost" OnClick="DiscardQueueAsync">Discard unfinished queue</Button>
+        </div>
     }
     @if (working) { <p class="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm break-words" role="status">@status</p> }
 
@@ -174,15 +182,18 @@
         .GroupBy(value => value, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
     protected override void OnParametersSet()
     {
-        if (suggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id)) > 0) _ = PublishSuggestionsAsync();
-        tagSuggestions.RemoveAll(suggestion => !Images.Any(image => image.Id == suggestion.Id));
         var imagesById = Images.ToDictionary(image => image.Id);
         for (var index = 0; index < compareImages.Count; index++)
             if (imagesById.TryGetValue(compareImages[index].Id, out var image)) compareImages[index] = image;
     }
 
     // Saved views are an unexposed feature: the UI is hidden, but views stay loaded and encrypted for a future surface.
-    protected override Task OnInitializedAsync() => RunAsync("Loading saved views...", async () => views = await Gallery.LoadViewsAsync());
+    protected override Task OnInitializedAsync() => RunAsync("Loading saved drafts...", async () =>
+    {
+        views = await Gallery.LoadViewsAsync();
+        await EnsureCheckpointAsync();
+        await RestoreDraftsAsync();
+    });
 
     private async Task RunAsync(string message, Func<Task> action, bool reportJob = false)
     {
@@ -191,6 +202,7 @@
         reportingJob = reportJob;
         if (reportJob) jobWorkflow = Workflow;
         try { await PublishJobAsync(); await action(); }
+        catch (Exception) when (disposed || checkpoint?.RevocationToken.IsCancellationRequested == true) { }
         catch (Exception exception)
         {
             Logger.LogError(exception, "Library workbench operation failed");
@@ -200,8 +212,8 @@
         finally
         {
             if (reportJob) jobMessage = error.Length > 0 ? "Operation reported errors. Open workflow for details." : notice;
-            if (error.Length > 0) Toasts.Show("Something went wrong", error, SonnerToastVariant.Destructive, 8000);
-            if (notice.Length > 0) Toasts.Show(notice, "", SonnerToastVariant.Default, 4000);
+            if (!disposed && error.Length > 0) Toasts.Show("Something went wrong", error, SonnerToastVariant.Destructive, 8000);
+            if (!disposed && notice.Length > 0) Toasts.Show(notice, "", SonnerToastVariant.Default, 4000);
             working = analyzing = reportingJob = false;
             await PublishJobAsync();
         }
@@ -221,6 +233,8 @@
 
     public async Task DiscardTagSuggestionsAsync()
     {
+        await EnsureCheckpointAsync();
+        await checkpoint!.UpdateAsync(state => state with { Drafts = [] });
         tagSuggestions.Clear();
         suggestions.Clear();
         await PublishSuggestionsAsync();
@@ -230,6 +244,8 @@
 
     public async Task DismissSuggestionAsync(OrganizationSuggestion suggestion)
     {
+        await EnsureCheckpointAsync();
+        await checkpoint!.DismissAsync(suggestion.Id);
         suggestions.RemoveAll(item => item.Id == suggestion.Id);
         if (!working) jobMessage = $"{suggestions.Count} suggestions await approval.";
         await PublishSuggestionsAsync();
@@ -314,52 +330,6 @@
 
     private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing media without a description...", includeCollection: false);
 
-    private Task AnalyzeAsync(ImageRecord[] selected, List<OrganizationSuggestion> target, string message, bool includeCollection = true) => RunAsync(message, async () =>
-    {
-        if (selected.Length == 0) throw new InvalidOperationException("There is no media to analyze.");
-        cancelRequested = false;
-        analyzing = true;
-        var settings = await Gallery.SettingsAsync();
-        var failures = new List<string>();
-        var completed = 0;
-        foreach (var image in selected)
-        {
-            if (disposed || cancelRequested) break;
-            status = $"Analyzing {completed + 1} / {selected.Length}: {image.Name}";
-            await PublishJobAsync();
-            await InvokeAsync(StateHasChanged);
-            try
-            {
-                var suggestion = await AnalyzeSuggestionAsync(image, settings, includeCollection);
-                if (disposed) break;
-                target.RemoveAll(suggestion => suggestion.Id == image.Id);
-                target.Add(suggestion);
-                if (ReferenceEquals(target, suggestions)) await PublishSuggestionsAsync();
-                if (suggestion.Warning.Length > 0) Logger.LogWarning("Analysis collection warning for {ImageId}: {Warning}", image.Id, suggestion.Warning);
-            }
-            catch (Exception exception)
-            {
-                Logger.LogError(exception, "Local analysis failed for {ImageId}", image.Id);
-                failures.Add($"{image.Name}: {exception.Message}");
-            }
-            completed++;
-        }
-        notice = $"{(cancelRequested ? "Stopped" : "Analysis finished")}: {completed} / {selected.Length} processed; {failures.Count} failed. {target.Count} suggestions await approval.";
-        error = string.Join(" / ", failures);
-    }, reportJob: true);
-
-    private async Task<OrganizationSuggestion> AnalyzeSuggestionAsync(ImageRecord image, VisionSettings settings, bool includeCollection)
-    {
-        var preview = await Gallery.PreviewAsync(image.Id);
-        if (includeCollection)
-        {
-            var result = await Gallery.AnalyzeImageWithCollectionAsync(settings, preview, Collections.ToArray());
-            return new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model, result.Warning);
-        }
-        var tags = await Gallery.AnalyzeImageAsync(settings, preview);
-        return new(image.Id, image.Name, tags.Description, tags.Tags, "", settings.Model, "");
-    }
-
     private Task ApplyTagsAsync() => RunAsync("Applying tags...", async () =>
     {
         if (string.IsNullOrWhiteSpace(tags) || tags.Length > 4000) throw new InvalidOperationException("Enter tags of up to 4000 characters.");
@@ -368,24 +338,20 @@
 
     private Task ApplyTagSuggestionAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved tags...", async () =>
     {
+        await EnsureCheckpointAsync();
         await Gallery.UpdateAsync(suggestion.Id, image => image with { Tags = Gallery.MergeTags(image.Tags, suggestion.Tags) });
+        await checkpoint!.DismissAsync(suggestion.Id, tagsOnly: true);
         tagSuggestions.Remove(suggestion);
         await Changed.InvokeAsync();
     });
 
-    public async Task StageSuggestionAsync(OrganizationSuggestion suggestion)
-    {
-        suggestions.RemoveAll(item => item.Id == suggestion.Id);
-        suggestions.Add(suggestion);
-        await PublishSuggestionsAsync();
-        await PublishJobAsync();
-        StateHasChanged();
-    }
-
     // Approval runs outside RunAsync so suggestions can be reviewed while a Play analysis is still running.
     public async Task<ImageRecord?> ApproveSuggestionAsync(OrganizationSuggestion suggestion)
     {
+        await EnsureCheckpointAsync();
+        checkpoint!.RevocationToken.ThrowIfCancellationRequested();
         var imageRecord = await PersistApprovedSuggestionAsync(Gallery, suggestion);
+        await checkpoint.DismissAsync(suggestion.Id);
         suggestions.RemoveAll(item => item.Id == suggestion.Id);
         if (!working) jobMessage = $"{suggestions.Count} suggestions await approval.";
         await PublishSuggestionsAsync();
@@ -428,7 +394,7 @@
     });
 
     private void CloseComparison() { compareImages.Clear(); comparison.Clear(); }
-    public void Dispose() { disposed = true; cancelRequested = true; suggestions.Clear(); CloseComparison(); }
+    public void Dispose() { disposed = true; cancelRequested = true; analysisLifetime.Cancel(); checkpoint = null; suggestions.Clear(); tagSuggestions.Clear(); CloseComparison(); }
 }
 
 @if (showDestination) { <CollectionDestinationDialog Images="@Images.Where(image => SelectedIds.Contains(image.Id)).ToArray()" Saved="DestinationSavedAsync" Cancel="DestinationCanceledAsync" /> }

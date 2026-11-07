@@ -10,8 +10,8 @@ internal sealed partial class VisionService
     private const int MaximumSearchQueryLength = 2000;
 
     public Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
-        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string> collections, IReadOnlyList<string>? existingTags = null)
-        => AnalyzeStructuredAsync(model, requestTimeoutSeconds, imageData, collections, existingTags);
+        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string> collections, IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default)
+        => AnalyzeStructuredAsync(model, requestTimeoutSeconds, imageData, collections, existingTags, cancellationToken);
 
     public async Task<GalleryFilter> InterpretSearchAsync(string model, int requestTimeoutSeconds, string query, IEnumerable<string> collections)
     {

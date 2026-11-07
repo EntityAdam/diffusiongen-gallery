@@ -2221,14 +2221,10 @@ else
 
     private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>
     {
-        if (selected is null) return;
-        var image = selected;
-        var analysisSettings = await Gallery.SettingsAsync();
-        var result = await Gallery.AnalyzeImageAsync(analysisSettings, preview);
-        if (disposed || !Gallery.IsUnlocked || selected?.Id != image.Id) return;
-        var suggestion = new OrganizationSuggestion(image.Id, image.Name, result.Description, result.Tags, "", analysisSettings.Model);
-        if (workbench is not null) await workbench.StageSuggestionAsync(suggestion);
-        message = "AI suggestion ready. Review it and choose Approve & save. Nothing has been saved.";
+        EnsureNoLibraryJob();
+        if (selected is null || workbench is null) return;
+        await workbench.AnalyzeDetailAsync(selected);
+        if (Gallery.IsUnlocked) message = "Review available suggestions in the AI toolbox. Unfinished analysis can be resumed there.";
     });
 
     private Task MoveAsync() => RunAsync("Moving encrypted media...", async () =>
@@ -2305,6 +2301,7 @@ else
 
     private void Lock()
     {
+        workbench?.Dispose();
         OrganizationHistory.Clear();
         collectionWorking = false;
         CancelCatalogLoad();
