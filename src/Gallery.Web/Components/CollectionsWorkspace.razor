@@ -58,7 +58,7 @@
     }
 </div>
 @if (destination) { <CollectionDestinationDialog Images="@SelectedMedia" InitialCollectionId="@Collection?.Id" InitialSetId="@(choosingMedia ? Set?.Id : null)" Saved="MovedAsync" Cancel="CloseDestinationAsync" /> }
-@if (quickTags) { <QuickOrganizationDialog Tags="@CommonTags" ImageName="" Options="@KnownTags" RemoveTag="RemoveTagAsync" Busy="@working" Error="@error" Save="SaveTagsAsync" Cancel="() => quickTags = false" /> }
+@if (quickTags) { <QuickOrganizationDialog Tags="@CommonTags" ImageName="" Options="@KnownTags" Busy="@working" Error="@error" Save="SaveTagsAsync" Cancel="() => quickTags = false" /> }
 @if (modal is not null)
 { <OrganizationModal Title="@ModalTitle" Action="@(modal == "delete" ? (modalIsSet ? "Delete set" : "Delete collection") : modal == "move" ? "Move set" : modalId is null ? "Create" : "Save")" Error="@error" Busy="@working" Disabled="@(modal != "delete" && string.IsNullOrWhiteSpace(name))" Destructive='@(modal == "delete")' Submit="SubmitModalAsync" Close="CloseModal">
     @if (modal == "delete") { <p>@AffectedMedia media will move to Unorganized.@(modalIsSet ? "" : $" {Catalog.Sets.Count(set => set.CollectionId == modalId)} sets will be deleted.")</p><p class="text-muted-foreground">The media files, tags and ratings are preserved.</p> }
@@ -133,7 +133,7 @@
         var retained = PageMedia.Select(image => image.Id).ToHashSet();foreach (var id in thumbnails.Keys.Where(id => !retained.Contains(id)).ToArray()) thumbnails.Remove(id);
     }
     private Task Navigate(CollectionLocation location) => LocationChanged.InvokeAsync(location);
-    private async Task ResetPageAsync() { page = 0; selection.Clear(); await LoadThumbnailsAsync(); }
+    private async Task ResetPageAsync() { page = 0; selection.Clear(); anchor = null; await LoadThumbnailsAsync(); }
     private async Task SearchChanged(ChangeEventArgs e) { query = e.Value?.ToString() ?? ""; await ResetPageAsync(); }
     private async Task SortChanged(ChangeEventArgs e) { sort = e.Value?.ToString() ?? "name"; await ResetPageAsync(); }
     private async Task RatingFilterChanged(ChangeEventArgs e) { minRating = int.TryParse(e.Value?.ToString(), out var value) ? value : 0; await ResetPageAsync(); }
@@ -187,7 +187,6 @@
     private Task RateAsync(ImageRecord image, int rating) => RunAsync(async () => { await Gallery.UpdateAsync(image.Id, edit => Gallery.SetCuration(edit, image.Rating == rating ? 0 : rating, null));await RefreshParentAsync(); });
     private Task FavoriteAsync(ImageRecord image) => RunAsync(async () => { await Gallery.UpdateAsync(image.Id, edit => edit with { IsFavorite = !image.IsFavorite });await RefreshParentAsync(); });
     private Task MarkAsync(ImageRecord image) => RunAsync(async () => { await Gallery.UpdateAsync(image.Id, edit => Gallery.SetDeletionMark(edit, !image.IsMarkedForDeletion));await RefreshParentAsync(); });
-    private Task SaveTagsAsync(string tags) => RunAsync(async () => { await Gallery.UpdateManyAsync(quickTagIds, edit => edit with { Tags = Gallery.MergeTags(edit.Tags, tags) });quickTags = false;await RefreshParentAsync(); });
-    private Task RemoveTagAsync(string tag) => RunAsync(async () => { await Gallery.UpdateManyAsync(quickTagIds, edit => edit with { Tags = Gallery.RemoveTag(edit.Tags, tag) });await RefreshParentAsync(); });
+    private Task SaveTagsAsync(string tags) => RunAsync(async () => { await Gallery.UpdateManyAsync(quickTagIds, edit => edit with { Tags = TagSelection.Apply(Gallery, edit.Tags, CommonTags, tags) });quickTags = false;await RefreshParentAsync(); });
     public void Dispose() { disposed = true;thumbnailGeneration++;thumbnails.Clear(); }
 }

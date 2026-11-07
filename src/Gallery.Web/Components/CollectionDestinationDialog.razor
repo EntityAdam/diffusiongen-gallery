@@ -5,6 +5,8 @@
     <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
         <h2 id="destination-title">Move @Images.Count media to a set</h2>
         <p class="text-muted-foreground">Current location: @CurrentLocation</p>
+        <p class="text-muted-foreground">New collections and sets are created immediately and remain available if you cancel this move.</p>
+        @if (createdDestinations.Count > 0) { <p role="status">Created: @string.Join("; ", createdDestinations). These destinations are saved independently of this move.</p> }
         @if (loading) { <p role="status">Loading destinations…</p> }
         <label for="destination-collection">Collection</label>
         <AdvancedSelect Id="destination-collection" Label="Collections" ItemLabel="collection" Placeholder="Search or create a collection…"
@@ -32,6 +34,7 @@
     [Parameter] public EventCallback Cancel { get; set; }
     private ElementReference element;
     private readonly string key = Guid.NewGuid().ToString("N");
+    private readonly List<string> createdDestinations = [];
     private MediaSet? suggestedSet;
     private string suggestionNotice = "";
     private CollectionCatalog catalog = CollectionCatalog.Empty;
@@ -66,16 +69,16 @@
     {
         setName = "";suggestedSet = null;suggestionNotice = "";
         if (name.Length == 0) { collectionName = ""; return; }
-        var item = catalog.Collections.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-            ?? await Gallery.CreateCollectionAsync(name);
+        var item = catalog.Collections.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (item is null) { item = await Gallery.CreateCollectionAsync(name); createdDestinations.Add($"Collection {item.Name}"); }
         catalog = await Gallery.LoadCollectionCatalogAsync(); collectionName = item.Name;
     });
     private async Task SelectSetAsync(string name) => await RunAsync(async () =>
     {
         if (name.Length == 0) { setName = ""; return; }
         if (Collection is null) return;
-        var item = Sets.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-            ?? await Gallery.CreateSetAsync(Collection.Id, name);
+        var item = Sets.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (item is null) { item = await Gallery.CreateSetAsync(Collection.Id, name); createdDestinations.Add($"Set {Collection.Name} / {item.Name}"); }
         catalog = await Gallery.LoadCollectionCatalogAsync(); setName = item.Name;
     });
     private Task SuggestAsync() => RunAsync(async () =>

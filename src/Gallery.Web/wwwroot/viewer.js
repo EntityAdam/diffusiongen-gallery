@@ -14,8 +14,16 @@ document.addEventListener("drop", preventImageDrop, true);
 
 // Keyboard curation for the focused or hovered gallery card.
 window.galleryFocus = {
+    lastElement: null,
     byId: function (id) { document.getElementById(id)?.focus(); }
 };
+
+// A busy render can disable the opener before an asynchronous dialog is shown.
+// Remember focus before that render so closing still returns to the same control.
+document.addEventListener("focusin", event => {
+    if (event.target?.matches?.("button,a[href],input,textarea,select,[tabindex]"))
+        window.galleryFocus.lastElement = event.target;
+}, true);
 
 window.galleryGrid = {
     keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "`", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
@@ -38,7 +46,7 @@ window.galleryGrid = {
             if (!grid.keys.includes(key)) return;
             const editing = event.target?.closest?.("input,textarea,select,[contenteditable=true]");
             if (editing && !(editing.type === "checkbox" && cardOf(editing))) return;
-            if (doc.querySelector("[role=dialog][aria-modal=true]")) return;
+            if (doc.querySelector("[role=dialog][aria-modal=true], dialog[open]")) return;
             const id = cardOf(doc.activeElement)?.dataset.imageId ?? hoveredId;
             if (key.startsWith("arrow")) {
                 const cards = Array.from(doc.querySelectorAll(".image-card[data-image-id]"));
@@ -345,9 +353,11 @@ window.galleryViewer = {
     },
     quickEditDialogs: new Map(),
     openQuickEdit: function (dialog, key) {
-        window.galleryViewer.quickEditDialogs.set(key, { dialog, previousFocus: document.activeElement });
+        const previousFocus = document.activeElement && document.activeElement !== document.body
+            ? document.activeElement : window.galleryFocus.lastElement;
+        window.galleryViewer.quickEditDialogs.set(key, { dialog, previousFocus });
         dialog.showModal();
-        (dialog.querySelector(".advanced-select-value") ?? dialog.querySelector("input"))?.focus();
+        (dialog.querySelector("[autofocus]") ?? dialog.querySelector(".advanced-select-value") ?? dialog.querySelector("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)"))?.focus();
     },
     closeQuickEdit: function (key) {
         const entry = window.galleryViewer.quickEditDialogs.get(key);
