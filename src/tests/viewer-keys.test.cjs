@@ -38,7 +38,8 @@ function setup({ dialog = false, selection = false } = {}) {
         return event;
     };
     const hover = target => listeners.get("mouseover")({ target });
-    return { window, doc, listeners, calls, card, input, key, hover };
+    const leave = (target, relatedTarget = null) => listeners.get("mouseout")({ target, relatedTarget });
+    return { window, doc, listeners, calls, card, input, key, hover, leave };
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -89,6 +90,7 @@ test("rating, favorite and deletion keys act on the hovered or focused card", as
     const { doc, calls, card, key, hover } = setup();
     hover(card("hovered"));
     assert.equal(key("3", {}).defaultPrevented, true);
+    hover({});
     doc.activeElement = card("focused");
     key("F", {});
     assert.equal(key("Delete", {}).defaultPrevented, false);
@@ -97,6 +99,36 @@ test("rating, favorite and deletion keys act on the hovered or focused card", as
     await flush();
     assert.deepEqual(calls, [["HandleGridKey", "3", "hovered", false], ["HandleGridKey", "f", "focused", false],
         ["HandleGridKey", "d", "focused", false], ["HandleGridKey", "x", "focused", true]]);
+});
+
+test("hovered card overrides retained focus for all curation and selection shortcuts", async () => {
+    const { doc, calls, card, key, hover } = setup();
+    doc.activeElement = card("last-selected");
+    hover(card("under-pointer"));
+    for (const value of ["0", "1", "2", "3", "4", "5", "f", "d", "x"]) key(value, doc.activeElement);
+    hover(card("next-pointer-target"));
+    key("x", doc.activeElement, { shiftKey: true });
+    await flush();
+    assert.deepEqual(calls, [
+        ...["0", "1", "2", "3", "4", "5", "f", "d", "x"].map(value => ["HandleGridKey", value, "under-pointer", false]),
+        ["HandleGridKey", "x", "next-pointer-target", true]
+    ]);
+});
+
+test("leaving a card or the document clears hover and restores focused-card shortcuts", async () => {
+    const { doc, calls, card, key, hover, leave } = setup();
+    const hovered = card("under-pointer");
+    doc.activeElement = card("focused");
+    hover(hovered);
+    // Moving between controls within the same card must retain its target.
+    leave(hovered, hovered);
+    key("f", doc.activeElement);
+    leave(hovered);
+    key("d", doc.activeElement);
+    doc.activeElement = null;
+    assert.equal(key("f", {}).defaultPrevented, false);
+    await flush();
+    assert.deepEqual(calls, [["HandleGridKey", "f", "under-pointer", false], ["HandleGridKey", "d", "focused", false]]);
 });
 
 test("shortcuts are ignored while typing, with modifiers, without a card, or behind a dialog", async () => {
@@ -445,7 +477,7 @@ test("Escape leaves native dialogs open until the save/discard decision closes t
 });
 
 test("vertical card navigation uses grid columns through collection wrappers", () => {
-    const { window, doc, card, key } = setup();
+    const { window, doc, card, key, hover } = setup();
     const grid = {};
     const focused = [];
     const cards = Array.from({ length: 6 }, (_, index) => {
@@ -458,6 +490,7 @@ test("vertical card navigation uses grid columns through collection wrappers", (
     window.getComputedStyle = element => ({ gridTemplateColumns: element === grid ? "100px 100px 100px" : "100px" });
     doc.querySelectorAll = () => cards;
     doc.activeElement = cards[0];
+    hover(cards[5]);
     assert.equal(key("ArrowDown", {}).defaultPrevented, true);
     assert.deepEqual(focused, [3]);
 });
