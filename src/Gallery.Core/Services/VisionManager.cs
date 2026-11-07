@@ -9,8 +9,8 @@ internal sealed class VisionManager(HttpClient httpClient)
     public Task<IReadOnlyList<string>> GetModelsAsync(VisionSettings settings) =>
         CreateGateway(settings).GetModelsAsync(settings.RequestTimeoutSeconds);
 
-    public Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData, IReadOnlyList<string>? existingTags = null) =>
-        CreateGateway(settings).AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, imageData, existingTags);
+    public Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData, IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default) =>
+        CreateGateway(settings).AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, imageData, existingTags, cancellationToken);
 
     public Task<string> SuggestCollectionAsync(
         VisionSettings settings, string description, string tags, IEnumerable<string> collections) =>
@@ -29,9 +29,9 @@ internal sealed class VisionManager(HttpClient httpClient)
     }
 
     public Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
-        VisionSettings settings, string imageData, IEnumerable<string> collections, IReadOnlyList<string>? existingTags = null) =>
+        VisionSettings settings, string imageData, IEnumerable<string> collections, IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default) =>
         CreateGateway(settings).AnalyzeImageWithCollectionAsync(
-            settings.Model, settings.RequestTimeoutSeconds, imageData, collections, existingTags);
+            settings.Model, settings.RequestTimeoutSeconds, imageData, collections, existingTags, cancellationToken);
 
     private VisionService CreateGateway(VisionSettings settings) =>
         new(httpClient, settings);

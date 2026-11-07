@@ -411,13 +411,20 @@ In the AI toolbox panel:
 - **Analyze selected** analyzes up to 24 selected media items.
 - The eye-dashed badge opens a pending suggestion in the full-screen viewer.
   **Approve & save** replaces vision notes, merges tags, and adds the suggested
-  collection. **Dismiss** discards it. Locking also discards pending suggestions.
+  collection when present. **Dismiss** discards the encrypted draft.
+- Completed suggestions and unfinished queue items are checkpointed in the encrypted
+  catalog after each result. Locking cancels the current request and clears the UI;
+  completed drafts survive lock/unlock, page reloads, and application restarts.
+- After unlocking, **Resume analysis** retries unfinished and failed items using the
+  currently saved LLM settings. A canceled in-flight item runs again. Completed
+  results are not repeated. **Discard unfinished queue** keeps completed drafts.
 - **Stop** finishes the current request before stopping; the configured timeout
   still applies. Per-item failures are reported.
 
 Analysis runs only when requested and does not change rating, review state,
 deletion marks, or media files. The details dialog's **Analyze locally** action
-saves directly, as described above; it is not the same approval workflow.
+uses the same encrypted draft and approval workflow. Drafts are separate from saved
+vision notes; creating a draft does not mark the image as analyzed.
 
 The navigation job indicator remains visible across workflows. While an LLM job
 runs, browsing/review remain available, but file operations and gallery

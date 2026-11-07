@@ -57,7 +57,7 @@
             <Button Variant="ButtonVariant.Outline" Disabled="@(Busy || !Dirty)" OnClick="Discard">Discard changes</Button>
             <Button Disabled="@Busy" OnClick="Analyze">Analyze locally</Button>
         </div>
-        <p class="text-muted-foreground">Analysis creates a suggestion. Nothing is saved until you approve.</p>
+        <p class="text-muted-foreground">Analysis saves an encrypted draft. Approve it to update vision notes and tags.</p>
         @if (Suggestion is { } suggestion)
         {
             <aside class="space-y-2 rounded-lg border border-border p-3" aria-label="AI suggestion">
