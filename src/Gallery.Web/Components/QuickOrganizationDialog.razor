@@ -10,7 +10,11 @@
         }
         <label for="quick-organization-value">Tags</label>
         <AdvancedSelect Id="quick-organization-value" Label="Tags" ItemLabel="tag" Placeholder="Select tags…" Multiple="true" MaxLength="4000"
-                            Options="@Options" Counts="@Counts" Values="@SelectedTags" ValuesChanged="TagsChangedAsync" Disabled="@Busy" />
+                            Options="@Options" Counts="@Counts" SelectionCounts="@AssignmentCounts" SelectionTotal="@MediaCount" Values="@SelectedTags" ValuesChanged="TagsChangedAsync" Disabled="@Busy" />
+        @if (MediaCount > 1)
+        {
+            <p class="text-sm text-muted-foreground">Counts show assignments on the selected media. Unchanged tags keep their existing assignments. Removing a tag removes it from all selected media; new tags apply to all.</p>
+        }
         @if (Error.Length > 0) { <p role="alert" class="text-destructive">@Error</p> }
         <div class="mt-3 flex justify-end gap-2">
             <button type="button" class="rounded-md border border-border px-3 py-2 text-sm" disabled="@Busy" @onclick="CancelAsync">Cancel</button>
@@ -23,6 +27,8 @@
     [Parameter] public string Tags { get; set; } = "";
     [Parameter] public string ImageName { get; set; } = "";
     [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, int>? AssignmentCounts { get; set; }
+    [Parameter] public int MediaCount { get; set; } = 1;
     [Parameter] public IEnumerable<string> Options { get; set; } = [];
     [Parameter] public bool Busy { get; set; }
     [Parameter] public string Error { get; set; } = "";

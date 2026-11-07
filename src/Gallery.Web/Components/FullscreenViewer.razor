@@ -1,5 +1,6 @@
 @implements IAsyncDisposable
 @inject GalleryService Gallery
+@inject OrganizationHistory OrganizationHistory
 @inject IJSRuntime JS
 @inject ILogger<FullscreenViewer> Logger
 
@@ -80,7 +81,7 @@
         else { <QuickOrganizationDialog ImageName="@Current.Name" Tags="@Current.Tags" Options="@QuickEditOptions" Counts="@QuickEditCounts"
                                  Busy="@busy" Error="@error" Save="SaveQuickEditAsync" Cancel="CancelQuickEdit" /> }
     }
-    @if (collectionUndo is not null && quickEdit is null) { <div class="viewer-collection-notice" role="status">Media moved to set. <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="UndoCollectionAsync">Undo</Button></div> }
+    @if (OrganizationHistory.Current is not null && quickEdit is null) { <div class="viewer-collection-notice"><Button Variant="ButtonVariant.Outline" Disabled="@(busy || OrganizationHistory.IsBusy)" OnClick="UndoCollectionAsync">Undo organization change</Button></div> }
     @if (quickEdit is null && error.Length > 0) { <Alert Variant="AlertVariant.Destructive" Class="absolute right-4 bottom-16 left-4">@error</Alert> }
 </section>
 
@@ -356,10 +357,9 @@
         error = "";
     }
 
-    private CollectionUndo? collectionUndo;
     private async Task CollectionMovedAsync(CollectionMutation result)
     {
-        collectionUndo = result.Undo;
+        OrganizationHistory.Record(result.Undo);
         var current = (await Gallery.ListAsync()).First(image => image.Id == Current.Id);
         latestImagesById[current.Id] = current;
         await OnImageChanged.InvokeAsync(current);
@@ -367,10 +367,15 @@
     }
     private Task UndoCollectionAsync() => RunAsync(async () =>
     {
-        if (collectionUndo is null) return;
-        await Gallery.UndoCollectionChangeAsync(collectionUndo);collectionUndo = null;
-        var current = (await Gallery.ListAsync()).First(image => image.Id == Current.Id);
-        latestImagesById[current.Id] = current;await OnImageChanged.InvokeAsync(current);
+        if (OrganizationHistory.Current is null) return;
+        await OrganizationHistory.UndoAsync();
+        var records = (await Gallery.ListAsync()).ToDictionary(image => image.Id);
+        foreach (var image in Images)
+        {
+            if (!records.TryGetValue(image.Id, out var updated)) continue;
+            latestImagesById[image.Id] = updated;
+            await OnImageChanged.InvokeAsync(updated);
+        }
     });
     private Task SaveQuickEditAsync(string value) => RunAsync(async () =>
     {

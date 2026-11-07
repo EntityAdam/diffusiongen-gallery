@@ -23,6 +23,10 @@
                 {
                     <span class="advanced-select-chip" @key="selected">
                         <span>@selected</span>
+                        @if (SelectionTotal > 1)
+                        {
+                            <span class="advanced-select-count">@(SelectionCounts?.GetValueOrDefault(selected) ?? SelectionTotal) of @SelectionTotal selected</span>
+                        }
                         <button type="button" disabled="@Disabled" aria-label="@($"Remove {ItemLabel} {selected}")" @onclick="() => RemoveAsync(selected)">
                             <img src="images/advanced-select/chip-x.svg" alt="" width="12" height="12" />
                         </button>
@@ -113,6 +117,8 @@
     [Parameter] public string Placeholder { get; set; } = "Select…";
     [Parameter] public IEnumerable<string> Options { get; set; } = [];
     [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, int>? SelectionCounts { get; set; }
+    [Parameter] public int SelectionTotal { get; set; }
     [Parameter] public bool Multiple { get; set; }
     [Parameter] public bool AllowCreate { get; set; } = true;
     [Parameter] public bool Disabled { get; set; }

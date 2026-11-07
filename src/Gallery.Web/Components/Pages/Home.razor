@@ -5,6 +5,7 @@
 @inject ILogger<Home> Logger
 @inject IJSRuntime JS
 @inject ISonnerService Toasts
+@inject OrganizationHistory OrganizationHistory
 
 <PageTitle>DiffusionGen Gallery</PageTitle>
 
@@ -160,9 +161,9 @@ else
         <nav class="workspace-navigation" aria-label="Gallery workflows">
         @foreach (var item in Workflows)
         {
-            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(busy || catalogPartial && item.Id is "ingest" or "duplicates" || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name @if (item.Id == "unorganized" && !catalogPartial) { <small>(@images.Count(image => image.SetId is null))</small> }</span></Button>
+            <Button Variant="@(workflow == item.Id ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(WorkspaceBusy || catalogPartial && item.Id is "ingest" or "duplicates" || libraryJob.IsRunning && item.Id is "ingest" or "settings")" Class="workspace-nav-button" aria-label="@item.Name" title="@item.Name" aria-current="@(workflow == item.Id ? "page" : null)" OnClick="() => SwitchWorkflowAsync(item.Id)"><LucideIcon Name="@WorkflowIcon(item.Id)" Size="16" aria-hidden="true" /><span class="sidebar-label">@item.Name @if (item.Id == "unorganized" && !catalogPartial) { <small>(@images.Count(image => !image.IsMarkedForDeletion && image.SetId is null))</small> }</span></Button>
         }
-        <Button Variant="@(ToolboxShown ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@busy" Class="workspace-nav-button" aria-pressed="@(ToolboxShown ? "true" : "false")"
+        <Button Variant="@(ToolboxShown ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@WorkspaceBusy" Class="workspace-nav-button" aria-pressed="@(ToolboxShown ? "true" : "false")"
                 aria-label="Toolbox (`)" title="Show or hide the toolbox (`). Shift+` resets its position." OnClick="ToggleToolboxAsync"><WrenchIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Toolbox <kbd>`</kbd></span></Button>
         </nav>
         @if (workflow is "collections" or "unorganized" && !sidebarCollapsed)
@@ -170,10 +171,10 @@ else
             <nav class="collection-hierarchy" aria-label="Collection hierarchy"><small>COLLECTIONS</small>
             @foreach (var collection in collectionCatalog.Collections.OrderBy(item => item.Name))
             {
-                <button class="@(collectionLocation.CollectionId == collection.Id ? "is-current" : "")" title="@collection.Name" aria-current="@(collectionLocation.CollectionId == collection.Id && collectionLocation.SetId is null ? "page" : null)" @onclick="() => NavigateCollectionsAsync(new(collection.Id))"><span>@collection.Name</span><small>@images.Count(image => collectionCatalog.Sets.Any(set => set.CollectionId == collection.Id && set.Id == image.SetId))</small></button>
+                <button disabled="@WorkspaceBusy" class="@(collectionLocation.CollectionId == collection.Id ? "is-current" : "")" title="@collection.Name" aria-current="@(collectionLocation.CollectionId == collection.Id && collectionLocation.SetId is null ? "page" : null)" @onclick="() => NavigateCollectionsAsync(new(collection.Id))"><span>@collection.Name</span><small>@images.Count(image => !image.IsMarkedForDeletion && collectionCatalog.Sets.Any(set => set.CollectionId == collection.Id && set.Id == image.SetId))</small></button>
                 @if (collectionLocation.CollectionId == collection.Id)
                 { @foreach (var set in collectionCatalog.Sets.Where(item => item.CollectionId == collection.Id).OrderBy(item => item.Order))
-                  { <button class="collection-hierarchy-set @(collectionLocation.SetId == set.Id ? "is-current" : "")" title="@set.Name" aria-current="@(collectionLocation.SetId == set.Id ? "page" : null)" @onclick="() => NavigateCollectionsAsync(new(collection.Id, set.Id))"><span>@set.Name</span><small>@images.Count(image => image.SetId == set.Id)</small></button> } }
+                  { <button disabled="@WorkspaceBusy" class="collection-hierarchy-set @(collectionLocation.SetId == set.Id ? "is-current" : "")" title="@set.Name" aria-current="@(collectionLocation.SetId == set.Id ? "page" : null)" @onclick="() => NavigateCollectionsAsync(new(collection.Id, set.Id))"><span>@set.Name</span><small>@images.Count(image => !image.IsMarkedForDeletion && image.SetId == set.Id)</small></button> } }
             }
             </nav>
         }
@@ -234,6 +235,12 @@ else
     </Sidebar>
     <AppLayoutMain Class="workspace-main">
     <AppLayoutBody Class="workspace-body">
+    @if (OrganizationHistory.Current is not null)
+    {
+        <div class="mb-4 flex flex-wrap items-center gap-2" aria-label="Organization actions">
+            <Button Variant="ButtonVariant.Outline" Disabled="@(WorkspaceBusy || libraryJob.IsRunning || catalogPartial)" OnClick="UndoOrganizationAsync">Undo organization change</Button>
+        </div>
+    }
     @if (workflow is not ("gallery" or "collections" or "unorganized"))
     {
     <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -584,7 +591,7 @@ else
         else {
             <Button Variant="ButtonVariant.Outline" Class="collection-navigation-toggle" aria-label="Show collection navigation" aria-expanded="@(collectionNavigationOpen ? "true" : "false")" OnClick="ToggleCollectionNavigation">Collections navigation</Button>
             @if (collectionNavigationOpen) { <button class="collection-nav-backdrop" aria-label="Close collection navigation" @onclick="CloseCollectionNavigation"></button> }
-            <CollectionsWorkspace @ref="collectionsWorkspace" Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="NavigateCollectionsAsync" Changed="ReloadAsync" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
+            <CollectionsWorkspace Disabled="@busy" @ref="collectionsWorkspace" Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="CollectionLocationChangedAsync" Changed="ReloadAsync" BusyChanged="value => collectionWorking = value" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
     }
     @if (workflow == "gallery")
     {
@@ -1031,12 +1038,16 @@ else
     private string workflow = "gallery";
     private CollectionCatalog collectionCatalog = CollectionCatalog.Empty;
     private CollectionLocation collectionLocation = new();
+    private bool collectionWorking;
+    private bool WorkspaceBusy => busy || collectionWorking || OrganizationHistory.IsBusy;
     private bool collectionNavigationOpen;
     private bool? focusCollectionNavigation;
     private void ToggleCollectionNavigation() { collectionNavigationOpen = !collectionNavigationOpen;focusCollectionNavigation = collectionNavigationOpen; }
     private void CloseCollectionNavigation() { collectionNavigationOpen = false;focusCollectionNavigation = false; }
     private void HandleCollectionNavigationKey(KeyboardEventArgs args) { if (args.Key == "Escape" && collectionNavigationOpen) CloseCollectionNavigation(); }
-    private Task NavigateCollectionsAsync(CollectionLocation location)
+    private Task NavigateCollectionsAsync(CollectionLocation location) => WorkspaceBusy
+        ? Task.CompletedTask : CollectionLocationChangedAsync(location);
+    private Task CollectionLocationChangedAsync(CollectionLocation location)
     {
         collectionLocation = location;
         collectionNavigationOpen = false;
@@ -1222,6 +1233,7 @@ else
 
     protected override void OnInitialized()
     {
+        OrganizationHistory.Changed += HandleOrganizationHistoryChanged;
         Gallery.OnAutoLocked += HandleAutoLocked;
         Gallery.DriveQueueChanged += HandleDriveQueueChanged;
         driveQueue = Gallery.DriveQueueStatus;
@@ -1229,6 +1241,23 @@ else
         newGalleryDirectory = GalleryService.DefaultVaultDirectory(newGalleryName);
         galleryRename = Gallery.VaultExists ? Gallery.VaultName : "";
     }
+
+    private void HandleOrganizationHistoryChanged()
+    {
+        if (!disposed) _ = InvokeAsync(StateHasChanged);
+    }
+
+    private Task UndoOrganizationAsync() => WorkspaceBusy ? Task.CompletedTask : RunAsync("Restoring organization...", async () =>
+    {
+        EnsureNoLibraryJob();
+        await OrganizationHistory.UndoAsync();
+        await ReloadAsync();
+        if (collectionLocation.CollectionId is { } collectionId && !collectionCatalog.Collections.Any(item => item.Id == collectionId))
+            collectionLocation = new();
+        else if (collectionLocation.SetId is { } setId && !collectionCatalog.Sets.Any(item => item.Id == setId))
+            collectionLocation = new(collectionLocation.CollectionId);
+        message = "Organization restored.";
+    });
 
     private void HandleDriveQueueChanged()
     {
@@ -1533,7 +1562,7 @@ else
 
     private Task SwitchWorkflowCoreAsync(string value)
     {
-        if (busy && value != workflow) return Task.CompletedTask;
+        if (WorkspaceBusy && value != workflow) return Task.CompletedTask;
         collectionNavigationOpen = false;
         if (value == "review")
         {
@@ -2273,6 +2302,8 @@ else
 
     private void Lock()
     {
+        OrganizationHistory.Clear();
+        collectionWorking = false;
         CancelCatalogLoad();
         catalogPartial = false;
         catalogLoadError = "";
@@ -2343,6 +2374,7 @@ else
     {
         ClearIngestionScan();
         disposed = true;
+        OrganizationHistory.Changed -= HandleOrganizationHistoryChanged;
         Gallery.OnAutoLocked -= HandleAutoLocked;
         Gallery.DriveQueueChanged -= HandleDriveQueueChanged;
         Lock();

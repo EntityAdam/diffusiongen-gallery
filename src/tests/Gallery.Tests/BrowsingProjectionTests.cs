@@ -846,6 +846,7 @@ public sealed class BrowsingProjectionTests
     {
         var home = new Home();
         typeof(Home).GetProperty("Gallery", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, testVault.Service);
+        typeof(Home).GetProperty("OrganizationHistory", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new OrganizationHistory(testVault.Service));
         typeof(Home).GetProperty("JS", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new NoOpJsRuntime());
         SetField(home, "images", imageRecords);
         SetField(home, "imagesById", imageRecords.ToDictionary(imageRecord => imageRecord.Id));
