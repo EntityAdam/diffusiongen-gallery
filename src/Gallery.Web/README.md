@@ -241,7 +241,9 @@ media; it does not delete files.
 ### Selection, filters, and organization
 
 Use the select button on a card, including in Trash. Shift+click selects a range
-across pages in the current sort order; Escape clears selection.
+across pages in the current sort order; Escape clears selection. Changing search,
+filters, grouping, or sorting clears selection in Gallery and Collections. Paging
+keeps selection.
 
 The **Organize** tool lists selected items' tags as removable chips. A count means
 only that many selected items have the tag. A chip's **x** removes that tag from
@@ -305,7 +307,19 @@ These shortcuts are ignored while typing or while a dialog/viewer is open.
 **Full screen view** in Change view opens the current page; the details preview
 also provides access. Left/Right navigate within that page, D toggles deletion,
 F toggles favorite, O shows original size, P fits to the window, and Escape closes.
-Changes save immediately, but the viewing sequence stays fixed until closing.
+In ordinary fullscreen browsing, clicking the current star clears the rating;
+0 clears it by keyboard, and 1–5 sets a rating. Guided review retains explicit
+rating decisions and advances after each decision. Rating, favorite, and deletion
+mark changes save immediately; the viewing sequence stays fixed until closing.
+
+Quick tag stages additions and removals until **Save changes**; **Cancel** discards
+both. Bulk tag edits preserve mixed assignments for tags you leave unchanged.
+The move dialog creates new collections and sets immediately, shows a saved
+creation notice, and keeps them if the move is cancelled.
+
+Media details and removal confirmation use modal dialogs: focus stays inside,
+Escape closes when idle, and closing returns focus to the opener.
+
 Fit mode uses viewing previews; original-size mode loads the stored original.
 Video playback depends on the browser's codec support.
 

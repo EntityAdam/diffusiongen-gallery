@@ -197,7 +197,7 @@ for (const review of ["false", "true"]) {
             window, document, Element: class {}
         });
         const calls = [];
-        const element = { dataset: { review, keys: "1 2 3 4 5 t c" }, focus() {}, querySelectorAll() { return []; }, querySelector() { return this.modalOpen ? {} : null; } };
+        const element = { dataset: { review, keys: review === "true" ? "1 2 3 4 5 t c" : "0 1 2 3 4 5 t c" }, focus() {}, querySelectorAll() { return []; }, querySelector() { return this.modalOpen ? {} : null; } };
         window.galleryViewer.attach(element, { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } });
         const press = async (key, extra = {}) => {
             const event = { key, target: { closest() { return null; } }, defaultPrevented: false,
@@ -208,6 +208,7 @@ for (const review of ["false", "true"]) {
         for (const key of ["1", "2", "3", "4", "5"]) assert.equal(await press(key), true);
         for (const extra of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { repeat: true },
             { target: { closest() { return {}; } } }]) assert.equal(await press("3", extra), false);
+        assert.equal(await press("0"), review !== "true");
         assert.equal(await press("k"), review === "true");
         assert.equal(await press("s"), review === "true");
         assert.deepEqual(calls.slice(0, 5), ["1", "2", "3", "4", "5"].map(key => ["HandleKey", key]));
@@ -363,4 +364,46 @@ test("gallerySecurity idle auto-lock triggers after configured inactivity", () =
         window.gallerySecurity.detach();
     }
     assert.equal(timerCleared, true);
+});
+
+
+test("modal opening respects autofocus before other controls and restores its opener", () => {
+    let focused;
+    const opener = { isConnected: true, focus() { focused = "opener"; } };
+    const document = { activeElement: opener, addEventListener() {} };
+    const window = {};
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, document, Element: class {}
+    });
+    const dialog = {
+        showModal() { this.open = true; }, close() { this.open = false; },
+        querySelector(selector) {
+            return { focus() { focused = selector === "[autofocus]" ? "cancel" : "other"; } };
+        }
+    };
+    window.galleryViewer.openQuickEdit(dialog, "removal");
+    assert.equal(focused, "cancel");
+    window.galleryViewer.closeQuickEdit("removal");
+    assert.equal(focused, "opener");
+    assert.equal(dialog.open, false);
+});
+
+test("modal restores an opener that lost focus while disabled by a busy render", () => {
+    let focusin;
+    let focused = false;
+    const body = {};
+    const document = {
+        body, activeElement: body,
+        addEventListener(name, listener) { if (name === "focusin") focusin = listener; }
+    };
+    const window = {};
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, document, Element: class {}
+    });
+    const opener = { isConnected: true, matches() { return true; }, focus() { focused = true; } };
+    focusin({ target: opener });
+    const dialog = { showModal() {}, close() {}, querySelector() { return null; } };
+    window.galleryViewer.openQuickEdit(dialog, "details");
+    window.galleryViewer.closeQuickEdit("details");
+    assert.equal(focused, true);
 });

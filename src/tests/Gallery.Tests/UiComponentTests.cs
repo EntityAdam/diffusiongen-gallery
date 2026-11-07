@@ -556,10 +556,10 @@ public sealed class UiComponentTests
         Assert.Equal(saved, changed);
         string html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => WebUtility.HtmlDecode(root.ToHtmlString()));
         Assert.Contains(reviewMode ? "2 / 2" : "1 / 2", html);
-        Assert.Contains("data-keys=\"1 2 3 4 5 t c\"", html);
+        Assert.Contains(reviewMode ? "data-keys=\"1 2 3 4 5 t c\"" : "data-keys=\"0 1 2 3 4 5 t c\"", html);
         Assert.Contains("1-5: rate", html);
         Assert.Contains("Quick edit media", html);
-        Assert.Equal(5, Regex.Matches(html, "aria-label=\"Rate [1-5] out of 5 stars\"").Count);
+        Assert.Equal(reviewMode ? 5 : 4, Regex.Matches(html, "aria-label=\"Rate [1-5] out of 5 stars\"").Count);
     }
 
     [Theory]
@@ -639,7 +639,7 @@ public sealed class UiComponentTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Viewer_QuickTag_RemovesChipsImmediatelyWithoutClosingOrAdvancing(bool reviewMode)
+    public async Task Viewer_QuickTag_SavesRemovalOfAllTagsWithoutAdvancing(bool reviewMode)
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
@@ -665,25 +665,17 @@ public sealed class UiComponentTests
         Assert.DoesNotContain(image.Name, dialog);
         Assert.Matches(@"<button[^>]*type=""button""[^>]*aria-label=""Remove tag cat""", dialog);
 
-        foreach (var tag in new[] { "cat", "dog" })
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
-            {
-                await (Task)typeof(FullscreenViewer).GetMethod("RemoveQuickTagAsync", flags)!.Invoke(viewer, [tag])!;
-                typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
-            });
-            string expectedTags = tag == "cat" ? "dog" : "";
-            Assert.Equal(expectedTags, Assert.Single(await vault.Service.ListAsync()).Tags);
-            Assert.NotNull(changed);
-            Assert.Equal(expectedTags, changed.Tags);
-            Assert.False(changed.IsReviewed);
-            string html = await Html();
-            Assert.Contains("<dialog", html);
-            Assert.DoesNotContain($"aria-label=\"Remove tag {tag}\"", html);
-            if (tag == "cat") Assert.Contains("aria-label=\"Remove tag dog\"", html);
-            else Assert.Contains("No tags yet.", html);
-            if (reviewMode) Assert.Contains("0 Reviewed + 0 Skipped / 1", html);
-        }
+            await (Task)typeof(FullscreenViewer).GetMethod("SaveQuickEditAsync", flags)!.Invoke(viewer, [""])!;
+            typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
+        });
+        Assert.Equal("", Assert.Single(await vault.Service.ListAsync()).Tags);
+        Assert.NotNull(changed);
+        Assert.False(changed.IsReviewed);
+        Assert.DoesNotContain("<dialog", await Html());
+        Assert.Contains("1 / 1", await Html());
+        if (reviewMode) Assert.Contains("0 Reviewed + 0 Skipped / 1", await Html());
     }
 
     [Fact]

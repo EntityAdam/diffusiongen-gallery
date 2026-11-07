@@ -3,7 +3,7 @@
 @inject IJSRuntime JS
 @inject ILogger<FullscreenViewer> Logger
 
-<section class="fullscreen-viewer fixed inset-0 z-50 flex flex-col bg-background outline-none" role="dialog" aria-modal="true" aria-label="@(ReviewMode ? "Guided review session" : "Full screen media viewer")" tabindex="-1" @ref="element" data-review="@ReviewMode.ToString().ToLowerInvariant()" data-keys="1 2 3 4 5 t c">
+<section class="fullscreen-viewer fixed inset-0 z-50 flex flex-col bg-background outline-none" role="dialog" aria-modal="true" aria-label="@(ReviewMode ? "Guided review session" : "Full screen media viewer")" tabindex="-1" @ref="element" data-review="@ReviewMode.ToString().ToLowerInvariant()" data-keys="@(ReviewMode ? "1 2 3 4 5 t c" : "0 1 2 3 4 5 t c")">
     <header class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 [&_strong]:break-all">
         <div><strong>@Current.Name</strong><span class="text-muted-foreground"> @(index + 1) / @Images.Count &middot; @Current.Width &times; @Current.Height</span></div>
         <div class="flex flex-wrap items-center gap-2">
@@ -19,7 +19,7 @@
         {
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || reviewComplete)" OnClick="() => DecideAsync(ReviewAction.Keep)">Keep (K)</Button>
         }
-        <ImageRating Image="@Current" Disabled="@(busy || reviewComplete)" ClearOnRepeat="false" Rate="RateAsync" />
+        <ImageRating Image="@Current" Disabled="@(busy || reviewComplete)" ClearOnRepeat="@(!ReviewMode)" Rate="RateAsync" />
         <Button Variant="@(Current.IsFavorite ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@(busy || reviewComplete)" OnClick="FavoriteAsync" aria-pressed="@Current.IsFavorite"><HeartIcon Fill="@(Current.IsFavorite ? "currentColor" : "none")" aria-hidden="true" />@(ReviewMode ? "Favorite" : Current.IsFavorite ? "Unfavorite" : "Favorite") (F)</Button>
         <Button Variant="@(Current.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@(busy || reviewComplete)" OnClick="MarkAsync" aria-pressed="@Current.IsMarkedForDeletion"><TrashIcon aria-hidden="true" />@(!ReviewMode && Current.IsMarkedForDeletion ? "Unmark deletion" : "Mark deletion") (D)</Button>
         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || reviewComplete)" OnClick='() => OpenQuickEdit("tag")'>Quick tag (T)</Button>
@@ -72,12 +72,12 @@
     }
     <footer class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-muted-foreground">
         <span>@(Current.IsFavorite ? "Favorite" : "Not favorite") &middot; @(Current.IsMarkedForDeletion ? "Marked for deletion" : "Not marked") &middot; @(Current.IsReviewed ? "Reviewed" : "Pending review") / @Current.Rating out of 5 &middot; @(originalSize ? "100% size (scroll to explore)" : "Fit to window")</span>
-        <span>@(ReviewMode ? "K: keep / F: favorite / D: mark deletion / S: skip / 1-5: rate / Arrows: browse / T: tag / C: collection / O: 100% / P: fit / Esc: close" : "Left: previous / Right: next / 1-5: rate / D: deletion mark / F: favorite / T: tag / C: collection / O: 100% / P: fit / Esc: close")</span>
+        <span>@(ReviewMode ? "K: keep / F: favorite / D: mark deletion / S: skip / 1-5: rate / Arrows: browse / T: tag / C: collection / O: 100% / P: fit / Esc: close" : "Left: previous / Right: next / 1-5: rate / 0: clear rating / D: deletion mark / F: favorite / T: tag / C: collection / O: 100% / P: fit / Esc: close")</span>
     </footer>
     @if (quickEdit is not null)
     {
         @if (quickEdit == "collection") { <CollectionDestinationDialog Images="@(new[] { Current })" Saved="CollectionMovedAsync" Cancel="CancelQuickEdit" /> }
-        else { <QuickOrganizationDialog ImageName="@Current.Name" Tags="@Current.Tags" RemoveTag="RemoveQuickTagAsync" Options="@QuickEditOptions" Counts="@QuickEditCounts"
+        else { <QuickOrganizationDialog ImageName="@Current.Name" Tags="@Current.Tags" Options="@QuickEditOptions" Counts="@QuickEditCounts"
                                  Busy="@busy" Error="@error" Save="SaveQuickEditAsync" Cancel="CancelQuickEdit" /> }
     }
     @if (collectionUndo is not null && quickEdit is null) { <div class="viewer-collection-notice" role="status">Media moved to set. <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="UndoCollectionAsync">Undo</Button></div> }
@@ -333,10 +333,12 @@
         await OnImageChanged.InvokeAsync(Current);
     });
 
-    private Task RateAsync(int rating) => ReviewMode ? DecideAsync(ReviewAction.Rate, rating) : RunAsync(async () =>
+    private Task RateAsync(int rating) => SaveRatingAsync(rating, clearOnRepeat: true);
+
+    private Task SaveRatingAsync(int rating, bool clearOnRepeat = false) => ReviewMode ? DecideAsync(ReviewAction.Rate, rating) : RunAsync(async () =>
     {
         var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id, image => Gallery.SetCuration(image, rating, null));
+        latestImagesById[id] = await Gallery.UpdateAsync(id, image => Gallery.SetCuration(image, clearOnRepeat && image.Rating == rating ? 0 : rating, null));
         await OnImageChanged.InvokeAsync(Current);
     });
 
@@ -353,15 +355,6 @@
         quickEdit = null;
         error = "";
     }
-
-    private Task RemoveQuickTagAsync(string tag) => RunAsync(async () =>
-    {
-        if (quickEdit != "tag") return;
-        var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id,
-            image => image with { Tags = Gallery.RemoveTag(image.Tags, tag) });
-        await OnImageChanged.InvokeAsync(Current);
-    });
 
     private CollectionUndo? collectionUndo;
     private async Task CollectionMovedAsync(CollectionMutation result)
@@ -381,9 +374,9 @@
     });
     private Task SaveQuickEditAsync(string value) => RunAsync(async () =>
     {
-        if (quickEdit != "tag" || string.IsNullOrWhiteSpace(value)) return;
+        if (quickEdit != "tag") return;
         var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id, image => image with { Tags = Gallery.MergeTags(image.Tags, value) });
+        latestImagesById[id] = await Gallery.UpdateAsync(id, image => image with { Tags = TagSelection.Apply(Gallery, image.Tags, Current.Tags, value) });
         await OnImageChanged.InvokeAsync(Current);
         quickEdit = null;
     });
@@ -418,8 +411,9 @@
             case "f": await FavoriteAsync(); break;
             case "k" when ReviewMode: await DecideAsync(ReviewAction.Keep); break;
             case "s" when ReviewMode: await SkipAsync(); break;
+            case "0" when !ReviewMode: await SaveRatingAsync(0); break;
             case "1" or "2" or "3" or "4" or "5":
-                await RateAsync(int.Parse(key)); break;
+                await SaveRatingAsync(int.Parse(key)); break;
             case "o": await SetSizeAsync(true); break;
             case "p": await SetSizeAsync(false); break;
             case "escape": await CloseAsync(); return;

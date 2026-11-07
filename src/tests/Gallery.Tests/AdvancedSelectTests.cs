@@ -80,17 +80,15 @@ public sealed class AdvancedSelectTests
     }
 
     [Fact]
-    public async Task QuickTags_RemovesExistingTagsImmediatelyAndSavesOnlyNewSelections()
+    public async Task QuickTags_StagesRemovalsAndAdditionsUntilSave()
     {
         await using var fixture = ComponentRenderFixture.Create();
         QuickOrganizationDialog? dialog = null;
-        var removed = new List<string>();
         string? saved = null;
         var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
             fixture.HtmlRenderer.RenderComponentAsync<QuickTagTestHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
             {
                 [nameof(QuickTagTestHost.Capture)] = (Action<QuickOrganizationDialog>)(value => dialog = value),
-                [nameof(QuickTagTestHost.Removed)] = (Action<string>)(value => removed.Add(value)),
                 [nameof(QuickTagTestHost.Saved)] = (Action<string>)(value => saved = value)
             })));
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -100,7 +98,6 @@ public sealed class AdvancedSelectTests
                 .Invoke(dialog, [new[] { "Product", "Research" }])!;
             typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(dialog, null);
         });
-        Assert.Equal(new[] { "Design" }, removed);
         Assert.Null(saved);
         string html = await Html(fixture, root);
         Assert.DoesNotContain("aria-label=\"Remove tag Design\"", html);
@@ -108,13 +105,12 @@ public sealed class AdvancedSelectTests
         Assert.Contains("aria-label=\"Remove tag Research\"", html);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
             await (Task)typeof(QuickOrganizationDialog).GetMethod("SaveAsync", flags)!.Invoke(dialog, null)!);
-        Assert.Equal("Research", saved);
+        Assert.Equal("Product, Research", saved);
     }
 
     private sealed class QuickTagTestHost : ComponentBase
     {
         [Parameter] public Action<QuickOrganizationDialog>? Capture { get; set; }
-        [Parameter] public Action<string>? Removed { get; set; }
         [Parameter] public Action<string>? Saved { get; set; }
         private string tags = "Design, Product";
         protected override void BuildRenderTree(RenderTreeBuilder builder)
@@ -122,11 +118,6 @@ public sealed class AdvancedSelectTests
             builder.OpenComponent<QuickOrganizationDialog>(0);
             builder.AddAttribute(1, nameof(QuickOrganizationDialog.Tags), tags);
             builder.AddAttribute(2, nameof(QuickOrganizationDialog.Options), new[] { "Design", "Product" });
-            builder.AddAttribute(3, nameof(QuickOrganizationDialog.RemoveTag), EventCallback.Factory.Create<string>(this, removed =>
-            {
-                tags = string.Join(", ", tags.Split(", ").Where(tag => tag != removed));
-                Removed?.Invoke(removed);
-            }));
             builder.AddAttribute(4, nameof(QuickOrganizationDialog.Save), EventCallback.Factory.Create<string>(this, value => Saved?.Invoke(value)));
             builder.AddComponentReferenceCapture(5, instance => Capture?.Invoke((QuickOrganizationDialog)instance));
             builder.CloseComponent();

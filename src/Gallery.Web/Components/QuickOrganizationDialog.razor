@@ -4,7 +4,7 @@
 <dialog @ref="element" class="viewer-quick-edit rounded-lg border border-border bg-background p-4 text-foreground" aria-labelledby="quick-organization-title" @oncancel="CancelAsync" @oncancel:preventDefault>
     <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
         <h2 id="quick-organization-title" class="text-lg font-semibold">Quick tag</h2>
-        @if (!CurrentTags.Any())
+        @if (!SelectedTags.Any())
         {
             <p class="text-sm text-muted-foreground">No tags yet.</p>
         }
@@ -14,14 +14,13 @@
         @if (Error.Length > 0) { <p role="alert" class="text-destructive">@Error</p> }
         <div class="mt-3 flex justify-end gap-2">
             <button type="button" class="rounded-md border border-border px-3 py-2 text-sm" disabled="@Busy" @onclick="CancelAsync">Cancel</button>
-            <button type="submit" class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" disabled="@(Busy || string.IsNullOrWhiteSpace(value))">@(Busy ? "Saving..." : "Add")</button>
+            <button type="submit" class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" disabled="@(Busy || !HasChanges)">@(Busy ? "Saving..." : "Save changes")</button>
         </div>
     </form>
 </dialog>
 
 @code {
     [Parameter] public string Tags { get; set; } = "";
-    [Parameter] public EventCallback<string> RemoveTag { get; set; }
     [Parameter] public string ImageName { get; set; } = "";
     [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
     [Parameter] public IEnumerable<string> Options { get; set; } = [];
@@ -31,7 +30,14 @@
     [Parameter] public EventCallback Cancel { get; set; }
     private ElementReference element;
     private readonly string dialogKey = Guid.NewGuid().ToString("N");
-    private string value = "";
+    private IReadOnlyList<string> selectedTags = [];
+    private bool initialized;
+    protected override void OnParametersSet()
+    {
+        if (initialized) return;
+        selectedTags = CurrentTags.ToArray();
+        initialized = true;
+    }
     private IEnumerable<string> CurrentTags => Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Distinct(StringComparer.OrdinalIgnoreCase);
 
@@ -46,17 +52,13 @@
         catch (JSDisconnectedException) { }
     }
 
-    private IReadOnlyList<string> SelectedTags => CurrentTags.Concat(value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-
-    private async Task TagsChangedAsync(IReadOnlyList<string> selected)
+    private IReadOnlyList<string> SelectedTags => selectedTags;
+    private bool HasChanges => !CurrentTags.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(selectedTags);
+    private Task TagsChangedAsync(IReadOnlyList<string> selected)
     {
-        if (Busy) return;
-        var existing = CurrentTags.ToArray();
-        foreach (var removed in existing.Except(selected, StringComparer.OrdinalIgnoreCase))
-            await RemoveTag.InvokeAsync(removed);
-        value = string.Join(", ", selected.Except(existing, StringComparer.OrdinalIgnoreCase));
+        if (!Busy) selectedTags = selected.ToArray();
+        return Task.CompletedTask;
     }
-    private Task SaveAsync() => Busy || string.IsNullOrWhiteSpace(value) ? Task.CompletedTask : Save.InvokeAsync(value.Trim());
+    private Task SaveAsync() => Busy || !HasChanges ? Task.CompletedTask : Save.InvokeAsync(string.Join(", ", selectedTags));
     private Task CancelAsync() => Busy ? Task.CompletedTask : Cancel.InvokeAsync();
 }

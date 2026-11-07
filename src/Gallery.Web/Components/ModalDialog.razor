@@ -1,0 +1,21 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<dialog @ref="element" class="workspace-modal @Class" aria-labelledby="@LabelledBy" aria-modal="true" @oncancel="CloseAsync" @oncancel:preventDefault>
+    @ChildContent
+</dialog>
+
+@code {
+    [Parameter, EditorRequired] public string LabelledBy { get; set; } = "";
+    [Parameter] public string Class { get; set; } = "";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private ElementReference element;
+    private readonly string key = Guid.NewGuid().ToString("N");
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    { if (firstRender) await JS.InvokeVoidAsync("galleryViewer.openQuickEdit", element, key); }
+    private Task CloseAsync() => Busy ? Task.CompletedTask : Close.InvokeAsync();
+    public async ValueTask DisposeAsync()
+    { try { await JS.InvokeVoidAsync("galleryViewer.closeQuickEdit", key); } catch (JSDisconnectedException) { } }
+}

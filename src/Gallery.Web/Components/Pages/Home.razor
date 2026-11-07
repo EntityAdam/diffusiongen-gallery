@@ -748,8 +748,8 @@ else
 
     @if (selected is not null)
     {
-        <div class="image-detail-overlay fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
-            <Card Class="image-detail-dialog mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+        <ModalDialog Class="image-detail-overlay" LabelledBy="detail-title" Busy="@busy" Close="CloseDetail">
+            <Card Class="image-detail-dialog mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close media details"><XIcon aria-hidden="true" /></Button></div>
                 <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
                     <ImageDetailPreview Image="selected" Preview="@preview" VideoUrl="@videoUrl" Busy="busy"
@@ -765,13 +765,13 @@ else
                     </div>
                 </div>
             </Card>
-        </div>
+        </ModalDialog>
     }
     @if (removalPlan.Count > 0)
     {
-        <div class="fixed inset-0 z-20 overflow-y-auto bg-black/90 p-3 md:p-7">
-            <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4" role="dialog" aria-modal="true" aria-labelledby="removal-title">
-                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="removal-title" class="min-w-0 flex-1 break-words">Remove @removalPlan.Count marked media item(s)</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CancelRemoval" aria-label="Cancel removal"><XIcon aria-hidden="true" /></Button></div>
+        <ModalDialog LabelledBy="removal-title" Busy="@busy" Close="CancelRemoval">
+            <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4">
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="removal-title" class="min-w-0 flex-1 break-words">Remove @removalPlan.Count marked media item(s)</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CancelRemoval" aria-label="Cancel removal" autofocus><XIcon aria-hidden="true" /></Button></div>
                 <p>This removes gallery records, thumbnails and encrypted files. Each media item is checked again before removal. Unmarked media cannot be removed.</p>
                 <details><summary>Review affected media</summary>
                     @foreach (var item in removalPlan)
@@ -807,7 +807,7 @@ else
                 @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                 @if (busy) { <p role="status">@progress</p> }
             </Card>
-        </div>
+        </ModalDialog>
     }
 }
 
@@ -1387,7 +1387,7 @@ else
         if (changed && !disposed) StateHasChanged();
     }
 
-    private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; await LoadThumbnailsAsync(); });
+    private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; ClearSelection(); await LoadThumbnailsAsync(); });
     private Task ResetFilters() { filterInputRevision++; filter = TrashActive ? new() { Deletion = "marked" } : new(); return FilterChangedAsync(); }
     private Task ApplyFilterPanelAsync(GalleryFilter value) { if (catalogPartial) return Task.CompletedTask; filter = value; return FilterChangedAsync(); }
     private Task ApplyLibraryFilterAsync(GalleryFilter value) { filterInputRevision++; return ApplyFilterPanelAsync(value); }
