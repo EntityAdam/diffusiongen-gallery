@@ -233,6 +233,7 @@ test("quick edit focuses its input and returns focus when dismissed", () => {
         window, document, Element: class {}
     });
     const dialog = {
+        addEventListener() {}, removeEventListener() {},
         showModal() { this.open = true; }, close() { this.open = false; },
         querySelector() { return { focus() { focused = "input"; } }; }
     };
@@ -376,6 +377,7 @@ test("modal opening respects autofocus before other controls and restores its op
         window, document, Element: class {}
     });
     const dialog = {
+        addEventListener() {}, removeEventListener() {},
         showModal() { this.open = true; }, close() { this.open = false; },
         querySelector(selector) {
             return { focus() { focused = selector === "[autofocus]" ? "cancel" : "other"; } };
@@ -402,8 +404,42 @@ test("modal restores an opener that lost focus while disabled by a busy render",
     });
     const opener = { isConnected: true, matches() { return true; }, focus() { focused = true; } };
     focusin({ target: opener });
-    const dialog = { showModal() {}, close() {}, querySelector() { return null; } };
+    const dialog = { addEventListener() {}, removeEventListener() {}, showModal() {}, close() {}, querySelector() { return null; } };
     window.galleryViewer.openQuickEdit(dialog, "details");
     window.galleryViewer.closeQuickEdit("details");
     assert.equal(focused, true);
+});
+
+
+test("Escape leaves native dialogs open until the save/discard decision closes them", () => {
+    const document = { activeElement: null, body: {}, addEventListener() {}, querySelector() { return null; } };
+    const window = {};
+    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        window, document, Element: class {}
+    });
+    const makeDialog = () => {
+        const target = new EventTarget();
+        target.showModal = function () { this.open = true; };
+        target.close = function () { this.open = false; };
+        target.querySelector = () => null;
+        return target;
+    };
+    const details = makeDialog();
+    const confirmation = makeDialog();
+    window.galleryViewer.openQuickEdit(details, "details");
+    const escapeDetails = new Event("cancel", { cancelable: true });
+    details.dispatchEvent(escapeDetails);
+    assert.equal(escapeDetails.defaultPrevented, true);
+    assert.equal(details.open, true);
+    window.galleryViewer.openQuickEdit(confirmation, "confirmation");
+    const escapeConfirmation = new Event("cancel", { cancelable: true });
+    confirmation.dispatchEvent(escapeConfirmation);
+    assert.equal(escapeConfirmation.defaultPrevented, true);
+    window.galleryViewer.closeQuickEdit("confirmation");
+    assert.equal(details.open, true);
+    assert.equal(confirmation.open, false);
+    window.galleryViewer.closeQuickEdit("details");
+    const afterClose = new Event("cancel", { cancelable: true });
+    details.dispatchEvent(afterClose);
+    assert.equal(afterClose.defaultPrevented, false);
 });

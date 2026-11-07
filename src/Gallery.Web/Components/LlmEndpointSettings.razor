@@ -5,6 +5,7 @@
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Connect your local LLM</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">OPENAI-COMPATIBLE</Badge></div>
     <p class="text-muted-foreground">Configure LM Studio, Ollama or another local server. Include /v1 when required. Use a literal loopback or private LAN IP: 10.x.x.x, 172.16.x.x through 172.31.x.x, or 192.168.x.x. Public addresses and hostnames are blocked.</p>
     <p class="text-muted-foreground">LAN analysis sends decrypted previews and metadata to that server. Only connect to servers you trust; HTTP is not encrypted in transit. Use HTTPS when supported.</p>
+    <p class="text-muted-foreground" role="status">@(HasUnsavedChanges ? "Unsaved changes. Save LLM settings to apply them." : "LLM settings are saved. Changes require Save LLM settings.")</p>
     <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
         <Label For="endpoint-url" Class="mt-4 mb-2 block">Endpoint URL</Label>
         <Input id="endpoint-url" Type="url" @bind-Value="draft.Endpoint" @bind-Value:after="EndpointChanged" Placeholder="http://127.0.0.1:1234/v1/" Disabled="@working" required />
@@ -69,6 +70,7 @@
     [Parameter] public EventCallback<VisionSettings> Saved { get; set; }
     private VisionSettingsDraft draft = new();
     private VisionSettings? observedSettings;
+    private bool HasUnsavedChanges => draft.ToSettings() != observedSettings;
     protected override void OnParametersSet()
     {
         if (Equals(observedSettings, SavedSettings)) return;
@@ -101,6 +103,7 @@
     {
         var settings = draft.ToSettings();
         await Gallery.SaveSettingsAsync(settings);
+        observedSettings = settings;
         await Saved.InvokeAsync(settings);
         message = "LLM settings saved encrypted in this gallery.";
     });

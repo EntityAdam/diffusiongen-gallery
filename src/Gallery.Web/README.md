@@ -171,8 +171,8 @@ as available space. Successful earlier batches remain imported if a later batch
 fails.
 
 Under **Advanced**, select HDD, SSD, or Custom performance settings and save them
-per gallery. Custom supports 1-32 workers and batches of 1-64 files. More workers
-use more memory. Optional performance information reports timings without file
+per gallery. Custom supports 1-32 workers and batches of 1-64 files. Changes are
+marked unsaved and must be saved before ingestion. More workers use more memory. Optional performance information reports timings without file
 or folder names.
 
 ## Browsing and organizing
@@ -282,9 +282,12 @@ stacks the sections. The preview scales proportionally within the desktop dialog
   be detected without providing parsed fields. Other tools' metadata and raw JSON
   are not displayed.
 - **Notes:** separate **Description** (your notes) and **Vision notes** textboxes.
-  **Save notes** saves both. **Analyze locally** immediately saves the returned
-  vision notes, replaces tags, records the model, and saves the current user
-  description; it does not wait for the suggestion-approval workflow.
+  **Save notes** saves both. **Analyze locally** stages a suggestion without saving.
+  **Approve & save**
+  replaces vision notes, adds suggested tags to existing tags, and records the model.
+  Your description is saved separately. Save or discard edited notes before approving.
+  Unsaved notes show a status; leaving details offers **Save changes**, **Discard changes**,
+  or **Keep editing**. Escape keeps editing when that choice is open.
 
 Manage collections/tags through Organize, not this dialog. Current encrypted paths
 and move/rename controls are not exposed here.
@@ -314,8 +317,9 @@ mark changes save immediately; the viewing sequence stays fixed until closing.
 
 Quick tag stages additions and removals until **Save changes**; **Cancel** discards
 both. Bulk tag edits preserve mixed assignments for tags you leave unchanged.
-The move dialog creates new collections and sets immediately, shows a saved
-creation notice, and keeps them if the move is cancelled.
+The move dialog stages new collections and sets until **Move**. Cancel discards
+the destination draft. Creation and placement commit together; a failed move leaves
+no new destinations. Undo restores both the placement and destination catalog.
 
 Media details and removal confirmation use modal dialogs: focus stays inside,
 Escape closes when idle, and closing returns focus to the opener.
@@ -363,6 +367,9 @@ Under **Settings > LLM endpoints**, configure an OpenAI-compatible endpoint,
 optional bearer API key, loaded vision-capable model, and timeout (10-3600 seconds,
 default 180). **Fetch models** checks the connection without saving settings; model
 discovery does not verify vision capability. Save the settings before analysis.
+LLM and backup destination edits show an unsaved
+status until saved. The auto-lock timer is labeled **Saves automatically** and applies
+when selected.
 
 Examples: LM Studio `http://127.0.0.1:1234/v1/`, Ollama
 `http://127.0.0.1:11434/v1/`. Use a literal loopback or private LAN IP:

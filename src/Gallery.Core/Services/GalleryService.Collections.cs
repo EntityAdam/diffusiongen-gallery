@@ -140,13 +140,51 @@ public sealed partial class GalleryService
         {
             var set = setId is null ? null : RequireSet(catalog, setId);
             var collection = set is null ? null : RequireCollection(catalog, set.CollectionId);
-            var byId = records.ToDictionary(image => image.Id);
-            if (ids.Any(id => !byId.ContainsKey(id))) throw new InvalidOperationException("Some selected media no longer exist. Refresh and try again.");
-            long order = records.Where(image => image.SetId == setId).Select(image => image.SetOrder).DefaultIfEmpty(-1).Max() + 1;
-            var changed = ids.Select(id => byId[id]).Where(image => image.SetId != setId || !image.LegacyCollections.IsEmpty).Select(image => image with
-            { SetId = setId, SetOrder = order++, Collections = collection is null ? [] : [collection.Name], LegacyCollections = [] }).ToArray();
-            return (collection is null ? catalog : Touch(catalog, collection.Id), changed);
+            return PlaceMedia(catalog, records, ids, set, collection);
         });
+    }
+
+    // Destination creation and placement share one commit: Cancel and failed moves leave no containers behind.
+    public Task<CollectionMutation> MoveMediaToDestinationAsync(IEnumerable<string> mediaIds, string collectionName,
+        string setName, string? collectionId = null, string? setId = null)
+    {
+        var ids = mediaIds.Distinct().ToArray();
+        var validCollectionName = ContainerName(collectionName);
+        var validSetName = ContainerName(setName);
+        return MutateCollectionsAsync((catalog, records) =>
+        {
+            if (ids.Length == 0) throw new InvalidOperationException("Choose media to move first.");
+            var collection = collectionId is not null ? RequireCollection(catalog, collectionId)
+                : catalog.Collections.FirstOrDefault(item => item.Name.Equals(validCollectionName, StringComparison.OrdinalIgnoreCase));
+            if (collection is null)
+            {
+                collection = new(Guid.NewGuid().ToString("N"), validCollectionName, DateTimeOffset.UtcNow);
+                catalog = catalog with { Collections = catalog.Collections.Add(collection) };
+            }
+            var set = setId is not null ? RequireSet(catalog, setId)
+                : catalog.Sets.FirstOrDefault(item => item.CollectionId == collection.Id && item.Name.Equals(validSetName, StringComparison.OrdinalIgnoreCase));
+            if (set is not null && set.CollectionId != collection.Id)
+                throw new InvalidOperationException("This set no longer belongs to the selected collection. Refresh and try again.");
+            if (set is null)
+            {
+                var order = catalog.Sets.Where(item => item.CollectionId == collection.Id).Select(item => item.Order).DefaultIfEmpty(-1).Max() + 1;
+                set = new(Guid.NewGuid().ToString("N"), collection.Id, validSetName, order);
+                catalog = catalog with { Sets = catalog.Sets.Add(set) };
+            }
+            return PlaceMedia(catalog, records, ids, set, collection);
+        });
+    }
+
+    private static (CollectionCatalog Catalog, ImageRecord[] Records) PlaceMedia(CollectionCatalog catalog,
+        List<ImageRecord> records, string[] ids, MediaSet? set, CollectionDefinition? collection)
+    {
+        var setId = set?.Id;
+        var byId = records.ToDictionary(image => image.Id);
+        if (ids.Any(id => !byId.ContainsKey(id))) throw new InvalidOperationException("Some selected media no longer exist. Refresh and try again.");
+        long order = records.Where(image => image.SetId == setId).Select(image => image.SetOrder).DefaultIfEmpty(-1).Max() + 1;
+        var changed = ids.Select(id => byId[id]).Where(image => image.SetId != setId || !image.LegacyCollections.IsEmpty).Select(image => image with
+        { SetId = setId, SetOrder = order++, Collections = collection is null ? [] : [collection.Name], LegacyCollections = [] }).ToArray();
+        return (collection is null ? catalog : Touch(catalog, collection.Id), changed);
     }
 
     public Task<CollectionMutation> DeleteContainerAsync(string id, bool isSet) => MutateCollectionsAsync((catalog, records) =>

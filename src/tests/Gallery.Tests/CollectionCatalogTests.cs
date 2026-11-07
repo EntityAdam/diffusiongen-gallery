@@ -12,6 +12,28 @@ public sealed class CollectionCatalogTests
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
+    public async Task FailedDestinationMoveLeavesNoContainersAndExistingDestinationsAreReused(CatalogBackend backend)
+    {
+        using var fixture = new ServiceFixture(backend);
+        await fixture.InitializeAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Service.MoveMediaToDestinationAsync(["missing"], "New", "Set"));
+        var empty = await fixture.Service.LoadCollectionCatalogAsync();
+        Assert.Empty(empty.Collections);
+        Assert.Empty(empty.Sets);
+        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(17, 19)), "second.png", "folder");
+        var moved = await fixture.Service.MoveMediaToDestinationAsync([first.Id], "New", "Set");
+        var reused = await fixture.Service.MoveMediaToDestinationAsync([second.Id], " new ", " SET ");
+        Assert.Single(reused.Catalog.Collections);
+        Assert.Single(reused.Catalog.Sets);
+        Assert.Equal(moved.Catalog.Sets[0].Id, reused.Catalog.Sets[0].Id);
+        Assert.All(await fixture.Service.ListAsync(), image => Assert.Equal(moved.Catalog.Sets[0].Id, image.SetId));
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
     public async Task EmptyHierarchySurvivesReopeningAndNamesAreUniqueWithinParents(CatalogBackend backend)
     {
         using var fixture = new ServiceFixture(backend);await fixture.InitializeAsync();

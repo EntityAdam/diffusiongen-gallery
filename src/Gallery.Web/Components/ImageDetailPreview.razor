@@ -16,12 +16,12 @@
         <ImageRating Image="@Image" Disabled="@Busy" Rate="@Rate" />
         <div class="flex flex-wrap items-center gap-1">
             <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@Busy" Class="@(Image.IsFavorite ? "text-primary" : "")"
-                    OnClick="Favorite" aria-label="Toggle favorite" aria-pressed="@(Image.IsFavorite ? "true" : "false")">
-                <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" />Favorite
+                    OnClick="Favorite" aria-label="@(Image.IsFavorite ? "Remove favorite" : "Favorite")" aria-pressed="@(Image.IsFavorite ? "true" : "false")">
+                <HeartIcon Size="16" Fill="@(Image.IsFavorite ? "currentColor" : "none")" aria-hidden="true" />@(Image.IsFavorite ? "Remove favorite" : "Favorite")
             </Button>
             <Button Variant="@(Image.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Ghost)" Size="ButtonSize.Sm" Disabled="@Busy"
-                    OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Unmark deletion" : "Trash")" aria-pressed="@(Image.IsMarkedForDeletion ? "true" : "false")">
-                <TrashIcon Size="16" aria-hidden="true" />@(Image.IsMarkedForDeletion ? "Unmark" : "Trash")
+                    OnClick="Mark" aria-label="@(Image.IsMarkedForDeletion ? "Restore from Trash" : "Move to Trash")" aria-pressed="@(Image.IsMarkedForDeletion ? "true" : "false")">
+                <TrashIcon Size="16" aria-hidden="true" />@(Image.IsMarkedForDeletion ? "Restore from Trash" : "Move to Trash")
             </Button>
         </div>
     </div>

@@ -335,7 +335,7 @@ public sealed class UiComponentTests
         Assert.Contains("aria-label=\"Clear rating\"", actualHtml);
         Assert.Contains("h-7!", actualHtml);
         Assert.Contains("focus-visible:ring-ring", actualHtml);
-        Assert.Contains("aria-label=\"Trash\"", actualHtml);
+        Assert.Contains("aria-label=\"Move to Trash\"", actualHtml);
         Assert.DoesNotContain("Mark deletion", actualHtml);
         Assert.DoesNotContain("Encrypted", actualHtml);
         Assert.Contains("aria-label=\"Not reviewed\"", actualHtml);
@@ -347,10 +347,10 @@ public sealed class UiComponentTests
         var footer = actualHtml[actualHtml.IndexOf("class=\"card-actions", StringComparison.Ordinal)..];
         Assert.Contains("card-rating-row", footer);
         Assert.Contains("aria-label=\"Clear rating\"", footer);
-        Assert.Contains("aria-label=\"Toggle favorite\"", footer);
-        Assert.Contains("aria-label=\"Trash\"", footer);
-        Assert.True(footer.IndexOf("card-rating-row", StringComparison.Ordinal) < footer.IndexOf("aria-label=\"Toggle favorite\"", StringComparison.Ordinal));
-        Assert.True(footer.IndexOf("aria-label=\"Toggle favorite\"", StringComparison.Ordinal) < footer.IndexOf("aria-label=\"Trash\"", StringComparison.Ordinal));
+        Assert.Contains("aria-label=\"Remove favorite\"", footer);
+        Assert.Contains("aria-label=\"Move to Trash\"", footer);
+        Assert.True(footer.IndexOf("card-rating-row", StringComparison.Ordinal) < footer.IndexOf("aria-label=\"Remove favorite\"", StringComparison.Ordinal));
+        Assert.True(footer.IndexOf("aria-label=\"Remove favorite\"", StringComparison.Ordinal) < footer.IndexOf("aria-label=\"Move to Trash\"", StringComparison.Ordinal));
         Assert.DoesNotContain("action-label", footer);
         Assert.DoesNotContain(">Trash<", footer);
         Assert.DoesNotContain(">Favorite<", footer);
@@ -484,8 +484,8 @@ public sealed class UiComponentTests
         Assert.Equal(5, Regex.Matches(actualHtml, "<button[^>]*aria-label=\"(?:Clear rating|Rate [1-5] out of 5 stars)\"").Count);
         Assert.Contains(isCurated ? "aria-label=\"Clear rating\"" : "aria-label=\"Rate 3 out of 5 stars\"", actualHtml);
         Assert.Contains($"aria-pressed=\"{isCurated.ToString().ToLowerInvariant()}\"",
-            Assert.Single(buttons, button => button.Contains("aria-label=\"Toggle favorite\"")));
-        Assert.Contains($"aria-label=\"{(isCurated ? "Unmark deletion" : "Trash")}\"", actualHtml);
+            Assert.Single(buttons, button => button.Contains($"aria-label=\"{(isCurated ? "Remove favorite" : "Favorite")}\"")));
+        Assert.Contains($"aria-label=\"{(isCurated ? "Restore from Trash" : "Move to Trash")}\"", actualHtml);
         Assert.True(actualHtml.IndexOf("aria-label=\"Full screen view\"", StringComparison.Ordinal)
             < actualHtml.IndexOf("role=\"group\"", StringComparison.Ordinal));
         Assert.DoesNotContain(">Full screen view<", actualHtml);

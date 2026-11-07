@@ -295,6 +295,7 @@ else
                             <Alert Variant="AlertVariant.Destructive">Not enough available disk space for the selected media and catalog growth.</Alert>
                         }
                     }
+                    @if (IngestionSettingsDirty) { <p role="status">Save your changes under Advanced before ingesting media.</p> }
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(!CanIngestScan)" OnClick="ImportFolderAsync">Ingest <ArrowRightIcon aria-hidden="true" /></Button>
                     </section>
                 }
@@ -308,7 +309,7 @@ else
                         <Button Variant="@(ingestionProfile == "ssd" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "ssd" ? "true" : "false")" Disabled="@busy" OnClick='() => ApplyIngestionProfile(IngestionOptions.Ssd, "ssd")'>SSD</Button>
                         <Button Variant="@(ingestionProfile == "custom" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(ingestionProfile == "custom" ? "true" : "false")" Disabled="@busy" OnClick='() => ingestionProfile = "custom"'>Custom</Button>
                     </div>
-                    <p class="text-muted-foreground">Active settings: @ingestionWorkers workers, batch size @ingestionBatchSize.</p>
+                    <p class="text-muted-foreground">Performance settings: @ingestionWorkers workers, batch size @ingestionBatchSize.</p>
                     @if (ingestionProfile == "custom")
                     {
                         <div class="space-y-3">
@@ -319,7 +320,8 @@ else
                             <p class="text-muted-foreground">Use 1-32 workers and a batch size of 1-64, at least as large as the worker count. More workers use more memory.</p>
                         </div>
                     }
-                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="SaveIngestionOptionsAsync">Save</Button>
+                    <p class="text-muted-foreground" role="status">@(IngestionSettingsDirty ? "Unsaved changes. Save ingestion settings before ingesting media." : "Ingestion settings are saved. Changes require Save ingestion settings.")</p>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@(busy || !IngestionSettingsDirty)" OnClick="SaveIngestionOptionsAsync">Save ingestion settings</Button>
                 </div>
             </details>
             @if (importProgress is not null)
@@ -518,6 +520,7 @@ else
             <BackupLocation @bind-Type="backupDestinationType" @bind-LocalDirectory="backupLocalDirectory"
                 @bind-Container="backupAzureContainer" @bind-Prefix="backupAzurePrefix"
                 @bind-ConnectionString="backupAzureConnectionString" HasSavedCredentials="@(backupOptions?.HasAzureCredentials == true)" Disabled="@busy" />
+            <p class="text-muted-foreground" role="status">@(BackupSettingsDirty ? "Unsaved changes. Save destination to apply them." : "Destination settings are saved. Changes require Save destination.")</p>
             <div class="flex flex-wrap items-center gap-2">
                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="SaveBackupOptionsAsync">Save destination</Button>
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(busy || !BackupDestinationReady)" OnClick="CreateFullBackupAsync">Create full backup</Button>
@@ -536,6 +539,7 @@ else
             <h3>Gallery security</h3>
             <div class="space-y-4 rounded-lg border border-border bg-background p-4">
                 <h4>Inactivity auto-lock</h4>
+                <p class="text-muted-foreground">Saves automatically when you choose a timer.</p>
                 <p class="text-muted-foreground">Automatically drop encryption keys from memory and lock the gallery when no mouse, keyboard or touch activity is detected. Locking also releases the gallery checkout after active work finishes.</p>
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
                     <Label For="auto-lock" Class="mt-4 mb-2 block">Auto-lock timer</Label>
@@ -748,22 +752,38 @@ else
 
     @if (selected is not null)
     {
-        <ModalDialog Class="image-detail-overlay" LabelledBy="detail-title" Busy="@busy" Close="CloseDetail">
+        <ModalDialog Class="image-detail-overlay" LabelledBy="detail-title" Busy="@busy" Close="RequestCloseDetailAsync">
             <Card Class="image-detail-dialog mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6">
-                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="CloseDetail" aria-label="Close media details"><XIcon aria-hidden="true" /></Button></div>
+                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@selected.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@busy" OnClick="RequestCloseDetailAsync" aria-label="Close media details"><XIcon aria-hidden="true" /></Button></div>
                 <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
                     <ImageDetailPreview Image="selected" Preview="@preview" VideoUrl="@videoUrl" Busy="busy"
-                                        Download="() => ExportAsync(selected)" Fullscreen="() => OpenViewer(selected.Id)"
+                                        Download="() => ExportAsync(selected)" Fullscreen="RequestDetailViewerAsync"
                                         Rate="value => RateImageAsync(selected, value)" Favorite="() => FavoriteAsync(selected)"
                                         Mark="() => MarkAsync(selected)" />
                     <div class="min-w-0 space-y-4">
                         <ImageDetailFields @key="selected.Id" Image="selected" Busy="busy" CatalogLoading="catalogPartial" @bind-Description="editDescription" @bind-UserDescription="editUserDescription"
-                                           Save="SaveNotesAsync" Analyze="AnalyzeAsync" DownloadWorkflow="() => ExportWorkflowAsync(selected)"
-                                           ShowPrompt="() => ShowPromptAsync(selected.Prompt)" Remove="() => PrepareRemovalAsync(new[] { selected.Id })" />
+                                           Save="SaveNotesAsync" Analyze="AnalyzeAsync" Dirty="NotesDirty" Discard="DiscardNotes"
+                                           Suggestion="@aiSuggestions.GetValueOrDefault(selected.Id)" Approve="ApproveDetailSuggestionAsync" Dismiss="DismissDetailSuggestionAsync" DownloadWorkflow="() => ExportWorkflowAsync(selected)"
+                                           ShowPrompt="RequestDetailPromptAsync" Remove="RequestDetailRemovalAsync" />
                         @if (busy) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@progress</p> }
                         @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
                     </div>
                 </div>
+            </Card>
+        </ModalDialog>
+    }
+    @if (pendingDetailAction is not null)
+    {
+        <ModalDialog LabelledBy="unsaved-notes-title" Busy="@busy" Close="KeepEditingNotes">
+            <Card Class="mx-auto max-w-lg space-y-4 p-5">
+                <h2 id="unsaved-notes-title">Save your notes?</h2>
+                <p>Your notes have unsaved changes.</p>
+                <div class="flex flex-wrap gap-2">
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="KeepEditingNotes" autofocus>Keep editing</Button>
+                    <Button Variant="ButtonVariant.Outline" Disabled="@busy" OnClick="DiscardNotesAndContinueAsync">Discard changes</Button>
+                    <Button Disabled="@busy" OnClick="SaveNotesAndContinueAsync">Save changes</Button>
+                </div>
+                @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
             </Card>
         </ModalDialog>
     }
@@ -825,6 +845,8 @@ else
     private string galleryScreen = "welcome", galleryTab = "create";
     private string existingGalleryDirectory = "", newGalleryName = "", newGalleryDirectory = "";
     private string newMediaDirectory = "", mediaDirectory = "", catalogDirectory = "";
+    private IngestionOptions savedIngestionOptions = IngestionOptions.Hdd;
+    private bool IngestionSettingsDirty => ingestionWorkers != savedIngestionOptions.Workers || ingestionBatchSize != savedIngestionOptions.CatalogBatchSize;
     private int ingestionWorkers = IngestionOptions.Hdd.Workers, ingestionBatchSize = IngestionOptions.Hdd.CatalogBatchSize;
     private string ingestionProfile = "hdd";
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
@@ -904,7 +926,9 @@ else
 
     private Task SaveIngestionOptionsAsync() => RunAsync("Saving ingestion settings...", async () =>
     {
-        await Gallery.SaveIngestionOptionsAsync(new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize });
+        var options = new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize };
+        await Gallery.SaveIngestionOptionsAsync(options);
+        savedIngestionOptions = options;
         message = "Performance settings saved for this gallery.";
     });
 
@@ -975,7 +999,7 @@ else
     private IngestionScan? ingestionScan;
     private IngestionSpaceEstimate? ingestionSpace;
     private bool includeImages = true, includeVideos = true;
-    private bool CanIngestScan => !busy && ingestionScan is not null && ingestionSpace?.HasEnoughSpace == true;
+    private bool CanIngestScan => !busy && !IngestionSettingsDirty && ingestionScan is not null && ingestionSpace?.HasEnoughSpace == true;
     private long EstimatedIngestionChangeBytes => ingestionSpace is { } space
         ? space.EstimatedBytes - (deleteSources ? space.SelectedSourceBytes : 0) : 0;
     private string preview = "", editDescription = "", editUserDescription = "", destination = "", rename = "";
@@ -1042,6 +1066,11 @@ else
     private DriveQueueStatus driveQueue = DriveQueueStatus.Empty;
     private BackupOptions? backupOptions;
     private string backupDestinationType = "local", backupLocalDirectory = "", backupAzureContainer = "", backupAzurePrefix = "", backupAzureConnectionString = "";
+    private bool BackupSettingsDirty => backupOptions is not null &&
+        (backupAzureConnectionString.Length > 0 || backupOptions.DestinationType != backupDestinationType
+        || backupOptions.LocalDirectory != backupLocalDirectory.Trim()
+        || backupOptions.AzureContainer != backupAzureContainer.Trim()
+        || backupOptions.AzurePrefix != backupAzurePrefix.Trim().Trim('/'));
     private bool BackupDestinationReady => backupOptions is not null
         && backupAzureConnectionString.Length == 0
         && backupOptions.DestinationType == backupDestinationType
@@ -1899,6 +1928,7 @@ else
     private Task ImportFolderAsync() => RunAsync("Ingesting scanned media...", async () =>
     {
         EnsureNoLibraryJob();
+        if (IngestionSettingsDirty) throw new InvalidOperationException("Save ingestion settings before ingesting media.");
         var scan = ingestionScan ?? throw new InvalidOperationException("Scan the source folder before ingesting.");
         if (ingestionSpace?.HasEnoughSpace != true)
             throw new InvalidOperationException("Select media and check available disk space before ingesting.");
@@ -1927,7 +1957,7 @@ else
                             lastProgressRender.Restart();
                         }
                     }), reportTimings: recordTimings ? report => completedTimingReport = report : null,
-                    options: new IngestionOptions { Workers = ingestionWorkers, CatalogBatchSize = ingestionBatchSize },
+                    options: savedIngestionOptions,
                     scan: scan, includeImages: includeImages, includeVideos: includeVideos);
             }
             catch (ImportFolderException exception)
@@ -2037,6 +2067,7 @@ else
 
     private void CloseDetail()
     {
+        pendingDetailAction = null;
         selected = null;
         preview = editDescription = editUserDescription = destination = rename = "";
         _ = ReleaseVideoAsync();
@@ -2122,13 +2153,7 @@ else
         return RunAsync("Refreshing gallery...", ReloadAsync);
     }
 
-    private Task SaveNotesAsync() => RunAsync("Saving notes...", async () =>
-    {
-        if (selected is null) return;
-        await Gallery.UpdateAsync(selected.Id, image => image with { Description = editDescription.Trim(), UserDescription = editUserDescription.Trim() });
-        await ReloadAsync();
-        message = "Notes saved.";
-    });
+    private Task SaveNotesAsync() => RunAsync("Saving notes...", SaveDetailNotesCoreAsync);
 
     private Task ExportWorkflowAsync(ImageRecord image) => RunAsync("Exporting workflow...", async () =>
     {
@@ -2142,15 +2167,13 @@ else
     private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>
     {
         if (selected is null) return;
+        var image = selected;
         var analysisSettings = await Gallery.SettingsAsync();
         var result = await Gallery.AnalyzeImageAsync(analysisSettings, preview);
-        await Gallery.UpdateAsync(selected.Id, image =>
-        {
-            return image with { Description = result.Description, UserDescription = editUserDescription.Trim(), Tags = result.Tags, AnalysisModel = analysisSettings.Model };
-        });
-        await ReloadAsync();
-        editDescription = selected!.Description;
-        message = "Vision analysis saved.";
+        if (disposed || !Gallery.IsUnlocked || selected?.Id != image.Id) return;
+        var suggestion = new OrganizationSuggestion(image.Id, image.Name, result.Description, result.Tags, "", analysisSettings.Model);
+        if (workbench is not null) await workbench.StageSuggestionAsync(suggestion);
+        message = "AI suggestion ready. Review it and choose Approve & save. Nothing has been saved.";
     });
 
     private Task MoveAsync() => RunAsync("Moving encrypted media...", async () =>

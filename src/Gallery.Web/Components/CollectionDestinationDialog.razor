@@ -5,16 +5,15 @@
     <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
         <h2 id="destination-title">Move @Images.Count media to a set</h2>
         <p class="text-muted-foreground">Current location: @CurrentLocation</p>
-        <p class="text-muted-foreground">New collections and sets are created immediately and remain available if you cancel this move.</p>
-        @if (createdDestinations.Count > 0) { <p role="status">Created: @string.Join("; ", createdDestinations). These destinations are saved independently of this move.</p> }
+        <p class="text-muted-foreground">New collections and sets are saved when you move the media. Cancel discards this destination.</p>
         @if (loading) { <p role="status">Loading destinations…</p> }
         <label for="destination-collection">Collection</label>
         <AdvancedSelect Id="destination-collection" Label="Collections" ItemLabel="collection" Placeholder="Search or create a collection…"
                         Options="@catalog.Collections.Select(item => item.Name)" Counts="@CollectionCounts" Value="@collectionName" ValueChanged="SelectCollectionAsync" Disabled="@(working || loading)" />
         <label for="destination-set">Set</label>
         <AdvancedSelect Id="destination-set" Label="Sets" ItemLabel="set" Placeholder="Search or create a set…"
-                        Options="@Sets.Select(item => item.Name)" Counts="@SetCounts" Value="@setName" ValueChanged="SelectSetAsync" Disabled="@(working || loading || Collection is null)" />
-        @if (Set is not null) { <p class="text-primary">Destination: @Collection?.Name / @Set.Name</p> }
+                        Options="@Sets.Select(item => item.Name)" Counts="@SetCounts" Value="@setName" ValueChanged="SelectSetAsync" Disabled="@(working || loading || string.IsNullOrWhiteSpace(collectionName))" />
+        @if (!string.IsNullOrWhiteSpace(setName)) { <p class="text-primary">Destination: @collectionName / @setName</p> }
         <Button Type="button" Variant="ButtonVariant.Outline" Disabled="@(working || loading || Collection is null || !Sets.Any())" OnClick="SuggestAsync">Suggest destination (AI)</Button>
         @if (suggestedSet is not null) { <div class="collection-notice" role="status">Suggested: @Collection?.Name / @suggestedSet.Name <Button Type="button" Variant="ButtonVariant.Ghost" OnClick="UseSuggestion">Use suggestion</Button><Button Type="button" Variant="ButtonVariant.Ghost" OnClick="() => suggestedSet = null">Dismiss</Button></div> }
         @if (suggestionNotice.Length > 0) { <p role="status">@suggestionNotice</p> }
@@ -22,7 +21,7 @@
         @if (error.Length > 0) { <p role="alert" class="text-destructive">@error</p><Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="LoadAsync">Refresh destinations</Button> }
         <div class="collection-dialog-actions">
             <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="CancelAsync">Cancel</Button>
-            <Button Type="submit" Disabled="@(working || loading || Set is null || Images.Count == 0 || Images.All(image => image.SetId == Set.Id))">@(working ? "Saving…" : $"Move {Images.Count} media")</Button>
+            <Button Type="submit" Disabled="@(working || loading || string.IsNullOrWhiteSpace(collectionName) || string.IsNullOrWhiteSpace(setName) || Images.Count == 0 || (Set is not null && Images.All(image => image.SetId == Set.Id)))">@(working ? "Saving…" : $"Move {Images.Count} media")</Button>
         </div>
     </form>
 </dialog>
@@ -34,16 +33,15 @@
     [Parameter] public EventCallback Cancel { get; set; }
     private ElementReference element;
     private readonly string key = Guid.NewGuid().ToString("N");
-    private readonly List<string> createdDestinations = [];
     private MediaSet? suggestedSet;
     private string suggestionNotice = "";
     private CollectionCatalog catalog = CollectionCatalog.Empty;
     private IReadOnlyList<ImageRecord> allMedia = [];
     private string collectionName = "", setName = "", error = "";
     private bool loading = true, working;
-    private CollectionDefinition? Collection => catalog.Collections.FirstOrDefault(item => item.Name == collectionName);
+    private CollectionDefinition? Collection => catalog.Collections.FirstOrDefault(item => item.Name.Equals(collectionName.Trim(), StringComparison.OrdinalIgnoreCase));
     private IEnumerable<MediaSet> Sets => catalog.Sets.Where(item => item.CollectionId == Collection?.Id);
-    private MediaSet? Set => Sets.FirstOrDefault(item => item.Name == setName);
+    private MediaSet? Set => Sets.FirstOrDefault(item => item.Name.Equals(setName.Trim(), StringComparison.OrdinalIgnoreCase));
     private IReadOnlyDictionary<string, int> CollectionCounts => catalog.Collections.ToDictionary(item => item.Name,
         item => allMedia.Count(image => catalog.Sets.Any(set => set.CollectionId == item.Id && set.Id == image.SetId)));
     private IReadOnlyDictionary<string, int> SetCounts => Sets.ToDictionary(item => item.Name, item => allMedia.Count(image => image.SetId == item.Id));
@@ -65,22 +63,20 @@
         catch (Exception exception) { error = exception.Message; }
         finally { loading = false; }
     }
-    private async Task SelectCollectionAsync(string name) => await RunAsync(async () =>
+    private Task SelectCollectionAsync(string name)
     {
-        setName = "";suggestedSet = null;suggestionNotice = "";
-        if (name.Length == 0) { collectionName = ""; return; }
-        var item = catalog.Collections.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        if (item is null) { item = await Gallery.CreateCollectionAsync(name); createdDestinations.Add($"Collection {item.Name}"); }
-        catalog = await Gallery.LoadCollectionCatalogAsync(); collectionName = item.Name;
-    });
-    private async Task SelectSetAsync(string name) => await RunAsync(async () =>
+        if (working || loading) return Task.CompletedTask;
+        collectionName = name;
+        setName = "";
+        suggestedSet = null;
+        suggestionNotice = "";
+        return Task.CompletedTask;
+    }
+    private Task SelectSetAsync(string name)
     {
-        if (name.Length == 0) { setName = ""; return; }
-        if (Collection is null) return;
-        var item = Sets.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        if (item is null) { item = await Gallery.CreateSetAsync(Collection.Id, name); createdDestinations.Add($"Set {Collection.Name} / {item.Name}"); }
-        catalog = await Gallery.LoadCollectionCatalogAsync(); setName = item.Name;
-    });
+        if (!working && !loading) setName = name;
+        return Task.CompletedTask;
+    }
     private Task SuggestAsync() => RunAsync(async () =>
     {
         suggestedSet = null;suggestionNotice = "";
@@ -89,8 +85,8 @@
         if (suggestedSet is null) suggestionNotice = "No existing set was a suitable match. Choose a destination yourself.";
     });
     private void UseSuggestion() { if (suggestedSet is not null) setName = suggestedSet.Name;suggestedSet = null; }
-    private Task MoveAsync() => Set is null || Images.Count == 0 ? Task.CompletedTask : RunAsync(async () =>
-    { var result = await Gallery.MoveMediaToSetAsync(Images.Select(image => image.Id), Set.Id); await Saved.InvokeAsync(result); });
+    private Task MoveAsync() => string.IsNullOrWhiteSpace(collectionName) || string.IsNullOrWhiteSpace(setName) || Images.Count == 0 ? Task.CompletedTask : RunAsync(async () =>
+    { var result = await Gallery.MoveMediaToDestinationAsync(Images.Select(image => image.Id), collectionName, setName, Collection?.Id, Set?.Id); await Saved.InvokeAsync(result); });
     private async Task RunAsync(Func<Task> action)
     { if (working) return; working = true; error = ""; try { await action(); } catch (Exception exception) { error = exception.Message; } finally { working = false; } }
     private Task CancelAsync() => working ? Task.CompletedTask : Cancel.InvokeAsync();
