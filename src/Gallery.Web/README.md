@@ -179,8 +179,14 @@ or folder names.
 
 Action successes and failures appear as toasts across workflows. Dialog validation
 and ongoing job status stay beside their controls. Collection organization changes
-offer **Undo organization change** in the toolbar, including changes made by dragging
-sets. **Refresh** reloads data without repeating a failed mutation.
+offer **Undo organization change** above the current workspace, including changes made by dragging
+sets. The latest organization change can also be undone in full-screen viewing and stays
+available when changing screens or closing the viewer. Locking or switching galleries clears
+it. Creating a collection or set clears the previous undo action. **Refresh** reloads data without repeating a failed mutation.
+
+Collections and Unorganized hide media in Trash by default, matching Gallery. Use
+**Include Trash** to show them; **Clear filters** returns to active media only. Collection
+navigation, filters, sorting, selection and paging pause while a change is being saved.
 
 Unsaved LLM, backup destination, and ingestion settings offer **Save changes**,
 **Discard changes**, or **Keep editing** before changing sections. Escape keeps the
@@ -331,7 +337,10 @@ rating decisions and advances after each decision. Rating, favorite, and deletio
 mark changes save immediately; the viewing sequence stays fixed until closing.
 
 Quick tag stages additions and removals until **Save changes**; **Cancel** discards
-both. Bulk tag edits preserve mixed assignments for tags you leave unchanged.
+both. Bulk tag edits show each tag's assignment count (for example, **2 of 5 selected**)
+and preserve mixed assignments for tags you leave unchanged. New tags apply to all selected
+media; removing a tag removes it from all selected media. A successful save confirms the
+number of affected media items.
 The move dialog stages new collections and sets until **Move**. Cancel discards
 the destination draft. Creation and placement commit together; a failed move leaves
 no new destinations. Undo restores both the placement and destination catalog.

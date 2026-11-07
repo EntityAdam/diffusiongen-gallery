@@ -1,4 +1,4 @@
-<article class="collection-container-card" draggable="@IsSet" @ondragstart="Drag" @ondragover:preventDefault="IsSet" @ondrop="Drop">
+<article class="collection-container-card" draggable="@(IsSet && !Busy)" @ondragstart="Drag" @ondragover:preventDefault="IsSet" @ondrop="Drop">
     <button class="collection-container-open" @onclick="Open" disabled="@Busy">
         <small>@(IsSet ? "SET" : "COLLECTION")</small><h3>@Name</h3><p>@Summary</p><span>Open @(IsSet ? "set" : "collection") →</span>
     </button>

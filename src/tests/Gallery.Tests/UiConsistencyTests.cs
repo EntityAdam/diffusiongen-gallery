@@ -1,5 +1,6 @@
 using System.Net;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Gallery.Core.Models;
 using Gallery.Web.Components;
 using Gallery.Web.Components.Pages;
@@ -48,16 +49,188 @@ public sealed class UiConsistencyTests
         first = await vault.Service.UpdateAsync(first.Id, image => image with { Tags = "cat, shared" });
         second = await vault.Service.UpdateAsync(second.Id, image => image with { Tags = "dog, shared" });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        var (workspace, _) = await Render<CollectionsWorkspace>(fixture, new()
+        var (workspace, root) = await Render<CollectionsWorkspace>(fixture, new()
         {
             [nameof(CollectionsWorkspace.Images)] = new[] { first, second },
             [nameof(CollectionsWorkspace.Location)] = new CollectionLocation(Unorganized: true)
         });
         typeof(CollectionsWorkspace).GetField("quickTagIds", Private)!.SetValue(workspace, new[] { first.Id, second.Id });
+        await Invoke(fixture, workspace, "SelectAll");
+        await Invoke(fixture, workspace, "OpenTags");
+        var tagHtml = await Html(fixture, root);
+        Assert.Contains("1 of 2 selected", tagHtml);
+        Assert.Contains("2 of 2 selected", tagHtml);
         await Invoke(fixture, workspace, "SaveTagsAsync", "dog, shared, bird");
         var saved = await vault.Service.ListAsync();
         Assert.Equal("shared, bird", saved.Single(image => image.Id == first.Id).Tags);
         Assert.Equal("dog, shared, bird", saved.Single(image => image.Id == second.Id).Tags);
+        Assert.Equal("Tags saved for 2 media item(s).", Field<string>(workspace, "notice"));
+    }
+
+    [Theory]
+    [InlineData("unorganized")]
+    [InlineData("set")]
+    [InlineData("all")]
+    public async Task Collections_HideTrashByDefaultAndResetIncludeTrashWithOtherFilters(string scope)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var collection = await vault.Service.CreateCollectionAsync("Series");
+        var set = await vault.Service.CreateSetAsync(collection.Id, "Set");
+        var location = scope == "unorganized" ? new CollectionLocation(Unorganized: true)
+            : scope == "set" ? new CollectionLocation(collection.Id, set.Id)
+            : new CollectionLocation(collection.Id, AllMedia: true);
+        var active = new ImageRecord { Id = "active", Name = "Active", SetId = scope == "unorganized" ? null : set.Id };
+        var trashed = active with { Id = "trashed", Name = "Trashed", IsMarkedForDeletion = true };
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (workspace, root) = await Render<CollectionsWorkspace>(fixture, new()
+        {
+            [nameof(CollectionsWorkspace.Catalog)] = await vault.Service.LoadCollectionCatalogAsync(),
+            [nameof(CollectionsWorkspace.Images)] = new[] { active, trashed },
+            [nameof(CollectionsWorkspace.Location)] = location
+        });
+        Assert.DoesNotContain("data-image-id=\"trashed\"", await Html(fixture, root));
+        await Invoke(fixture, workspace, "IncludeTrashChanged", new ChangeEventArgs { Value = true });
+        Assert.Contains("data-image-id=\"trashed\"", await Html(fixture, root));
+        await Invoke(fixture, workspace, "SelectAll");
+        Assert.Equal(2, Field<HashSet<string>>(workspace, "selection").Count);
+        await Invoke(fixture, workspace, "ClearFiltersAsync");
+        Assert.Empty(Field<HashSet<string>>(workspace, "selection"));
+        Assert.DoesNotContain("data-image-id=\"trashed\"", await Html(fixture, root));
+    }
+
+    [Theory]
+    [InlineData("gallery", false)]
+    [InlineData("collections", false)]
+    [InlineData("fullscreen", false)]
+    [InlineData("gallery", true)]
+    [InlineData("collections", true)]
+    public async Task OrganizationUndoSurvivesChangingScreens(string origin, bool undoInViewer)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, root) = await Render<Home>(fixture, new());
+        await Invoke(fixture, home, "ReloadAsync");
+        var moved = await vault.Service.MoveMediaToDestinationAsync([image.Id], "New collection", "New set");
+        if (origin == "gallery")
+            await Invoke(fixture, Field<LibraryWorkbench>(home, "workbench"), "DestinationSavedAsync", moved);
+        else if (origin == "collections")
+        {
+            await Invoke(fixture, home, "SwitchWorkflowAsync", "unorganized");
+            await Invoke(fixture, Field<CollectionsWorkspace>(home, "collectionsWorkspace"), "MovedAsync", moved);
+        }
+        else
+        {
+            var (viewer, _) = await Render<FullscreenViewer>(fixture, new() { [nameof(FullscreenViewer.Images)] = new[] { image } });
+            await Invoke(fixture, viewer, "CollectionMovedAsync", moved);
+            await Invoke(fixture, viewer, "CloseAsync");
+        }
+        await vault.Service.UpdateAsync(image.Id, edit => edit with { Tags = "preserved", Rating = 4 });
+        await Invoke(fixture, home, "SwitchWorkflowAsync", "settings");
+        Assert.Contains("Undo organization change", await Html(fixture, root));
+        if (undoInViewer)
+        {
+            var (viewer, viewerRoot) = await Render<FullscreenViewer>(fixture, new()
+            { [nameof(FullscreenViewer.Images)] = await vault.Service.ListAsync() });
+            Assert.Contains("Undo organization change", await Html(fixture, viewerRoot));
+            await Invoke(fixture, viewer, "UndoCollectionAsync");
+        }
+        else await Invoke(fixture, home, "UndoOrganizationAsync");
+        var restored = Assert.Single(await vault.Service.ListAsync());
+        Assert.Null(restored.SetId);
+        Assert.Equal("preserved", restored.Tags);
+        Assert.Equal(4, restored.Rating);
+        Assert.Empty((await vault.Service.LoadCollectionCatalogAsync()).Collections);
+        Assert.DoesNotContain("Undo organization change", await Html(fixture, root));
+    }
+
+    [Fact]
+    public async Task Collections_BlockViewAndSelectionChangesDuringSaveAndReleaseAfterFailure()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var images = Enumerable.Range(0, 13).Select(i => new ImageRecord { Id = $"image-{i}", Name = $"Image {i}" }).ToArray();
+        var busyStates = new List<bool>();
+        var (workspace, root) = await Render<CollectionsWorkspace>(fixture, new()
+        {
+            [nameof(CollectionsWorkspace.Images)] = images,
+            [nameof(CollectionsWorkspace.Location)] = new CollectionLocation(Unorganized: true),
+            [nameof(CollectionsWorkspace.BusyChanged)] = EventCallback.Factory.Create<bool>(this, value => busyStates.Add(value))
+        });
+        await Invoke(fixture, workspace, "Select", images[0].Id, false);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task save = null!;
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
+        {
+            save = (Task)typeof(CollectionsWorkspace).GetMethod("RunAsync", Private)!.Invoke(workspace,
+                [(Func<Task>)(async () => { await release.Task; throw new IOException("Save failed"); })])!;
+            typeof(ComponentBase).GetMethod("StateHasChanged", Private)!.Invoke(workspace, null);
+        });
+        var html = await Html(fixture, root);
+        Assert.Contains("aria-busy=\"true\"", html);
+        var controls = Regex.Matches(html, @"<(?:input|select|button)\b[^>]*>");
+        Assert.NotEmpty(controls);
+        foreach (Match control in controls) Assert.Matches(@"\sdisabled(?:=|\s|/?>)", control.Value);
+        await Invoke(fixture, workspace, "ClearSelection");
+        await Invoke(fixture, workspace, "SortChanged", new ChangeEventArgs { Value = "name" });
+        await Invoke(fixture, workspace, "IncludeTrashChanged", new ChangeEventArgs { Value = true });
+        await Invoke(fixture, workspace, "NextPageAsync");
+        Assert.Single(Field<HashSet<string>>(workspace, "selection"));
+        Assert.Equal("newest", Field<string>(workspace, "sort"));
+        Assert.False(Field<bool>(workspace, "includeTrash"));
+        Assert.Equal(0, Field<int>(workspace, "page"));
+        release.SetResult();
+        await save;
+        Assert.Equal(new[] { true, false }, busyStates);
+        Assert.False(Field<bool>(workspace, "working"));
+        Assert.Equal("Save failed", Field<string>(workspace, "error"));
+        await Invoke(fixture, workspace, "SortChanged", new ChangeEventArgs { Value = "name" });
+        Assert.Equal("name", Field<string>(workspace, "sort"));
+        Assert.Empty(Field<HashSet<string>>(workspace, "selection"));
+    }
+
+    [Fact]
+    public async Task WorkspaceNavigationWaitsForCollectionSaveAndLockClearsSharedUndo()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, root) = await Render<Home>(fixture, new());
+        await Invoke(fixture, home, "ReloadAsync");
+        var moved = await vault.Service.MoveMediaToDestinationAsync([image.Id], "Collection", "Set");
+        await Invoke(fixture, Field<LibraryWorkbench>(home, "workbench"), "DestinationSavedAsync", moved);
+        await Invoke(fixture, home, "SwitchWorkflowAsync", "unorganized");
+        typeof(Home).GetField("collectionWorking", Private)!.SetValue(home, true);
+        await Invoke(fixture, home, "SwitchWorkflowAsync", "settings");
+        await Invoke(fixture, home, "NavigateCollectionsAsync", new CollectionLocation(moved.Catalog.Collections[0].Id));
+        Assert.Equal("unorganized", Field<string>(home, "workflow"));
+        Assert.True(Field<CollectionLocation>(home, "collectionLocation").Unorganized);
+        var html = await Html(fixture, root);
+        Assert.Matches(@"\sdisabled(?:=|\s|/?>)", Regex.Match(html, @"<button[^>]*aria-label=""Settings""[^>]*>").Value);
+        await Invoke(fixture, home, "Lock");
+        await vault.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        await Invoke(fixture, home, "ReloadAsync");
+        Assert.DoesNotContain("Undo organization change", await Html(fixture, root));
+    }
+
+    [Fact]
+    public async Task UndoFromNewDestinationReturnsToExistingCollectionNavigation()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, _) = await Render<Home>(fixture, new());
+        var moved = await vault.Service.MoveMediaToDestinationAsync([image.Id], "New collection", "New set");
+        await Invoke(fixture, Field<LibraryWorkbench>(home, "workbench"), "DestinationSavedAsync", moved);
+        await Invoke(fixture, home, "NavigateCollectionsAsync", new CollectionLocation(moved.Catalog.Collections[0].Id, moved.Catalog.Sets[0].Id));
+        await Invoke(fixture, home, "UndoOrganizationAsync");
+        Assert.Equal(new CollectionLocation(), Field<CollectionLocation>(home, "collectionLocation"));
+        Assert.Null(Assert.Single(await vault.Service.ListAsync()).SetId);
     }
 
     [Fact]
@@ -197,6 +370,8 @@ public sealed class UiConsistencyTests
         Assert.True(saved.IsFavorite);
         Assert.True(saved.IsMarkedForDeletion);
         Assert.True(saved.IsReviewed);
+        await Invoke(fixture, workspace, "IncludeTrashChanged", new ChangeEventArgs { Value = true });
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => home.HandleGridKey("d", first.Id, false));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => home.HandleGridKey("x", first.Id, false));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => home.HandleGridKey("x", second.Id, true));
         Assert.Equal(2, Field<HashSet<string>>(workspace, "selection").Count);
@@ -246,21 +421,20 @@ public sealed class UiConsistencyTests
         var second = await vault.Service.CreateSetAsync(collection.Id, "Second");
         var third = await vault.Service.CreateSetAsync(collection.Id, "Third");
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        var (workspace, root) = await Render<CollectionsWorkspace>(fixture, new()
-        {
-            [nameof(CollectionsWorkspace.Catalog)] = await vault.Service.LoadCollectionCatalogAsync(),
-            [nameof(CollectionsWorkspace.Location)] = new CollectionLocation(collection.Id)
-        });
+        var (home, root) = await Render<Home>(fixture, new());
+        await Invoke(fixture, home, "ReloadAsync");
+        await Invoke(fixture, home, "NavigateCollectionsAsync", new CollectionLocation(collection.Id));
+        var workspace = Field<CollectionsWorkspace>(home, "collectionsWorkspace");
         typeof(CollectionsWorkspace).GetField("draggedSet", Private)!.SetValue(workspace, first.Id);
         await Invoke(fixture, workspace, "DropSetAsync", third.Id);
         Assert.Equal(new[] { second.Id, third.Id, first.Id }, (await vault.Service.LoadCollectionCatalogAsync()).Sets.OrderBy(item => item.Order).Select(item => item.Id));
         var html = await Html(fixture, root);
         Assert.Contains("Undo organization change", html);
         Assert.DoesNotContain("collection-notice", html);
-        await Invoke(fixture, workspace, "UndoAsync");
+        await Invoke(fixture, home, "UndoOrganizationAsync");
         Assert.Equal(new[] { first.Id, second.Id, third.Id }, (await vault.Service.LoadCollectionCatalogAsync()).Sets.OrderBy(item => item.Order).Select(item => item.Id));
         await Invoke(fixture, workspace, "ReorderSet", first.Id, 1);
-        await Invoke(fixture, workspace, "UndoAsync");
+        await Invoke(fixture, home, "UndoOrganizationAsync");
         Assert.Equal(new[] { first.Id, second.Id, third.Id }, (await vault.Service.LoadCollectionCatalogAsync()).Sets.OrderBy(item => item.Order).Select(item => item.Id));
     }
 

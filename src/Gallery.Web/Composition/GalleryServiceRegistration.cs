@@ -16,6 +16,7 @@ public static class GalleryServiceRegistration
         var galleryRuntimeOptions = CaptureGalleryRuntimeOptions(configuration);
         RegisterVisionHttpClient(services);
         RegisterGalleryService(services, vaultRoot, galleryRuntimeOptions);
+        services.AddScoped<Gallery.Web.Components.OrganizationHistory>();
     }
 
     internal static GalleryRuntimeOptions CaptureGalleryRuntimeOptions(IConfiguration configuration)

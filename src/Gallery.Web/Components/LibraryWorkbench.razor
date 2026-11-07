@@ -1,5 +1,6 @@
 @using Gallery.Core.Exceptions
 @inject GalleryService Gallery
+@inject OrganizationHistory OrganizationHistory
 @inject ISonnerService Toasts
 @inject ILogger<LibraryWorkbench> Logger
 @implements IDisposable
@@ -142,11 +143,9 @@
     [Parameter] public EventCallback<IReadOnlyList<OrganizationSuggestion>> SuggestionsChanged { get; set; }
     [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     private bool showDestination;
-    private CollectionUndo? collectionUndo;
-    private async Task DestinationSavedAsync(CollectionMutation result) { collectionUndo = result.Undo;showDestination = false;notice = "Media moved to set.";await Changed.InvokeAsync(); }
+    private async Task DestinationSavedAsync(CollectionMutation result) { OrganizationHistory.Record(result.Undo);showDestination = false;notice = "Media moved to set.";await Changed.InvokeAsync(); }
     private async Task DestinationCanceledAsync() { showDestination = false;await Changed.InvokeAsync(); }
-    private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await Gallery.MoveMediaToSetAsync(SelectedIds, null);collectionUndo = result.Undo;notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
-    private Task UndoCollectionAsync() => RunAsync("Restoring organization...", async () => { if (collectionUndo is null) return;await Gallery.UndoCollectionChangeAsync(collectionUndo);collectionUndo = null;await Changed.InvokeAsync();notice = "Organization restored."; });
+    private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await Gallery.MoveMediaToSetAsync(SelectedIds, null);OrganizationHistory.Record(result.Undo);notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
     private string tags = "", viewName = "", query = "", error = "", notice = "", status = "";
     private int rating = -1;
     private string reviewStatus = "unchanged", jobWorkflow = "", jobMessage = "";
@@ -432,5 +431,4 @@
     public void Dispose() { disposed = true; cancelRequested = true; suggestions.Clear(); CloseComparison(); }
 }
 
-@if (collectionUndo is not null && Visible) { <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="UndoCollectionAsync">Undo organization change</Button> }
 @if (showDestination) { <CollectionDestinationDialog Images="@Images.Where(image => SelectedIds.Contains(image.Id)).ToArray()" Saved="DestinationSavedAsync" Cancel="DestinationCanceledAsync" /> }
