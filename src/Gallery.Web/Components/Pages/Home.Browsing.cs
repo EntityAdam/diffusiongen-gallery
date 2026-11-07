@@ -4,6 +4,12 @@ namespace Gallery.Web.Components.Pages;
 
 public partial class Home
 {
+    private async Task<(CollectionCatalog Catalog, IReadOnlyList<ImageRecord> Images)> ReloadCollectionsAsync()
+    {
+        await ReloadAsync();
+        return (collectionCatalog, images);
+    }
+
     private bool catalogPartial;
     private bool catalogLoading;
     private string catalogLoadError = "";

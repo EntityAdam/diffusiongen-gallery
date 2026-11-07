@@ -591,7 +591,7 @@ else
         else {
             <Button Variant="ButtonVariant.Outline" Class="collection-navigation-toggle" aria-label="Show collection navigation" aria-expanded="@(collectionNavigationOpen ? "true" : "false")" OnClick="ToggleCollectionNavigation">Collections navigation</Button>
             @if (collectionNavigationOpen) { <button class="collection-nav-backdrop" aria-label="Close collection navigation" @onclick="CloseCollectionNavigation"></button> }
-            <CollectionsWorkspace Disabled="@busy" @ref="collectionsWorkspace" Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="CollectionLocationChangedAsync" Changed="ReloadAsync" BusyChanged="value => collectionWorking = value" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
+            <CollectionsWorkspace Disabled="@busy" @ref="collectionsWorkspace" Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="CollectionLocationChangedAsync" Reload="ReloadCollectionsAsync" ImageChanged="ViewerImageChanged" BusyChanged="value => collectionWorking = value" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
     }
     @if (workflow == "gallery")
     {
@@ -855,7 +855,7 @@ else
 
 @if (Gallery.IsUnlocked && viewerImages.Count > 0)
 {
-    <FullscreenViewer KnownTags="AllTags" Images="viewerImages" InitialId="@viewerInitialId" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
+    <FullscreenViewer KnownTags="AllTags" Images="viewerImages" InitialId="@viewerInitialId" InitialPreview="@viewerInitialPreview" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
                       Suggestions="aiSuggestions" ApproveSuggestion="ApproveSuggestionAsync" DismissSuggestion="DismissSuggestionAsync" />
 }
 @if (Gallery.IsUnlocked && reviewGroups.Count > 0)
@@ -1122,6 +1122,7 @@ else
     private readonly HashSet<string> librarySelection = [];
     private List<ImageRecord> viewerImages = [];
     private string viewerInitialId = "";
+    private string viewerInitialPreview = "";
     private bool reviewMode;
     private bool reviewRandomOrder;
     private int reviewGoal = 10;
@@ -1770,8 +1771,7 @@ else
         catalogTags = AllTags.Concat(updated.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         imagesById[updated.Id] = updated;
-        var imageIndex = images.FindIndex(image => image.Id == updated.Id);
-        if (imageIndex >= 0) images[imageIndex] = updated;
+        images = images.Select(image => image.Id == updated.Id ? updated : image).ToList();
         if (selected?.Id == updated.Id) selected = updated;
         if (detailViewerImages is not null)
             detailViewerImages = detailViewerImages.Select(image => image.Id == updated.Id ? updated : image).ToArray();
@@ -2185,6 +2185,7 @@ else
         if (initialId is not null && !viewerImages.Any(image => image.Id == initialId) && selected is not null)
             viewerImages.Add(selected with { });
         viewerInitialId = initialId ?? viewerImages.FirstOrDefault()?.Id ?? "";
+        viewerInitialPreview = selected?.Id == viewerInitialId && !selected.IsVideo ? preview : "";
         CloseDetail();
     }
 
@@ -2194,6 +2195,7 @@ else
         if (reviewRandomOrder) Random.Shared.Shuffle(pool);
         viewerImages = pool.Take(ReviewGoal).Select(image => image with { }).ToList();
         viewerInitialId = viewerImages.FirstOrDefault()?.Id ?? "";
+        viewerInitialPreview = "";
         reviewMode = true;
         CloseDetail();
     }
@@ -2202,6 +2204,7 @@ else
     {
         viewerImages.Clear();
         viewerInitialId = "";
+        viewerInitialPreview = "";
         return RunAsync("Refreshing gallery...", ReloadAsync);
     }
 
@@ -2360,6 +2363,7 @@ else
         librarySelection.Clear();
         viewerImages.Clear();
         viewerInitialId = "";
+        viewerInitialPreview = "";
         imagesById = [];
         density = UiPreferences.DetailDensity;
         selectionAnchor = null;

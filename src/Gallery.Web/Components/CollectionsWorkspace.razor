@@ -31,12 +31,12 @@
     </div>
     @if (!ShowsMedia)
     {
-        @if (Collection is null) { <div class="collection-inbox-banner"><div><strong>@BrowsableImages.Count(image => image.SetId is null) media are waiting for a set</strong><p>Organize incoming media without losing your place.</p></div><Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Outline" OnClick="() => Navigate(new(Unorganized: true))">Open Unorganized</Button></div> }
+        @if (Collection is null) { <div class="collection-inbox-banner"><div><strong>@Index.MediaBySet[null].Count() media are waiting for a set</strong><p>Organize incoming media without losing your place.</p></div><Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Outline" OnClick="() => Navigate(new(Unorganized: true))">Open Unorganized</Button></div> }
         <div class="collection-container-grid @(listView ? "is-list" : "")">
         @if (Collection is null)
         { @foreach (var item in VisibleCollections) { <CollectionContainerCard @key="item.Id" Name="@item.Name" Summary="@CollectionSummary(item.Id)" Busy="@ControlsDisabled" Open="() => Navigate(new(item.Id))" Rename="() => BeginName(item.Id, false)" Delete="() => BeginDelete(item.Id, false)" /> } }
         else
-        { @foreach (var item in VisibleSets) { <CollectionContainerCard @key="item.Id" Name="@item.Name" Summary="@($"{BrowsableImages.Count(image => image.SetId == item.Id)} media")" IsSet="true" Busy="@ControlsDisabled" Open="() => Navigate(new(Collection.Id, item.Id))" Rename="() => BeginName(item.Id, true)" Delete="() => BeginDelete(item.Id, true)" Move="() => BeginMoveSet(item.Id)" Up="() => ReorderSet(item.Id, -1)" Down="() => ReorderSet(item.Id, 1)" Drag="() => BeginDragSet(item.Id)" Drop="() => DropSetAsync(item.Id)" /> } }
+        { @foreach (var item in VisibleSets) { <CollectionContainerCard @key="item.Id" Name="@item.Name" Summary="@($"{Index.MediaBySet[item.Id].Count()} media")" IsSet="true" Busy="@ControlsDisabled" Open="() => Navigate(new(Collection.Id, item.Id))" Rename="() => BeginName(item.Id, true)" Delete="() => BeginDelete(item.Id, true)" Move="() => BeginMoveSet(item.Id)" Up="() => ReorderSet(item.Id, -1)" Down="() => ReorderSet(item.Id, 1)" Drag="() => BeginDragSet(item.Id)" Drop="() => DropSetAsync(item.Id)" /> } }
         </div>
         @if (!(Collection is null ? VisibleCollections.Any() : VisibleSets.Any()))
         { <div class="collection-empty"><h3>@(query.Length > 0 ? "No matches" : Collection is null ? "Create your first collection" : "Create your first set")</h3><p>Collections bring related sets together. Sets hold your media.</p>@if (query.Length > 0) { <Button Disabled="@ControlsDisabled" OnClick="ClearFiltersAsync">Clear filters</Button> } else { <Button Disabled="@ControlsDisabled" OnClick="() => BeginName(null, Collection is not null)">+ New @(Collection is null ? "collection" : "set")</Button> }</div> }
@@ -72,30 +72,70 @@
     [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     [Parameter] public CollectionLocation Location { get; set; } = new();
     [Parameter] public EventCallback<CollectionLocation> LocationChanged { get; set; }
-    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter, EditorRequired] public Func<Task<(CollectionCatalog Catalog, IReadOnlyList<ImageRecord> Images)>> Reload { get; set; } = null!;
+    [Parameter] public EventCallback<ImageRecord> ImageChanged { get; set; }
     [Parameter] public EventCallback<bool> BusyChanged { get; set; }
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public EventCallback BackToGallery { get; set; }
     [Parameter] public EventCallback<(ImageRecord[] Images, string InitialId)> Open { get; set; }
-    private CollectionDefinition? Collection => Catalog.Collections.FirstOrDefault(item => item.Id == Location.CollectionId);
-    private MediaSet? Set => Catalog.Sets.FirstOrDefault(item => item.Id == Location.SetId && item.CollectionId == Collection?.Id);
-    private IEnumerable<MediaSet> CollectionSets => Catalog.Sets.Where(item => item.CollectionId == Collection?.Id).OrderBy(item => item.Order);
-    private IEnumerable<ImageRecord> BrowsableImages => Images.Where(image => includeTrash || !image.IsMarkedForDeletion);
-    private IEnumerable<ImageRecord> CollectionMedia => BrowsableImages.Where(image => Catalog.Sets.Any(set => set.CollectionId == Collection?.Id && set.Id == image.SetId));
+    private CollectionBrowsingIndex? browsingIndex;
+    private IReadOnlyList<ImageRecord>? indexedImages;
+    private CollectionCatalog? indexedCatalog;
+    private bool indexedTrash;
+    private CollectionBrowsingIndex Index
+    {
+        get
+        {
+            if (browsingIndex is null || !ReferenceEquals(indexedImages, Images)
+                || !ReferenceEquals(indexedCatalog, Catalog) || indexedTrash != includeTrash)
+            {
+                browsingIndex = CollectionBrowsingIndex.Create(Catalog, Images, includeTrash);
+                indexedImages = Images;
+                indexedCatalog = Catalog;
+                indexedTrash = includeTrash;
+            }
+            return browsingIndex;
+        }
+    }
+    private CollectionDefinition? Collection => Location.CollectionId is { } id ? Index.Collections.GetValueOrDefault(id) : null;
+    private MediaSet? Set => Location.SetId is { } id && Index.Sets.GetValueOrDefault(id) is { } set
+        && set.CollectionId == Collection?.Id ? set : null;
+    private IEnumerable<MediaSet> CollectionSets => Collection is { } collection ? Index.SetsByCollection[collection.Id] : [];
+    private IEnumerable<ImageRecord> CollectionMedia => Collection is { } collection ? Index.MediaByCollection[collection.Id] : [];
     private IEnumerable<CollectionDefinition> VisibleCollections => (sort == "name" ? Catalog.Collections.OrderBy(item => item.Name) : Catalog.Collections.OrderByDescending(item => item.UpdatedAt)).Where(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
     private IEnumerable<MediaSet> VisibleSets => (sort == "name" ? CollectionSets.OrderBy(item => item.Name) : CollectionSets).Where(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
     private bool ShowsMedia => choosingMedia || Set is not null || Location.Unorganized || Location.AllMedia;
     private string Title => choosingMedia ? "Choose media" : Location.Unorganized ? "Unorganized" : Set?.Name ?? Collection?.Name ?? "Collections";
     private string Subtitle => Location.Unorganized ? $"{ScopedMedia.Count()} media without a set. Select items, then choose their destination." : Set is not null ? $"{ScopedMedia.Count()} media · {Collection?.Name}" : Collection is not null ? CollectionSummary(Collection.Id) : "A home for related sets. Tags work across every collection.";
     private string SearchLabel => ShowsMedia ? $"Search {(choosingMedia ? "library" : Title)}…" : Collection is null ? "Search collections…" : "Search sets…";
-    private IEnumerable<ImageRecord> ScopedMedia => choosingMedia ? BrowsableImages : Location.Unorganized ? BrowsableImages.Where(image => image.SetId is null) : Set is not null ? BrowsableImages.Where(image => image.SetId == Set.Id) : CollectionMedia;
-    private List<ImageRecord> Media
+    private IEnumerable<ImageRecord> ScopedMedia => choosingMedia ? Index.Images : Location.Unorganized ? Index.MediaBySet[null]
+        : Set is { } set ? Index.MediaBySet[set.Id] : CollectionMedia;
+    private CollectionBrowsingIndex? projectedIndex;
+    private (CollectionLocation Location, string Query, string Sort, int Rating, bool Favorites, bool Choosing) projectedView;
+    private IReadOnlyList<ImageRecord> projectedMedia = [];
+    private IReadOnlyList<ImageRecord> Media
     {
         get
         {
-            var filtered = Gallery.Filter(ScopedMedia, new GalleryFilter
-            { Search = query, MinRating = minRating, IncludesFavoritesOnly = favoritesOnly, Deletion = includeTrash ? GalleryFilter.AnyValue : "active" });
-            return (sort == "name" ? filtered.OrderBy(image => image.Name) : sort == "sequence" ? filtered.OrderBy(image => image.SetOrder).ThenBy(image => image.Id) : filtered.OrderByDescending(image => image.ImportedAt)).ToList();
+            var index = Index;
+            var view = (Location, query, sort, minRating, favoritesOnly, choosingMedia);
+            if (!ReferenceEquals(projectedIndex, index) || projectedView != view)
+            {
+                // Container pages need counts, but never filter, sort or decrypt media previews.
+                if (!ShowsMedia) projectedMedia = [];
+                else
+                {
+                    var filtered = Gallery.Filter(ScopedMedia, new GalleryFilter
+                    { Search = query, MinRating = minRating,
+                      IncludesFavoritesOnly = favoritesOnly, Deletion = includeTrash ? GalleryFilter.AnyValue : "active" });
+                    projectedMedia = (sort == "name" ? filtered.OrderBy(image => image.Name)
+                        : sort == "sequence" ? filtered.OrderBy(image => image.SetOrder).ThenBy(image => image.Id)
+                        : filtered.OrderByDescending(image => image.ImportedAt)).ToArray();
+                }
+                projectedIndex = index;
+                projectedView = view;
+            }
+            return projectedMedia;
         }
     }
     private const int PageSize = 12;
@@ -120,7 +160,7 @@
         .SelectMany(image => image.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.OrdinalIgnoreCase))
         .GroupBy(tag => tag, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
     private string CommonTags => string.Join(", ", Images.Where(image => quickTagIds.Contains(image.Id)).SelectMany(image => image.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)).Distinct(StringComparer.OrdinalIgnoreCase));
-    private string CollectionSummary(string id) => $"{Catalog.Sets.Count(set => set.CollectionId == id)} sets · {BrowsableImages.Count(image => Catalog.Sets.Any(set => set.CollectionId == id && set.Id == image.SetId))} media";
+    private string CollectionSummary(string id) => $"{Index.SetsByCollection[id].Count()} sets · {Index.MediaByCollection[id].Count()} media";
     private string ModalName => modalIsSet ? Catalog.Sets.FirstOrDefault(item => item.Id == modalId)?.Name ?? "" : Catalog.Collections.FirstOrDefault(item => item.Id == modalId)?.Name ?? "";
     private string ModalTitle => modal == "delete" ? $"Delete “{ModalName}”?" : modal == "move" ? $"Move “{ModalName}”" : $"{(modalId is null ? "New" : "Rename")} {(modalIsSet ? "set" : "collection")}";
     private int AffectedMedia => Images.Count(image => modalIsSet ? image.SetId == modalId : Catalog.Sets.Any(set => set.CollectionId == modalId && set.Id == image.SetId));
@@ -132,6 +172,7 @@
     private async Task LoadThumbnailsAsync()
     {
         var generation = ++thumbnailGeneration;
+        if (!ShowsMedia) { thumbnails.Clear(); return; }
         foreach (var image in PageMedia.ToArray())
         {
             if (thumbnails.ContainsKey(image.Id) || thumbnailFailures.Contains(image.Id)) continue;
@@ -178,9 +219,8 @@
     });
     private async Task RefreshParentAsync()
     {
-        await Changed.InvokeAsync();
-        Catalog = await Gallery.LoadCollectionCatalogAsync();
-        Images = await Gallery.ListAsync();
+        // The parent supplies the same snapshot it publishes to the rest of the workspace.
+        (Catalog, Images) = await Reload();
         selection.IntersectWith(Media.Select(image => image.Id));
         page = Math.Min(page, PageCount - 1);
         await LoadThumbnailsAsync();
@@ -239,8 +279,12 @@
     }
     private Task CurateAsync(ImageRecord image, Func<ImageRecordEdit, ImageRecordEdit> update, string message) => RunAsync(async () =>
     {
-        await Gallery.UpdateAsync(image.Id, update);
-        await RefreshParentAsync();
+        var updated = await Gallery.UpdateAsync(image.Id, update);
+        Images = Images.Select(item => item.Id == updated.Id ? updated : item).ToArray();
+        await ImageChanged.InvokeAsync(updated);
+        selection.IntersectWith(Media.Select(item => item.Id));
+        page = Math.Min(page, PageCount - 1);
+        await LoadThumbnailsAsync();
         notice = message;
     });
     public void Dispose() { disposed = true;thumbnailGeneration++;thumbnails.Clear(); }

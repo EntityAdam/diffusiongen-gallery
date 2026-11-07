@@ -52,6 +52,8 @@ public sealed class UiConsistencyTests
         var (workspace, root) = await Render<CollectionsWorkspace>(fixture, new()
         {
             [nameof(CollectionsWorkspace.Images)] = new[] { first, second },
+            [nameof(CollectionsWorkspace.Reload)] = (Func<Task<(CollectionCatalog, IReadOnlyList<ImageRecord>)>>)(async () =>
+                (await vault.Service.LoadCollectionCatalogAsync(), await vault.Service.ListAsync())),
             [nameof(CollectionsWorkspace.Location)] = new CollectionLocation(Unorganized: true)
         });
         typeof(CollectionsWorkspace).GetField("quickTagIds", Private)!.SetValue(workspace, new[] { first.Id, second.Id });
@@ -403,7 +405,7 @@ public sealed class UiConsistencyTests
             [nameof(CollectionsWorkspace.Location)] = new CollectionLocation(collection.Id, set.Id)
         });
         await Invoke(fixture, workspace, "SearchChanged", query.ToUpperInvariant());
-        var media = (List<ImageRecord>)typeof(CollectionsWorkspace).GetProperty("Media", Private)!.GetValue(workspace)!;
+        var media = (IReadOnlyList<ImageRecord>)typeof(CollectionsWorkspace).GetProperty("Media", Private)!.GetValue(workspace)!;
         Assert.Equal("in-scope", Assert.Single(media).Id);
         Assert.Contains("id=\"collection-search\"", await Html(fixture, root));
         var previousRevision = Field<long>(workspace, "searchResetVersion");
