@@ -354,3 +354,5 @@
 }
 .workspace-modal::backdrop { background: rgb(0 0 0 / 90%); }
 @media (max-width: 767px) { .workspace-modal { padding: .75rem; } }
+
+.media-scroll-status { display: flex; justify-content: center; align-items: center; gap: 16px; padding: 24px 0; color: hsl(var(--muted-foreground)); font-size: 0.875rem; min-height: 72px; }

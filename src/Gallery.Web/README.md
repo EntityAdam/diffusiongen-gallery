@@ -116,11 +116,11 @@ ports.
 
 ## Opening large galleries
 
-Opening uses an encrypted index of the newest items to make the first page usable
+Opening uses an encrypted index of the newest items to make the initial grid usable
 before reading the rest of the catalog. You can view and edit those items while
-the remaining library loads in the background. Search, filters, grouping, further
-pages, ingestion, duplicate finding and library counts become available when the
-full load finishes. A status message shows this pending state and offers a retry
+the remaining library loads in the background. Search, filters, grouping, infinite
+scrolling through the full results, ingestion, duplicate finding and library counts
+become available when the full load finishes. A status message shows this pending state and offers a retry
 if the background load fails. Locking or switching galleries cancels the load.
 
 The first open after upgrading, or after a membership change invalidates the
@@ -210,14 +210,28 @@ focus the grip and use arrow keys. Double-click the grip, press Shift+backtick, 
 choose **Reset toolbox position** to return it to the top-left. Shift+backtick also
 shows a hidden toolbox. Position, visibility, and active tool are saved per gallery.
 
+### Infinite scrolling
+
+Gallery, Collections, and Unorganized append cards automatically as you approach
+more media. Thumbnails are decrypted only for cards in or just outside the viewport;
+previews far outside it are released and loaded again when you scroll back. A
+**Load more** button also lets keyboard users request the next batch. There are no
+page controls. Filtering, sorting, grouping, and changing collection scope restart
+the scroll sequence; selection survives automatic appends.
+
+Catalog metadata still loads in the background when opening a large gallery. The
+viewport controls thumbnail loading, rather than loading every original media file.
+Full-screen viewing uses the complete filtered sequence and loads previews as you
+navigate. Guided review retains its configured goal.
+
 ### Compact and Detail cards
 
 Choose **Thumbnail size** in Change view:
 
-- **Compact:** 49 cards per page, no filenames or metadata; rating stars sit above
-  the favorite and trash-can icons.
-- **Detail:** 12 cards per page, with uncropped previews, filename and status icons
-  on the first line, then dimensions, approximate megapixels or video duration,
+- **Compact:** an initial batch of 49 cards, no filenames or metadata; rating stars
+  sit above the favorite and trash-can icons.
+- **Detail:** an initial batch of 12 cards, with uncropped previews, filename and status
+  icons on the first line, then dimensions, approximate megapixels or video duration,
   and original size in MiB. Model names and a two-line positive prompt appear when
   ComfyUI metadata provides them. Stars, heart, and trash-can icons share the
   bottom footer row.
@@ -250,9 +264,9 @@ media; it does not delete files.
 ### Selection, filters, and organization
 
 Use the select button on a card, including in Trash. Shift+click selects a range
-across pages in the current sort order; Escape clears selection. Changing search,
-filters, grouping, or sorting clears selection in Gallery and Collections. Paging
-keeps selection.
+across the filtered results in the current sort order; Escape clears selection.
+Changing search, filters, grouping, or sorting clears selection in Gallery and
+Collections. Appending media while scrolling keeps selection.
 
 The **Organize** tool lists selected items' tags as removable chips. A count means
 only that many selected items have the tag. A chip's **x** removes that tag from
@@ -277,7 +291,7 @@ is processing, newer text stays visible and only its latest value is queued.
 ### Media details
 
 Click a thumbnail in Gallery, Collections, or Unorganized to open the same details
-dialog. Full-screen viewing is an explicit action and keeps the originating page’s
+dialog. Full-screen viewing is an explicit action and keeps the originating view’s
 media sequence. The preview has a download icon at the top
 right and a full-screen icon at the bottom right. Rating, favorite, and trash
 controls sit below it.
@@ -322,8 +336,8 @@ card when no card is hovered. Arrow keys continue from keyboard focus:
 The same shortcuts work in Collections and Unorganized. They are ignored while
 typing or while a dialog/viewer is open.
 
-**Full screen view** in Change view opens the current page; the details preview
-also provides access. Left/Right navigate within that page, D toggles deletion,
+**Full screen view** in Change view opens the full filtered sequence; the details
+preview also provides access. Left/Right navigate within that sequence, D toggles deletion,
 F toggles favorite, O shows original size, P fits to the window, and Escape closes.
 In ordinary fullscreen browsing, clicking the current star clears the rating;
 0 clears it by keyboard, and 1–5 sets a rating. Guided review retains explicit
@@ -345,7 +359,7 @@ Video playback depends on the browser's codec support.
 ### Guided review
 
 In the Review tool, choose a **Goal** (default 10) and **Start Review**. It selects
-pending, unmarked items from the current filtered results across all pages,
+pending, unmarked items from the current filtered results throughout the library,
 limited to the number available. **Random order** samples without duplicates;
 otherwise the current sort order applies. The sequence stays fixed for the session.
 

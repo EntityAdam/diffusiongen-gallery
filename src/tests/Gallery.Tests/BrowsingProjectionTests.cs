@@ -388,17 +388,16 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public void HomeProjection_WhenPaginationChanges_ThenReusesTheSnapshotAndShowsTheCorrectPageCounts()
+    public void HomeProjection_WhenDensityChanges_ThenReusesTheFullSnapshotAndChangesTheInitialBatchSize()
     {
         // Arrange
         using var testVault = new TestVault();
         var imageRecords = CreateImages(60);
         var home = CreateHome(testVault, imageRecords);
         var priorImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
-        SetField(home, "page", 1);
         SetField(home, "density", "compact");
-        var expectedScenario = ExpectedScenario.CreateFrom("Pagination reuses the filtered snapshot while calculating the current page boundaries.",
-            new { ReusesSnapshot = true, PageCount = 2, PageImageCount = 11 });
+        var expectedScenario = ExpectedScenario.CreateFrom("Density changes preserve the entire filtered sequence while choosing the initial scroll batch.",
+            new { ReusesSnapshot = true, ImageCount = 60, InitialBatchSize = 49 });
 
         // Act
         var actualImageRecords = (IReadOnlyList<ImageRecord>)typeof(Home)
@@ -408,9 +407,23 @@ public sealed class BrowsingProjectionTests
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
             ReusesSnapshot = ReferenceEquals(priorImageRecords, actualImageRecords),
-            PageCount = GetProperty<int>(home, "PageCount"),
-            PageImageCount = GetProperty<IEnumerable<ImageRecord>>(home, "PageImages").Count()
+            ImageCount = actualImageRecords.Count,
+            InitialBatchSize = GetProperty<int>(home, "InitialBatchSize")
         });
+    }
+
+    [Fact]
+    public void FullscreenIncludesTheEntireFilteredSequenceBeyondTheInitialScrollBatch()
+    {
+        using var testVault = new TestVault();
+        var imageRecords = CreateImages(60);
+        var home = CreateHome(testVault, imageRecords);
+        var filtered = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
+        Invoke(home, "OpenViewer", filtered[20].Id);
+        var sequence = GetField<List<ImageRecord>>(home, "viewerImages");
+        Assert.Equal(filtered.Select(image => image.Id), sequence.Select(image => image.Id));
+        Assert.Equal(60, sequence.Count);
+        Assert.Equal(filtered[20].Id, GetField<string>(home, "viewerInitialId"));
     }
 
     [Fact]
@@ -553,7 +566,7 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public void GuidedReview_WhenStartedWithTheDefaultGoal_ThenOpensADetachedReviewOfTenEligibleImagesAcrossPagesInSortOrder()
+    public void GuidedReview_WhenStartedWithTheDefaultGoal_ThenOpensADetachedReviewOfTenEligibleImagesAcrossResultsInSortOrder()
     {
         // Arrange
         using var testVault = new TestVault();
@@ -563,10 +576,9 @@ public sealed class BrowsingProjectionTests
         var home = CreateHome(testVault, imageRecords);
         SetField(home, "filter", new GalleryFilter { Sort = "name" });
         SetField(home, "density", "detail");
-        SetField(home, "page", 1);
         const int ExpectedReviewGoal = 10;
         var expectedImageIds = imageRecords.Skip(2).Take(ExpectedReviewGoal).Select(imageRecord => imageRecord.Id).ToArray();
-        var expectedScenario = ExpectedScenario.CreateFrom("Default review selects ten eligible images in library sort order, independent of pagination, in a detached session.", new
+        var expectedScenario = ExpectedScenario.CreateFrom("Default review selects ten eligible images in library sort order, independent of the rendered scroll batch, in a detached session.", new
         {
             Goal = ExpectedReviewGoal, ImageIds = expectedImageIds, InitialId = expectedImageIds[0], ReviewMode = true, IsDetachedSnapshot = true
         });
