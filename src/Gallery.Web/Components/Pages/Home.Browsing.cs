@@ -23,7 +23,7 @@ public partial class Home
         CancelCatalogLoad();
         var generation = catalogGeneration;
         collectionCatalog = await Gallery.LoadCollectionCatalogAsync();
-        var snapshot = await Gallery.LoadInitialPageAsync(PageSize, TrashActive);
+        var snapshot = await Gallery.LoadInitialPageAsync(InitialBatchSize, TrashActive);
         if (!IsCatalogGenerationCurrent(generation)) return;
         catalogPartial = !snapshot.IsComplete || !snapshot.IsCurrent;
         catalogLoadError = "";
@@ -64,8 +64,7 @@ public partial class Home
             catalogLoading = false;
             if (selected is not null) selected = imagesById.GetValueOrDefault(selected.Id);
             UpdateDuplicateGroups();
-            page = Math.Min(page, PageCount - 1);
-            await LoadThumbnailsAsync();
+
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
@@ -73,7 +72,7 @@ public partial class Home
             if (!disposed && generation == catalogGeneration && Gallery.IsUnlocked)
             {
                 Logger.LogError(exception, "Background catalog load failed");
-                catalogLoadError = "The rest of the library could not be loaded. The initial page is still available.";
+                catalogLoadError = "The rest of the library could not be loaded. The initial media is still available.";
                 catalogLoading = false;
             }
         }
@@ -111,8 +110,7 @@ public partial class Home
         if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }
         removalSelection.IntersectWith(images.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
         librarySelection.IntersectWith(images.Select(image => image.Id));
-        page = Math.Min(page, PageCount - 1);
-        await LoadThumbnailsAsync();
+
     }
 
     private Task RetryCatalogLoadAsync()

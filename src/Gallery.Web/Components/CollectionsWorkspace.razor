@@ -1,4 +1,3 @@
-@implements IDisposable
 @inject GalleryService Gallery
 @inject ISonnerService Toasts
 <div class="collections-workspace" data-has-selection="@(selection.Count > 0 ? "true" : "false")">
@@ -24,7 +23,7 @@
             else if (Collection is null) { <option value="updated">Recently updated</option><option value="name">Name</option> }
             else { <option value="sequence">Manual order</option><option value="name">Name</option> }
         </select>
-        @if (ShowsMedia) { <select aria-label="Minimum rating" value="@minRating" @onchange="RatingFilterChanged"><option value="0">All ratings</option>@for (var i = 1; i <= 5; i++) { <option value="@i">@i+ stars</option> }</select><label class="collection-favorite-filter"><input type="checkbox" @bind="favoritesOnly" @bind:after="ResetPageAsync" />Favorites</label><Button Variant="ButtonVariant.Ghost" OnClick="SelectAll">Select all</Button> }
+        @if (ShowsMedia) { <select aria-label="Minimum rating" value="@minRating" @onchange="RatingFilterChanged"><option value="0">All ratings</option>@for (var i = 1; i <= 5; i++) { <option value="@i">@i+ stars</option> }</select><label class="collection-favorite-filter"><input type="checkbox" @bind="favoritesOnly" @bind:after="ResetMediaAsync" />Favorites</label><Button Variant="ButtonVariant.Ghost" OnClick="SelectAll">Select all</Button> }
         else { <Button Variant="ButtonVariant.Ghost" OnClick="() => listView = !listView">@(listView ? "Grid view" : "List view")</Button> }
         @if (undo is not null) { <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="UndoAsync">Undo organization change</Button> }
         <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="RefreshAsync">Refresh</Button>
@@ -45,17 +44,18 @@
     {
         @if (selection.Count > 0) { <div class="collection-selection" role="region" aria-label="Selected media actions"><strong aria-live="polite">@selection.Count selected</strong><Button Disabled="@working" OnClick="OpenDestination">@(choosingMedia ? $"Move {selection.Count} media here" : "Move to set")</Button><Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick="OpenTags">Edit tags</Button><Button Variant="ButtonVariant.Outline" Disabled="@working" OnClick="RemoveFromSetAsync">Remove from set</Button><Button Variant="ButtonVariant.Ghost" OnClick="ClearSelection">Clear selection</Button></div> }
         <p class="collection-result-count">@Media.Count of @ScopedMedia.Count() media</p>
-        <div class="image-grid density-detail">
-        @foreach (var image in PageMedia)
-        { <div @key="image.Id" class="collection-media-wrap"><GalleryImageCard Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)" ThumbnailFailed="@thumbnailFailures.Contains(image.Id)" Busy="@working" Selected="@selection.Contains(image.Id)" ShowSelection="true" Select="args => Select(image.Id, args.ShiftKey)" Open="() => OpenMediaAsync(image)" Rate="value => RateAsync(image, value)" Favorite="() => FavoriteAsync(image)" Mark="() => MarkAsync(image)" />
+        <MediaViewport @ref="mediaViewport" Items="Media" ResetVersion="viewportVersion" Disabled="working">
+        <ChildContent Context="viewport">
+        @foreach (var image in viewport.RenderedImages)
+        { <div @key="image.Id" class="collection-media-wrap"><GalleryImageCard Image="image" Thumbnail="@viewport.ThumbnailFor(image.Id)" ThumbnailFailed="@viewport.ThumbnailFailed(image.Id)" Busy="@working" Selected="@selection.Contains(image.Id)" ShowSelection="true" Select="args => Select(image.Id, args.ShiftKey)" Open="() => OpenMediaAsync(image)" Rate="value => RateAsync(image, value)" Favorite="() => FavoriteAsync(image)" Mark="() => MarkAsync(image)" />
             @if (choosingMedia || Location.AllMedia) { <small class="collection-media-path">@Catalog.PathOf(image)</small> }
             @if (!image.LegacyCollections.IsEmpty) { <small class="collection-media-path">Previous collections: @string.Join(", ", image.LegacyCollections)</small> }
             @if (Set is not null && !choosingMedia && sort == "sequence" && !HasFilters) { <div class="collection-order-actions"><button disabled="@working" @onclick="() => ReorderMedia(image.Id, -1)">Move earlier</button><button disabled="@working" @onclick="() => ReorderMedia(image.Id, 1)">Move later</button></div> }
           </div> }
-        </div>
+        </ChildContent>
+        </MediaViewport>
         @if (Media.Count == 0) { <div class="collection-empty"><h3>@(HasFilters ? "No matches in this view" : Location.Unorganized ? "Everything has a place" : "This set is ready for media")</h3>
         @if (HasFilters) { <Button OnClick="ClearFiltersAsync">Clear filters</Button> } else if (Location.Unorganized) { <Button OnClick="() => Navigate(new())">Browse collections</Button><Button Variant="ButtonVariant.Outline" OnClick="BackToGallery">Back to gallery</Button> } else { <p>Choose existing media or organize items from Unorganized.</p><Button OnClick="() => BeginChooseMedia()">Choose media</Button><Button Variant="ButtonVariant.Outline" OnClick="() => Navigate(new(Unorganized: true))">Open Unorganized</Button> }</div> }
-        @if (Media.Count > PageSize) { <div class="collection-pagination"><Button Variant="ButtonVariant.Outline" Disabled="@(page == 0)" OnClick="PreviousPageAsync">Previous</Button><span>Page @(page + 1) of @PageCount</span><Button Variant="ButtonVariant.Outline" Disabled="@(page + 1 >= PageCount)" OnClick="NextPageAsync">Next</Button></div> }
     }
 </div>
 @if (destination) { <CollectionDestinationDialog Images="@SelectedMedia" InitialCollectionId="@Collection?.Id" InitialSetId="@(choosingMedia ? Set?.Id : null)" Saved="MovedAsync" Cancel="CloseDestinationAsync" /> }
@@ -95,9 +95,10 @@
             return (sort == "name" ? filtered.OrderBy(image => image.Name) : sort == "sequence" ? filtered.OrderBy(image => image.SetOrder).ThenBy(image => image.Id) : filtered.OrderByDescending(image => image.ImportedAt)).ToList();
         }
     }
-    private const int PageSize = 12;
-    private int page, minRating;
-    private bool favoritesOnly, listView, choosingMedia, destination, quickTags, working, disposed;
+    private int minRating;
+    private long viewportVersion;
+    private MediaViewport? mediaViewport;
+    private bool favoritesOnly, listView, choosingMedia, destination, quickTags, working;
     private string query = "", sort = "updated", error = "", notice = "", name = "";
     private string? modal, modalId, anchor, draggedSet;
     private bool modalIsSet;
@@ -106,11 +107,7 @@
     private void OpenTags() { quickTagIds = SelectedMedia.Select(image => image.Id).ToArray();quickTags = true; }
     private CollectionLocation? previousLocation;
     private readonly HashSet<string> selection = [];
-    private readonly Dictionary<string, string> thumbnails = [];
-    private readonly HashSet<string> thumbnailFailures = [];
-    private long thumbnailGeneration, searchResetVersion;
-    private int PageCount => Math.Max(1, (Media.Count + PageSize - 1) / PageSize);
-    private IEnumerable<ImageRecord> PageMedia => Media.Skip(page * PageSize).Take(PageSize);
+    private long searchResetVersion;
     private IReadOnlyList<ImageRecord> SelectedMedia => Media.Where(image => selection.Contains(image.Id)).ToArray();
     private bool HasFilters => query.Length > 0 || minRating > 0 || favoritesOnly;
     private string CommonTags => string.Join(", ", Images.Where(image => quickTagIds.Contains(image.Id)).SelectMany(image => image.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)).Distinct(StringComparer.OrdinalIgnoreCase));
@@ -118,30 +115,17 @@
     private string ModalName => modalIsSet ? Catalog.Sets.FirstOrDefault(item => item.Id == modalId)?.Name ?? "" : Catalog.Collections.FirstOrDefault(item => item.Id == modalId)?.Name ?? "";
     private string ModalTitle => modal == "delete" ? $"Delete “{ModalName}”?" : modal == "move" ? $"Move “{ModalName}”" : $"{(modalId is null ? "New" : "Rename")} {(modalIsSet ? "set" : "collection")}";
     private int AffectedMedia => Images.Count(image => modalIsSet ? image.SetId == modalId : Catalog.Sets.Any(set => set.CollectionId == modalId && set.Id == image.SetId));
-    protected override async Task OnParametersSetAsync()
+    protected override void OnParametersSet()
     {
-        if (Location != previousLocation) { previousLocation = Location; query = ""; searchResetVersion++; page = 0; selection.Clear(); choosingMedia = false; sort = Location.SetId is not null || Location.CollectionId is not null ? "sequence" : Location.Unorganized ? "newest" : "updated"; }
-        selection.IntersectWith(Media.Select(image => image.Id)); page = Math.Min(page, PageCount - 1); await LoadThumbnailsAsync();
-    }
-    private async Task LoadThumbnailsAsync()
-    {
-        var generation = ++thumbnailGeneration;
-        foreach (var image in PageMedia.ToArray())
-        {
-            if (thumbnails.ContainsKey(image.Id) || thumbnailFailures.Contains(image.Id)) continue;
-            try { var thumbnail = await Gallery.ThumbnailAsync(image.Id); if (disposed || generation != thumbnailGeneration) return; thumbnails[image.Id] = thumbnail; }
-            catch (Exception) { if (disposed || generation != thumbnailGeneration) return; thumbnailFailures.Add(image.Id); }
-        }
-        var retained = PageMedia.Select(image => image.Id).ToHashSet();foreach (var id in thumbnails.Keys.Where(id => !retained.Contains(id)).ToArray()) thumbnails.Remove(id);
+        if (Location != previousLocation) { previousLocation = Location; query = ""; searchResetVersion++; viewportVersion++; selection.Clear(); choosingMedia = false; sort = Location.SetId is not null || Location.CollectionId is not null ? "sequence" : Location.Unorganized ? "newest" : "updated"; }
+        selection.IntersectWith(Media.Select(image => image.Id));
     }
     private Task Navigate(CollectionLocation location) => LocationChanged.InvokeAsync(location);
-    private async Task ResetPageAsync() { page = 0; selection.Clear(); anchor = null; await LoadThumbnailsAsync(); }
-    private async Task SearchChanged(string value) { query = value; await ResetPageAsync(); }
-    private async Task SortChanged(ChangeEventArgs e) { sort = e.Value?.ToString() ?? "name"; await ResetPageAsync(); }
-    private async Task RatingFilterChanged(ChangeEventArgs e) { minRating = int.TryParse(e.Value?.ToString(), out var value) ? value : 0; await ResetPageAsync(); }
-    private async Task ClearFiltersAsync() { query = ""; searchResetVersion++; minRating = 0; favoritesOnly = false; await ResetPageAsync(); }
-    private async Task PreviousPageAsync() { page--; await LoadThumbnailsAsync(); }
-    private async Task NextPageAsync() { page++; await LoadThumbnailsAsync(); }
+    private Task ResetMediaAsync() { viewportVersion++; ClearSelection(); return Task.CompletedTask; }
+    private async Task SearchChanged(string value) { query = value; await ResetMediaAsync(); }
+    private async Task SortChanged(ChangeEventArgs e) { sort = e.Value?.ToString() ?? "name"; await ResetMediaAsync(); }
+    private async Task RatingFilterChanged(ChangeEventArgs e) { minRating = int.TryParse(e.Value?.ToString(), out var value) ? value : 0; await ResetMediaAsync(); }
+    private async Task ClearFiltersAsync() { query = ""; searchResetVersion++; minRating = 0; favoritesOnly = false; await ResetMediaAsync(); }
     private void ClearSelection() { selection.Clear(); anchor = null; }
     private void SelectAll() { foreach (var image in Media) selection.Add(image.Id); }
     private void Select(string id, bool range)
@@ -184,9 +168,9 @@
             if (notice.Length > 0) Toasts.Show(notice, "", SonnerToastVariant.Default, 4000);
         }
     }
-    private async Task ApplyAsync(CollectionMutation result, string message) { Catalog = result.Catalog;undo = result.Undo;notice = message;await RefreshParentAsync();selection.IntersectWith(Media.Select(image => image.Id));await LoadThumbnailsAsync(); }
+    private async Task ApplyAsync(CollectionMutation result, string message) { Catalog = result.Catalog;undo = result.Undo;notice = message;await RefreshParentAsync();selection.IntersectWith(Media.Select(image => image.Id)); }
     private Task UndoAsync() => RunAsync(async () => { if (undo is null) return;await Gallery.UndoCollectionChangeAsync(undo);undo = null;notice = "Organization restored.";await RefreshParentAsync(); });
-    private Task RefreshAsync() => RunAsync(async () => { thumbnailFailures.Clear(); await RefreshParentAsync();await LoadThumbnailsAsync(); });
+    private Task RefreshAsync() => RunAsync(async () => { await RefreshParentAsync();mediaViewport?.RetryThumbnails(); });
     private Task RemoveFromSetAsync() => RunAsync(async () => { await ApplyAsync(await Gallery.MoveMediaToSetAsync(SelectedMedia.Select(image => image.Id), null), "Media moved to Unorganized.");selection.Clear(); });
     private Task ReorderSet(string id, int offset) => RunAsync(async () => await ApplyAsync(await Gallery.ReorderSetAsync(id, offset), "Set order updated."));
     private Task ReorderMedia(string id, int offset) => RunAsync(async () => await ApplyAsync(await Gallery.ReorderMediaAsync(Set!.Id, id, offset), "Media sequence updated."));
@@ -200,8 +184,8 @@
         await ApplyAsync(await Gallery.ReorderSetAsync(draggedSet, targetIndex - sourceIndex), "Set order updated.");
         draggedSet = null;
     });
-    private async Task BeginChooseMedia() { choosingMedia = true;sort = "newest";await ResetPageAsync(); }
-    private async Task EndChooseMedia() { choosingMedia = false;sort = "sequence";await ResetPageAsync(); }
+    private async Task BeginChooseMedia() { choosingMedia = true;sort = "newest";await ResetMediaAsync(); }
+    private async Task EndChooseMedia() { choosingMedia = false;sort = "sequence";await ResetMediaAsync(); }
     private void OpenDestination() { if (selection.Count > 0) destination = true; }
     private async Task CloseDestinationAsync() { destination = false;await RefreshParentAsync(); }
     private async Task MovedAsync(CollectionMutation result) { destination = false;var targetId = result.Undo.AfterMedia.FirstOrDefault()?.SetId;
@@ -212,7 +196,7 @@
     private Task FavoriteAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(Gallery, "f", image)!, image.IsFavorite ? "Removed from favorites." : "Added to favorites.");
     private Task MarkAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(Gallery, "d", image)!, image.IsMarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.");
     private Task SaveTagsAsync(string tags) => RunAsync(async () => { await Gallery.UpdateManyAsync(quickTagIds, edit => edit with { Tags = TagSelection.Apply(Gallery, edit.Tags, CommonTags, tags) });quickTags = false;await RefreshParentAsync(); });
-    private Task OpenMediaAsync(ImageRecord image) => working ? Task.CompletedTask : Open.InvokeAsync((PageMedia.ToArray(), image.Id));
+    private Task OpenMediaAsync(ImageRecord image) => working ? Task.CompletedTask : Open.InvokeAsync((Media.ToArray(), image.Id));
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
     {
         if (working || modal is not null || quickTags || destination) return;
@@ -229,5 +213,4 @@
         await RefreshParentAsync();
         notice = message;
     });
-    public void Dispose() { disposed = true;thumbnailGeneration++;thumbnails.Clear(); }
 }

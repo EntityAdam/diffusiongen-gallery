@@ -158,7 +158,7 @@ public sealed class UiConsistencyTests
     }
 
     [Fact]
-    public async Task CollectionThumbnailOpensDetailsAndFullscreenKeepsItsOriginatingPage()
+    public async Task CollectionThumbnailOpensDetailsAndFullscreenKeepsItsOriginatingSequence()
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();

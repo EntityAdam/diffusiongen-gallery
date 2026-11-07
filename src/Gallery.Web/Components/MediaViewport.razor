@@ -1,0 +1,162 @@
+@implements IAsyncDisposable
+@inject GalleryService Gallery
+@inject IJSRuntime JS
+@inject ILogger<MediaViewport> Logger
+
+<div @ref="element" class="media-viewport">
+    <div class="image-grid @GridClass">
+        @ChildContent(this)
+    </div>
+    <div @ref="sentinel" class="media-scroll-status" role="status" aria-live="polite">
+        <span>Showing @Math.Min(renderCount, Items.Count) of @Items.Count media</span>
+        @if (renderCount < Items.Count)
+        {
+            <Button Variant="ButtonVariant.Outline" Disabled="@Disabled" OnClick="() => LoadMoreAsync(generation)">Load more</Button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ImageRecord> Items { get; set; } = [];
+    [Parameter, EditorRequired] public RenderFragment<MediaViewport> ChildContent { get; set; } = default!;
+    [Parameter] public string GridClass { get; set; } = "density-detail";
+    [Parameter] public int BatchSize { get; set; } = 24;
+    [Parameter] public long ResetVersion { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    public IEnumerable<ImageRecord> RenderedImages => Items.Take(renderCount);
+    public string? ThumbnailFor(string id) => thumbnails.GetValueOrDefault(id);
+    public bool ThumbnailFailed(string id) => failures.Contains(id);
+
+    private ElementReference element, sentinel;
+    private DotNetObjectReference<MediaViewport>? reference;
+    private readonly Dictionary<string, string> thumbnails = [];
+    private readonly HashSet<string> failures = [];
+    private HashSet<string> wanted = [];
+    private Task thumbnailTask = Task.CompletedTask;
+    private int renderCount;
+    private long generation, observedResetVersion;
+    private bool initialized, loading, disposed;
+
+    protected override void OnParametersSet()
+    {
+        if (!initialized || observedResetVersion != ResetVersion)
+        {
+            initialized = true;
+            observedResetVersion = ResetVersion;
+            renderCount = Math.Max(1, BatchSize);
+            Clear();
+        }
+        renderCount = Math.Max(renderCount, Math.Max(1, BatchSize));
+        var available = RenderedImages.Select(image => image.Id).ToHashSet();
+        wanted.IntersectWith(available);
+        PrunePreviews();
+        StartThumbnailLoad();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed) return;
+        reference ??= DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("galleryScroll.sync", element, sentinel, reference, generation,
+            !Disabled && renderCount < Items.Count);
+    }
+
+    [JSInvokable]
+    public Task LoadMoreAsync(long revision)
+    {
+        if (disposed || Disabled || revision != generation || renderCount >= Items.Count) return Task.CompletedTask;
+        renderCount = (int)Math.Min(Items.Count, (long)renderCount + Math.Max(1, BatchSize));
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task UpdateViewportAsync(string[] ids, long revision)
+    {
+        if (disposed || revision != generation) return Task.CompletedTask;
+        var available = RenderedImages.Select(image => image.Id).ToHashSet();
+        wanted = ids.Where(available.Contains).ToHashSet();
+        PrunePreviews();
+        StartThumbnailLoad();
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void PrunePreviews()
+    {
+        foreach (var id in thumbnails.Keys.Where(id => !wanted.Contains(id)).ToArray()) thumbnails.Remove(id);
+        failures.IntersectWith(wanted);
+    }
+
+    public void RetryThumbnails()
+    {
+        failures.Clear();
+        StartThumbnailLoad();
+    }
+
+    public void Clear()
+    {
+        generation++;
+        wanted.Clear();
+        thumbnails.Clear();
+        failures.Clear();
+    }
+
+    private void StartThumbnailLoad()
+    {
+        if (loading || disposed || Disabled || !Gallery.IsUnlocked
+            || !wanted.Any(id => !thumbnails.ContainsKey(id) && !failures.Contains(id))) return;
+        loading = true;
+        thumbnailTask = LoadThumbnailsAsync(generation);
+    }
+
+    private async Task LoadThumbnailsAsync(long revision)
+    {
+        await Task.Yield();
+        var lastRender = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            while (!disposed && !Disabled && Gallery.IsUnlocked && revision == generation)
+            {
+                var id = wanted.FirstOrDefault(id => !thumbnails.ContainsKey(id) && !failures.Contains(id));
+                if (id is null) break;
+                try
+                {
+                    var thumbnail = await Gallery.ThumbnailAsync(id);
+                    if (disposed || revision != generation || !Gallery.IsUnlocked) break;
+                    if (wanted.Contains(id)) thumbnails[id] = thumbnail;
+                }
+                catch (Exception exception)
+                {
+                    if (disposed || revision != generation || !Gallery.IsUnlocked) break;
+                    Logger.LogWarning(exception, "Visible media preview could not be loaded");
+                    if (wanted.Contains(id)) failures.Add(id);
+                }
+                if (System.Diagnostics.Stopwatch.GetElapsedTime(lastRender).TotalMilliseconds >= 100)
+                {
+                    StateHasChanged();
+                    lastRender = System.Diagnostics.Stopwatch.GetTimestamp();
+                }
+            }
+        }
+        finally
+        {
+            loading = false;
+            if (!disposed)
+            {
+                StateHasChanged();
+                StartThumbnailLoad();
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        Clear();
+        try { await JS.InvokeVoidAsync("galleryScroll.detach", element); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        finally { reference?.Dispose(); }
+    }
+}
