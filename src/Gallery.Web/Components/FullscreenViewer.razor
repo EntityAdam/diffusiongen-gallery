@@ -87,6 +87,7 @@
 
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public string InitialPreview { get; set; } = "";
     [Parameter] public string InitialId { get; set; } = "";
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<ImageRecord> OnImageChanged { get; set; }
@@ -144,7 +145,15 @@
         if (!firstRender) return;
         reference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("galleryViewer.attach", element, reference);
-        await RunAsync(async () => imageData = await LoadImageAsync(Current.Id, false));
+        await RunAsync(async () =>
+        {
+            if (!Current.IsVideo && InitialPreview.Length > 0)
+            {
+                var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", InitialPreview);
+                fitCache[Current.Id] = (url, InitialPreview.Length * 3L / 4);
+            }
+            imageData = await LoadImageAsync(Current.Id, false);
+        });
         StateHasChanged();
         preload = PreloadPageAsync();
     }
