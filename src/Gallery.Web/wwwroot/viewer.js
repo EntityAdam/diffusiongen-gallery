@@ -39,6 +39,10 @@ window.galleryGrid = {
             return Math.max(1, (style?.gridTemplateColumns ?? "").split(" ").filter(Boolean).length);
         };
         const onHover = event => { hoveredId = cardOf(event.target)?.dataset.imageId ?? null; };
+        const onLeave = event => {
+            if (cardOf(event.target)?.dataset.imageId === hoveredId)
+                hoveredId = cardOf(event.relatedTarget)?.dataset.imageId ?? null;
+        };
         const onKey = event => {
             if (event.ctrlKey || event.altKey || event.metaKey || event.defaultPrevented) return;
             if (event.target?.closest?.("[data-advanced-select]")) return;
@@ -47,11 +51,14 @@ window.galleryGrid = {
             const editing = event.target?.closest?.("input,textarea,select,[contenteditable=true]");
             if (editing && !(editing.type === "checkbox" && cardOf(editing))) return;
             if (doc.querySelector("[role=dialog][aria-modal=true], dialog[open]")) return;
-            const id = cardOf(doc.activeElement)?.dataset.imageId ?? hoveredId;
+            const focusedId = cardOf(doc.activeElement)?.dataset.imageId;
+            // Pointer curation follows the hovered card even when a previous card retains focus.
+            const id = hoveredId ?? focusedId;
             if (key.startsWith("arrow")) {
                 const cards = Array.from(doc.querySelectorAll(".image-card[data-image-id]"));
                 if (cards.length === 0) return;
-                const current = cards.findIndex(card => card.dataset.imageId === id);
+                // Arrow navigation continues from keyboard focus while the pointer stays parked.
+                const current = cards.findIndex(card => card.dataset.imageId === (focusedId ?? hoveredId));
                 const columns = columnsOf(cards[0].closest(".image-grid") ?? cards[0].parentElement);
                 const step = { arrowleft: -1, arrowright: 1, arrowup: -columns, arrowdown: columns }[key];
                 const next = cards[current < 0 ? 0 : Math.min(cards.length - 1, Math.max(0, current + step))];
@@ -66,9 +73,11 @@ window.galleryGrid = {
             queue = invocation.catch(error => console.error("Gallery shortcut failed", error));
         };
         doc.addEventListener("mouseover", onHover, true);
+        doc.addEventListener("mouseout", onLeave, true);
         doc.addEventListener("keydown", onKey, true);
         grid.detach = () => {
             doc.removeEventListener("mouseover", onHover, true);
+            doc.removeEventListener("mouseout", onLeave, true);
             doc.removeEventListener("keydown", onKey, true);
             grid.detach = () => { };
         };

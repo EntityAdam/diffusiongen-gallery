@@ -307,7 +307,8 @@ and move/rename controls are not exposed here.
 
 ### Keyboard shortcuts and full-screen viewing
 
-On a focused gallery card, or the card under the pointer:
+Curation shortcuts target the card under the pointer, falling back to the focused
+card when no card is hovered. Arrow keys continue from keyboard focus:
 
 | Key | Action |
 |---|---|
