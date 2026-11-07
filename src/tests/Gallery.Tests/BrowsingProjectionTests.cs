@@ -9,6 +9,8 @@ using Gallery.Web.Components.Pages;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using ShadCn.Blazor.Components;
 using Microsoft.JSInterop;
 
 namespace Gallery.Tests;
@@ -739,6 +741,10 @@ public sealed class BrowsingProjectionTests
         const BindingFlags InstanceMembers = BindingFlags.Instance | BindingFlags.NonPublic;
         using var testVault = new TestVault();
         using var libraryWorkbench = new LibraryWorkbench();
+        var services = new ServiceCollection();
+        services.AddShadCnBlazorComponents();
+        using var provider = services.BuildServiceProvider();
+        typeof(LibraryWorkbench).GetProperty("Toasts", InstanceMembers)!.SetValue(libraryWorkbench, provider.GetRequiredService<ISonnerService>());
         typeof(LibraryWorkbench).GetProperty("Gallery", InstanceMembers)!.SetValue(libraryWorkbench, testVault.Service);
         typeof(LibraryWorkbench).GetProperty("Logger", InstanceMembers)!
             .SetValue(libraryWorkbench, NullLogger<LibraryWorkbench>.Instance);

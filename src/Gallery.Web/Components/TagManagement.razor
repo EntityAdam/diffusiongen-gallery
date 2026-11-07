@@ -1,5 +1,6 @@
 @inject GalleryService Gallery
 @inject ILogger<TagManagement> Logger
+@inject ISonnerService Toasts
 
 <Card Class="mb-6 space-y-4 p-5 md:p-6">
     <h3>Manage tags</h3>
@@ -13,8 +14,7 @@
     </div>
     <Label For="catalog-tag-search" Class="mb-2 block">Find tags</Label>
     <input id="catalog-tag-search" type="search" @bind="search" @bind:event="oninput" disabled="@working" class="prompt-editor tag-manager-input" />
-    @if (message.Length > 0) { <p role="status">@message</p> }
-    @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
+
     @if (entries.Count == 0 && !working) { <p class="text-muted-foreground">No tags yet. Create your first tag above.</p> }
     <ul class="space-y-2" aria-label="Tag catalog">
         @foreach (var entry in entries.Where(entry => entry.Name.Contains(search, StringComparison.OrdinalIgnoreCase)))
@@ -96,6 +96,11 @@
             Logger.LogError(exception, "Tag management operation failed");
             error = exception is InvalidOperationException ? exception.Message : "Could not update tags. Check the application console.";
         }
-        finally { working = false; }
+        finally
+        {
+            working = false;
+            if (error.Length > 0) Toasts.Show("Could not update tags", error, SonnerToastVariant.Destructive, 8000);
+            if (message.Length > 0) Toasts.Show(message, "", SonnerToastVariant.Default, 4000);
+        }
     }
 }
