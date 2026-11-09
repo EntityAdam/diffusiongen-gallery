@@ -94,6 +94,38 @@ public static class VisionTests
         Assert.Equal(VisionSettings.DefaultCollectionAnalysisInstructions, settings.CollectionAnalysisInstructions);
         Assert.Equal(VisionSettings.DefaultCollectionSuggestionSystemPrompt, settings.CollectionSuggestionSystemPrompt);
         Assert.Equal(VisionSettings.DefaultSearchSystemPrompt, settings.SearchSystemPrompt);
+        Assert.Equal(800, settings.AnalysisMaxTokens);
+        Assert.Equal(1200, settings.CollectionAnalysisMaxTokens);
+        Assert.Equal(500, settings.TextMaxTokens);
+        Assert.Equal(0.2, settings.AnalysisTemperature);
+        Assert.Equal(0.1, settings.TextTemperature);
+    }
+
+    [Fact]
+    public static async Task InvalidGenerationSettings_AreRejectedBeforeSavingOrSending()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var calls = 0;
+        using var client = new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); }));
+        var manager = new VisionManager(client);
+        var valid = new VisionSettings { Model = "vision" };
+        await vault.Service.SaveSettingsAsync(valid);
+        VisionSettings[] invalid =
+        [
+            valid with { AnalysisMaxTokens = 0 }, valid with { CollectionAnalysisMaxTokens = -1 },
+            valid with { TextMaxTokens = 0 }, valid with { AnalysisTemperature = -0.1 },
+            valid with { AnalysisTemperature = double.NaN }, valid with { TextTemperature = 2.1 },
+            valid with { TextTemperature = double.PositiveInfinity }
+        ];
+        foreach (var settings in invalid)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => vault.Service.SaveSettingsAsync(settings));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => manager.AnalyzeImageAsync(settings, "image"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => manager.SuggestCollectionAsync(settings, "description", "tags", []));
+        }
+        Assert.Equal(0, calls);
+        Assert.Equal(valid, await vault.Service.SettingsAsync());
     }
 
     [Theory]

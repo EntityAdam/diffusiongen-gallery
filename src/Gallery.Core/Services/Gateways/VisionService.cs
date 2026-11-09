@@ -26,6 +26,7 @@ internal sealed partial class VisionService
     {
         var uri = ValidateEndpoint(visionSettings.Endpoint, visionSettings.ApiKey);
         ValidateTimeout(visionSettings.RequestTimeoutSeconds);
+        ValidateGenerationSettings(visionSettings);
         ValidateModel(visionSettings.Model);
         ValidateSystemPrompt(visionSettings.SystemPrompt);
         ValidateSystemPrompt(visionSettings.CollectionSuggestionSystemPrompt, "Collection suggestion system prompt");
@@ -45,6 +46,26 @@ internal sealed partial class VisionService
         if (string.IsNullOrWhiteSpace(model))
             throw new InvalidOperationException(
                 $"Model '{model}' is empty; enter the name of a loaded vision-capable model.");
+    }
+
+    private static void ValidateGenerationSettings(VisionSettings settings)
+    {
+        ValidateMaxTokens(settings.AnalysisMaxTokens, "Vision response token limit");
+        ValidateMaxTokens(settings.CollectionAnalysisMaxTokens, "Collection-aware vision response token limit");
+        ValidateMaxTokens(settings.TextMaxTokens, "Text response token limit");
+        ValidateTemperature(settings.AnalysisTemperature, "Vision temperature");
+        ValidateTemperature(settings.TextTemperature, "Text temperature");
+    }
+
+    private static void ValidateMaxTokens(int maxTokens, string label)
+    {
+        if (maxTokens <= 0) throw new InvalidOperationException($"{label} must be a positive whole number.");
+    }
+
+    private static void ValidateTemperature(double temperature, string label)
+    {
+        if (!double.IsFinite(temperature) || temperature is < 0 or > 2)
+            throw new InvalidOperationException($"{label} must be between 0 and 2.");
     }
 
     private static void ValidateTimeout(int requestTimeoutSeconds)
@@ -79,6 +100,7 @@ internal sealed partial class VisionService
     {
         var uri = ValidateEndpoint(settings.Endpoint, settings.ApiKey);
         ValidateTimeout(requestTimeoutSeconds);
+        ValidateGenerationSettings(settings);
         ValidateModel(model);
         return uri;
     }
@@ -186,15 +208,15 @@ internal sealed partial class VisionService
         return (system, prompt);
     }
 
-    private static HttpRequestMessage CreateAnalysisHttpRequest(
+    private HttpRequestMessage CreateAnalysisHttpRequest(
         Uri uri, string model, string imageData, string system, string prompt, AnalysisMode analysisMode)
     {
         var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, uri);
         httpRequestMessage.Content = JsonContent.Create(new
         {
             model,
-            temperature = 0.2,
-            max_tokens = analysisMode == AnalysisMode.WithCollection ? 1200 : 800,
+            temperature = settings.AnalysisTemperature,
+            max_tokens = analysisMode == AnalysisMode.WithCollection ? settings.CollectionAnalysisMaxTokens : settings.AnalysisMaxTokens,
             messages = new object[]
             {
                 new { role = "system", content = system },
@@ -284,7 +306,7 @@ internal sealed partial class VisionService
         var choice = choices[0];
         if (choice.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("The LLM endpoint returned an invalid completion choice.");
         if (choice.TryGetProperty("finish_reason", out var reason) && reason.ValueKind == JsonValueKind.String && reason.GetString() == "length")
-            throw new InvalidOperationException("The model reached the response token limit before finishing. Use a model that can return concise JSON; reasoning may consume the output budget.");
+            throw new InvalidOperationException("The model reached the response token limit before finishing. Increase the response token limit in LLM settings; reasoning may consume the output budget.");
         if (!choice.TryGetProperty("message", out var message)
             || message.ValueKind != JsonValueKind.Object || !message.TryGetProperty("content", out var value) || value.ValueKind != JsonValueKind.String
             || string.IsNullOrWhiteSpace(value.GetString()))

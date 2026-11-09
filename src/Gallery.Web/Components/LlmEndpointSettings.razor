@@ -27,6 +27,26 @@
             <Input id="model-select" @bind-Value="draft.Model" Disabled="@working" Placeholder="Fetch models or enter a model ID" required />
         }
         <p class="text-muted-foreground">Choose a vision-capable model for image analysis. Model discovery does not verify vision support. Text search interpretation uses this model too.</p>
+        <fieldset class="space-y-3" disabled="@working" aria-describedby="generation-settings-help">
+            <legend class="mt-4 font-medium">Model generation settings</legend>
+            <p id="generation-settings-help" class="text-muted-foreground">Response token limits include reasoning on servers that count thinking tokens in the output budget. Increase the relevant limit for thinking models, and increase the request timeout if needed. The server's model and context limits still apply.</p>
+            <Label For="analysis-max-tokens" Class="block">Vision response token limit</Label>
+            <input id="analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.AnalysisMaxTokens" required class="@GenerationInputClass" />
+            <p class="text-muted-foreground">Used for detail analysis, analysis without collection suggestions, and tag suggestions. Default: 800.</p>
+            <Label For="collection-analysis-max-tokens" Class="block">Collection-aware vision response token limit</Label>
+            <input id="collection-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.CollectionAnalysisMaxTokens" required class="@GenerationInputClass" />
+            <p class="text-muted-foreground">Used for image analysis that also suggests a collection. Default: 1,200.</p>
+            <Label For="analysis-temperature" Class="block">Vision temperature</Label>
+            <input id="analysis-temperature" type="number" min="0" max="2" step="any" @bind="draft.AnalysisTemperature" required class="@GenerationInputClass" />
+            <p class="text-muted-foreground">Used for all image analysis. Default: 0.2.</p>
+            <Label For="text-max-tokens" Class="block">Text response token limit</Label>
+            <input id="text-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.TextMaxTokens" required class="@GenerationInputClass" />
+            <p class="text-muted-foreground">Used for search interpretation and text-only collection and set suggestions. Default: 500.</p>
+            <Label For="text-temperature" Class="block">Text temperature</Label>
+            <input id="text-temperature" type="number" min="0" max="2" step="any" @bind="draft.TextTemperature" required class="@GenerationInputClass" />
+            <p class="text-muted-foreground">Used for text-only requests. Default: 0.1. Lower temperatures make responses more predictable; supported values depend on your server and model.</p>
+            <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultGenerationSettings">Restore default generation settings</Button>
+        </fieldset>
         <Label For="vision-system-prompt" Class="mt-4 mb-2 block">Vision system prompt</Label>
         <textarea id="vision-system-prompt" rows="8" @bind="draft.SystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="vision-system-prompt-help"></textarea>
         <p id="vision-system-prompt-help" class="text-muted-foreground">Used by image analysis in the detail view and toolbox. Responses must be JSON with description (a string) and tags (an array of strings). Toolbox collection suggestions and full organization analysis also append the collection instructions below. Tag suggestions use this prompt plus the tag vocabulary instructions below.</p>
@@ -65,6 +85,7 @@
 </Card>
 
 @code {
+    private const string GenerationInputClass = "h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
     [Parameter, EditorRequired] public VisionSettings SavedSettings { get; set; } = new();
     [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     [Parameter] public EventCallback<VisionSettings> Saved { get; set; }
@@ -94,6 +115,15 @@
     private void RestoreDefaultCollectionInstructions() => draft.CollectionAnalysisInstructions = VisionSettings.DefaultCollectionAnalysisInstructions;
     private void RestoreDefaultCollectionPrompt() => draft.CollectionSuggestionSystemPrompt = VisionSettings.DefaultCollectionSuggestionSystemPrompt;
     private void RestoreDefaultSearchPrompt() => draft.SearchSystemPrompt = VisionSettings.DefaultSearchSystemPrompt;
+    private void RestoreDefaultGenerationSettings()
+    {
+        var defaults = new VisionSettings();
+        draft.AnalysisMaxTokens = defaults.AnalysisMaxTokens;
+        draft.CollectionAnalysisMaxTokens = defaults.CollectionAnalysisMaxTokens;
+        draft.TextMaxTokens = defaults.TextMaxTokens;
+        draft.AnalysisTemperature = defaults.AnalysisTemperature;
+        draft.TextTemperature = defaults.TextTemperature;
+    }
 
     private void EndpointChanged() { models = []; message = error = ""; }
     private Task FetchModelsAsync() => RunAsync(async () =>
@@ -148,6 +178,11 @@
         public string SetSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultSetSuggestionSystemPrompt;
         public string SearchSystemPrompt { get; set; } = VisionSettings.DefaultSearchSystemPrompt;
         public int RequestTimeoutSeconds { get; set; }
+        public int AnalysisMaxTokens { get; set; }
+        public int CollectionAnalysisMaxTokens { get; set; }
+        public int TextMaxTokens { get; set; }
+        public double AnalysisTemperature { get; set; }
+        public double TextTemperature { get; set; }
 
         public static VisionSettingsDraft From(VisionSettings settings) => new()
         {
@@ -160,7 +195,12 @@
             CollectionSuggestionSystemPrompt = settings.CollectionSuggestionSystemPrompt,
             SetSuggestionSystemPrompt = settings.SetSuggestionSystemPrompt,
             SearchSystemPrompt = settings.SearchSystemPrompt,
-            RequestTimeoutSeconds = settings.RequestTimeoutSeconds
+            RequestTimeoutSeconds = settings.RequestTimeoutSeconds,
+            AnalysisMaxTokens = settings.AnalysisMaxTokens,
+            CollectionAnalysisMaxTokens = settings.CollectionAnalysisMaxTokens,
+            TextMaxTokens = settings.TextMaxTokens,
+            AnalysisTemperature = settings.AnalysisTemperature,
+            TextTemperature = settings.TextTemperature
         };
 
         public VisionSettings ToSettings() => new()
@@ -174,7 +214,12 @@
             CollectionSuggestionSystemPrompt = CollectionSuggestionSystemPrompt,
             SetSuggestionSystemPrompt = SetSuggestionSystemPrompt,
             SearchSystemPrompt = SearchSystemPrompt,
-            RequestTimeoutSeconds = RequestTimeoutSeconds
+            RequestTimeoutSeconds = RequestTimeoutSeconds,
+            AnalysisMaxTokens = AnalysisMaxTokens,
+            CollectionAnalysisMaxTokens = CollectionAnalysisMaxTokens,
+            TextMaxTokens = TextMaxTokens,
+            AnalysisTemperature = AnalysisTemperature,
+            TextTemperature = TextTemperature
         };
     }
 }

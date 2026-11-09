@@ -17,7 +17,7 @@ namespace Gallery.Tests;
 public sealed class VisionPromptEditorTests
 {
     [Fact]
-    public async Task EditingSavingAndReloadingThePrompt_SendsTheEditedTextToTheEndpoint()
+    public async Task EditingSavingAndReloadingModelSettings_SendsTheEditedValuesToTheEndpoint()
     {
         using var handler = new CaptureHandler();
         using var client = new HttpClient(handler);
@@ -50,6 +50,16 @@ public sealed class VisionPromptEditorTests
             var input = renderer.FindElement("textarea", "vision-system-prompt");
             await renderer.DispatchEventAsync(input.Event("oninput"), new EventFieldInfo { ComponentId = input.ComponentId, FieldValue = custom },
                 new ChangeEventArgs { Value = custom });
+            foreach (var (id, value) in new[]
+            {
+                ("analysis-max-tokens", "16384"), ("collection-analysis-max-tokens", "24576"),
+                ("text-max-tokens", "8192"), ("analysis-temperature", "0.6"), ("text-temperature", "0.4")
+            })
+            {
+                var field = renderer.FindElement("input", id);
+                await renderer.DispatchEventAsync(field.Event("onchange"),
+                    new EventFieldInfo { ComponentId = field.ComponentId, FieldValue = value }, new ChangeEventArgs { Value = value });
+            }
             // A parent rerender with the same saved settings must preserve the edit.
             await renderer.RenderAsync(root, Parameters(saved));
             var form = renderer.FindElement("form", null);
@@ -58,6 +68,11 @@ public sealed class VisionPromptEditorTests
 
         var reloaded = await vault.Service.SettingsAsync();
         Assert.Equal(custom, reloaded.SystemPrompt);
+        Assert.Equal(16384, reloaded.AnalysisMaxTokens);
+        Assert.Equal(24576, reloaded.CollectionAnalysisMaxTokens);
+        Assert.Equal(8192, reloaded.TextMaxTokens);
+        Assert.Equal(0.6, reloaded.AnalysisTemperature);
+        Assert.Equal(0.4, reloaded.TextTemperature);
         Assert.Equal(reloaded, savedCallback);
         await vault.Service.AnalyzeImageAsync(reloaded, "data:image/png;base64,example");
         Assert.NotNull(handler.Body);
@@ -65,6 +80,18 @@ public sealed class VisionPromptEditorTests
         var sent = request.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
         Assert.Equal(custom, sent);
         Assert.NotEqual(VisionSettings.DefaultSystemPrompt, sent);
+        Assert.Equal(16384, request.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(0.6, request.RootElement.GetProperty("temperature").GetDouble());
+
+        await vault.Service.AnalyzeImageWithCollectionAsync(reloaded, "image", ["Worlds"]);
+        using var collectionRequest = JsonDocument.Parse(handler.Body!);
+        Assert.Equal(24576, collectionRequest.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(0.6, collectionRequest.RootElement.GetProperty("temperature").GetDouble());
+
+        await vault.Service.SuggestCollectionAsync(reloaded, "Landscape", "landscape", ["Worlds"]);
+        using var textRequest = JsonDocument.Parse(handler.Body!);
+        Assert.Equal(8192, textRequest.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(0.4, textRequest.RootElement.GetProperty("temperature").GetDouble());
     }
 
     private sealed class CaptureHandler : HttpMessageHandler
@@ -73,7 +100,7 @@ public sealed class VisionPromptEditorTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Body = await request.Content!.ReadAsStringAsync(token);
-            var content = JsonSerializer.Serialize(new { description = "A landscape.", tags = new[] { "landscape" } });
+            var content = JsonSerializer.Serialize(new { description = "A landscape.", tags = new[] { "landscape" }, collection = "Worlds" });
             return new(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } }))

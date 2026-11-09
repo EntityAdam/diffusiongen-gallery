@@ -391,6 +391,17 @@ Under **Settings > LLM endpoints**, configure an OpenAI-compatible endpoint,
 optional bearer API key, loaded vision-capable model, and timeout (10-3600 seconds,
 default 180). **Fetch models** checks the connection without saving settings; model
 discovery does not verify vision capability. Save the settings before analysis.
+**Model generation settings** exposes response token limits for vision analysis
+(default 800), collection-aware vision analysis (1,200), and text-only requests
+(500), plus vision temperature (0.2) and text temperature (0.1). Token limits must
+be positive whole numbers; temperatures must be between 0 and 2. Existing saved
+settings retain these defaults until changed. These settings are encrypted with
+the rest of the LLM configuration and apply to subsequent requests after saving.
+Thinking models may count reasoning against the response budget. If analysis
+reports that the model reached the response token limit, increase the relevant
+limit and, if needed, the request timeout. Your server's context and model limits
+still apply. **Restore default generation settings** resets these five fields;
+save to apply the defaults.
 LLM and backup destination edits show an unsaved
 status until saved. The auto-lock timer is labeled **Saves automatically** and applies
 when selected.

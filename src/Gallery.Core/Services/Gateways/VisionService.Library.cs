@@ -146,7 +146,7 @@ internal sealed partial class VisionService
         var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, new Uri(ValidateRequest(model, requestTimeoutSeconds), "chat/completions"));
         httpRequestMessage.Content = JsonContent.Create(new
         {
-            model, temperature = 0.1, max_tokens = 500,
+            model, temperature = settings.TextTemperature, max_tokens = settings.TextMaxTokens,
             messages = new[] { new { role = "system", content = system }, new { role = "user", content = prompt } }
         });
         return httpRequestMessage;
