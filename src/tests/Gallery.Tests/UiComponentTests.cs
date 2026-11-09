@@ -832,6 +832,8 @@ public sealed class UiComponentTests
         Assert.Contains(">All media<", html);
         Assert.Contains(">Images only<", html);
         Assert.Contains(">Videos only<", html);
+        Assert.Contains($"value=\"{GalleryFilter.AwaitingApproval}\"", html);
+        Assert.Contains(">Awaiting approval<", html);
         Assert.Equal(1, GalleryFilterPanel.CountActive(activeFilter));
         Assert.Equal(0, GalleryFilterPanel.CountChanged(new GalleryFilter()));
         Assert.Equal(2, GalleryFilterPanel.CountChanged(activeFilter));

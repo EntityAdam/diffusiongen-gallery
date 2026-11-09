@@ -4,10 +4,11 @@ namespace Gallery.Core.Services.Queries;
 
 internal static class GalleryFilterProcessor
 {
-    public static IEnumerable<ImageRecord> Apply(GalleryFilter galleryFilter, IEnumerable<ImageRecord> images) =>
-        OrderImages(images.Where(imageRecord => Matches(galleryFilter, imageRecord)), galleryFilter.Sort);
+    public static IEnumerable<ImageRecord> Apply(GalleryFilter galleryFilter, IEnumerable<ImageRecord> images,
+        IReadOnlySet<string>? awaitingApprovalIds = null) =>
+        OrderImages(images.Where(imageRecord => Matches(galleryFilter, imageRecord, awaitingApprovalIds)), galleryFilter.Sort);
 
-    private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord) =>
+    private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord, IReadOnlySet<string>? awaitingApprovalIds) =>
         (galleryFilter.Media == GalleryFilter.AnyValue || imageRecord.MediaType == galleryFilter.Media)
         && (galleryFilter.Prompt.Length == 0 || imageRecord.Prompt == galleryFilter.Prompt)
         && (galleryFilter.Search.Length == 0 || $"{imageRecord.Name} {imageRecord.OriginalName} {imageRecord.Metadata} {imageRecord.Description} {imageRecord.UserDescription} {imageRecord.Tags}"
@@ -25,7 +26,10 @@ internal static class GalleryFilterProcessor
         && (galleryFilter.Review == GalleryFilter.AnyValue || imageRecord.IsReviewed == (galleryFilter.Review == "reviewed"))
         && (!galleryFilter.IncludesUnorganizedOnly || imageRecord.Collections.IsEmpty)
         && (galleryFilter.Deletion == GalleryFilter.AnyValue || imageRecord.IsMarkedForDeletion == (galleryFilter.Deletion == "marked"))
-        && (galleryFilter.Analysis == GalleryFilter.AnyValue || (imageRecord.Description.Length > 0) == (galleryFilter.Analysis == "analyzed"))
+        && (galleryFilter.Analysis == GalleryFilter.AnyValue
+            || (galleryFilter.Analysis == GalleryFilter.AwaitingApproval
+                ? awaitingApprovalIds?.Contains(imageRecord.Id) == true
+                : (imageRecord.Description.Length > 0) == (galleryFilter.Analysis == "analyzed")))
         && (galleryFilter.Orientation == GalleryFilter.AnyValue
             || galleryFilter.Orientation == "square" && imageRecord.Width == imageRecord.Height
             || galleryFilter.Orientation == "landscape" && imageRecord.Width > imageRecord.Height

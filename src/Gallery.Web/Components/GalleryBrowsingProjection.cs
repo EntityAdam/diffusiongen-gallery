@@ -39,9 +39,10 @@ internal static class GalleryBrowsingProjector
         Create(galleryService, sourceImages, galleryFilter, "none");
 
     public static GalleryBrowsingProjection Create(GalleryService galleryService,
-        IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter, string grouping)
+        IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter, string grouping,
+        IReadOnlySet<string>? awaitingApprovalIds = null)
     {
-        var filteredImages = galleryService.Filter(sourceImages, galleryFilter);
+        var filteredImages = galleryService.Filter(sourceImages, galleryFilter, awaitingApprovalIds);
         var promptGroups = grouping == PromptGrouping ? galleryService.GroupByPrompt(filteredImages) : [];
         var diffusionModelGroups = grouping == ModelGrouping ? galleryService.GroupByDiffusionModel(filteredImages) : [];
         var images = SelectImages(grouping, filteredImages, promptGroups, diffusionModelGroups);
