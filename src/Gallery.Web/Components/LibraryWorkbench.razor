@@ -231,14 +231,21 @@
         await PublishJobAsync();
     }
 
-    public async Task DiscardTagSuggestionsAsync()
+    public async Task UpdateSuggestionTagsAsync(TagCatalogChange change)
     {
+        if (change.PreviousName is null) return;
         await EnsureCheckpointAsync();
-        await checkpoint!.UpdateAsync(state => state with { Drafts = [] });
-        tagSuggestions.Clear();
-        suggestions.Clear();
-        await PublishSuggestionsAsync();
-        await PublishJobAsync();
+        // A vocabulary change only affects suggested tags, never the completed analysis.
+        await checkpoint!.UpdateAsync(state => state with
+        {
+            Drafts = [.. state.Drafts.Select(draft => draft with
+            {
+                Tags = string.Join(", ", draft.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(tag => tag.Equals(change.PreviousName, StringComparison.OrdinalIgnoreCase) ? change.Name : tag)
+                    .Where(tag => tag is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+            })]
+        });
+        await RestoreDraftsAsync();
         StateHasChanged();
     }
 

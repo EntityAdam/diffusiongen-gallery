@@ -1163,7 +1163,7 @@ else
     {
         if (change.PreviousName is not null && change.Name is not null && filter.Tag.Equals(change.PreviousName, StringComparison.OrdinalIgnoreCase))
             filter = filter with { Tag = change.Name };
-        if (change.PreviousName is not null && workbench is not null) await workbench.DiscardTagSuggestionsAsync();
+        if (workbench is not null) await workbench.UpdateSuggestionTagsAsync(change);
         await ReloadAsync();
     }
     private List<ImageRecord> images = [];

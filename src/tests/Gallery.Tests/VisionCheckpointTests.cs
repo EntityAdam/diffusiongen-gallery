@@ -16,6 +16,53 @@ public sealed class VisionCheckpointTests
     private const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic;
 
     [Theory]
+    [InlineData(null, "new", "sunlit, keep")]
+    [InlineData("SUNLIT", "Sunshine", "Sunshine, keep")]
+    [InlineData("SUNLIT", "keep", "keep")]
+    [InlineData("SUNLIT", null, "keep")]
+    public async Task Managing_tags_preserves_analysis_drafts_and_queue_across_unlock(
+        string? previous, string? replacement, string expectedTags)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        await vault.Service.AddTagAsync("sunlit");
+        await vault.Service.AddTagAsync("keep");
+        var checkpoint = await vault.Service.OpenVisionCheckpointAsync();
+        VisionDraft analysis = new(image.Id, image.Name, "Completed description", "sunlit, keep", "", "vision", "Review this");
+        VisionDraft tags = analysis with { TagsOnly = true };
+        VisionDraft other = new("off-page", "other.png", "Other description", "unrelated", "Worlds", "vision");
+        VisionQueueItem pending = new("unfinished", Failed: true);
+        await checkpoint.UpdateAsync(state => state with { Drafts = [analysis, tags, other], Queue = [pending] });
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var workbench = await RenderAsync(fixture, [image]);
+
+        if (previous is null) await vault.Service.AddTagAsync(replacement!);
+        else if (replacement is null) await vault.Service.DeleteTagAsync(previous);
+        else await vault.Service.RenameTagAsync(previous, replacement);
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => workbench.UpdateSuggestionTagsAsync(new(previous, replacement)));
+
+        var saved = (await vault.Service.OpenVisionCheckpointAsync()).State;
+        Assert.Equal(new[] { analysis with { Tags = expectedTags }, tags with { Tags = expectedTags }, other }, saved.Drafts.ToArray());
+        Assert.Equal(pending, Assert.Single(saved.Queue));
+        Assert.Equal(expectedTags, Assert.Single(Suggestions(workbench, true)).Tags);
+        Assert.Equal(2, Suggestions(workbench, false).Count);
+        Assert.Empty(Assert.Single(await vault.Service.ListAsync()).Description);
+
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(workbench.Dispose);
+        vault.Service.LockVault();
+        await vault.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        var restored = await RenderAsync(fixture, [image]);
+        var suggestion = Suggestions(restored, false).Single(item => item.Id == image.Id);
+        Assert.Equal("Completed description", suggestion.Description);
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => restored.ApproveSuggestionAsync(suggestion));
+        var approved = Assert.Single(await vault.Service.ListAsync());
+        Assert.Equal("Completed description", approved.Description);
+        Assert.Equal(expectedTags, approved.Tags);
+        Assert.Equal("vision", approved.AnalysisModel);
+    }
+
+    [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
     public async Task Encrypted_drafts_and_queue_survive_restart_and_revoked_handles_cannot_write(CatalogBackend backend)
