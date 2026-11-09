@@ -104,6 +104,11 @@ public sealed record VisionSettings
     public string Model { get; init; } = "";
     public string ApiKey { get; init; } = "";
     public int RequestTimeoutSeconds { get; init; } = 180;
+    public int AnalysisMaxTokens { get; init; } = 800;
+    public int CollectionAnalysisMaxTokens { get; init; } = 1200;
+    public int TextMaxTokens { get; init; } = 500;
+    public double AnalysisTemperature { get; init; } = 0.2;
+    public double TextTemperature { get; init; } = 0.1;
     public string SystemPrompt { get; init; } = DefaultSystemPrompt;
     public string TagVocabularyInstructions { get; init; } = DefaultTagVocabularyInstructions;
     public string CollectionAnalysisInstructions { get; init; } = DefaultCollectionAnalysisInstructions;
