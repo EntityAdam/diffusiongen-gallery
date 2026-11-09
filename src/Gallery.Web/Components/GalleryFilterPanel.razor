@@ -78,7 +78,7 @@
                             case "vision":
                                 <Label For="analysis" Class="mb-2 block">Analysis status</Label>
                                 <Select Disabled="@Disabled" id="analysis" @bind-Value="draft.Analysis" @bind-Value:after="NotifyChangedAsync">
-                                    <option value="all">All media</option><option value="analyzed">Analyzed</option><option value="pending">Not analyzed yet</option>
+                                    <option value="all">All media</option><option value="analyzed">Analyzed</option><option value="@GalleryFilter.AwaitingApproval">Awaiting approval</option><option value="pending">Not analyzed yet</option>
                                 </Select>
                                 <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
                                 <DebouncedFilterInput Disabled="@Disabled" Id="analysis-model" ResetVersion="@ResetVersion" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />

@@ -425,6 +425,10 @@ Analysis runs only when requested and does not change rating, review state,
 deletion marks, or media files. The details dialog's **Analyze locally** action
 uses the same encrypted draft and approval workflow. Drafts are separate from saved
 vision notes; creating a draft does not mark the image as analyzed.
+Choose **Vision analysis → Analysis status → Awaiting approval** in the gallery
+filters to show media with completed analysis drafts, including new drafts for
+previously analyzed media. Approving or dismissing a draft removes it from this
+view. Other filters still apply.
 
 The navigation job indicator remains visible across workflows. While an LLM job
 runs, browsing/review remain available, but file operations and gallery

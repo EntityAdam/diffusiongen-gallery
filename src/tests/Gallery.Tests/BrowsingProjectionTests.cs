@@ -18,6 +18,54 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class BrowsingProjectionTests
 {
+    [Theory]
+    [InlineData("none")]
+    [InlineData("prompt")]
+    [InlineData("model")]
+    public void AwaitingApproval_FiltersDraftsBeforeGroupingAndCombinesOtherCriteria(string grouping)
+    {
+        using var vault = new TestVault();
+        List<ImageRecord> images =
+        [
+            new() { Id = "new-draft", IsFavorite = true },
+            new() { Id = "reanalyzed", Description = "Approved notes", IsFavorite = true },
+            new() { Id = "no-draft", IsFavorite = true },
+            new() { Id = "not-favorite" },
+            new() { Id = "deleted", IsFavorite = true, IsMarkedForDeletion = true }
+        ];
+        var filter = new GalleryFilter { Analysis = GalleryFilter.AwaitingApproval, IncludesFavoritesOnly = true };
+        var draftIds = new HashSet<string> { "new-draft", "reanalyzed", "not-favorite", "deleted", "missing" };
+
+        var projection = GalleryBrowsingProjector.Create(vault.Service, images, filter, grouping, draftIds);
+
+        Assert.Equal(new[] { "new-draft", "reanalyzed" }, projection.Images.Select(image => image.Id).Order());
+        Assert.Empty(vault.Service.Filter(images, filter));
+        Assert.Empty(GalleryBrowsingProjector.Create(vault.Service, images, filter, grouping, new HashSet<string>()).Images);
+    }
+
+    [Fact]
+    public async Task AwaitingApproval_RefreshesCachedResultsAndClampsPageWhenDraftsChange()
+    {
+        using var vault = new TestVault();
+        var images = CreateImages(60);
+        var home = CreateHome(vault, images);
+        SetField(home, "filter", new GalleryFilter { Analysis = GalleryFilter.AwaitingApproval });
+        Assert.Empty(GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered"));
+        var suggestions = images.Select(image => new OrganizationSuggestion(image.Id, image.Name, "Draft", "", "", "vision")).ToArray();
+
+        await (Task)Invoke(home, "SuggestionsChanged", (object)suggestions)!;
+        Assert.Equal(60, GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered").Count);
+        SetField(home, "page", 4);
+
+        await (Task)Invoke(home, "SuggestionsChanged", (object)suggestions.Take(1).ToArray())!;
+        Assert.Equal(images[0].Id, Assert.Single(GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered")).Id);
+        Assert.Equal(0, GetField<int>(home, "page"));
+
+        await (Task)Invoke(home, "SuggestionsChanged", (object)Array.Empty<OrganizationSuggestion>())!;
+        Assert.Empty(GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered"));
+        Assert.Equal(0, GetField<int>(home, "page"));
+    }
+
     [Fact]
     public void IngestionDefaults_WhenHomeIsCreated_ThenUsesTheSafeHddSettings()
     {

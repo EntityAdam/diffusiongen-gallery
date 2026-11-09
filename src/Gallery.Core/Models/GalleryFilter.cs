@@ -3,6 +3,7 @@ namespace Gallery.Core.Models;
 public sealed record GalleryFilter
 {
     public const string AnyValue = "all";
+    public const string AwaitingApproval = "awaiting-approval";
     public string Search { get; init; } = "";
     public string Folder { get; init; } = "";
     public string Tag { get; init; } = "";

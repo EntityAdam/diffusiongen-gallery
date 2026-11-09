@@ -1185,7 +1185,8 @@ else
         {
             if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != grouping)
             {
-                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, catalogPartial ? "none" : grouping);
+                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, catalogPartial ? "none" : grouping,
+                    aiSuggestions.Keys.ToHashSet());
                 browsingSource = images;
                 projectedFilter = filter;
                 projectedGrouping = grouping;
@@ -1757,8 +1758,14 @@ else
         await SetActiveToolAsync(libraryJob.Workflow is "organize" or "search" && (libraryJob.IsRunning || libraryJob.Suggestions == 0)
             ? libraryJob.Workflow : "intelligence");
     }
-    private void SuggestionsChanged(IReadOnlyList<OrganizationSuggestion> suggestions) =>
+    private async Task SuggestionsChanged(IReadOnlyList<OrganizationSuggestion> suggestions)
+    {
         aiSuggestions = suggestions.ToDictionary(suggestion => suggestion.Id);
+        if (filter.Analysis != GalleryFilter.AwaitingApproval) return;
+        browsingSource = null;
+        page = Math.Min(page, PageCount - 1);
+        await LoadThumbnailsAsync();
+    }
     private Task<ImageRecord?> ApproveSuggestionAsync(OrganizationSuggestion suggestion) =>
         workbench?.ApproveSuggestionAsync(suggestion) ?? Task.FromResult<ImageRecord?>(null);
     private Task DismissSuggestionAsync(OrganizationSuggestion suggestion) =>

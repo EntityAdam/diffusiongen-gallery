@@ -119,11 +119,12 @@ public sealed partial class GalleryService
 
     public static bool IsVideoName(string name) => string.Equals(Path.GetExtension(name), Mp4Extension, StringComparison.OrdinalIgnoreCase);
 
-    public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter)
+    public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter,
+        IReadOnlySet<string>? awaitingApprovalIds = null)
     {
         ArgumentNullException.ThrowIfNull(records);
         ArgumentNullException.ThrowIfNull(filter);
-        return GalleryFilterProcessor.Apply(filter, records)
+        return GalleryFilterProcessor.Apply(filter, records, awaitingApprovalIds)
             .ToList();
     }
 
