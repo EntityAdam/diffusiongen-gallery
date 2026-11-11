@@ -5,6 +5,7 @@ public sealed record GalleryFilter
     public const string AnyValue = "all";
     public const string AwaitingApproval = "awaiting-approval";
     public string Search { get; init; } = "";
+    public VisionQuery? Vision { get; init; }
     public string Folder { get; init; } = "";
     public string Tag { get; init; } = "";
     public string Model { get; init; } = "";

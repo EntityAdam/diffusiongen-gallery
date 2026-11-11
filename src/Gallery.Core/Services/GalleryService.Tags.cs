@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Gallery.Core.Models;
+using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Processors;
 
 namespace Gallery.Core.Services;
@@ -17,12 +18,13 @@ public sealed partial class GalleryService
         return name.Trim();
     }
 
-    private async Task<TagCatalog> ReadTagCatalogWithKeyAsync(byte[] key, IReadOnlyList<ImageRecord>? records = null)
+    private async Task<TagCatalog> ReadTagCatalogWithKeyAsync(byte[] key, IReadOnlyList<ImageRecord>? records = null, IGalleryStore? store = null)
     {
-        var catalog = await galleryStore.ReadSettingsAsync<TagCatalog>(TagCatalog.SettingId, TagCatalog.SettingPurpose, key);
+        store ??= galleryStore;
+        var catalog = await store.ReadSettingsAsync<TagCatalog>(TagCatalog.SettingId, TagCatalog.SettingPurpose, key);
         if (catalog is not null && !catalog.Names.IsDefault) return catalog;
-        catalog = new(NormalizeTagNames((records ?? await galleryStore.ReadRecordsAsync(key)).SelectMany(TagsOf)));
-        await galleryStore.CommitTagCatalogAsync([], catalog, null, key);
+        catalog = new(NormalizeTagNames((records ?? await store.ReadRecordsAsync(key)).SelectMany(TagsOf)));
+        await store.CommitTagCatalogAsync([], catalog, null, key);
         return catalog;
     }
 
@@ -57,13 +59,6 @@ public sealed partial class GalleryService
     public Task DeleteTagAsync(string name) => ChangeTagCatalogAsync(RequireTagLookup(name), null);
     private static string RequireTagLookup(string name) => !string.IsNullOrWhiteSpace(name)
         ? name.Trim() : throw new InvalidOperationException("Choose an existing tag.");
-
-    private static string CanonicalVisionTags(string tags, IReadOnlyList<string> knownTags)
-    {
-        var names = knownTags.ToDictionary(name => name, StringComparer.OrdinalIgnoreCase);
-        return string.Join(", ", tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(tag => names.GetValueOrDefault(tag, tag)).Distinct(StringComparer.OrdinalIgnoreCase));
-    }
 
     private async Task ChangeTagCatalogAsync(string? original, string? replacement)
     {

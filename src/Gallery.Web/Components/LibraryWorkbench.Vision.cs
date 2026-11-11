@@ -28,7 +28,7 @@ public partial class LibraryWorkbench
     }
 
     private static OrganizationSuggestion ToSuggestion(VisionDraft draft) =>
-        new(draft.Id, draft.Name, draft.Description, draft.Tags, draft.Collection, draft.Model, draft.Warning);
+        new(draft.Id, draft.Name, draft.Description, draft.Tags, draft.Collection, draft.Model, draft.Warning, draft.Analysis, draft.UseExistingTags, draft.SuggestNewTags);
 
     public Task AnalyzeDetailAsync(ImageRecord image) =>
         AnalyzeAsync([image], suggestions, "Analyzing media...", includeCollection: false);
@@ -98,18 +98,9 @@ public partial class LibraryWorkbench
             try
             {
                 token.ThrowIfCancellationRequested();
-                var preview = await Gallery.PreviewAsync(image.Id);
-                token.ThrowIfCancellationRequested();
-                if (item.IncludeCollection)
-                {
-                    var result = await Gallery.AnalyzeImageWithCollectionAsync(settings, preview, Collections.ToArray(), token);
-                    draft = new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model, result.Warning, item.TagsOnly);
-                }
-                else
-                {
-                    var result = await Gallery.AnalyzeImageAsync(settings, preview, token);
-                    draft = new(image.Id, image.Name, result.Description, result.Tags, "", settings.Model, TagsOnly: item.TagsOnly);
-                }
+                var result = await Gallery.AnalyzeForDraftAsync(image.Id, settings, item.IncludeCollection, Collections.ToArray(), token);
+                draft = new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model,
+                    result.Warning, item.TagsOnly, result.Analysis, settings.UseExistingTags, settings.SuggestNewTags);
                 token.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }

@@ -26,7 +26,7 @@ public sealed class DatabaseMigrationTests
         {
             var tables = new List<string>();
             while (reader.Read()) tables.Add(reader.GetString(0));
-            Assert.Equal(["SchemaVersions", "drive_operations", "images", "media_index", "settings", "storage_overview_state"], tables);
+            Assert.Equal(["SchemaVersions", "drive_operations", "images", "media_index", "settings", "storage_overview_state", "vision_analysis"], tables);
         }
         AssertJournal(connection);
         command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('images') WHERE name = 'fingerprint'";
@@ -161,7 +161,8 @@ public sealed class DatabaseMigrationTests
         while (reader.Read()) scripts.Add(reader.GetString(0));
         Assert.Equal([
             "Gallery.Migrations.Scripts.M0001_Baseline.sql",
-            "Gallery.Migrations.Scripts.M0002_Fingerprint.cs"
+            "Gallery.Migrations.Scripts.M0002_Fingerprint.cs",
+            "Gallery.Migrations.Scripts.M0003_VisionAnalysis.sql"
         ], scripts);
     }
 }

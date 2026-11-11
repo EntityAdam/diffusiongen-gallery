@@ -94,6 +94,42 @@ public sealed class VisionPromptEditorTests
         Assert.Equal(0.4, textRequest.RootElement.GetProperty("temperature").GetDouble());
     }
 
+    [Fact]
+    public async Task StructuredSettings_SaveFormatPromptTagCheckboxesAndBudgetWithoutChangingOtherPrompts()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var settings = new VisionSettings { Model = "vision", SearchSystemPrompt = "Keep search instructions" };
+        using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
+            .AddSingleton(vault.Service).BuildServiceProvider();
+        await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var id = renderer.AddRoot();
+            await renderer.RenderAsync(id, ParameterView.FromDictionary(new Dictionary<string, object?>
+            { [nameof(LlmEndpointSettings.SavedSettings)] = settings }));
+            var format = renderer.FindElement(null, "vision-output-format");
+            await renderer.DispatchEventAsync(format.Event("onchange"), null, new ChangeEventArgs { Value = "structured" });
+            var restore = renderer.FindElement(null, "restore-vision-prompt");
+            await renderer.DispatchEventAsync(restore.Event("onclick"), null, new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+            var existing = renderer.FindElement(null, "vision-existing-tags");
+            if (existing.Events.TryGetValue("onchange", out var change))
+                await renderer.DispatchEventAsync(change, null, new ChangeEventArgs { Value = false });
+            else await renderer.DispatchEventAsync(existing.Event("onclick"), null, new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+            var budget = renderer.FindElement(null, "structured-analysis-max-tokens");
+            await renderer.DispatchEventAsync(budget.Event("onchange"), null, new ChangeEventArgs { Value = "16384" });
+            var form = renderer.FindElement("form", null);
+            await renderer.DispatchEventAsync(form.Event("onsubmit"), null, EventArgs.Empty);
+        });
+        var saved = await vault.Service.SettingsAsync();
+        Assert.True(saved.StructuredAnalysis);
+        Assert.False(saved.UseExistingTags);
+        Assert.True(saved.SuggestNewTags);
+        Assert.Equal(16384, saved.StructuredAnalysisMaxTokens);
+        Assert.Equal(Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt, saved.SystemPrompt);
+        Assert.Equal(settings.SearchSystemPrompt, saved.SearchSystemPrompt);
+    }
+
     private sealed class CaptureHandler : HttpMessageHandler
     {
         public string? Body { get; private set; }
@@ -124,7 +160,7 @@ public sealed class VisionPromptEditorTests
             for (int i = 0; i < renderBatch.UpdatedComponents.Count; i++) components.Add(renderBatch.UpdatedComponents.Array[i].ComponentId);
             return Task.CompletedTask;
         }
-        public ElementEvents FindElement(string name, string? id)
+        public ElementEvents FindElement(string? name, string? id)
         {
             foreach (int component in components)
             {
@@ -132,7 +168,7 @@ public sealed class VisionPromptEditorTests
                 for (int i = 0; i < tree.Count; i++)
                 {
                     var frame = tree.Array[i];
-                    if (frame.FrameType != RenderTreeFrameType.Element || frame.ElementName != name) continue;
+                    if (frame.FrameType != RenderTreeFrameType.Element || (name is not null && frame.ElementName != name)) continue;
                     var attributes = new Dictionary<string, object?>();
                     var events = new Dictionary<string, ulong>();
                     for (int j = i + 1; j < tree.Count && tree.Array[j].FrameType == RenderTreeFrameType.Attribute; j++)

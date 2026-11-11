@@ -36,6 +36,9 @@
             <Label For="collection-analysis-max-tokens" Class="block">Collection-aware vision response token limit</Label>
             <input id="collection-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.CollectionAnalysisMaxTokens" required class="@GenerationInputClass" />
             <p class="text-muted-foreground">Used for image analysis that also suggests a collection. Default: 1,200.</p>
+            <Label For="structured-analysis-max-tokens" Class="block">Structured vision response token limit</Label>
+            <input id="structured-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.StructuredAnalysisMaxTokens" required class="@GenerationInputClass" />
+            <p class="text-muted-foreground">Used for structured scene/entity analysis, including collection-aware requests. Default: 8,192. Increase for detailed or crowded images.</p>
             <Label For="analysis-temperature" Class="block">Vision temperature</Label>
             <input id="analysis-temperature" type="number" min="0" max="2" step="any" @bind="draft.AnalysisTemperature" required class="@GenerationInputClass" />
             <p class="text-muted-foreground">Used for all image analysis. Default: 0.2.</p>
@@ -47,13 +50,24 @@
             <p class="text-muted-foreground">Used for text-only requests. Default: 0.1. Lower temperatures make responses more predictable; supported values depend on your server and model.</p>
             <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultGenerationSettings">Restore default generation settings</Button>
         </fieldset>
+        <div class="mt-4 space-y-3">
+            <Label For="vision-output-format">Vision output format</Label>
+            <Select id="vision-output-format" @bind-Value="draft.OutputFormat" Disabled="@working">
+                <option value="legacy">Description and tags (existing prompts)</option>
+                <option value="structured">Structured scene and entities (experimental)</option>
+            </Select>
+            <p class="text-muted-foreground">Changing format keeps your prompt. Use Restore default prompt to adopt the matching commented TypeScript prompt. Structured output requires scene and entities; relationships are optional.</p>
+            <div class="flex items-start gap-3"><Checkbox id="vision-existing-tags" Disabled="@working" @bind-Checked="draft.UseExistingTags" /><Label For="vision-existing-tags">Choose from existing tags</Label></div>
+            <div class="flex items-start gap-3"><Checkbox id="vision-new-tags" Disabled="@working" @bind-Checked="draft.SuggestNewTags" /><Label For="vision-new-tags">Suggest new tags</Label></div>
+            <p class="text-muted-foreground">Independent controls. With both off, analysis still describes the image but assigns no tags. Existing tags are sent only when enabled, including unused registered tags.</p>
+        </div>
         <Label For="vision-system-prompt" Class="mt-4 mb-2 block">Vision system prompt</Label>
         <textarea id="vision-system-prompt" rows="8" @bind="draft.SystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="vision-system-prompt-help"></textarea>
-        <p id="vision-system-prompt-help" class="text-muted-foreground">Used by image analysis in the detail view and toolbox. Responses must be JSON with description (a string) and tags (an array of strings). Toolbox collection suggestions and full organization analysis also append the collection instructions below. Tag suggestions use this prompt plus the tag vocabulary instructions below.</p>
-        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultPrompt">Restore default prompt</Button>
+        <p id="vision-system-prompt-help" class="text-muted-foreground">Used by image analysis in the detail view and toolbox. Legacy responses must contain description and tags. Structured responses must contain a scene object and entities array, with optional relationships. Detailed entity observations are retained separately from the overview. Toolbox collection suggestions and full organization analysis also append the collection instructions below. Tag suggestions use this prompt plus the tag vocabulary instructions below.</p>
+        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" id="restore-vision-prompt" OnClick="RestoreDefaultPrompt">Restore default prompt</Button>
         <Label For="tag-vocabulary-instructions" Class="mt-4 mb-2 block">Tag vocabulary instructions</Label>
         <textarea id="tag-vocabulary-instructions" rows="5" @bind="draft.TagVocabularyInstructions" @bind:event="oninput" disabled="@working" class="prompt-editor"></textarea>
-        <p class="text-muted-foreground">Image analysis receives the entire registered tag vocabulary, including unused tags. These instructions are appended when the catalog is nonempty. The toolbox keeps new tags as suggestions until approved.</p>
+        <p class="text-muted-foreground">When Choose from existing tags is enabled, image analysis receives the entire registered tag vocabulary, including unused tags. These instructions are appended when the catalog is nonempty. The toolbox keeps new tags as suggestions until approved.</p>
         <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="() => draft.TagVocabularyInstructions = VisionSettings.DefaultTagVocabularyInstructions">Restore default tag vocabulary instructions</Button>
         <Label For="collection-analysis-instructions" Class="mt-4 mb-2 block">Collection analysis instructions</Label>
         <textarea id="collection-analysis-instructions" rows="5" @bind="draft.CollectionAnalysisInstructions" @bind:event="oninput" disabled="@working" class="prompt-editor" aria-describedby="collection-analysis-instructions-help"></textarea>
@@ -111,7 +125,8 @@
         return error.Length == 0 && !HasUnsavedChanges;
     }
 
-    private void RestoreDefaultPrompt() => draft.SystemPrompt = VisionSettings.DefaultSystemPrompt;
+    private void RestoreDefaultPrompt() => draft.SystemPrompt = draft.OutputFormat == "structured"
+        ? global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt : VisionSettings.DefaultSystemPrompt;
     private void RestoreDefaultCollectionInstructions() => draft.CollectionAnalysisInstructions = VisionSettings.DefaultCollectionAnalysisInstructions;
     private void RestoreDefaultCollectionPrompt() => draft.CollectionSuggestionSystemPrompt = VisionSettings.DefaultCollectionSuggestionSystemPrompt;
     private void RestoreDefaultSearchPrompt() => draft.SearchSystemPrompt = VisionSettings.DefaultSearchSystemPrompt;
@@ -119,6 +134,7 @@
     {
         var defaults = new VisionSettings();
         draft.AnalysisMaxTokens = defaults.AnalysisMaxTokens;
+        draft.StructuredAnalysisMaxTokens = defaults.StructuredAnalysisMaxTokens;
         draft.CollectionAnalysisMaxTokens = defaults.CollectionAnalysisMaxTokens;
         draft.TextMaxTokens = defaults.TextMaxTokens;
         draft.AnalysisTemperature = defaults.AnalysisTemperature;
@@ -171,6 +187,9 @@
         public string Endpoint { get; set; } = "";
         public string Model { get; set; } = "";
         public string ApiKey { get; set; } = "";
+        public string OutputFormat { get; set; } = "legacy";
+        public bool UseExistingTags { get; set; } = true;
+        public bool SuggestNewTags { get; set; } = true;
         public string SystemPrompt { get; set; } = VisionSettings.DefaultSystemPrompt;
         public string TagVocabularyInstructions { get; set; } = VisionSettings.DefaultTagVocabularyInstructions;
         public string CollectionAnalysisInstructions { get; set; } = VisionSettings.DefaultCollectionAnalysisInstructions;
@@ -178,6 +197,7 @@
         public string SetSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultSetSuggestionSystemPrompt;
         public string SearchSystemPrompt { get; set; } = VisionSettings.DefaultSearchSystemPrompt;
         public int RequestTimeoutSeconds { get; set; }
+        public int StructuredAnalysisMaxTokens { get; set; }
         public int AnalysisMaxTokens { get; set; }
         public int CollectionAnalysisMaxTokens { get; set; }
         public int TextMaxTokens { get; set; }
@@ -189,6 +209,8 @@
             Endpoint = settings.Endpoint,
             Model = settings.Model,
             ApiKey = settings.ApiKey,
+            OutputFormat = settings.StructuredAnalysis ? "structured" : "legacy",
+            UseExistingTags = settings.UseExistingTags, SuggestNewTags = settings.SuggestNewTags,
             SystemPrompt = settings.SystemPrompt,
             TagVocabularyInstructions = settings.TagVocabularyInstructions,
             CollectionAnalysisInstructions = settings.CollectionAnalysisInstructions,
@@ -196,6 +218,7 @@
             SetSuggestionSystemPrompt = settings.SetSuggestionSystemPrompt,
             SearchSystemPrompt = settings.SearchSystemPrompt,
             RequestTimeoutSeconds = settings.RequestTimeoutSeconds,
+            StructuredAnalysisMaxTokens = settings.StructuredAnalysisMaxTokens,
             AnalysisMaxTokens = settings.AnalysisMaxTokens,
             CollectionAnalysisMaxTokens = settings.CollectionAnalysisMaxTokens,
             TextMaxTokens = settings.TextMaxTokens,
@@ -208,6 +231,8 @@
             Endpoint = Endpoint,
             Model = Model,
             ApiKey = ApiKey,
+            StructuredAnalysis = OutputFormat == "structured",
+            UseExistingTags = UseExistingTags, SuggestNewTags = SuggestNewTags,
             SystemPrompt = SystemPrompt,
             TagVocabularyInstructions = TagVocabularyInstructions,
             CollectionAnalysisInstructions = CollectionAnalysisInstructions,
@@ -215,6 +240,7 @@
             SetSuggestionSystemPrompt = SetSuggestionSystemPrompt,
             SearchSystemPrompt = SearchSystemPrompt,
             RequestTimeoutSeconds = RequestTimeoutSeconds,
+            StructuredAnalysisMaxTokens = StructuredAnalysisMaxTokens,
             AnalysisMaxTokens = AnalysisMaxTokens,
             CollectionAnalysisMaxTokens = CollectionAnalysisMaxTokens,
             TextMaxTokens = TextMaxTokens,

@@ -346,7 +346,8 @@
     private Task ApplyTagSuggestionAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved tags...", async () =>
     {
         await EnsureCheckpointAsync();
-        await Gallery.UpdateAsync(suggestion.Id, image => image with { Tags = Gallery.MergeTags(image.Tags, suggestion.Tags) });
+        await Gallery.ApproveVisionAsync(suggestion.Id, suggestion.Description, suggestion.Tags, suggestion.Model, suggestion.Analysis,
+            tagsOnly: true, useExistingTags: suggestion.UseExistingTags, suggestNewTags: suggestion.SuggestNewTags);
         await checkpoint!.DismissAsync(suggestion.Id, tagsOnly: true);
         tagSuggestions.Remove(suggestion);
         await Changed.InvokeAsync();
@@ -370,16 +371,9 @@
 
     internal static Task<ImageRecord> PersistApprovedSuggestionAsync(
         GalleryService galleryService, OrganizationSuggestion organizationSuggestion) =>
-        galleryService.UpdateAsync(organizationSuggestion.Id, image =>
-        {
-            var updatedImageRecord = image with
-            {
-                Description = organizationSuggestion.Description,
-                Tags = galleryService.MergeTags(image.Tags, organizationSuggestion.Tags),
-                AnalysisModel = organizationSuggestion.Model
-            };
-            return updatedImageRecord;
-        });
+        galleryService.ApproveVisionAsync(organizationSuggestion.Id, organizationSuggestion.Description, organizationSuggestion.Tags,
+            organizationSuggestion.Model, organizationSuggestion.Analysis, useExistingTags: organizationSuggestion.UseExistingTags,
+            suggestNewTags: organizationSuggestion.SuggestNewTags);
 
     private Task PublishSuggestionsAsync() => disposed ? Task.CompletedTask : SuggestionsChanged.InvokeAsync(suggestions.ToArray());
 

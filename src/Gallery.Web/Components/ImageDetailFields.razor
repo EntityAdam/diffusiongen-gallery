@@ -64,12 +64,15 @@
                 <h4>AI suggestion</h4>
                 <p class="whitespace-pre-wrap">@suggestion.Description</p>
                 <p>Tags: @suggestion.Tags</p>
+                @if (suggestion.Warning.Length > 0) { <p role="status">@suggestion.Warning</p> }
+                <VisionAnalysisView Analysis="@suggestion.Analysis" />
                 <p class="text-muted-foreground">Approval replaces vision notes and adds suggested tags. Your description is saved separately.</p>
                 @if (Dirty) { <p>Save or discard your notes before approving this suggestion.</p> }
                 <Button Disabled="@(Busy || Dirty)" OnClick="Approve">Approve &amp; save</Button>
                 <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="Dismiss">Dismiss</Button>
             </aside>
         }
+        @if (Image.VisionFacts is not null) { <AcceptedVisionAnalysis Image="@Image" /> }
         @if (Image.AnalysisModel.Length > 0) { <p class="text-xs text-muted-foreground">Analyzed by @Image.AnalysisModel</p> }
     </Card>
 </div>

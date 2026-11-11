@@ -674,3 +674,7 @@ Retained but unexposed code includes saved filter views, comparison of two media
 items, selection ZIP export, and additional bulk organization/review operations. These are not user-facing
 features. Explicit persisted vision-acceptance tracking is a future change;
 the current card icon is inferred from saved analysis and pending suggestions.
+
+## Experimental structured vision analysis
+
+See [the structured vision guide](../../docs/features/structured-vision-analysis.md) for the commented TypeScript prompt, independent tag controls, review workflow, and entity-bound filters. The existing description/tags format remains the default until explicitly changed in settings.

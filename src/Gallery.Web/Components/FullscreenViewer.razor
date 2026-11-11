@@ -62,6 +62,7 @@
         <aside class="viewer-suggestion" aria-label="AI suggestion">
             <h3><SparklesIcon Size="16" aria-hidden="true" />AI suggestion</h3>
             <p>@suggestion.Description</p>
+            <VisionAnalysisView Analysis="@suggestion.Analysis" />
             <p class="text-muted-foreground">Tags: @suggestion.Tags</p>
             @if (suggestion.Collection.Length > 0) { <p class="text-muted-foreground">Collection: @suggestion.Collection</p> }
             @if (suggestion.Warning.Length > 0) { <Alert Variant="AlertVariant.Destructive">@suggestion.Warning</Alert> }
@@ -70,6 +71,13 @@
                 <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => RunAsync(() => DismissSuggestion.InvokeAsync(suggestion))">Dismiss</Button>
             </div>
         </aside>
+    }
+    @if (!ReviewMode && Current.VisionFacts is not null && !Suggestions.ContainsKey(Current.Id))
+    {
+        <details class="viewer-suggestion">
+            <summary>Accepted structured analysis</summary>
+            <AcceptedVisionAnalysis Image="@Current" />
+        </details>
     }
     <footer class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-muted-foreground">
         <span>@(Current.IsFavorite ? "Favorite" : "Not favorite") &middot; @(Current.IsMarkedForDeletion ? "Marked for deletion" : "Not marked") &middot; @(Current.IsReviewed ? "Reviewed" : "Pending review") / @Current.Rating out of 5 &middot; @(originalSize ? "100% size (scroll to explore)" : "Fit to window")</span>

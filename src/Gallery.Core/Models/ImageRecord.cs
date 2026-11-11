@@ -23,6 +23,7 @@ public sealed record ImageRecord
     public string UserDescription { get; init; } = "";
     public string Tags { get; init; } = "";
     public string AnalysisModel { get; init; } = "";
+    public VisionFacts? VisionFacts { get; init; }
     [System.Text.Json.Serialization.JsonPropertyName("Favorite")]
     public bool IsFavorite { get; init; }
     [System.Text.Json.Serialization.JsonPropertyName("MarkedForDeletion")]

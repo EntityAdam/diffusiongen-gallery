@@ -54,6 +54,10 @@ public sealed class UiComponentTests
             }));
             return WebUtility.HtmlDecode(root.ToHtmlString());
         });
+        Assert.Contains("vision-existing-tags", html);
+        Assert.Contains("vision-new-tags", html);
+        Assert.Contains("vision-output-format", html);
+        Assert.Contains("structured-analysis-max-tokens", html);
         Assert.Contains("Vision system prompt", html);
         Assert.Contains("id=\"vision-system-prompt\"", html);
         Assert.Contains(prompt, html);
@@ -66,6 +70,31 @@ public sealed class UiComponentTests
         Assert.Contains(prompt + " Additional analysis directions.", html);
         Assert.Contains("Collection directions.", html);
         Assert.Contains("Search directions.", html);
+    }
+
+    [Fact]
+    public async Task StructuredAnalysis_ShowsSeparateEntityDetailsWarningsAndOriginalJson()
+    {
+        using var json = System.Text.Json.JsonDocument.Parse("""
+            {"scene":{"description":"Overview only"},"entities":[
+            {"id":"p","kind":"person","description":"A person in a blue jacket","attributes":[{"name":"pose","value":"standing"}]},
+            {"id":"unresolved"}],"relationships":[{"subjectId":"p.hand","predicate":"holding","objectId":"unresolved"}],
+            "visual":{"medium":"anime"},"custom_field":"preserved"}
+            """);
+        var result = Gallery.Core.Services.Processors.StructuredVision.Parse(json.RootElement);
+        await using var fixture = ComponentRenderFixture.Create();
+        var html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await fixture.HtmlRenderer.RenderComponentAsync<VisionAnalysisView>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            { [nameof(VisionAnalysisView.Analysis)] = result.Analysis }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+        Assert.Equal("Overview only", result.Description);
+        Assert.Contains("A person in a blue jacket", html);
+        Assert.Contains("standing", html);
+        Assert.Contains("excluded from search", html);
+        Assert.Contains("anime", html);
+        Assert.Contains("custom_field", html);
     }
 
     [Theory]

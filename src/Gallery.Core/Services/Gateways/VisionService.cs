@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Gallery.Core.Models;
+using Gallery.Core.Services.Processors;
 
 namespace Gallery.Core.Services.Gateways;
 
@@ -50,6 +51,7 @@ internal sealed partial class VisionService
 
     private static void ValidateGenerationSettings(VisionSettings settings)
     {
+        ValidateMaxTokens(settings.StructuredAnalysisMaxTokens, "Structured vision response token limit");
         ValidateMaxTokens(settings.AnalysisMaxTokens, "Vision response token limit");
         ValidateMaxTokens(settings.CollectionAnalysisMaxTokens, "Collection-aware vision response token limit");
         ValidateMaxTokens(settings.TextMaxTokens, "Text response token limit");
@@ -173,18 +175,48 @@ internal sealed partial class VisionService
         return (result.Description, result.Tags);
     }
 
-    private async Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeStructuredAsync(
-        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string>? collections, IReadOnlyList<string>? existingTags, CancellationToken cancellationToken = default)
+    internal async Task<VisionAnalysisResult> AnalyzeResultAsync(string model, int requestTimeoutSeconds, string imageData,
+        IEnumerable<string>? collections, IReadOnlyList<string>? existingTags, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ValidateSystemPrompt(settings.SystemPrompt);
-        var analysisMode = GetAnalysisMode(collections);
-        using var httpRequestMessage = CreateAnalysisRequest(model, requestTimeoutSeconds, imageData, collections, analysisMode, existingTags);
-        using var httpResponseMessage = await SendAsync(requestTimeoutSeconds, httpRequestMessage, cancellationToken);
+        var mode = GetAnalysisMode(collections);
+        using var request = CreateAnalysisRequest(model, requestTimeoutSeconds, imageData, collections, mode, existingTags);
+        using var response = await SendAsync(requestTimeoutSeconds, request, cancellationToken);
+        using var json = await ReadCompletionAsync(response);
         cancellationToken.ThrowIfCancellationRequested();
-        if (analysisMode == AnalysisMode.WithCollection) return await ReadAnalysisWithCollectionAsync(httpResponseMessage);
-        var analysis = await ReadAnalysisAsync(httpResponseMessage);
-        return (analysis.Description, analysis.Tags, "", "");
+        if (!settings.StructuredAnalysis)
+        {
+            var legacy = mode == AnalysisMode.WithCollection ? ParseAnalysisWithCollection(json) : LegacyResult(json);
+            return new(legacy.Description, legacy.Tags, legacy.Collection, legacy.Warning);
+        }
+        var result = StructuredVision.Parse(json.RootElement);
+        var collection = ""; var warning = result.Warning;
+        if (mode == AnalysisMode.WithCollection && !TryNormalizeCollectionName(StructuredVision.Text(json.RootElement, "collection"), out collection))
+            warning += " The model returned an invalid or missing collection. Description and tags remain available for approval.";
+        var analysis = result.Analysis! with
+        {
+            Model = model, Endpoint = settings.Endpoint,
+            EffectiveSystemPrompt = CreateAnalysisPrompt(collections, mode, existingTags).System,
+            MaxTokens = settings.StructuredAnalysisMaxTokens,
+            RequestTimeoutSeconds = requestTimeoutSeconds,
+            Temperature = settings.AnalysisTemperature,
+            UseExistingTags = settings.UseExistingTags, SuggestNewTags = settings.SuggestNewTags
+        };
+        return result with { Collection = collection, Warning = warning.Trim(), Analysis = analysis };
+    }
+
+    private static (string Description, string Tags, string Collection, string Warning) LegacyResult(JsonDocument json)
+    {
+        var result = ParseAnalysis(json);
+        return (result.Description, result.Tags, "", "");
+    }
+
+    private async Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeStructuredAsync(
+        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string>? collections, IReadOnlyList<string>? existingTags, CancellationToken cancellationToken = default)
+    {
+        var result = await AnalyzeResultAsync(model, requestTimeoutSeconds, imageData, collections, existingTags, cancellationToken);
+        return (result.Description, result.Tags, result.Collection, result.Warning);
     }
 
     private HttpRequestMessage CreateAnalysisRequest(
@@ -202,7 +234,7 @@ internal sealed partial class VisionService
     {
         var system = settings.BuildImageAnalysisSystemPrompt(existingTags?.Count > 0, analysisMode == AnalysisMode.WithCollection);
         var prompt = "Describe and tag this image.";
-        if (existingTags?.Count > 0) prompt += " Existing tags: " + JsonSerializer.Serialize(existingTags);
+        if (settings.UseExistingTags && existingTags?.Count > 0) prompt += " Existing tags: " + JsonSerializer.Serialize(existingTags);
         if (analysisMode == AnalysisMode.WithCollection)
             prompt += " Existing collections: " + JsonSerializer.Serialize(collections);
         return (system, prompt);
@@ -216,7 +248,8 @@ internal sealed partial class VisionService
         {
             model,
             temperature = settings.AnalysisTemperature,
-            max_tokens = analysisMode == AnalysisMode.WithCollection ? settings.CollectionAnalysisMaxTokens : settings.AnalysisMaxTokens,
+            max_tokens = settings.StructuredAnalysis ? settings.StructuredAnalysisMaxTokens
+                : analysisMode == AnalysisMode.WithCollection ? settings.CollectionAnalysisMaxTokens : settings.AnalysisMaxTokens,
             messages = new object[]
             {
                 new { role = "system", content = system },
@@ -234,19 +267,6 @@ internal sealed partial class VisionService
 
     private static AnalysisMode GetAnalysisMode(IEnumerable<string>? collections) =>
         collections is null ? AnalysisMode.DescriptionAndTags : AnalysisMode.WithCollection;
-
-    private static async Task<(string Description, string Tags)> ReadAnalysisAsync(HttpResponseMessage httpResponseMessage)
-    {
-        using var jsonDocument = await ReadCompletionAsync(httpResponseMessage);
-        return ParseAnalysis(jsonDocument);
-    }
-
-    private static async Task<(string Description, string Tags, string Collection, string Warning)> ReadAnalysisWithCollectionAsync(
-        HttpResponseMessage httpResponseMessage)
-    {
-        using var jsonDocument = await ReadCompletionAsync(httpResponseMessage);
-        return ParseAnalysisWithCollection(jsonDocument);
-    }
 
     private static (string Description, string Tags) ParseAnalysis(JsonDocument jsonDocument)
     {
@@ -292,6 +312,8 @@ internal sealed partial class VisionService
     private static async Task<JsonDocument> ReadCompletionAsync(HttpResponseMessage httpResponseMessage)
     {
         var body = await httpResponseMessage.Content.ReadAsStringAsync();
+        if (System.Text.Encoding.UTF8.GetByteCount(body) > StructuredVision.MaximumDocumentBytes * 8)
+            throw new InvalidOperationException("The LLM response exceeds the response size limit.");
         if (string.IsNullOrWhiteSpace(body))
             throw new InvalidOperationException("The LLM endpoint returned an empty response. Check the model and server logs.");
         JsonDocument parsed;

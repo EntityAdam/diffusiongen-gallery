@@ -10,6 +10,7 @@ internal static class GalleryFilterProcessor
 
     private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord, IReadOnlySet<string>? awaitingApprovalIds) =>
         (galleryFilter.Media == GalleryFilter.AnyValue || imageRecord.MediaType == galleryFilter.Media)
+        && Processors.StructuredVision.Matches(imageRecord.VisionFacts, imageRecord.ContentSha256, galleryFilter.Vision)
         && (galleryFilter.Prompt.Length == 0 || imageRecord.Prompt == galleryFilter.Prompt)
         && (galleryFilter.Search.Length == 0 || $"{imageRecord.Name} {imageRecord.OriginalName} {imageRecord.Metadata} {imageRecord.Description} {imageRecord.UserDescription} {imageRecord.Tags}"
             .Contains(galleryFilter.Search, StringComparison.OrdinalIgnoreCase))
