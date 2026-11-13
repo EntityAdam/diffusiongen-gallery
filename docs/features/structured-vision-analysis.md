@@ -5,12 +5,12 @@ The first-pass experiment describes an image using a commented TypeScript interf
 ## Enable
 
 1. Open **Settings → LLM endpoints**.
-2. Choose **Structured scene and entities (experimental)** under Vision output format.
-3. Use **Restore default prompt** to load the commented TypeScript template, or edit your own prompt to return that structure.
+2. Enable **Experimental scene analysis**. The commented TypeScript prompt is selected automatically.
+3. In **Prompts**, choose a task to edit its instructions. **Restore default prompt** resets only the selected task.
 4. Adjust **Structured vision response token limit** if needed (default 8,192), then save settings.
 5. Analyze a detail item, a selection, or media without a description through the existing vision workflow. Review and approve the encrypted draft.
 
-Changing output format does not overwrite a custom prompt. Existing settings default to the legacy description/tags format, with both tag controls enabled. Model discovery, local/LAN connection policy, timeouts, temperatures, collection/set/search prompts, and existing generation limits are preserved. Structured requests have their own response token limit, including collection-aware requests.
+Each image-analysis mode remembers its own custom prompt. Switching modes restores that mode’s prompt; switching back restores your previous prompt, including after saving and reopening settings. Existing settings default to the legacy description/tags format, with both tag controls enabled. Model discovery, local/LAN connection policy, timeouts, temperatures, collection/set/search prompts, and existing generation limits are preserved. Structured requests have their own response token limit, including collection-aware requests.
 
 ## Tags
 

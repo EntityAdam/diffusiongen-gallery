@@ -2,100 +2,109 @@
 @inject ILogger<LlmEndpointSettings> Logger
 @inject ISonnerService Toasts
 
-<Card Class="mb-6 p-5 md:p-6 space-y-4">
-    <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3>Connect your local LLM</h3><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">OPENAI-COMPATIBLE</Badge></div>
-    <p class="text-muted-foreground">Configure LM Studio, Ollama or another local server. Include /v1 when required. Use a literal loopback or private LAN IP: 10.x.x.x, 172.16.x.x through 172.31.x.x, or 192.168.x.x. Public addresses and hostnames are blocked.</p>
-    <p class="text-muted-foreground">LAN analysis sends decrypted previews and metadata to that server. Only connect to servers you trust; HTTP is not encrypted in transit. Use HTTPS when supported.</p>
-    <p class="text-muted-foreground" role="status">@(HasUnsavedChanges ? "Unsaved changes. Save LLM settings to apply them." : "LLM settings are saved. Changes require Save LLM settings.")</p>
+<Card Class="llm-settings mb-6">
+    <header class="llm-header">
+        <div><h3>Local AI</h3><p class="text-muted-foreground">Connect a model, choose how it analyzes images, and tailor its instructions.</p></div>
+        <Badge Variant="BadgeVariant.Secondary">OpenAI-compatible</Badge>
+    </header>
     <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
-        <Label For="endpoint-url" Class="mt-4 mb-2 block">Endpoint URL</Label>
-        <Input id="endpoint-url" Type="url" @bind-Value="draft.Endpoint" @bind-Value:after="EndpointChanged" Placeholder="http://127.0.0.1:1234/v1/" Disabled="@working" required />
-        <Label For="api-key" Class="mt-4 mb-2 block">API key (optional)</Label>
-        <Input id="api-key" Type="password" autocomplete="new-password" @bind-Value="draft.ApiKey" Disabled="@working" Placeholder="Leave blank for unauthenticated local endpoints" />
-        <Label For="request-timeout" Class="mt-4 mb-2 block">Request timeout (seconds)</Label>
-        <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds" @bind="draft.RequestTimeoutSeconds" disabled="@working" required  class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"/>
-        <Label For="model-select" Class="mt-4 mb-2 block">Model</Label>
-        @if (models.Count > 0)
-        {
-            <Select id="model-select" @bind-Value="draft.Model" Disabled="@working" required>
-                <option value="">Choose a model</option>
-                @foreach (var model in models) { <option value="@model">@model</option> }
-            </Select>
-        }
-        else
-        {
-            <Input id="model-select" @bind-Value="draft.Model" Disabled="@working" Placeholder="Fetch models or enter a model ID" required />
-        }
-        <p class="text-muted-foreground">Choose a vision-capable model for image analysis. Model discovery does not verify vision support. Text search interpretation uses this model too.</p>
-        <fieldset class="space-y-3" disabled="@working" aria-describedby="generation-settings-help">
-            <legend class="mt-4 font-medium">Model generation settings</legend>
-            <p id="generation-settings-help" class="text-muted-foreground">Response token limits include reasoning on servers that count thinking tokens in the output budget. Increase the relevant limit for thinking models, and increase the request timeout if needed. The server's model and context limits still apply.</p>
-            <Label For="analysis-max-tokens" Class="block">Vision response token limit</Label>
-            <input id="analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.AnalysisMaxTokens" required class="@GenerationInputClass" />
-            <p class="text-muted-foreground">Used for detail analysis, analysis without collection suggestions, and tag suggestions. Default: 800.</p>
-            <Label For="collection-analysis-max-tokens" Class="block">Collection-aware vision response token limit</Label>
-            <input id="collection-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.CollectionAnalysisMaxTokens" required class="@GenerationInputClass" />
-            <p class="text-muted-foreground">Used for image analysis that also suggests a collection. Default: 1,200.</p>
-            <Label For="structured-analysis-max-tokens" Class="block">Structured vision response token limit</Label>
-            <input id="structured-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.StructuredAnalysisMaxTokens" required class="@GenerationInputClass" />
-            <p class="text-muted-foreground">Used for structured scene/entity analysis, including collection-aware requests. Default: 8,192. Increase for detailed or crowded images.</p>
-            <Label For="analysis-temperature" Class="block">Vision temperature</Label>
-            <input id="analysis-temperature" type="number" min="0" max="2" step="any" @bind="draft.AnalysisTemperature" required class="@GenerationInputClass" />
-            <p class="text-muted-foreground">Used for all image analysis. Default: 0.2.</p>
-            <Label For="text-max-tokens" Class="block">Text response token limit</Label>
-            <input id="text-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.TextMaxTokens" required class="@GenerationInputClass" />
-            <p class="text-muted-foreground">Used for search interpretation and text-only collection and set suggestions. Default: 500.</p>
-            <Label For="text-temperature" Class="block">Text temperature</Label>
-            <input id="text-temperature" type="number" min="0" max="2" step="any" @bind="draft.TextTemperature" required class="@GenerationInputClass" />
-            <p class="text-muted-foreground">Used for text-only requests. Default: 0.1. Lower temperatures make responses more predictable; supported values depend on your server and model.</p>
-            <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultGenerationSettings">Restore default generation settings</Button>
-        </fieldset>
-        <div class="mt-4 space-y-3">
-            <Label For="vision-output-format">Vision output format</Label>
-            <Select id="vision-output-format" @bind-Value="draft.OutputFormat" Disabled="@working">
-                <option value="legacy">Description and tags (existing prompts)</option>
-                <option value="structured">Structured scene and entities (experimental)</option>
-            </Select>
-            <p class="text-muted-foreground">Changing format keeps your prompt. Use Restore default prompt to adopt the matching commented TypeScript prompt. Structured output requires scene and entities; relationships are optional.</p>
-            <div class="flex items-start gap-3"><Checkbox id="vision-existing-tags" Disabled="@working" @bind-Checked="draft.UseExistingTags" /><Label For="vision-existing-tags">Choose from existing tags</Label></div>
-            <div class="flex items-start gap-3"><Checkbox id="vision-new-tags" Disabled="@working" @bind-Checked="draft.SuggestNewTags" /><Label For="vision-new-tags">Suggest new tags</Label></div>
-            <p class="text-muted-foreground">Independent controls. With both off, analysis still describes the image but assigns no tags. Existing tags are sent only when enabled, including unused registered tags.</p>
-        </div>
-        <Label For="vision-system-prompt" Class="mt-4 mb-2 block">Vision system prompt</Label>
-        <textarea id="vision-system-prompt" rows="8" @bind="draft.SystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="vision-system-prompt-help"></textarea>
-        <p id="vision-system-prompt-help" class="text-muted-foreground">Used by image analysis in the detail view and toolbox. Legacy responses must contain description and tags. Structured responses must contain a scene object and entities array, with optional relationships. Detailed entity observations are retained separately from the overview. Toolbox collection suggestions and full organization analysis also append the collection instructions below. Tag suggestions use this prompt plus the tag vocabulary instructions below.</p>
-        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" id="restore-vision-prompt" OnClick="RestoreDefaultPrompt">Restore default prompt</Button>
-        <Label For="tag-vocabulary-instructions" Class="mt-4 mb-2 block">Tag vocabulary instructions</Label>
-        <textarea id="tag-vocabulary-instructions" rows="5" @bind="draft.TagVocabularyInstructions" @bind:event="oninput" disabled="@working" class="prompt-editor"></textarea>
-        <p class="text-muted-foreground">When Choose from existing tags is enabled, image analysis receives the entire registered tag vocabulary, including unused tags. These instructions are appended when the catalog is nonempty. The toolbox keeps new tags as suggestions until approved.</p>
-        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="() => draft.TagVocabularyInstructions = VisionSettings.DefaultTagVocabularyInstructions">Restore default tag vocabulary instructions</Button>
-        <Label For="collection-analysis-instructions" Class="mt-4 mb-2 block">Collection analysis instructions</Label>
-        <textarea id="collection-analysis-instructions" rows="5" @bind="draft.CollectionAnalysisInstructions" @bind:event="oninput" disabled="@working" class="prompt-editor" aria-describedby="collection-analysis-instructions-help"></textarea>
-        <p id="collection-analysis-instructions-help" class="text-muted-foreground">Appended to the vision system prompt for toolbox collection suggestions and full organization analysis. Leave empty to append nothing. Collection suggestions expect a collection string of 1–80 characters in the JSON response.</p>
-        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultCollectionInstructions">Restore default collection instructions</Button>
-        <details>
-            <summary>Effective system prompt for collection-aware analysis</summary>
-            <pre>@draft.ToSettings().BuildImageAnalysisSystemPrompt(KnownTags.Any(), true)</pre>
-        </details>
-        <Label For="collection-suggestion-prompt" Class="mt-4 mb-2 block">Collection suggestion system prompt</Label>
-        <textarea id="collection-suggestion-prompt" rows="5" @bind="draft.CollectionSuggestionSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="collection-suggestion-prompt-help"></textarea>
-        <p id="collection-suggestion-prompt-help" class="text-muted-foreground">Used by the text-only collection suggestion request. Expects JSON with a collection string of 1–80 characters.</p>
-        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultCollectionPrompt">Restore default collection suggestion prompt</Button>
-        <Label For="set-suggestion-prompt" Class="mt-4 mb-2 block">Set destination suggestion system prompt</Label>
-        <textarea id="set-suggestion-prompt" rows="5" @bind="draft.SetSuggestionSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required></textarea>
-        <p class="text-muted-foreground">Used by the shared move dialog. Chooses an existing set in the selected collection; returns JSON with setId. Suggestions never move media automatically.</p>
-        <Button Variant="ButtonVariant.Ghost" Disabled="@working" OnClick="() => draft.SetSuggestionSystemPrompt = VisionSettings.DefaultSetSuggestionSystemPrompt">Restore default set prompt</Button>
-        <Label For="search-system-prompt" Class="mt-4 mb-2 block">Search interpretation system prompt</Label>
-        <textarea id="search-system-prompt" rows="8" @bind="draft.SearchSystemPrompt" @bind:event="oninput" disabled="@working" class="prompt-editor" required aria-describedby="search-system-prompt-help"></textarea>
-        <p id="search-system-prompt-help" class="text-muted-foreground">Used by natural-language search. Expects JSON with search, tag, collection, minRating, favoritesOnly, orientation and review.</p>
-        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultSearchPrompt">Restore default search prompt</Button>
-        <div class="flex flex-wrap items-center gap-2">
-            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@working" OnClick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</Button>
-            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="submit" Disabled="@(working || !HasUnsavedChanges)">Save LLM settings</Button>
-        </div>
-    </form>
+        <section class="llm-section" aria-labelledby="llm-connection-title">
+            <h4 id="llm-connection-title">Connection</h4>
+            <div class="llm-grid">
+                <div class="llm-field"><Label For="endpoint-url">Endpoint URL</Label>
+                    <Input id="endpoint-url" Type="url" @bind-Value="draft.Endpoint" @bind-Value:after="EndpointChanged" Placeholder="http://127.0.0.1:1234/v1/" Disabled="@working" required /></div>
+                <div class="llm-field"><Label For="api-key">API key <span class="text-muted-foreground">(optional)</span></Label>
+                    <Input id="api-key" Type="password" autocomplete="new-password" @bind-Value="draft.ApiKey" Disabled="@working" Placeholder="Leave blank if not required" /></div>
+                <div class="llm-field llm-full"><Label For="model-select">Model</Label>
+                    <div class="llm-model-row">
+                        @if (models.Count > 0)
+                        {
+                            <Select id="model-select" @bind-Value="draft.Model" Disabled="@working" required>
+                                <option value="">Choose a model</option>
+                                @foreach (var model in models) { <option value="@model">@model</option> }
+                            </Select>
+                        }
+                        else { <Input id="model-select" @bind-Value="draft.Model" Disabled="@working" Placeholder="Enter a model ID or fetch available models" required /> }
+                        <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</Button>
+                    </div>
+                    <p class="llm-help">Use a vision-capable model. Discovery lists models but does not verify vision support.</p>
+                </div>
+            </div>
+            <details class="llm-details">
+                <summary>Connection requirements &amp; privacy</summary>
+                <p class="llm-help">Use LM Studio, Ollama or another OpenAI-compatible server. Include /v1 when required. Only literal loopback or private LAN IP addresses are allowed; public addresses and hostnames are blocked.</p>
+                <p class="llm-help">LAN requests send decrypted previews and metadata to your server. Use a trusted server and HTTPS when supported. Settings and the optional API key are encrypted in your gallery. Fetch models tests the entered connection without saving it.</p>
+            </details>
+        </section>
 
-    <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground">Settings, including the optional API key, are encrypted in your gallery. Fetch models tests the entered endpoint without saving it. Save to apply changes to subsequent requests.</div>
+        <section class="llm-section" aria-labelledby="llm-analysis-title">
+            <div class="llm-section-heading"><h4 id="llm-analysis-title">Image analysis</h4><Badge Variant="BadgeVariant.Secondary">@(draft.IsStructured ? "Structured" : "Description & tags")</Badge></div>
+            <div class="llm-mode">
+                <Checkbox id="structured-analysis-enabled" Disabled="@working" Checked="@draft.IsStructured" CheckedChanged="ToggleStructuredAnalysis" />
+                <div><Label For="structured-analysis-enabled">Experimental scene analysis</Label>
+                    <p class="llm-help">Describe subjects, their details, and relationships using the TypeScript template. Switching modes selects its saved prompt automatically.</p></div>
+            </div>
+            <div class="llm-tag-options">
+                <div class="llm-check"><Checkbox id="vision-existing-tags" Disabled="@working" @bind-Checked="draft.UseExistingTags" /><Label For="vision-existing-tags">Choose from existing tags</Label></div>
+                <div class="llm-check"><Checkbox id="vision-new-tags" Disabled="@working" @bind-Checked="draft.SuggestNewTags" /><Label For="vision-new-tags">Suggest new tags</Label></div>
+            </div>
+            <p class="llm-help">These controls are independent. With both off, analysis describes the image without assigning tags.</p>
+        </section>
+
+        <section class="llm-section" aria-labelledby="llm-prompts-title">
+            <div class="llm-section-heading"><h4 id="llm-prompts-title">Prompts</h4><span class="llm-help">Edit one task at a time</span></div>
+            <div class="llm-field">
+                <Label For="prompt-task">Task</Label>
+                <Select id="prompt-task" @bind-Value="selectedPrompt" Disabled="@working">
+                    <option value="vision">Image analysis — @(draft.IsStructured ? "experimental" : "standard")</option>
+                    <option value="tags">Tag reuse instructions</option>
+                    <option value="collection-analysis">Collection-aware analysis instructions</option>
+                    <option value="collection">Collection suggestions</option>
+                    <option value="set">Set destination suggestions</option>
+                    <option value="search">Search interpretation</option>
+                </Select>
+            </div>
+            <div class="llm-prompt-heading"><Label For="@PromptId">@PromptLabel</Label>
+                <Button id="restore-selected-prompt" Variant="ButtonVariant.Ghost" Type="button" Disabled="@working" OnClick="RestoreSelectedPrompt">Restore default prompt</Button></div>
+            <textarea @key="selectedPrompt" id="@PromptId" rows="12" @bind="SelectedPromptText" @bind:event="oninput" disabled="@working" class="llm-prompt-editor" required="@(selectedPrompt is not ("tags" or "collection-analysis"))" aria-describedby="selected-prompt-help" spellcheck="false"></textarea>
+            <p id="selected-prompt-help" class="llm-help">@PromptHelp</p>
+            <details class="llm-details">
+                <summary>Effective system prompt for collection-aware analysis</summary>
+                <pre class="llm-prompt-preview">@draft.ToSettings().BuildImageAnalysisSystemPrompt(KnownTags.Any(), true)</pre>
+            </details>
+        </section>
+
+        <details class="llm-section llm-generation">
+            <summary>Advanced generation settings</summary>
+            <p class="llm-help">Token budgets include reasoning on servers that count thinking tokens. Server context limits still apply.</p>
+            <fieldset class="llm-grid" disabled="@working">
+                <legend class="sr-only">Model generation settings</legend>
+                <div class="llm-field"><Label For="request-timeout">Request timeout (seconds)</Label>
+                    <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds" @bind="draft.RequestTimeoutSeconds" required class="@GenerationInputClass" /></div>
+                <div class="llm-field"><Label For="structured-analysis-max-tokens">Structured vision token limit</Label>
+                    <input id="structured-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.StructuredAnalysisMaxTokens" required class="@GenerationInputClass" /></div>
+                <div class="llm-field"><Label For="analysis-max-tokens">Standard vision token limit</Label>
+                    <input id="analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.AnalysisMaxTokens" required class="@GenerationInputClass" /></div>
+                <div class="llm-field"><Label For="collection-analysis-max-tokens">Collection-aware vision token limit</Label>
+                    <input id="collection-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.CollectionAnalysisMaxTokens" required class="@GenerationInputClass" /></div>
+                <div class="llm-field"><Label For="analysis-temperature">Vision temperature</Label>
+                    <input id="analysis-temperature" type="number" min="0" max="2" step="any" @bind="draft.AnalysisTemperature" required class="@GenerationInputClass" /></div>
+                <div class="llm-field"><Label For="text-max-tokens">Text response token limit</Label>
+                    <input id="text-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.TextMaxTokens" required class="@GenerationInputClass" /></div>
+                <div class="llm-field"><Label For="text-temperature">Text temperature</Label>
+                    <input id="text-temperature" type="number" min="0" max="2" step="any" @bind="draft.TextTemperature" required class="@GenerationInputClass" /></div>
+            </fieldset>
+            <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="RestoreDefaultGenerationSettings">Restore default generation settings</Button>
+        </details>
+
+        <footer class="llm-save-bar">
+            <p class="llm-help" role="status">@(HasUnsavedChanges ? "Unsaved changes" : "All changes saved")</p>
+            <div class="llm-actions">
+                <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@(working || !HasUnsavedChanges)" OnClick="DiscardDraft">Discard changes</Button>
+                <Button Type="submit" Disabled="@(working || !HasUnsavedChanges)">Save LLM settings</Button>
+            </div>
+        </footer>
+    </form>
 </Card>
 
 @code {
@@ -105,19 +114,26 @@
     [Parameter] public EventCallback<VisionSettings> Saved { get; set; }
     private VisionSettingsDraft draft = new();
     private VisionSettings? observedSettings;
-    public bool HasUnsavedChanges => draft.ToSettings() != observedSettings;
+    private VisionSettings? baseline;
+    private string selectedPrompt = "vision";
+    public bool HasUnsavedChanges => draft.ToSettings() != baseline;
     protected override void OnParametersSet()
     {
         if (Equals(observedSettings, SavedSettings)) return;
         draft = VisionSettingsDraft.From(SavedSettings);
         observedSettings = SavedSettings;
+        baseline = draft.ToSettings();
     }
     private IReadOnlyList<string> models = [];
     private string message = "", error = "";
     private bool working;
     public bool IsBusy => working;
     public string ErrorMessage => error;
-    public void DiscardDraft() => draft = VisionSettingsDraft.From(SavedSettings);
+    public void DiscardDraft()
+    {
+        draft = VisionSettingsDraft.From(SavedSettings);
+        baseline = draft.ToSettings();
+    }
     public async Task<bool> SaveDraftAsync()
     {
         if (working) return false;
@@ -125,11 +141,64 @@
         return error.Length == 0 && !HasUnsavedChanges;
     }
 
-    private void RestoreDefaultPrompt() => draft.SystemPrompt = draft.OutputFormat == "structured"
-        ? global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt : VisionSettings.DefaultSystemPrompt;
-    private void RestoreDefaultCollectionInstructions() => draft.CollectionAnalysisInstructions = VisionSettings.DefaultCollectionAnalysisInstructions;
-    private void RestoreDefaultCollectionPrompt() => draft.CollectionSuggestionSystemPrompt = VisionSettings.DefaultCollectionSuggestionSystemPrompt;
-    private void RestoreDefaultSearchPrompt() => draft.SearchSystemPrompt = VisionSettings.DefaultSearchSystemPrompt;
+    private void ToggleStructuredAnalysis(bool enabled)
+    {
+        draft.SwitchFormat(enabled);
+        selectedPrompt = "vision";
+    }
+
+    private string PromptId => selectedPrompt switch
+    {
+        "tags" => "tag-vocabulary-instructions", "collection-analysis" => "collection-analysis-instructions",
+        "collection" => "collection-suggestion-prompt", "set" => "set-suggestion-prompt",
+        "search" => "search-system-prompt", _ => "vision-system-prompt"
+    };
+    private string PromptLabel => selectedPrompt switch
+    {
+        "tags" => "Tag vocabulary instructions", "collection-analysis" => "Collection analysis instructions",
+        "collection" => "Collection suggestion system prompt", "set" => "Set destination system prompt",
+        "search" => "Search interpretation system prompt", _ => "Vision system prompt"
+    };
+    private string PromptHelp => selectedPrompt switch
+    {
+        "tags" => "Appended when existing-tag reuse is enabled and the catalog is nonempty. Includes unused registered tags. Leave blank to append nothing.",
+        "collection-analysis" => "Appended to image analysis when a collection suggestion is requested. Expects collection in the JSON response. Leave blank to append nothing.",
+        "collection" => "Text-only collection suggestions. Return JSON with a nonempty collection name of up to 80 characters.",
+        "set" => "Selects an existing set in the chosen collection. Return JSON with setId, or an empty string if none fit. Suggestions never move media automatically.",
+        "search" => "Translates natural-language search into JSON: search, tag, collection, minRating, favoritesOnly, orientation and review.",
+        _ => draft.IsStructured ? "Return JSON with a scene object and entities array; relationships are optional. The TypeScript comments guide detailed observations. Each mode remembers its own custom prompt."
+            : "Return JSON with description (a string) and tags (an array of strings). Each mode remembers its own custom prompt."
+    };
+    private string SelectedPromptText
+    {
+        get => selectedPrompt switch
+        {
+            "tags" => draft.TagVocabularyInstructions, "collection-analysis" => draft.CollectionAnalysisInstructions,
+            "collection" => draft.CollectionSuggestionSystemPrompt, "set" => draft.SetSuggestionSystemPrompt,
+            "search" => draft.SearchSystemPrompt, _ => draft.SystemPrompt
+        };
+        set
+        {
+            switch (selectedPrompt)
+            {
+                case "tags": draft.TagVocabularyInstructions = value; break;
+                case "collection-analysis": draft.CollectionAnalysisInstructions = value; break;
+                case "collection": draft.CollectionSuggestionSystemPrompt = value; break;
+                case "set": draft.SetSuggestionSystemPrompt = value; break;
+                case "search": draft.SearchSystemPrompt = value; break;
+                default: draft.SystemPrompt = value; break;
+            }
+        }
+    }
+    private void RestoreSelectedPrompt() => SelectedPromptText = selectedPrompt switch
+    {
+        "tags" => VisionSettings.DefaultTagVocabularyInstructions,
+        "collection-analysis" => VisionSettings.DefaultCollectionAnalysisInstructions,
+        "collection" => VisionSettings.DefaultCollectionSuggestionSystemPrompt,
+        "set" => VisionSettings.DefaultSetSuggestionSystemPrompt,
+        "search" => VisionSettings.DefaultSearchSystemPrompt,
+        _ => draft.IsStructured ? global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt : VisionSettings.DefaultSystemPrompt
+    };
     private void RestoreDefaultGenerationSettings()
     {
         var defaults = new VisionSettings();
@@ -159,6 +228,7 @@
         var settings = draft.ToSettings();
         await Gallery.SaveSettingsAsync(settings);
         observedSettings = settings;
+        baseline = settings;
         await Saved.InvokeAsync(settings);
         message = "LLM settings saved encrypted in this gallery.";
     });
@@ -188,6 +258,17 @@
         public string Model { get; set; } = "";
         public string ApiKey { get; set; } = "";
         public string OutputFormat { get; set; } = "legacy";
+        public bool IsStructured => OutputFormat == "structured";
+        public string LegacyPrompt { get; set; } = VisionSettings.DefaultSystemPrompt;
+        public string StructuredPrompt { get; set; } = global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt;
+        public void SwitchFormat(bool enabled)
+        {
+            if (enabled == IsStructured) return;
+            if (IsStructured) StructuredPrompt = SystemPrompt;
+            else LegacyPrompt = SystemPrompt;
+            OutputFormat = enabled ? "structured" : "legacy";
+            SystemPrompt = enabled ? StructuredPrompt : LegacyPrompt;
+        }
         public bool UseExistingTags { get; set; } = true;
         public bool SuggestNewTags { get; set; } = true;
         public string SystemPrompt { get; set; } = VisionSettings.DefaultSystemPrompt;
@@ -212,6 +293,8 @@
             OutputFormat = settings.StructuredAnalysis ? "structured" : "legacy",
             UseExistingTags = settings.UseExistingTags, SuggestNewTags = settings.SuggestNewTags,
             SystemPrompt = settings.SystemPrompt,
+            LegacyPrompt = settings.LegacySystemPrompt ?? (settings.StructuredAnalysis ? VisionSettings.DefaultSystemPrompt : settings.SystemPrompt),
+            StructuredPrompt = settings.StructuredSystemPrompt ?? (settings.StructuredAnalysis ? settings.SystemPrompt : global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt),
             TagVocabularyInstructions = settings.TagVocabularyInstructions,
             CollectionAnalysisInstructions = settings.CollectionAnalysisInstructions,
             CollectionSuggestionSystemPrompt = settings.CollectionSuggestionSystemPrompt,
@@ -234,6 +317,8 @@
             StructuredAnalysis = OutputFormat == "structured",
             UseExistingTags = UseExistingTags, SuggestNewTags = SuggestNewTags,
             SystemPrompt = SystemPrompt,
+            LegacySystemPrompt = IsStructured ? LegacyPrompt : SystemPrompt,
+            StructuredSystemPrompt = IsStructured ? SystemPrompt : StructuredPrompt,
             TagVocabularyInstructions = TagVocabularyInstructions,
             CollectionAnalysisInstructions = CollectionAnalysisInstructions,
             CollectionSuggestionSystemPrompt = CollectionSuggestionSystemPrompt,

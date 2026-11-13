@@ -56,20 +56,18 @@ public sealed class UiComponentTests
         });
         Assert.Contains("vision-existing-tags", html);
         Assert.Contains("vision-new-tags", html);
-        Assert.Contains("vision-output-format", html);
+        Assert.Contains("structured-analysis-enabled", html);
+        Assert.Contains("prompt-task", html);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, "<textarea"));
         Assert.Contains("structured-analysis-max-tokens", html);
         Assert.Contains("Vision system prompt", html);
         Assert.Contains("id=\"vision-system-prompt\"", html);
         Assert.Contains(prompt, html);
         Assert.Contains("Restore default prompt", html);
-        Assert.Contains("Toolbox collection suggestions and full organization analysis also append the collection instructions below", html);
-        Assert.Contains("id=\"collection-analysis-instructions\"", html);
-        Assert.Contains("id=\"collection-suggestion-prompt\"", html);
-        Assert.Contains("id=\"search-system-prompt\"", html);
         Assert.Contains("Effective system prompt for collection-aware analysis", html);
         Assert.Contains(prompt + " Additional analysis directions.", html);
-        Assert.Contains("Collection directions.", html);
-        Assert.Contains("Search directions.", html);
+        Assert.Contains("Collection suggestions", html);
+        Assert.Contains("Search interpretation", html);
     }
 
     [Fact]

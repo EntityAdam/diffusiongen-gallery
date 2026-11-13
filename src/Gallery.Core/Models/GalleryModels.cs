@@ -114,6 +114,9 @@ public sealed record VisionSettings
     public bool StructuredAnalysis { get; init; }
     public bool UseExistingTags { get; init; } = true;
     public bool SuggestNewTags { get; init; } = true;
+    // SystemPrompt remains the active prompt sent by existing callers. These slots remember the other mode.
+    public string? LegacySystemPrompt { get; init; }
+    public string? StructuredSystemPrompt { get; init; }
     public string SystemPrompt { get; init; } = DefaultSystemPrompt;
     public string TagVocabularyInstructions { get; init; } = DefaultTagVocabularyInstructions;
     public string CollectionAnalysisInstructions { get; init; } = DefaultCollectionAnalysisInstructions;
