@@ -69,20 +69,6 @@
             <Button Variant="ButtonVariant.Outline" Disabled="@cancelRequested" OnClick="StopAnalysisAsync">Stop after current media item</Button>
         }
     }
-    @if (Workflow == "search")
-    {
-        <div class="space-y-3">
-            <Label For="smart-query" Class="mb-2 block">Describe what you want to find</Label>
-            <Input id="smart-query" @bind-Value="query" maxlength="2000" Placeholder="Highly rated landscape favorites" />
-            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@working" OnClick="InterpretAsync"><SearchIcon Size="16" aria-hidden="true" />Convert to filters</Button>
-            <p class="text-muted-foreground text-sm">Your local LLM converts language to explicit filters, not embedding search. Review the interpretation before applying it.</p>
-            @if (suggestedFilter is not null)
-            {
-                <div class="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm break-words">Search: @suggestedFilter.Search / Tag: @suggestedFilter.Tag / Collection: @suggestedFilter.Collection / Minimum rating: @suggestedFilter.MinRating / Favorites: @suggestedFilter.IncludesFavoritesOnly / Orientation: @suggestedFilter.Orientation / Review: @suggestedFilter.Review</div>
-                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@working" OnClick="ApplySearchAsync">Apply suggested filters</Button>
-            }
-        </div>
-    }
     @if (Workflow == "intelligence")
     {
         <p class="text-muted-foreground text-sm">Describe and tag media with your local vision model. Suggestions are saved as encrypted drafts until you approve: cards with a suggestion show a <SparklesIcon Size="12" aria-hidden="true" /> badge, which opens the media item in full screen for review.</p>
@@ -144,7 +130,6 @@
     [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
     [Parameter] public IReadOnlyCollection<string> SelectedIds { get; set; } = [];
     [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
-    [Parameter] public EventCallback<GalleryFilter> FilterChanged { get; set; }
     [Parameter] public EventCallback Changed { get; set; }
     [Parameter] public EventCallback ClearSelection { get; set; }
     [Parameter] public EventCallback<LibraryJobStatus> JobChanged { get; set; }
@@ -154,17 +139,15 @@
     private async Task DestinationSavedAsync(CollectionMutation result) { OrganizationHistory.Record(result.Undo);showDestination = false;notice = "Media moved to set.";await Changed.InvokeAsync(); }
     private async Task DestinationCanceledAsync() { showDestination = false;await Changed.InvokeAsync(); }
     private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await Gallery.MoveMediaToSetAsync(SelectedIds, null);OrganizationHistory.Record(result.Undo);notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
-    private string tags = "", viewName = "", query = "", error = "", notice = "", status = "";
+    private string tags = "", viewName = "", error = "", notice = "", status = "";
     private int rating = -1;
     private string reviewStatus = "unchanged", jobWorkflow = "", jobMessage = "";
     private bool working, analyzing, reportingJob, cancelRequested, disposed;
     private List<SavedView> views = [];
     private List<OrganizationSuggestion> suggestions = [];
     private readonly List<OrganizationSuggestion> tagSuggestions = [];
-    private GalleryFilter? suggestedFilter;
     private List<ImageRecord> compareImages = [];
     private readonly Dictionary<string, string> comparison = [];
-    private IEnumerable<string> Collections => Images.SelectMany(image => image.Collections).Distinct(StringComparer.OrdinalIgnoreCase).Order();
     private IEnumerable<string> Tags => KnownTags.Concat(Images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
         .Distinct(StringComparer.OrdinalIgnoreCase).Order();
     private static string[] TagsOf(ImageRecord image) => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -314,28 +297,16 @@
         views = await Gallery.LoadViewsAsync();
     });
 
-    private Task InterpretAsync() => RunAsync("Interpreting search locally...", async () =>
-    {
-        suggestedFilter = await Gallery.InterpretSearchAsync(await Gallery.SettingsAsync(), query, Collections.ToArray());
-        notice = "Search interpretation ready to inspect.";
-    }, reportJob: true);
+    private Task SuggestAsync() => AnalyzeSelectionAsync(suggestions);
+    private Task SuggestTagsAsync() => AnalyzeSelectionAsync(tagSuggestions);
 
-    private async Task ApplySearchAsync()
-    {
-        if (suggestedFilter is not null) await FilterChanged.InvokeAsync(suggestedFilter with { });
-        suggestedFilter = null;
-    }
-
-    private Task SuggestAsync() => AnalyzeSelectionAsync(suggestions, includeCollection: false);
-    private Task SuggestTagsAsync() => AnalyzeSelectionAsync(tagSuggestions, includeCollection: false);
-
-    private Task AnalyzeSelectionAsync(List<OrganizationSuggestion> target, bool includeCollection = true)
+    private Task AnalyzeSelectionAsync(List<OrganizationSuggestion> target)
     {
         if (SelectedIds.Count is 0 or > 24) return RunAsync("Analyzing selection...", () => throw new InvalidOperationException("Select between 1 and 24 media items."));
-        return AnalyzeAsync(Images.Where(image => SelectedIds.Contains(image.Id)).ToArray(), target, "Analyzing selection...", includeCollection);
+        return AnalyzeAsync(Images.Where(image => SelectedIds.Contains(image.Id)).ToArray(), target, "Analyzing selection...");
     }
 
-    private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing media without a description...", includeCollection: false);
+    private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing media without a description...");
 
     private Task ApplyTagsAsync() => RunAsync("Applying tags...", async () =>
     {

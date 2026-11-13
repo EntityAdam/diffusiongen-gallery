@@ -47,7 +47,6 @@ public static class StructuredVision
           tags?: string[]; // relevant exact names selected from supplied existing tags
           suggested_tags?: string[]; // useful NEW gallery tags absent from the existing catalog
           visual?: VisualInformation; // optional medium, style and attribution information
-          collection?: string; // only when collection suggestion is requested
         }
         """;
 

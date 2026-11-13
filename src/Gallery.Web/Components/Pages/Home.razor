@@ -703,7 +703,7 @@ else
                 </div>
             </div>
         }
-        @if (catalogPartial && activeTool is "filters" or "review" or "organize" or "search" or "intelligence")
+        @if (catalogPartial && activeTool is "filters" or "review" or "organize" or "intelligence")
         {
             <p class="text-muted-foreground" role="status">This tool will be available when the full library finishes loading.</p>
         }
@@ -752,8 +752,8 @@ else
                 }
             </div>
         }
-        <LibraryWorkbench KnownTags="AllTags" @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "search" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
-                          Filter="filter" FilterChanged="ApplyLibraryFilterAsync" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
+        <LibraryWorkbench KnownTags="AllTags" @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
+                          Filter="filter" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
                           SuggestionsChanged="SuggestionsChanged" />
     </GalleryToolbox>
 
@@ -1469,7 +1469,6 @@ else
     private Task FilterChangedAsync() => RunAsync("Filtering...", async () => { page = 0; ClearSelection(); await LoadThumbnailsAsync(); });
     private Task ResetFilters() { filterInputRevision++; filter = TrashActive ? new() { Deletion = "marked" } : new(); return FilterChangedAsync(); }
     private Task ApplyFilterPanelAsync(GalleryFilter value) { if (catalogPartial) return Task.CompletedTask; filter = value; return FilterChangedAsync(); }
-    private Task ApplyLibraryFilterAsync(GalleryFilter value) { filterInputRevision++; return ApplyFilterPanelAsync(value); }
     private Task SetSort(string? value)
     {
         if (catalogPartial) return Task.CompletedTask;
@@ -1755,7 +1754,7 @@ else
     {
         toolboxVisible = true;
         if (workflow != "gallery") await SwitchWorkflowAsync("gallery");
-        await SetActiveToolAsync(libraryJob.Workflow is "organize" or "search" && (libraryJob.IsRunning || libraryJob.Suggestions == 0)
+        await SetActiveToolAsync(libraryJob.Workflow is "organize" && (libraryJob.IsRunning || libraryJob.Suggestions == 0)
             ? libraryJob.Workflow : "intelligence");
     }
     private async Task SuggestionsChanged(IReadOnlyList<OrganizationSuggestion> suggestions)

@@ -109,10 +109,8 @@ public sealed class TagCatalogTests
         }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task VisionReceivesAllRegisteredTagsIncludingUnusedAndOtherMediaTags(bool withCollection)
+    [Fact]
+    public async Task VisionReceivesAllRegisteredTagsIncludingUnusedAndOtherMediaTags()
     {
         using var handler = new CaptureHandler();
         using var fixture = new ServiceFixture(CatalogBackend.Sqlite, new HttpClient(handler));
@@ -124,15 +122,13 @@ public sealed class TagCatalogTests
         await fixture.Service.AddTagAsync("Unused \"quoted\" tag");
         var settings = new VisionSettings { Model = "vision", SystemPrompt = "Base instructions.", TagVocabularyInstructions = "Reuse vocabulary when relevant; allow new tags." };
         await fixture.Service.SaveSettingsAsync(settings);
-        string tags;
-        if (withCollection) tags = (await fixture.Service.AnalyzeImageWithCollectionAsync(settings, "image", ["Worlds"])).Tags;
-        else tags = (await fixture.Service.AnalyzeImageAsync(settings, "image")).Tags;
+        var tags = (await fixture.Service.AnalyzeImageAsync(settings, "image")).Tags;
         using var request = JsonDocument.Parse(handler.Body!);
         var messages = request.RootElement.GetProperty("messages");
         var system = messages[0].GetProperty("content").GetString()!;
         Assert.StartsWith(settings.SystemPrompt + " " + settings.TagVocabularyInstructions, system);
         string prompt = messages[1].GetProperty("content")[0].GetProperty("text").GetString()!;
-        string payload = prompt.Split("Existing tags: ")[1].Split(" Existing collections: ")[0];
+        string payload = prompt.Split("Existing tags: ")[1];
         Assert.Equal(new[] { "Current image", "Elsewhere", "Unused \"quoted\" tag" }, JsonSerializer.Deserialize<string[]>(payload));
         Assert.Equal("Elsewhere, New idea", tags);
         Assert.DoesNotContain("New idea", await fixture.Service.LoadTagNamesAsync());
@@ -157,7 +153,7 @@ public sealed class TagCatalogTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Body = await request.Content!.ReadAsStringAsync(token);
-            var content = JsonSerializer.Serialize(new { description = "A landscape.", tags = new[] { "elsewhere", "New idea" }, collection = "Worlds" });
+            var content = JsonSerializer.Serialize(new { description = "A landscape.", tags = new[] { "elsewhere", "New idea" } });
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } })) };
         }
     }

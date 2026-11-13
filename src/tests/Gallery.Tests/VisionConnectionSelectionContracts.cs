@@ -21,8 +21,8 @@ public sealed class VisionConnectionSelectionContracts
         var secondSettings = new VisionSettings { Endpoint = "http://192.168.1.2:8080/api/", ApiKey = "second-token", Model = "second-model", RequestTimeoutSeconds = 20 };
         var expectedRequests = new[]
         {
-            "http://127.0.0.1:1234/v1/chat/completions|first-token|first-model|800|False",
-            "http://192.168.1.2:8080/api/chat/completions|second-token|second-model|800|False"
+            "http://127.0.0.1:1234/v1/chat/completions|first-token|first-model|800",
+            "http://192.168.1.2:8080/api/chat/completions|second-token|second-model|800"
         };
 
         // Act
@@ -34,32 +34,6 @@ public sealed class VisionConnectionSelectionContracts
         Assert.All(analyses, analysis => Assert.Equal(("A landscape.", "green"), analysis));
         Assert.Null(httpClient.DefaultRequestHeaders.Authorization);
         Assert.Equal(new[] { "available" }, await galleryService.GetVisionModelsAsync(new VisionSettings { RequestTimeoutSeconds = 10 }));
-    }
-
-    [Fact]
-    public async Task ImageAnalysis_WhenCollectionSuggestionIsSelected_ThenChangesPromptBudgetAndParserTogether()
-    {
-        // Arrange
-        var visionRequestRecorder = new VisionRequestRecorder();
-        using var httpClient = new HttpClient(visionRequestRecorder);
-        using var fixture = new VisionGalleryFixture(httpClient);
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        var galleryService = fixture.Service;
-        var visionSettings = new VisionSettings { Model = "vision", RequestTimeoutSeconds = 10 };
-        var expectedRequests = new[]
-        {
-            "http://127.0.0.1:1234/v1/chat/completions||vision|800|False",
-            "http://127.0.0.1:1234/v1/chat/completions||vision|1200|True"
-        };
-
-        // Act
-        var analysis = await galleryService.AnalyzeImageAsync(visionSettings, "image");
-        var collectionAnalysis = await galleryService.AnalyzeImageWithCollectionAsync(visionSettings, "image", ["Worlds"]);
-
-        // Assert
-        Assert.Equal(expectedRequests.Order(StringComparer.Ordinal), visionRequestRecorder.ReadRequests());
-        Assert.Equal(("A landscape.", "green"), analysis);
-        Assert.Equal(("A landscape.", "green", "Worlds", ""), collectionAnalysis);
     }
 
     private sealed class VisionGalleryFixture : IDisposable
@@ -89,13 +63,12 @@ public sealed class VisionConnectionSelectionContracts
                 return new(HttpStatusCode.OK) { Content = new StringContent("""{"data":[{"id":"available"}]}""") };
             using var jsonDocument = JsonDocument.Parse(await httpRequestMessage.Content!.ReadAsStringAsync(cancellationToken));
             var jsonElement = jsonDocument.RootElement;
-            string prompt = jsonElement.GetProperty("messages")[1].GetProperty("content")[0].GetProperty("text").GetString()!;
             capturedRequests.Enqueue($"{httpRequestMessage.RequestUri}|{httpRequestMessage.Headers.Authorization?.Parameter}|" +
-                $"{jsonElement.GetProperty("model").GetString()}|{jsonElement.GetProperty("max_tokens").GetInt32()}|{prompt.Contains("Worlds", StringComparison.Ordinal)}");
+                $"{jsonElement.GetProperty("model").GetString()}|{jsonElement.GetProperty("max_tokens").GetInt32()}");
             await Task.Yield();
             return new(HttpStatusCode.OK)
             {
-                Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Worlds\"}"}}]}""")
+                Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""")
             };
         }
     }

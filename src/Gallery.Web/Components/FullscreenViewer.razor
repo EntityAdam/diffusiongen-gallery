@@ -64,7 +64,6 @@
             <p>@suggestion.Description</p>
             <VisionAnalysisView Analysis="@suggestion.Analysis" />
             <p class="text-muted-foreground">Tags: @suggestion.Tags</p>
-            @if (suggestion.Collection.Length > 0) { <p class="text-muted-foreground">Collection: @suggestion.Collection</p> }
             @if (suggestion.Warning.Length > 0) { <Alert Variant="AlertVariant.Destructive">@suggestion.Warning</Alert> }
             <div class="flex flex-wrap items-center gap-2">
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@busy" OnClick="() => ApproveSuggestionAsync(suggestion)">Approve &amp; save</Button>

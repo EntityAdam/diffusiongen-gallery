@@ -7,8 +7,7 @@ namespace Gallery.Core.Services;
 
 public sealed partial class GalleryService
 {
-    public async Task<VisionAnalysisResult> AnalyzeForDraftAsync(string id, VisionSettings settings, bool includeCollection = false,
-        IEnumerable<string>? collections = null, CancellationToken token = default)
+    public async Task<VisionAnalysisResult> AnalyzeForDraftAsync(string id, VisionSettings settings, CancellationToken token = default)
     {
         var generation = vaultSession.AcquireUnlockedSession();
         var store = galleryStore;
@@ -29,7 +28,7 @@ public sealed partial class GalleryService
         else preview = await GalleryImageRenderer.CreatePreviewAsync(source,
             await StoredMediaProcessor.ReadAsync(source, key.Bytes), ImageResolution.Fit);
         cancellation.Token.ThrowIfCancellationRequested();
-        var result = await RequiredVisionManager().AnalyzeResultAsync(settings, preview, includeCollection ? collections ?? [] : null, names, cancellation.Token);
+        var result = await RequiredVisionManager().AnalyzeResultAsync(settings, preview, names, cancellation.Token);
         cancellation.Token.ThrowIfCancellationRequested();
         var tags = FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags);
         var warning = result.Warning;

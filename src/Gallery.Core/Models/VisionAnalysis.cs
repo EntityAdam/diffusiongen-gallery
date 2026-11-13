@@ -37,7 +37,7 @@ public sealed record VisionAnalysis
     public VisionFacts Facts { get; init; } = new();
 }
 
-public sealed record VisionAnalysisResult(string Description, string Tags, string Collection = "", string Warning = "", VisionAnalysis? Analysis = null);
+public sealed record VisionAnalysisResult(string Description, string Tags, string Warning = "", VisionAnalysis? Analysis = null);
 
 // Positive, entity-bound search. All object conditions apply to the SAME object.
 public sealed record VisionQuery

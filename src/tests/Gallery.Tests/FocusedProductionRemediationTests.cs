@@ -73,45 +73,6 @@ public sealed class FocusedProductionRemediationTests
         Assert.Equal(720, probeResult.Height);
     }
 
-    [Theory]
-    [InlineData("search", "null")]
-    [InlineData("tag", "null")]
-    [InlineData("collection", "null")]
-    [InlineData("search", "42")]
-    [InlineData("tag", "[]")]
-    [InlineData("collection", "{}")]
-    public async Task SearchInterpretation_WhenRequiredStringIsMalformed_ThenRejectsTheResponse(string fieldName, string jsonValue)
-    {
-        // Arrange
-        var response = JsonNode.Parse("""{"search":"","tag":"","collection":"","minRating":0,"favoritesOnly":false,"orientation":"all","review":"all"}""")!.AsObject();
-        response[fieldName] = JsonNode.Parse(jsonValue);
-        using var httpClient = new HttpClient(new ModelResponseHandler(response.ToJsonString()));
-        var visionService = new VisionService(httpClient, new VisionSettings());
-
-        // Act
-        var error = await Assert.ThrowsAsync<VisionResponseFormatException>(() =>
-            visionService.InterpretSearchAsync("local", 180, "show images", []));
-
-        // Assert
-        Assert.Contains(fieldName, error.Message);
-    }
-
-    [Fact]
-    public async Task SearchInterpretation_WhenRequiredStringsAreEmpty_ThenPreservesAnEmptyFilter()
-    {
-        // Arrange
-        using var httpClient = new HttpClient(new ModelResponseHandler("""{"search":"","tag":"","collection":"","minRating":0,"favoritesOnly":false,"orientation":"all","review":"all"}"""));
-        var visionService = new VisionService(httpClient, new VisionSettings());
-
-        // Act
-        var galleryFilter = await visionService.InterpretSearchAsync("local", 180, "show images", []);
-
-        // Assert
-        Assert.Equal("", galleryFilter.Search);
-        Assert.Equal("", galleryFilter.Tag);
-        Assert.Equal("", galleryFilter.Collection);
-    }
-
     [Fact]
     public void VideoConfiguration_WhenPathsAreQuotedOrBlank_ThenNormalizesAtTheSourceBoundary()
     {
@@ -400,17 +361,5 @@ public sealed class FocusedProductionRemediationTests
         Assert.Equal(HttpStatusCode.NotFound, status);
         Assert.False(typeof(GalleryException).GetProperty(nameof(GalleryException.Reason))!.GetMethod!.IsVirtual);
         Assert.False(typeof(GalleryException).GetProperty(nameof(GalleryException.HttpStatusCode))!.GetMethod!.IsVirtual);
-    }
-
-    private sealed class ModelResponseHandler(string responseJson) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(JsonSerializer.Serialize(new
-                {
-                    choices = new[] { new { message = new { content = responseJson } } }
-                }))
-            });
     }
 }

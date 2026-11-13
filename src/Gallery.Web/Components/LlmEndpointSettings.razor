@@ -58,19 +58,16 @@
                 <Select id="prompt-task" @bind-Value="selectedPrompt" Disabled="@working">
                     <option value="vision">Image analysis — @(draft.IsStructured ? "experimental" : "standard")</option>
                     <option value="tags">Tag reuse instructions</option>
-                    <option value="collection-analysis">Collection-aware analysis instructions</option>
-                    <option value="collection">Collection suggestions</option>
                     <option value="set">Set destination suggestions</option>
-                    <option value="search">Search interpretation</option>
                 </Select>
             </div>
             <div class="llm-prompt-heading"><Label For="@PromptId">@PromptLabel</Label>
                 <Button id="restore-selected-prompt" Variant="ButtonVariant.Ghost" Type="button" Disabled="@working" OnClick="RestoreSelectedPrompt">Restore default prompt</Button></div>
-            <textarea @key="selectedPrompt" id="@PromptId" rows="12" @bind="SelectedPromptText" @bind:event="oninput" disabled="@working" class="llm-prompt-editor" required="@(selectedPrompt is not ("tags" or "collection-analysis"))" aria-describedby="selected-prompt-help" spellcheck="false"></textarea>
+            <textarea @key="selectedPrompt" id="@PromptId" rows="12" @bind="SelectedPromptText" @bind:event="oninput" disabled="@working" class="llm-prompt-editor" required="@(selectedPrompt is not ("tags"))" aria-describedby="selected-prompt-help" spellcheck="false"></textarea>
             <p id="selected-prompt-help" class="llm-help">@PromptHelp</p>
             <details class="llm-details">
-                <summary>Effective system prompt for collection-aware analysis</summary>
-                <pre class="llm-prompt-preview">@draft.ToSettings().BuildImageAnalysisSystemPrompt(KnownTags.Any(), true)</pre>
+                <summary>Effective image analysis system prompt</summary>
+                <pre class="llm-prompt-preview">@draft.ToSettings().BuildImageAnalysisSystemPrompt(KnownTags.Any())</pre>
             </details>
         </section>
 
@@ -85,8 +82,6 @@
                     <input id="structured-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.StructuredAnalysisMaxTokens" required class="@GenerationInputClass" /></div>
                 <div class="llm-field"><Label For="analysis-max-tokens">Standard vision token limit</Label>
                     <input id="analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.AnalysisMaxTokens" required class="@GenerationInputClass" /></div>
-                <div class="llm-field"><Label For="collection-analysis-max-tokens">Collection-aware vision token limit</Label>
-                    <input id="collection-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.CollectionAnalysisMaxTokens" required class="@GenerationInputClass" /></div>
                 <div class="llm-field"><Label For="analysis-temperature">Vision temperature</Label>
                     <input id="analysis-temperature" type="number" min="0" max="2" step="any" @bind="draft.AnalysisTemperature" required class="@GenerationInputClass" /></div>
                 <div class="llm-field"><Label For="text-max-tokens">Text response token limit</Label>
@@ -149,23 +144,16 @@
 
     private string PromptId => selectedPrompt switch
     {
-        "tags" => "tag-vocabulary-instructions", "collection-analysis" => "collection-analysis-instructions",
-        "collection" => "collection-suggestion-prompt", "set" => "set-suggestion-prompt",
-        "search" => "search-system-prompt", _ => "vision-system-prompt"
+        "tags" => "tag-vocabulary-instructions", "set" => "set-suggestion-prompt", _ => "vision-system-prompt"
     };
     private string PromptLabel => selectedPrompt switch
     {
-        "tags" => "Tag vocabulary instructions", "collection-analysis" => "Collection analysis instructions",
-        "collection" => "Collection suggestion system prompt", "set" => "Set destination system prompt",
-        "search" => "Search interpretation system prompt", _ => "Vision system prompt"
+        "tags" => "Tag vocabulary instructions", "set" => "Set destination system prompt", _ => "Vision system prompt"
     };
     private string PromptHelp => selectedPrompt switch
     {
         "tags" => "Appended when existing-tag reuse is enabled and the catalog is nonempty. Includes unused registered tags. Leave blank to append nothing.",
-        "collection-analysis" => "Appended to image analysis when a collection suggestion is requested. Expects collection in the JSON response. Leave blank to append nothing.",
-        "collection" => "Text-only collection suggestions. Return JSON with a nonempty collection name of up to 80 characters.",
         "set" => "Selects an existing set in the chosen collection. Return JSON with setId, or an empty string if none fit. Suggestions never move media automatically.",
-        "search" => "Translates natural-language search into JSON: search, tag, collection, minRating, favoritesOnly, orientation and review.",
         _ => draft.IsStructured ? "Return JSON with a scene object and entities array; relationships are optional. The TypeScript comments guide detailed observations. Each mode remembers its own custom prompt."
             : "Return JSON with description (a string) and tags (an array of strings). Each mode remembers its own custom prompt."
     };
@@ -173,19 +161,14 @@
     {
         get => selectedPrompt switch
         {
-            "tags" => draft.TagVocabularyInstructions, "collection-analysis" => draft.CollectionAnalysisInstructions,
-            "collection" => draft.CollectionSuggestionSystemPrompt, "set" => draft.SetSuggestionSystemPrompt,
-            "search" => draft.SearchSystemPrompt, _ => draft.SystemPrompt
+            "tags" => draft.TagVocabularyInstructions, "set" => draft.SetSuggestionSystemPrompt, _ => draft.SystemPrompt
         };
         set
         {
             switch (selectedPrompt)
             {
                 case "tags": draft.TagVocabularyInstructions = value; break;
-                case "collection-analysis": draft.CollectionAnalysisInstructions = value; break;
-                case "collection": draft.CollectionSuggestionSystemPrompt = value; break;
                 case "set": draft.SetSuggestionSystemPrompt = value; break;
-                case "search": draft.SearchSystemPrompt = value; break;
                 default: draft.SystemPrompt = value; break;
             }
         }
@@ -193,10 +176,7 @@
     private void RestoreSelectedPrompt() => SelectedPromptText = selectedPrompt switch
     {
         "tags" => VisionSettings.DefaultTagVocabularyInstructions,
-        "collection-analysis" => VisionSettings.DefaultCollectionAnalysisInstructions,
-        "collection" => VisionSettings.DefaultCollectionSuggestionSystemPrompt,
         "set" => VisionSettings.DefaultSetSuggestionSystemPrompt,
-        "search" => VisionSettings.DefaultSearchSystemPrompt,
         _ => draft.IsStructured ? global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt : VisionSettings.DefaultSystemPrompt
     };
     private void RestoreDefaultGenerationSettings()
@@ -204,7 +184,6 @@
         var defaults = new VisionSettings();
         draft.AnalysisMaxTokens = defaults.AnalysisMaxTokens;
         draft.StructuredAnalysisMaxTokens = defaults.StructuredAnalysisMaxTokens;
-        draft.CollectionAnalysisMaxTokens = defaults.CollectionAnalysisMaxTokens;
         draft.TextMaxTokens = defaults.TextMaxTokens;
         draft.AnalysisTemperature = defaults.AnalysisTemperature;
         draft.TextTemperature = defaults.TextTemperature;
@@ -273,14 +252,10 @@
         public bool SuggestNewTags { get; set; } = true;
         public string SystemPrompt { get; set; } = VisionSettings.DefaultSystemPrompt;
         public string TagVocabularyInstructions { get; set; } = VisionSettings.DefaultTagVocabularyInstructions;
-        public string CollectionAnalysisInstructions { get; set; } = VisionSettings.DefaultCollectionAnalysisInstructions;
-        public string CollectionSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultCollectionSuggestionSystemPrompt;
         public string SetSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultSetSuggestionSystemPrompt;
-        public string SearchSystemPrompt { get; set; } = VisionSettings.DefaultSearchSystemPrompt;
         public int RequestTimeoutSeconds { get; set; }
         public int StructuredAnalysisMaxTokens { get; set; }
         public int AnalysisMaxTokens { get; set; }
-        public int CollectionAnalysisMaxTokens { get; set; }
         public int TextMaxTokens { get; set; }
         public double AnalysisTemperature { get; set; }
         public double TextTemperature { get; set; }
@@ -296,14 +271,10 @@
             LegacyPrompt = settings.LegacySystemPrompt ?? (settings.StructuredAnalysis ? VisionSettings.DefaultSystemPrompt : settings.SystemPrompt),
             StructuredPrompt = settings.StructuredSystemPrompt ?? (settings.StructuredAnalysis ? settings.SystemPrompt : global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt),
             TagVocabularyInstructions = settings.TagVocabularyInstructions,
-            CollectionAnalysisInstructions = settings.CollectionAnalysisInstructions,
-            CollectionSuggestionSystemPrompt = settings.CollectionSuggestionSystemPrompt,
             SetSuggestionSystemPrompt = settings.SetSuggestionSystemPrompt,
-            SearchSystemPrompt = settings.SearchSystemPrompt,
             RequestTimeoutSeconds = settings.RequestTimeoutSeconds,
             StructuredAnalysisMaxTokens = settings.StructuredAnalysisMaxTokens,
             AnalysisMaxTokens = settings.AnalysisMaxTokens,
-            CollectionAnalysisMaxTokens = settings.CollectionAnalysisMaxTokens,
             TextMaxTokens = settings.TextMaxTokens,
             AnalysisTemperature = settings.AnalysisTemperature,
             TextTemperature = settings.TextTemperature
@@ -320,14 +291,10 @@
             LegacySystemPrompt = IsStructured ? LegacyPrompt : SystemPrompt,
             StructuredSystemPrompt = IsStructured ? SystemPrompt : StructuredPrompt,
             TagVocabularyInstructions = TagVocabularyInstructions,
-            CollectionAnalysisInstructions = CollectionAnalysisInstructions,
-            CollectionSuggestionSystemPrompt = CollectionSuggestionSystemPrompt,
             SetSuggestionSystemPrompt = SetSuggestionSystemPrompt,
-            SearchSystemPrompt = SearchSystemPrompt,
             RequestTimeoutSeconds = RequestTimeoutSeconds,
             StructuredAnalysisMaxTokens = StructuredAnalysisMaxTokens,
             AnalysisMaxTokens = AnalysisMaxTokens,
-            CollectionAnalysisMaxTokens = CollectionAnalysisMaxTokens,
             TextMaxTokens = TextMaxTokens,
             AnalysisTemperature = AnalysisTemperature,
             TextTemperature = TextTemperature

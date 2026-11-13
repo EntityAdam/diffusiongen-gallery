@@ -48,8 +48,7 @@ public sealed class UiComponentTests
             {
                 [nameof(LlmEndpointSettings.SavedSettings)] = new VisionSettings
                 {
-                    Model = "vision", SystemPrompt = prompt, CollectionAnalysisInstructions = "Additional analysis directions.",
-                    CollectionSuggestionSystemPrompt = "Collection directions.", SearchSystemPrompt = "Search directions."
+                    Model = "vision", SystemPrompt = prompt
                 }
             }));
             return WebUtility.HtmlDecode(root.ToHtmlString());
@@ -64,10 +63,7 @@ public sealed class UiComponentTests
         Assert.Contains("id=\"vision-system-prompt\"", html);
         Assert.Contains(prompt, html);
         Assert.Contains("Restore default prompt", html);
-        Assert.Contains("Effective system prompt for collection-aware analysis", html);
-        Assert.Contains(prompt + " Additional analysis directions.", html);
-        Assert.Contains("Collection suggestions", html);
-        Assert.Contains("Search interpretation", html);
+        Assert.Contains("Effective image analysis system prompt", html);
     }
 
     [Fact]

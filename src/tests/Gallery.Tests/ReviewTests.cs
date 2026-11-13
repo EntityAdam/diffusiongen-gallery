@@ -65,7 +65,7 @@ public sealed class ReviewTests
             Collections = ["Originals"]
         });
         var organizationSuggestion = new OrganizationSuggestion(
-            imageRecord.Id, imageRecord.Name, "A green hillside.", "landscape", "", "vision");
+            imageRecord.Id, imageRecord.Name, "A green hillside.", "landscape", "vision");
 
         // Act
         var approvedImageRecord = await LibraryWorkbench.PersistApprovedSuggestionAsync(
