@@ -94,6 +94,118 @@ public sealed class VisionPromptEditorTests
         Assert.Equal(0.4, textRequest.RootElement.GetProperty("temperature").GetDouble());
     }
 
+    [Fact]
+    public async Task StructuredSettings_SaveFormatPromptTagCheckboxesAndBudgetWithoutChangingOtherPrompts()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var settings = new VisionSettings { Model = "vision", SearchSystemPrompt = "Keep search instructions" };
+        using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
+            .AddSingleton(vault.Service).BuildServiceProvider();
+        await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var id = renderer.AddRoot();
+            await renderer.RenderAsync(id, ParameterView.FromDictionary(new Dictionary<string, object?>
+            { [nameof(LlmEndpointSettings.SavedSettings)] = settings }));
+            await ToggleCheckboxAsync(renderer, "structured-analysis-enabled", true);
+            Assert.Equal(Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt,
+                renderer.FindElement("textarea", "vision-system-prompt").Value);
+            var existing = renderer.FindElement(null, "vision-existing-tags");
+            if (existing.Events.TryGetValue("onchange", out var change))
+                await renderer.DispatchEventAsync(change, null, new ChangeEventArgs { Value = false });
+            else await renderer.DispatchEventAsync(existing.Event("onclick"), null, new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+            var budget = renderer.FindElement(null, "structured-analysis-max-tokens");
+            await renderer.DispatchEventAsync(budget.Event("onchange"), null, new ChangeEventArgs { Value = "16384" });
+            var form = renderer.FindElement("form", null);
+            await renderer.DispatchEventAsync(form.Event("onsubmit"), null, EventArgs.Empty);
+        });
+        var saved = await vault.Service.SettingsAsync();
+        Assert.True(saved.StructuredAnalysis);
+        Assert.False(saved.UseExistingTags);
+        Assert.True(saved.SuggestNewTags);
+        Assert.Equal(16384, saved.StructuredAnalysisMaxTokens);
+        Assert.Equal(Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt, saved.SystemPrompt);
+        Assert.Equal(settings.SearchSystemPrompt, saved.SearchSystemPrompt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SwitchingModes_PreservesCustomPromptsAcrossEditsSaveReloadAndDiscard(bool initiallyStructured)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var original = new VisionSettings { Model = "vision", StructuredAnalysis = initiallyStructured, SystemPrompt = "Original custom prompt" };
+        await vault.Service.SaveSettingsAsync(original);
+        using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
+            .AddSingleton(vault.Service).BuildServiceProvider();
+        await using (var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>()))
+        {
+            await renderer.Dispatcher.InvokeAsync(async () =>
+            {
+                var id = renderer.AddRoot();
+                await renderer.RenderAsync(id, Parameters(original));
+                Assert.False(renderer.Editor!.HasUnsavedChanges);
+                await ToggleCheckboxAsync(renderer, "structured-analysis-enabled", !initiallyStructured);
+                Assert.Equal(initiallyStructured ? VisionSettings.DefaultSystemPrompt : Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt,
+                    renderer.FindElement("textarea", "vision-system-prompt").Value);
+                await EditPromptAsync(renderer, "Other mode custom prompt");
+                await ToggleCheckboxAsync(renderer, "structured-analysis-enabled", initiallyStructured);
+                Assert.Equal(original.SystemPrompt, renderer.FindElement("textarea", "vision-system-prompt").Value);
+                // Editing a different task must not replace either image prompt.
+                var tasks = renderer.FindElement(null, "prompt-task");
+                await renderer.DispatchEventAsync(tasks.Event("onchange"), null, new ChangeEventArgs { Value = "search" });
+                var search = renderer.FindElement("textarea", "search-system-prompt");
+                await renderer.DispatchEventAsync(search.Event("oninput"), null, new ChangeEventArgs { Value = "Custom search prompt" });
+                await ToggleCheckboxAsync(renderer, "structured-analysis-enabled", !initiallyStructured);
+                Assert.Equal("Other mode custom prompt", renderer.FindElement("textarea", "vision-system-prompt").Value);
+                await renderer.RenderAsync(id, Parameters(original)); // parent rerender keeps both drafts
+                var form = renderer.FindElement("form", null);
+                await renderer.DispatchEventAsync(form.Event("onsubmit"), null, EventArgs.Empty);
+                Assert.False(renderer.Editor.HasUnsavedChanges);
+            });
+        }
+        var saved = await vault.Service.SettingsAsync();
+        Assert.Equal(!initiallyStructured, saved.StructuredAnalysis);
+        Assert.Equal("Other mode custom prompt", saved.SystemPrompt);
+        Assert.Equal("Custom search prompt", saved.SearchSystemPrompt);
+        Assert.Equal(initiallyStructured ? "Original custom prompt" : "Other mode custom prompt", saved.StructuredSystemPrompt);
+        Assert.Equal(initiallyStructured ? "Other mode custom prompt" : "Original custom prompt", saved.LegacySystemPrompt);
+        await using (var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>()))
+        {
+            await renderer.Dispatcher.InvokeAsync(async () =>
+            {
+                var id = renderer.AddRoot();
+                await renderer.RenderAsync(id, Parameters(saved));
+                Assert.False(renderer.Editor!.HasUnsavedChanges);
+                await ToggleCheckboxAsync(renderer, "structured-analysis-enabled", initiallyStructured);
+                Assert.Equal("Original custom prompt", renderer.FindElement("textarea", "vision-system-prompt").Value);
+                await EditPromptAsync(renderer, "Discard this edit");
+                renderer.Editor.DiscardDraft();
+                await renderer.RenderAsync(id, Parameters(saved));
+                Assert.False(renderer.Editor.HasUnsavedChanges);
+                await ToggleCheckboxAsync(renderer, "structured-analysis-enabled", initiallyStructured);
+                Assert.Equal("Original custom prompt", renderer.FindElement("textarea", "vision-system-prompt").Value);
+            });
+        }
+        static ParameterView Parameters(VisionSettings settings) => ParameterView.FromDictionary(new Dictionary<string, object?>
+        { [nameof(LlmEndpointSettings.SavedSettings)] = settings });
+    }
+
+    private static async Task ToggleCheckboxAsync(EditorRenderer renderer, string id, bool value)
+    {
+        var field = renderer.FindElement(null, id);
+        if (field.Events.TryGetValue("onchange", out var change))
+            await renderer.DispatchEventAsync(change, null, new ChangeEventArgs { Value = value });
+        else await renderer.DispatchEventAsync(field.Event("onclick"), null, new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+    }
+    private static Task EditPromptAsync(EditorRenderer renderer, string value)
+    {
+        var field = renderer.FindElement("textarea", "vision-system-prompt");
+        return renderer.DispatchEventAsync(field.Event("oninput"), null, new ChangeEventArgs { Value = value });
+    }
+
     private sealed class CaptureHandler : HttpMessageHandler
     {
         public string? Body { get; private set; }
@@ -116,7 +228,8 @@ public sealed class VisionPromptEditorTests
     {
         private readonly HashSet<int> components = [];
         public override Dispatcher Dispatcher { get; } = Dispatcher.CreateDefault();
-        public int AddRoot() => AssignRootComponentId(InstantiateComponent(typeof(LlmEndpointSettings)));
+        public LlmEndpointSettings? Editor { get; private set; }
+        public int AddRoot() => AssignRootComponentId(Editor = (LlmEndpointSettings)InstantiateComponent(typeof(LlmEndpointSettings)));
         public Task RenderAsync(int id, ParameterView parameters) => RenderRootComponentAsync(id, parameters);
         protected override void HandleException(Exception exception) => throw new InvalidOperationException("Editor rendering failed.", exception);
         protected override Task UpdateDisplayAsync(in RenderBatch renderBatch)
@@ -124,7 +237,7 @@ public sealed class VisionPromptEditorTests
             for (int i = 0; i < renderBatch.UpdatedComponents.Count; i++) components.Add(renderBatch.UpdatedComponents.Array[i].ComponentId);
             return Task.CompletedTask;
         }
-        public ElementEvents FindElement(string name, string? id)
+        public ElementEvents FindElement(string? name, string? id)
         {
             foreach (int component in components)
             {
@@ -132,7 +245,7 @@ public sealed class VisionPromptEditorTests
                 for (int i = 0; i < tree.Count; i++)
                 {
                     var frame = tree.Array[i];
-                    if (frame.FrameType != RenderTreeFrameType.Element || frame.ElementName != name) continue;
+                    if (frame.FrameType != RenderTreeFrameType.Element || (name is not null && frame.ElementName != name)) continue;
                     var attributes = new Dictionary<string, object?>();
                     var events = new Dictionary<string, ulong>();
                     for (int j = i + 1; j < tree.Count && tree.Array[j].FrameType == RenderTreeFrameType.Attribute; j++)

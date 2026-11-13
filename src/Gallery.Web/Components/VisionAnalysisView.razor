@@ -1,0 +1,45 @@
+@using System.Text.Json
+@using Gallery.Core.Services.Processors
+@if (Analysis is { } analysis)
+{
+    <section class="min-w-0 space-y-3" aria-label="Structured vision analysis">
+        <h4>Structured vision analysis</h4>
+        @foreach (var warning in analysis.Warnings)
+        { <p class="text-amber-600 dark:text-amber-400" role="status">@warning</p> }
+        @foreach (var entity in analysis.Facts.Entities)
+        {
+            <div class="rounded-lg border border-border p-3 space-y-2">
+                <h5>@entity.Kind <span class="text-muted-foreground">(@entity.Id)</span></h5>
+                <p class="whitespace-pre-wrap break-words">@entity.Description</p>
+                <dl class="space-y-1">
+                    @foreach (var detail in entity.Attributes)
+                    { <div><dt class="inline font-medium">@detail.Name: </dt><dd class="inline break-words">@detail.Value</dd></div> }
+                </dl>
+            </div>
+        }
+        @foreach (var relation in analysis.Facts.Relationships)
+        { <p class="break-words">@relation.SubjectId → @relation.Predicate → @relation.ObjectId</p> }
+        @if (VisualInformation.Length > 0)
+        {
+            <h5>Visual information</h5>
+            <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">@VisualInformation</pre>
+        }
+        <p class="text-xs text-muted-foreground">@analysis.Model · @analysis.CreatedAt.ToLocalTime().ToString("g") · Preview analysis; omitted details do not establish absence.</p>
+        <details>
+            <summary>Full JSON (includes original observations and helper tags)</summary>
+            <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">@analysis.Json</pre>
+        </details>
+    </section>
+}
+@code {
+    [Parameter] public VisionAnalysis? Analysis { get; set; }
+    private string VisualInformation
+    {
+        get
+        {
+            if (Analysis is null) return "";
+            using var json = JsonDocument.Parse(Analysis.Json);
+            return json.RootElement.TryGetProperty("visual", out var visual) ? JsonSerializer.Serialize(visual, new JsonSerializerOptions { WriteIndented = true }) : "";
+        }
+    }
+}

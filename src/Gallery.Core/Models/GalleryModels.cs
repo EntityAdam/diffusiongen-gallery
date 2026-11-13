@@ -105,10 +105,18 @@ public sealed record VisionSettings
     public string ApiKey { get; init; } = "";
     public int RequestTimeoutSeconds { get; init; } = 180;
     public int AnalysisMaxTokens { get; init; } = 800;
+    public int StructuredAnalysisMaxTokens { get; init; } = 8192;
     public int CollectionAnalysisMaxTokens { get; init; } = 1200;
     public int TextMaxTokens { get; init; } = 500;
     public double AnalysisTemperature { get; init; } = 0.2;
     public double TextTemperature { get; init; } = 0.1;
+    // Opt in explicitly so saved custom description/tags prompts keep their parser.
+    public bool StructuredAnalysis { get; init; }
+    public bool UseExistingTags { get; init; } = true;
+    public bool SuggestNewTags { get; init; } = true;
+    // SystemPrompt remains the active prompt sent by existing callers. These slots remember the other mode.
+    public string? LegacySystemPrompt { get; init; }
+    public string? StructuredSystemPrompt { get; init; }
     public string SystemPrompt { get; init; } = DefaultSystemPrompt;
     public string TagVocabularyInstructions { get; init; } = DefaultTagVocabularyInstructions;
     public string CollectionAnalysisInstructions { get; init; } = DefaultCollectionAnalysisInstructions;
@@ -119,8 +127,14 @@ public sealed record VisionSettings
     public string BuildImageAnalysisSystemPrompt(bool hasExistingTags, bool includeCollection)
     {
         var prompt = SystemPrompt;
-        if (hasExistingTags && !string.IsNullOrWhiteSpace(TagVocabularyInstructions)) prompt += " " + TagVocabularyInstructions;
+        if (UseExistingTags && hasExistingTags && !string.IsNullOrWhiteSpace(TagVocabularyInstructions)) prompt += " " + TagVocabularyInstructions;
         if (includeCollection && !string.IsNullOrWhiteSpace(CollectionAnalysisInstructions)) prompt += " " + CollectionAnalysisInstructions;
+        if (!UseExistingTags || !SuggestNewTags)
+        {
+            prompt += UseExistingTags ? " Choose only relevant registered tags." : " Do not choose registered gallery tags; no catalog is supplied.";
+            prompt += SuggestNewTags ? " You may suggest new gallery tags." : " Do not suggest new gallery tags.";
+            if (!UseExistingTags && !SuggestNewTags) prompt += " Return empty tag arrays. Still describe the image fully.";
+        }
         return prompt;
     }
 

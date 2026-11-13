@@ -292,7 +292,7 @@ public sealed partial class GalleryService
         cancellationToken.ThrowIfCancellationRequested();
         var result = await manager.AnalyzeImageAsync(settings, imageData, names, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        return (result.Description, CanonicalVisionTags(result.Tags, names));
+        return (result.Description, FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags));
     }
     public Task<string> SuggestCollectionAsync(VisionSettings settings, string description, string tags,
         IEnumerable<string> collections) => RequiredVisionManager().SuggestCollectionAsync(settings, description, tags, collections);
@@ -306,7 +306,7 @@ public sealed partial class GalleryService
         cancellationToken.ThrowIfCancellationRequested();
         var result = await manager.AnalyzeImageWithCollectionAsync(settings, imageData, collections, names, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        return (result.Description, CanonicalVisionTags(result.Tags, names), result.Collection, result.Warning);
+        return (result.Description, FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags), result.Collection, result.Warning);
     }
 
     private VisionManager RequiredVisionManager() => visionManager

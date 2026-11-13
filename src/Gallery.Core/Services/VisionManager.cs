@@ -33,6 +33,11 @@ internal sealed class VisionManager(HttpClient httpClient)
         CreateGateway(settings).AnalyzeImageWithCollectionAsync(
             settings.Model, settings.RequestTimeoutSeconds, imageData, collections, existingTags, cancellationToken);
 
+    public Task<VisionAnalysisResult> AnalyzeResultAsync(VisionSettings settings, string imageData,
+        IEnumerable<string>? collections, IReadOnlyList<string> existingTags, CancellationToken token) =>
+        CreateGateway(settings).AnalyzeResultAsync(settings.Model, settings.RequestTimeoutSeconds, imageData,
+            collections, settings.UseExistingTags ? existingTags : [], token);
+
     private VisionService CreateGateway(VisionSettings settings) =>
         new(httpClient, settings);
 }

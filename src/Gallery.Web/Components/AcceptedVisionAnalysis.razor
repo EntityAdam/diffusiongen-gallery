@@ -1,0 +1,51 @@
+@implements IDisposable
+@inject GalleryService Gallery
+@inject IJSRuntime JS
+<VisionAnalysisView Analysis="@analysis" />
+@if (analysis is not null) { <Button Variant="ButtonVariant.Outline" Disabled="@downloading" OnClick="DownloadAsync">Download analysis JSON</Button> }
+@if (error.Length > 0) { <p role="status">@error</p> }
+@code {
+    [Parameter, EditorRequired] public ImageRecord Image { get; set; } = new();
+    private VisionAnalysis? analysis;
+    private bool downloading;
+    private string identity = "", error = "";
+    public void Dispose() { identity = ""; analysis = null; error = ""; }
+    private async Task DownloadAsync()
+    {
+        if (downloading) return;
+        downloading = true;
+        ExportFile? file = null;
+        byte[]? bytes = null;
+        try
+        {
+            file = await Gallery.ExportVisionAnalysisAsync(Image.Id);
+            bytes = GalleryService.CopyExportContent(file);
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var reference = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("galleryMedia.download", reference, file.FileName, file.ContentType);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException or JSException)
+        { error = "Could not download the analysis. Reopen the media details and try again."; }
+        finally
+        {
+            if (bytes is not null) System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
+            if (file is not null) GalleryService.ClearExportContent(file);
+            downloading = false;
+        }
+    }
+    protected override async Task OnParametersSetAsync()
+    {
+        var next = Image.Id + ":" + Image.VisionFacts?.RunId + ":" + Image.ContentSha256;
+        if (next == identity) return;
+        identity = next;
+        analysis = null; error = "";
+        if (Image.VisionFacts is null) return;
+        try
+        {
+            var loaded = await Gallery.ReadVisionAnalysisAsync(Image.Id);
+            if (identity == next) analysis = loaded;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException)
+        { if (identity == next) error = "Could not load structured analysis. Reopen the media details to retry."; }
+    }
+}

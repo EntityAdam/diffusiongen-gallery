@@ -82,6 +82,19 @@
                                 </Select>
                                 <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
                                 <DebouncedFilterInput Disabled="@Disabled" Id="analysis-model" ResetVersion="@ResetVersion" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
+                                <p class="mt-4 text-muted-foreground">Structured analysis (experimental): kinds and relationships match exactly; attribute values match a phrase. With an object, attributes apply to that same object. Without one, they apply to the subject.</p>
+                                <datalist id="vision-kinds">@foreach (var kind in VisionKinds) { <option value="@kind"></option> }</datalist>
+                                <datalist id="vision-predicates">@foreach (var predicate in VisionPredicates) { <option value="@predicate"></option> }</datalist>
+                                <Label For="vision-subject" Class="mt-3 mb-2 block">Subject kind</Label>
+                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-subject" List="vision-kinds" ResetVersion="@ResetVersion" @bind-Value="draft.VisionSubject" @bind-Value:after="NotifyChangedAsync" Placeholder="man" />
+                                <Label For="vision-relationship" Class="mt-3 mb-2 block">Relationship</Label>
+                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-relationship" List="vision-predicates" ResetVersion="@ResetVersion" @bind-Value="draft.VisionRelationship" @bind-Value:after="NotifyChangedAsync" Placeholder="wearing" />
+                                <Label For="vision-object" Class="mt-3 mb-2 block">Object kind</Label>
+                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-object" List="vision-kinds" ResetVersion="@ResetVersion" @bind-Value="draft.VisionObject" @bind-Value:after="NotifyChangedAsync" Placeholder="hat" />
+                                <Label For="vision-attribute" Class="mt-3 mb-2 block">Attribute name</Label>
+                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-attribute" ResetVersion="@ResetVersion" @bind-Value="draft.VisionAttribute" @bind-Value:after="NotifyChangedAsync" Placeholder="color" />
+                                <Label For="vision-value" Class="mt-3 mb-2 block">Attribute value</Label>
+                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-value" ResetVersion="@ResetVersion" @bind-Value="draft.VisionValue" @bind-Value:after="NotifyChangedAsync" Placeholder="yellow" />
                                 break;
                             case "imported":
                                 <div class="grid grid-cols-2 gap-3">
@@ -123,7 +136,7 @@
             filter.Deletion != GalleryFilter.AnyValue)),
         new("media", "Media & dimensions", filter => Count(
             filter.Media != GalleryFilter.AnyValue, filter.Orientation != GalleryFilter.AnyValue, filter.MinWidth > 0, filter.MinHeight > 0)),
-        new("vision", "Vision analysis", filter => Count(filter.Analysis != GalleryFilter.AnyValue, filter.Model.Length > 0)),
+        new("vision", "Vision analysis", filter => Count(filter.Analysis != GalleryFilter.AnyValue, filter.Model.Length > 0, filter.Vision is { IsEmpty: false })),
         new("imported", "Imported date", filter => Count(filter.From is not null, filter.To is not null))
     ];
 
@@ -167,6 +180,13 @@
     private IEnumerable<string> DiffusionModels => Images.Select(image => image.Generation?.Model.Trim() ?? "")
         .Where(model => model.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
 
+    private IEnumerable<string> VisionKinds => Images.Where(image => image.VisionFacts is not null)
+        .SelectMany(image => image.VisionFacts!.Entities).Select(entity => entity.Kind).Where(kind => kind.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+    private IEnumerable<string> VisionPredicates => Images.Where(image => image.VisionFacts is not null)
+        .SelectMany(image => image.VisionFacts!.Relationships).Select(relation => relation.Predicate)
+        .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+
     private Task NotifyChangedAsync() => Changed.InvokeAsync(draft.ToFilter());
 
     private void ToggleSection(string id)
@@ -176,6 +196,11 @@
 
     private sealed class FilterDraft
     {
+        public string VisionSubject { get; set; } = "";
+        public string VisionRelationship { get; set; } = "";
+        public string VisionObject { get; set; } = "";
+        public string VisionAttribute { get; set; } = "";
+        public string VisionValue { get; set; } = "";
         public string Search { get; set; } = "";
         public string Folder { get; set; } = "";
         public string Tag { get; set; } = "";
@@ -199,6 +224,11 @@
 
         public static FilterDraft CreateFrom(GalleryFilter filter) => new()
         {
+            VisionSubject = filter.Vision?.Subject ?? "",
+            VisionRelationship = filter.Vision?.Relationship ?? "",
+            VisionObject = filter.Vision?.Object ?? "",
+            VisionAttribute = filter.Vision?.Attribute ?? "",
+            VisionValue = filter.Vision?.Value ?? "",
             Search = filter.Search, Folder = filter.Folder, Tag = filter.Tag, Model = filter.Model,
             DiffusionModel = filter.DiffusionModel,
             IncludesFavoritesOnly = filter.IncludesFavoritesOnly, Deletion = filter.Deletion, Analysis = filter.Analysis,
@@ -210,6 +240,7 @@
 
         public GalleryFilter ToFilter() => new()
         {
+            Vision = new VisionQuery { Subject = VisionSubject.Trim(), Relationship = VisionRelationship.Trim(), Object = VisionObject.Trim(), Attribute = VisionAttribute.Trim(), Value = VisionValue.Trim() },
             Search = Search, Folder = Folder, Tag = Tag, Model = Model, DiffusionModel = DiffusionModel,
             IncludesFavoritesOnly = IncludesFavoritesOnly,
             Deletion = Deletion, Analysis = Analysis, Orientation = Orientation, MinWidth = MinWidth,
