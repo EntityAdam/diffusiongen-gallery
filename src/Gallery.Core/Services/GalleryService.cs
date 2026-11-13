@@ -294,21 +294,6 @@ public sealed partial class GalleryService
         cancellationToken.ThrowIfCancellationRequested();
         return (result.Description, FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags));
     }
-    public Task<string> SuggestCollectionAsync(VisionSettings settings, string description, string tags,
-        IEnumerable<string> collections) => RequiredVisionManager().SuggestCollectionAsync(settings, description, tags, collections);
-    public Task<GalleryFilter> InterpretSearchAsync(VisionSettings settings, string query, IEnumerable<string> collections) =>
-        RequiredVisionManager().InterpretSearchAsync(settings, query, collections);
-    public async Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeImageWithCollectionAsync(
-        VisionSettings settings, string imageData, IEnumerable<string> collections, CancellationToken cancellationToken = default)
-    {
-        var manager = RequiredVisionManager();
-        var names = await LoadTagNamesAsync();
-        cancellationToken.ThrowIfCancellationRequested();
-        var result = await manager.AnalyzeImageWithCollectionAsync(settings, imageData, collections, names, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        return (result.Description, FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags), result.Collection, result.Warning);
-    }
-
     private VisionManager RequiredVisionManager() => visionManager
         ?? throw new InvalidOperationException("The vision manager is not configured.");
 

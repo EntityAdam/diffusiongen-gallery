@@ -52,7 +52,7 @@ public sealed class VisionPromptEditorTests
                 new ChangeEventArgs { Value = custom });
             foreach (var (id, value) in new[]
             {
-                ("analysis-max-tokens", "16384"), ("collection-analysis-max-tokens", "24576"),
+                ("analysis-max-tokens", "16384"),
                 ("text-max-tokens", "8192"), ("analysis-temperature", "0.6"), ("text-temperature", "0.4")
             })
             {
@@ -69,7 +69,6 @@ public sealed class VisionPromptEditorTests
         var reloaded = await vault.Service.SettingsAsync();
         Assert.Equal(custom, reloaded.SystemPrompt);
         Assert.Equal(16384, reloaded.AnalysisMaxTokens);
-        Assert.Equal(24576, reloaded.CollectionAnalysisMaxTokens);
         Assert.Equal(8192, reloaded.TextMaxTokens);
         Assert.Equal(0.6, reloaded.AnalysisTemperature);
         Assert.Equal(0.4, reloaded.TextTemperature);
@@ -83,12 +82,7 @@ public sealed class VisionPromptEditorTests
         Assert.Equal(16384, request.RootElement.GetProperty("max_tokens").GetInt32());
         Assert.Equal(0.6, request.RootElement.GetProperty("temperature").GetDouble());
 
-        await vault.Service.AnalyzeImageWithCollectionAsync(reloaded, "image", ["Worlds"]);
-        using var collectionRequest = JsonDocument.Parse(handler.Body!);
-        Assert.Equal(24576, collectionRequest.RootElement.GetProperty("max_tokens").GetInt32());
-        Assert.Equal(0.6, collectionRequest.RootElement.GetProperty("temperature").GetDouble());
-
-        await vault.Service.SuggestCollectionAsync(reloaded, "Landscape", "landscape", ["Worlds"]);
+        await new VisionManager(client).SuggestSetAsync(reloaded, "Series", [], []);
         using var textRequest = JsonDocument.Parse(handler.Body!);
         Assert.Equal(8192, textRequest.RootElement.GetProperty("max_tokens").GetInt32());
         Assert.Equal(0.4, textRequest.RootElement.GetProperty("temperature").GetDouble());
@@ -99,7 +93,7 @@ public sealed class VisionPromptEditorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var settings = new VisionSettings { Model = "vision", SearchSystemPrompt = "Keep search instructions" };
+        var settings = new VisionSettings { Model = "vision", SetSuggestionSystemPrompt = "Keep set instructions" };
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
             .AddSingleton(vault.Service).BuildServiceProvider();
         await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
@@ -126,7 +120,7 @@ public sealed class VisionPromptEditorTests
         Assert.True(saved.SuggestNewTags);
         Assert.Equal(16384, saved.StructuredAnalysisMaxTokens);
         Assert.Equal(Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt, saved.SystemPrompt);
-        Assert.Equal(settings.SearchSystemPrompt, saved.SearchSystemPrompt);
+        Assert.Equal(settings.SetSuggestionSystemPrompt, saved.SetSuggestionSystemPrompt);
     }
 
     [Theory]
@@ -155,9 +149,9 @@ public sealed class VisionPromptEditorTests
                 Assert.Equal(original.SystemPrompt, renderer.FindElement("textarea", "vision-system-prompt").Value);
                 // Editing a different task must not replace either image prompt.
                 var tasks = renderer.FindElement(null, "prompt-task");
-                await renderer.DispatchEventAsync(tasks.Event("onchange"), null, new ChangeEventArgs { Value = "search" });
-                var search = renderer.FindElement("textarea", "search-system-prompt");
-                await renderer.DispatchEventAsync(search.Event("oninput"), null, new ChangeEventArgs { Value = "Custom search prompt" });
+                await renderer.DispatchEventAsync(tasks.Event("onchange"), null, new ChangeEventArgs { Value = "set" });
+                var set = renderer.FindElement("textarea", "set-suggestion-prompt");
+                await renderer.DispatchEventAsync(set.Event("oninput"), null, new ChangeEventArgs { Value = "Custom set prompt" });
                 await ToggleCheckboxAsync(renderer, "structured-analysis-enabled", !initiallyStructured);
                 Assert.Equal("Other mode custom prompt", renderer.FindElement("textarea", "vision-system-prompt").Value);
                 await renderer.RenderAsync(id, Parameters(original)); // parent rerender keeps both drafts
@@ -169,7 +163,7 @@ public sealed class VisionPromptEditorTests
         var saved = await vault.Service.SettingsAsync();
         Assert.Equal(!initiallyStructured, saved.StructuredAnalysis);
         Assert.Equal("Other mode custom prompt", saved.SystemPrompt);
-        Assert.Equal("Custom search prompt", saved.SearchSystemPrompt);
+        Assert.Equal("Custom set prompt", saved.SetSuggestionSystemPrompt);
         Assert.Equal(initiallyStructured ? "Original custom prompt" : "Other mode custom prompt", saved.StructuredSystemPrompt);
         Assert.Equal(initiallyStructured ? "Other mode custom prompt" : "Original custom prompt", saved.LegacySystemPrompt);
         await using (var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>()))
@@ -212,7 +206,7 @@ public sealed class VisionPromptEditorTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Body = await request.Content!.ReadAsStringAsync(token);
-            var content = JsonSerializer.Serialize(new { description = "A landscape.", tags = new[] { "landscape" }, collection = "Worlds" });
+            var content = JsonSerializer.Serialize(new { description = "A landscape.", tags = new[] { "landscape" }, setId = "" });
             return new(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } }))

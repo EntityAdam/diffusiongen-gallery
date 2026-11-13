@@ -51,7 +51,7 @@ public sealed class BrowsingProjectionTests
         var home = CreateHome(vault, images);
         SetField(home, "filter", new GalleryFilter { Analysis = GalleryFilter.AwaitingApproval });
         Assert.Empty(GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered"));
-        var suggestions = images.Select(image => new OrganizationSuggestion(image.Id, image.Name, "Draft", "", "", "vision")).ToArray();
+        var suggestions = images.Select(image => new OrganizationSuggestion(image.Id, image.Name, "Draft", "", "vision")).ToArray();
 
         await (Task)Invoke(home, "SuggestionsChanged", (object)suggestions)!;
         Assert.Equal(60, GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered").Count);

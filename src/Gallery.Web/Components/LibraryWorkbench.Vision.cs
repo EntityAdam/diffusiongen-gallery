@@ -28,18 +28,18 @@ public partial class LibraryWorkbench
     }
 
     private static OrganizationSuggestion ToSuggestion(VisionDraft draft) =>
-        new(draft.Id, draft.Name, draft.Description, draft.Tags, draft.Collection, draft.Model, draft.Warning, draft.Analysis, draft.UseExistingTags, draft.SuggestNewTags);
+        new(draft.Id, draft.Name, draft.Description, draft.Tags, draft.Model, draft.Warning, draft.Analysis, draft.UseExistingTags, draft.SuggestNewTags);
 
     public Task AnalyzeDetailAsync(ImageRecord image) =>
-        AnalyzeAsync([image], suggestions, "Analyzing media...", includeCollection: false);
+        AnalyzeAsync([image], suggestions, "Analyzing media...");
 
-    private Task AnalyzeAsync(ImageRecord[] selected, List<OrganizationSuggestion> target, string message, bool includeCollection = true) =>
+    private Task AnalyzeAsync(ImageRecord[] selected, List<OrganizationSuggestion> target, string message) =>
         RunAsync(message, async () =>
         {
             if (selected.Length == 0) throw new InvalidOperationException("There is no media to analyze.");
             await EnsureCheckpointAsync();
             var tagsOnly = ReferenceEquals(target, tagSuggestions);
-            var queued = selected.Select(image => new VisionQueueItem(image.Id, tagsOnly, includeCollection)).ToArray();
+            var queued = selected.Select(image => new VisionQueueItem(image.Id, tagsOnly)).ToArray();
             await checkpoint!.UpdateAsync(state => state with
             {
                 Queue = [.. state.Queue.Where(item => !queued.Any(next => next.Id == item.Id && next.TagsOnly == item.TagsOnly)), .. queued]
@@ -98,8 +98,8 @@ public partial class LibraryWorkbench
             try
             {
                 token.ThrowIfCancellationRequested();
-                var result = await Gallery.AnalyzeForDraftAsync(image.Id, settings, item.IncludeCollection, Collections.ToArray(), token);
-                draft = new(image.Id, image.Name, result.Description, result.Tags, result.Collection, settings.Model,
+                var result = await Gallery.AnalyzeForDraftAsync(image.Id, settings, token);
+                draft = new(image.Id, image.Name, result.Description, result.Tags, settings.Model,
                     result.Warning, item.TagsOnly, result.Analysis, settings.UseExistingTags, settings.SuggestNewTags);
                 token.ThrowIfCancellationRequested();
             }

@@ -29,9 +29,9 @@ public sealed class VisionCheckpointTests
         await vault.Service.AddTagAsync("sunlit");
         await vault.Service.AddTagAsync("keep");
         var checkpoint = await vault.Service.OpenVisionCheckpointAsync();
-        VisionDraft analysis = new(image.Id, image.Name, "Completed description", "sunlit, keep", "", "vision", "Review this");
+        VisionDraft analysis = new(image.Id, image.Name, "Completed description", "sunlit, keep", "vision", "Review this");
         VisionDraft tags = analysis with { TagsOnly = true };
-        VisionDraft other = new("off-page", "other.png", "Other description", "unrelated", "Worlds", "vision");
+        VisionDraft other = new("off-page", "other.png", "Other description", "unrelated", "vision");
         VisionQueueItem pending = new("unfinished", Failed: true);
         await checkpoint.UpdateAsync(state => state with { Drafts = [analysis, tags, other], Queue = [pending] });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
@@ -76,10 +76,10 @@ public sealed class VisionCheckpointTests
                 await gallery.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
                 var session = await gallery.OpenVisionCheckpointAsync();
                 await session.UpdateAsync(state => state with { Queue = [new("completed"), new("unfinished")] });
-                await session.StageAsync(new("completed", "private-name-sentinel", "private-description-sentinel", "private-tag-sentinel", "", "model"));
+                await session.StageAsync(new("completed", "private-name-sentinel", "private-description-sentinel", "private-tag-sentinel", "model"));
                 gallery.LockVault();
                 await gallery.UnlockWithPassphraseAsync(TestVault.Passphrase);
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.StageAsync(new("late", "late", "late", "", "", "model")));
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.StageAsync(new("late", "late", "late", "", "model")));
                 await gallery.CloseVaultAsync();
             }
             // Recreate the service to exercise catalog persistence, not an in-memory cache.

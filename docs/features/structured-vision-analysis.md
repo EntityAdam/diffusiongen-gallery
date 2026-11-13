@@ -10,7 +10,7 @@ The first-pass experiment describes an image using a commented TypeScript interf
 4. Adjust **Structured vision response token limit** if needed (default 8,192), then save settings.
 5. Analyze a detail item, a selection, or media without a description through the existing vision workflow. Review and approve the encrypted draft.
 
-Each image-analysis mode remembers its own custom prompt. Switching modes restores that mode’s prompt; switching back restores your previous prompt, including after saving and reopening settings. Existing settings default to the legacy description/tags format, with both tag controls enabled. Model discovery, local/LAN connection policy, timeouts, temperatures, collection/set/search prompts, and existing generation limits are preserved. Structured requests have their own response token limit, including collection-aware requests.
+Each image-analysis mode remembers its own custom prompt. Switching modes restores that mode’s prompt; switching back restores your previous prompt, including after saving and reopening settings. Existing settings default to the legacy description/tags format, with both tag controls enabled. Model discovery, local/LAN connection policy, timeouts, temperatures, set destination prompts, and existing generation limits are preserved. Structured requests have their own response token limit.
 
 ## Tags
 

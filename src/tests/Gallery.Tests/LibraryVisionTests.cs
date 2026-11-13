@@ -13,11 +13,11 @@ namespace Gallery.Tests;
 public sealed class LibraryVisionTests
 {
     [Theory]
-    [InlineData("SuggestTagsAsync", "tagSuggestions", false)]
-    [InlineData("AnalyzeUnanalyzedAsync", "suggestions", false)]
-    [InlineData("SuggestAsync", "suggestions", false)]
+    [InlineData("SuggestTagsAsync", "tagSuggestions")]
+    [InlineData("AnalyzeUnanalyzedAsync", "suggestions")]
+    [InlineData("SuggestAsync", "suggestions")]
     public async Task WorkbenchTagAndDescriptionSuggestions_DoNotUseCollectionNamesAsTagVocabulary(
-        string action, string suggestionField, bool expectsCollection)
+        string action, string suggestionField)
     {
         using var handler = new CapturingVisionHandler();
         using var client = new HttpClient(handler);
@@ -27,8 +27,7 @@ public sealed class LibraryVisionTests
         image = await vault.Service.UpdateAsync(image.Id, edit => vault.Service.AddCollection(edit, "Existing collection sentinel"));
         var settings = new VisionSettings
         {
-            Model = "vision", SystemPrompt = "Image description and tags only. Return JSON with description and tags.",
-            CollectionAnalysisInstructions = "Collection context marker. Also return collection."
+            Model = "vision", SystemPrompt = "Image description and tags only. Return JSON with description and tags."
         };
         await vault.Service.SaveSettingsAsync(settings);
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
@@ -49,18 +48,12 @@ public sealed class LibraryVisionTests
         var messages = request.RootElement.GetProperty("messages");
         var system = messages[0].GetProperty("content").GetString();
         var task = messages[1].GetProperty("content")[0].GetProperty("text").GetString();
-        Assert.Equal(expectsCollection ? settings.SystemPrompt + " " + settings.CollectionAnalysisInstructions : settings.SystemPrompt, system);
-        if (expectsCollection) Assert.Contains("Existing collection sentinel", task);
-        else
-        {
-            Assert.Equal("Describe and tag this image.", task);
-            Assert.DoesNotContain("Existing collection sentinel", handler.RequestBody);
-            Assert.DoesNotContain("Collection context marker", handler.RequestBody);
-        }
+        Assert.Equal(settings.SystemPrompt, system);
+        Assert.Equal("Describe and tag this image.", task);
+        Assert.DoesNotContain("Existing collection sentinel", handler.RequestBody);
         var results = (List<OrganizationSuggestion>)typeof(LibraryWorkbench).GetField(suggestionField, flags)!.GetValue(workbench)!;
         var suggestion = Assert.Single(results);
         Assert.Equal("sunlit, landscape", suggestion.Tags);
-        Assert.Equal(expectsCollection ? "Existing collection sentinel" : "", suggestion.Collection);
         Assert.Equal("", suggestion.Warning);
         Assert.Equal("", Assert.Single(await vault.Service.ListAsync()).Tags);
     }
@@ -89,7 +82,7 @@ public sealed class LibraryVisionTests
             RequestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
             var content = JsonSerializer.Serialize(new
             {
-                description = "A sunlit landscape.", tags = new[] { "sunlit", "landscape" }, collection = "Existing collection sentinel"
+                description = "A sunlit landscape.", tags = new[] { "sunlit", "landscape" }
             });
             return new(HttpStatusCode.OK)
             {

@@ -11,91 +11,13 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public static class VisionTests
 {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public static async Task ImageAnalysis_UsesConfiguredSystemPromptAndKeepsTextSuggestionInstructionsSeparate(bool withCollection)
-    {
-        const string customPrompt = "Describe composition and lighting.\nReturn JSON with description and tags.";
-        var systems = new List<string>();
-        using var client = new HttpClient(new FakeHandler(async request =>
-        {
-            using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
-            systems.Add(body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!);
-            return new(HttpStatusCode.OK)
-            {
-                Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Worlds\"}"}}]}""")
-            };
-        }));
-        var manager = new VisionManager(client);
-        var settings = new VisionSettings { Model = "vision", SystemPrompt = customPrompt };
-
-        if (withCollection) await manager.AnalyzeImageWithCollectionAsync(settings, "image", ["Worlds"]);
-        else await manager.AnalyzeImageAsync(settings, "image");
-        await manager.SuggestCollectionAsync(settings, "A landscape.", "green", ["Worlds"]);
-
-        if (withCollection)
-        {
-            Assert.StartsWith(customPrompt, systems[0]);
-            Assert.Contains("Also include collection", systems[0]);
-        }
-        else Assert.Equal(customPrompt, systems[0]);
-        Assert.StartsWith("Suggest one concise collection name", systems[1]);
-        Assert.DoesNotContain(customPrompt, systems[1]);
-    }
-
-    [Theory]
-    [InlineData("Use broader collection names.")]
-    [InlineData("")]
-    public static async Task ConfiguredTaskPrompts_AreSentExactlyWithoutHiddenCollectionInstructions(string collectionInstructions)
-    {
-        var sent = new List<string>();
-        using var client = new HttpClient(new FakeHandler(async request =>
-        {
-            using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
-            sent.Add(body.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!);
-            var content = System.Text.Json.JsonSerializer.Serialize(new
-            {
-                description = "A landscape.", tags = new[] { "green" }, collection = "Worlds",
-                search = "", tag = "", minRating = 0, favoritesOnly = false, orientation = "all", review = "all"
-            });
-            return new(HttpStatusCode.OK)
-            {
-                Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } }))
-            };
-        }));
-        var manager = new VisionManager(client);
-        var settings = new VisionSettings
-        {
-            Model = "vision", SystemPrompt = "Custom image instructions.", CollectionAnalysisInstructions = collectionInstructions,
-            CollectionSuggestionSystemPrompt = "Custom collection instructions.", SearchSystemPrompt = "Custom search instructions."
-        };
-
-        await manager.AnalyzeImageAsync(settings, "image");
-        await manager.AnalyzeImageWithCollectionAsync(settings, "image", ["Worlds"]);
-        await manager.SuggestCollectionAsync(settings, "Landscape", "green", ["Worlds"]);
-        await manager.InterpretSearchAsync(settings, "landscapes", ["Worlds"]);
-
-        Assert.Equal(new[]
-        {
-            settings.SystemPrompt,
-            settings.SystemPrompt + (collectionInstructions.Length == 0 ? "" : " " + collectionInstructions),
-            settings.CollectionSuggestionSystemPrompt,
-            settings.SearchSystemPrompt
-        }, sent);
-    }
-
     [Fact]
     public static void LegacyVisionSettings_UseTheExistingDefaultSystemPrompt()
     {
         var settings = System.Text.Json.JsonSerializer.Deserialize<VisionSettings>("""{"Model":"vision","Endpoint":"http://127.0.0.1:1234/v1/"}""");
         Assert.NotNull(settings);
         Assert.Equal(VisionSettings.DefaultSystemPrompt, settings.SystemPrompt);
-        Assert.Equal(VisionSettings.DefaultCollectionAnalysisInstructions, settings.CollectionAnalysisInstructions);
-        Assert.Equal(VisionSettings.DefaultCollectionSuggestionSystemPrompt, settings.CollectionSuggestionSystemPrompt);
-        Assert.Equal(VisionSettings.DefaultSearchSystemPrompt, settings.SearchSystemPrompt);
         Assert.Equal(800, settings.AnalysisMaxTokens);
-        Assert.Equal(1200, settings.CollectionAnalysisMaxTokens);
         Assert.Equal(500, settings.TextMaxTokens);
         Assert.Equal(0.2, settings.AnalysisTemperature);
         Assert.Equal(0.1, settings.TextTemperature);
@@ -113,7 +35,7 @@ public static class VisionTests
         await vault.Service.SaveSettingsAsync(valid);
         VisionSettings[] invalid =
         [
-            valid with { AnalysisMaxTokens = 0 }, valid with { CollectionAnalysisMaxTokens = -1 },
+            valid with { AnalysisMaxTokens = 0 },
             valid with { TextMaxTokens = 0 }, valid with { AnalysisTemperature = -0.1 },
             valid with { AnalysisTemperature = double.NaN }, valid with { TextTemperature = 2.1 },
             valid with { TextTemperature = double.PositiveInfinity }
@@ -122,7 +44,7 @@ public static class VisionTests
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => vault.Service.SaveSettingsAsync(settings));
             await Assert.ThrowsAsync<InvalidOperationException>(() => manager.AnalyzeImageAsync(settings, "image"));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => manager.SuggestCollectionAsync(settings, "description", "tags", []));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => manager.SuggestSetAsync(settings, "Series", [], []));
         }
         Assert.Equal(0, calls);
         Assert.Equal(valid, await vault.Service.SettingsAsync());
@@ -137,35 +59,6 @@ public static class VisionTests
         var error = Assert.Throws<InvalidOperationException>(() =>
             VisionService.Validate(new VisionSettings { Model = "vision", SystemPrompt = prompt! }));
         Assert.Contains("Vision system prompt must not be empty", error.Message);
-    }
-
-    [Fact]
-    public static async Task BulkAnalysis_WhenCollectionsAreAvailable_ThenUsesOneVisionRequestWithCollectionContext()
-    {
-        // Arrange
-        var calls = 0;
-        string? sent = null;
-        var service = new VisionService(new HttpClient(new FakeHandler(async request =>
-        {
-            calls++;
-            sent = await request.Content!.ReadAsStringAsync();
-            return new(HttpStatusCode.OK)
-            {
-                Content = new StringContent("""{"choices":[{"message":{"content":" \n```json\n{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Worlds\"}\n``` "}}]}""")
-            };
-        })), new VisionSettings());
-        var expected = ExpectedVisionScenario.Create("one collection-aware request returns the complete analysis",
-            new ExpectedVisionObligation("image payload", "image_url", VisionComparison.Contains), new ExpectedVisionObligation("available collections", "Worlds", VisionComparison.Contains),
-            new ExpectedVisionObligation("collection instruction", "collection", VisionComparison.Contains), new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green", "Worlds", "" }), new ExpectedVisionObligation("requests", 1));
-        // Act
-        var result = await service.AnalyzeImageWithCollectionAsync("vision", 180, "data:image/png;base64,example", ["Worlds"]);
-
-        // Assert
-        AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
-        {
-            ["image payload"] = sent, ["available collections"] = sent, ["collection instruction"] = sent,
-            ["analysis"] = new[] { result.Description, result.Tags, result.Collection, result.Warning }, ["requests"] = calls
-        });
     }
 
     [Theory]
@@ -184,7 +77,7 @@ public static class VisionTests
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) }))), new VisionSettings());
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []));
+            service.AnalyzeAsync("vision", 180, "image"));
 
         // Assert
         var malformedResponse = Assert.IsType<InvalidOperationException>(error);
@@ -192,69 +85,12 @@ public static class VisionTests
     }
 
     [Fact]
-    public static async Task BulkAnalysis_WhenCollectionIsMissing_ThenPreservesAnalysisWithWarning()
-    {
-        // Arrange
-        var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
-            new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""")
-            }))), new VisionSettings());
-        var expected = ExpectedVisionScenario.Create("missing collection preserves description and tags and explains the omission",
-            new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green", "" }), new ExpectedVisionObligation("warning", "missing collection", VisionComparison.Contains));
-        // Act
-        var result = await service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []);
-
-        // Assert
-        AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
-        { ["analysis"] = new[] { result.Description, result.Tags, result.Collection }, ["warning"] = result.Warning });
-    }
-
-    [Fact]
-    public static async Task BulkAnalysis_WhenSuggestedCollectionIsTooLong_ThenKeepsAnalysisApprovableWithoutCollection()
-    {
-        // Arrange
-        var overlongCollection = new string('x', 81);
-        var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
-            new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    choices = new[]
-                    {
-                        new
-                        {
-                            message = new
-                            {
-                                content = System.Text.Json.JsonSerializer.Serialize(new
-                                {
-                                    description = "A landscape.",
-                                    tags = new[] { "green" },
-                                    collection = overlongCollection
-                                })
-                            }
-                        }
-                    }
-                }))
-            }))), new VisionSettings());
-
-        // Act
-        var result = await service.AnalyzeImageWithCollectionAsync("vision", 180, "image", ["Worlds"]);
-
-        // Assert
-        Assert.Equal("A landscape.", result.Description);
-        Assert.Equal("green", result.Tags);
-        Assert.Empty(result.Collection);
-        Assert.Contains("invalid or missing collection", result.Warning, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public static async Task Analysis_WhenCollectionIsMissing_ThenPreservesDescriptionAndTags()
+    public static async Task Analysis_WhenResponseIsValid_ThenReturnsDescriptionAndTags()
     {
         // Arrange
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") }))), new VisionSettings());
-        var expected = ExpectedVisionScenario.Create("basic analysis does not require a collection", new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
+        var expected = ExpectedVisionScenario.Create("basic analysis returns description and tags", new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
         var analysis = await service.AnalyzeAsync("vision", 180, "image");
         // Assert
@@ -277,7 +113,7 @@ public static class VisionTests
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(envelope) }))), new VisionSettings());
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AnalyzeImageWithCollectionAsync("vision", 180, "image", []));
+            service.AnalyzeAsync("vision", 180, "image"));
 
         // Assert
         var invalidAnalysis = Assert.IsType<InvalidOperationException>(error);
@@ -607,20 +443,20 @@ public static class VisionTests
             authorization.Add((request.Headers.Authorization?.Scheme, request.Headers.Authorization?.Parameter));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"collection\":\"Landscapes\"}"}}]}""")
+                Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"],\"setId\":\"set-1\"}"}}]}""")
             });
         })), settings);
 
-        var expected = ExpectedVisionScenario.Create("saved authentication is applied to vision and text requests", new ExpectedVisionObligation("collection", "Landscapes"),
+        var expected = ExpectedVisionScenario.Create("saved authentication is applied to vision and text requests", new ExpectedVisionObligation("set", "set-1"),
             new ExpectedVisionObligation("authorization", new[] { new[] { "Bearer", settings.ApiKey }, new[] { "Bearer", settings.ApiKey } }));
         await service.AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, "image");
 
         // Act - text request follows an authenticated vision request
-        var collection = await service.SuggestCollectionAsync(settings.Model, settings.RequestTimeoutSeconds, "Landscape", "green", []);
+        var set = await service.SuggestSetAsync("Series", [new MediaSet("set-1", "collection-1", "Landscapes", 0)], []);
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
-        { ["collection"] = collection, ["authorization"] = authorization.Select(value => new[] { value.Scheme, value.Token }) });
+        { ["set"] = set, ["authorization"] = authorization.Select(value => new[] { value.Scheme, value.Token }) });
     }
 
     private static ExpectedVisionScenario EndpointExpectation(string endpoint)

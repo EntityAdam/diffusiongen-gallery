@@ -10,6 +10,6 @@ Deleting a collection or set preserves files, tags and ratings, returning affect
 
 The gallery toolbox, fullscreen and guided review share `CollectionDestinationDialog`. It uses the existing Advanced Select for both collection and scoped set selection, with explicit inline creation. Creating a container persists it even if the later move is canceled. Fullscreen/review `C` opens this picker; `T` edits tags and `1–5` rate. Quick edits do not advance the review queue.
 
-Destination AI only proposes an existing set within the selected collection, using available descriptions and tags. Its system prompt is saved under Settings → LLM endpoints. A suggestion requires user selection and an explicit Move; unknown set IDs are rejected. Description/tag analysis no longer proposes collection ownership through the workbench.
+Destination AI only proposes an existing set within the selected collection, using available descriptions and tags. Its system prompt is saved under Settings → LLM endpoints. A suggestion requires user selection and an explicit Move; unknown set IDs are rejected.
 
 The approved design and interaction specification are in [Figma](https://www.figma.com/design/N8p6b65oOuGKvAWmxbGBs2/Advanced-Select?node-id=17-239).

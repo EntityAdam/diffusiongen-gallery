@@ -5,7 +5,7 @@ using Gallery.Core.Services.Gateways;
 
 namespace Gallery.Tests;
 
-public sealed class CollectionSuggestionTests
+public sealed class SetSuggestionTests
 {
     [Theory]
     [InlineData("set-1", true)]

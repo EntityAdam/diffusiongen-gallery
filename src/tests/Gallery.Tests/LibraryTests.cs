@@ -235,54 +235,5 @@ public sealed class LibraryTests
         Assert.Empty(matches);
     }
 
-    [Fact]
-    public async Task SearchInterpretation_WhenModelReturnsValidAndInvalidFilters_ValidatesWithoutChangingRecords()
-    {
-        // Arrange
-        using var fixture = new TestVault();
-        var mediator = new TestMediatorVision(new VisionSearchAnswer(
-            "", "landscape", "Worlds", 4, true, "landscape", "pending"));
-        using var service = GalleryVisionFactory.Create(fixture.Root, mediator);
-        // Act
-        var filter = await service.InterpretSearchAsync(new() { Model = "local" }, "Favorite landscapes awaiting review", ["Worlds"]);
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.InterpretSearchAsync(new() { Model = "local" }, "query", []));
-
-        // Assert
-        Assert.Equal("landscape", filter.Tag);
-        Assert.Equal(4, filter.MinRating);
-        Assert.True(filter.IncludesFavoritesOnly);
-        Assert.IsType<InvalidOperationException>(error);
-        Assert.Contains("Worlds", error.Message, StringComparison.Ordinal);
-        Assert.Contains("does not exist", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("none", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Collection(mediator.CapturedVisionRequests,
-            request => Assert.Equal(new CapturedVisionRequest("local", "/v1/chat/completions"), request),
-            request => Assert.Equal(new CapturedVisionRequest("local", "/v1/chat/completions"), request));
-    }
-
-    [Fact]
-    public async Task CollectionSuggestion_WhenModelOutputIsInvalid_ReportsTheInvalidCollection()
-    {
-        // Arrange
-        using var fixture = new TestVault();
-        var mediator = new TestMediatorVision(new VisionCollectionAnswer("Worlds"), new VisionCollectionAnswer(""));
-        using var service = GalleryVisionFactory.Create(fixture.Root, mediator);
-
-        // Act
-        var suggested = await service.SuggestCollectionAsync(new() { Model = "local" }, "Landscape", "green", []);
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.SuggestCollectionAsync(new() { Model = "local" }, "Landscape", "green", []));
-
-        // Assert
-        Assert.Equal("Worlds", suggested);
-        Assert.IsType<InvalidOperationException>(error);
-        Assert.Contains("collection ''", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("nonempty", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("80", error.Message, StringComparison.Ordinal);
-        Assert.Collection(mediator.CapturedVisionRequests,
-            request => Assert.Equal(new CapturedVisionRequest("local", "/v1/chat/completions"), request),
-            request => Assert.Equal(new CapturedVisionRequest("local", "/v1/chat/completions"), request));
-    }
 
 }

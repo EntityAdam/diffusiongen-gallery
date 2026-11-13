@@ -84,7 +84,7 @@ public sealed class StructuredVisionTests
         var userPrompt = request.RootElement.GetProperty("messages")[1].GetProperty("content")[0].GetProperty("text").GetString()!;
         Assert.Equal(existing, userPrompt.Contains("Portrait", StringComparison.Ordinal));
         Assert.DoesNotContain("never assign me", result.Tags);
-        Assert.Equal(settings.BuildImageAnalysisSystemPrompt(existing, false), result.Analysis!.EffectiveSystemPrompt);
+        Assert.Equal(settings.BuildImageAnalysisSystemPrompt(existing), result.Analysis!.EffectiveSystemPrompt);
         await fixture.Service.ApproveVisionAsync(image.Id, result.Description, result.Tags, settings.Model, result.Analysis,
             useExistingTags: existing, suggestNewTags: novel);
         Assert.Equal(expected, Assert.Single(await fixture.Service.ListAsync()).Tags);

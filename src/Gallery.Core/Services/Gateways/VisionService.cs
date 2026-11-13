@@ -30,9 +30,7 @@ internal sealed partial class VisionService
         ValidateGenerationSettings(visionSettings);
         ValidateModel(visionSettings.Model);
         ValidateSystemPrompt(visionSettings.SystemPrompt);
-        ValidateSystemPrompt(visionSettings.CollectionSuggestionSystemPrompt, "Collection suggestion system prompt");
         ValidateSystemPrompt(visionSettings.SetSuggestionSystemPrompt, "Set suggestion system prompt");
-        ValidateSystemPrompt(visionSettings.SearchSystemPrompt, "Search system prompt");
         return uri;
     }
 
@@ -53,7 +51,6 @@ internal sealed partial class VisionService
     {
         ValidateMaxTokens(settings.StructuredAnalysisMaxTokens, "Structured vision response token limit");
         ValidateMaxTokens(settings.AnalysisMaxTokens, "Vision response token limit");
-        ValidateMaxTokens(settings.CollectionAnalysisMaxTokens, "Collection-aware vision response token limit");
         ValidateMaxTokens(settings.TextMaxTokens, "Text response token limit");
         ValidateTemperature(settings.AnalysisTemperature, "Vision temperature");
         ValidateTemperature(settings.TextTemperature, "Text temperature");
@@ -171,77 +168,58 @@ internal sealed partial class VisionService
 
     public async Task<(string Description, string Tags)> AnalyzeAsync(string model, int requestTimeoutSeconds, string imageData, IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default)
     {
-        var result = await AnalyzeStructuredAsync(model, requestTimeoutSeconds, imageData, null, existingTags, cancellationToken);
+        var result = await AnalyzeResultAsync(model, requestTimeoutSeconds, imageData, existingTags, cancellationToken);
         return (result.Description, result.Tags);
     }
 
     internal async Task<VisionAnalysisResult> AnalyzeResultAsync(string model, int requestTimeoutSeconds, string imageData,
-        IEnumerable<string>? collections, IReadOnlyList<string>? existingTags, CancellationToken cancellationToken)
+        IReadOnlyList<string>? existingTags, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ValidateSystemPrompt(settings.SystemPrompt);
-        var mode = GetAnalysisMode(collections);
-        using var request = CreateAnalysisRequest(model, requestTimeoutSeconds, imageData, collections, mode, existingTags);
+        using var request = CreateAnalysisRequest(model, requestTimeoutSeconds, imageData, existingTags);
         using var response = await SendAsync(requestTimeoutSeconds, request, cancellationToken);
         using var json = await ReadCompletionAsync(response);
         cancellationToken.ThrowIfCancellationRequested();
         if (!settings.StructuredAnalysis)
         {
-            var legacy = mode == AnalysisMode.WithCollection ? ParseAnalysisWithCollection(json) : LegacyResult(json);
-            return new(legacy.Description, legacy.Tags, legacy.Collection, legacy.Warning);
+            var legacy = ParseAnalysis(json);
+            return new(legacy.Description, legacy.Tags);
         }
         var result = StructuredVision.Parse(json.RootElement);
-        var collection = ""; var warning = result.Warning;
-        if (mode == AnalysisMode.WithCollection && !TryNormalizeCollectionName(StructuredVision.Text(json.RootElement, "collection"), out collection))
-            warning += " The model returned an invalid or missing collection. Description and tags remain available for approval.";
         var analysis = result.Analysis! with
         {
             Model = model, Endpoint = settings.Endpoint,
-            EffectiveSystemPrompt = CreateAnalysisPrompt(collections, mode, existingTags).System,
+            EffectiveSystemPrompt = CreateAnalysisPrompt(existingTags).System,
             MaxTokens = settings.StructuredAnalysisMaxTokens,
             RequestTimeoutSeconds = requestTimeoutSeconds,
             Temperature = settings.AnalysisTemperature,
             UseExistingTags = settings.UseExistingTags, SuggestNewTags = settings.SuggestNewTags
         };
-        return result with { Collection = collection, Warning = warning.Trim(), Analysis = analysis };
-    }
-
-    private static (string Description, string Tags, string Collection, string Warning) LegacyResult(JsonDocument json)
-    {
-        var result = ParseAnalysis(json);
-        return (result.Description, result.Tags, "", "");
-    }
-
-    private async Task<(string Description, string Tags, string Collection, string Warning)> AnalyzeStructuredAsync(
-        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string>? collections, IReadOnlyList<string>? existingTags, CancellationToken cancellationToken = default)
-    {
-        var result = await AnalyzeResultAsync(model, requestTimeoutSeconds, imageData, collections, existingTags, cancellationToken);
-        return (result.Description, result.Tags, result.Collection, result.Warning);
+        return result with { Analysis = analysis };
     }
 
     private HttpRequestMessage CreateAnalysisRequest(
-        string model, int requestTimeoutSeconds, string imageData, IEnumerable<string>? collections, AnalysisMode analysisMode, IReadOnlyList<string>? existingTags)
+        string model, int requestTimeoutSeconds, string imageData, IReadOnlyList<string>? existingTags)
     {
         string system;
         string prompt;
-        (system, prompt) = CreateAnalysisPrompt(collections, analysisMode, existingTags);
+        (system, prompt) = CreateAnalysisPrompt(existingTags);
         var uri = new Uri(ValidateRequest(model, requestTimeoutSeconds), "chat/completions");
-        return CreateAnalysisHttpRequest(uri, model, imageData, system, prompt, analysisMode);
+        return CreateAnalysisHttpRequest(uri, model, imageData, system, prompt);
     }
 
     private (string System, string Prompt) CreateAnalysisPrompt(
-        IEnumerable<string>? collections, AnalysisMode analysisMode, IReadOnlyList<string>? existingTags)
+        IReadOnlyList<string>? existingTags)
     {
-        var system = settings.BuildImageAnalysisSystemPrompt(existingTags?.Count > 0, analysisMode == AnalysisMode.WithCollection);
+        var system = settings.BuildImageAnalysisSystemPrompt(existingTags?.Count > 0);
         var prompt = "Describe and tag this image.";
         if (settings.UseExistingTags && existingTags?.Count > 0) prompt += " Existing tags: " + JsonSerializer.Serialize(existingTags);
-        if (analysisMode == AnalysisMode.WithCollection)
-            prompt += " Existing collections: " + JsonSerializer.Serialize(collections);
         return (system, prompt);
     }
 
     private HttpRequestMessage CreateAnalysisHttpRequest(
-        Uri uri, string model, string imageData, string system, string prompt, AnalysisMode analysisMode)
+        Uri uri, string model, string imageData, string system, string prompt)
     {
         var httpRequestMessage = new HttpRequestMessage(HttpMethod.Post, uri);
         httpRequestMessage.Content = JsonContent.Create(new
@@ -249,7 +227,7 @@ internal sealed partial class VisionService
             model,
             temperature = settings.AnalysisTemperature,
             max_tokens = settings.StructuredAnalysis ? settings.StructuredAnalysisMaxTokens
-                : analysisMode == AnalysisMode.WithCollection ? settings.CollectionAnalysisMaxTokens : settings.AnalysisMaxTokens,
+                : settings.AnalysisMaxTokens,
             messages = new object[]
             {
                 new { role = "system", content = system },
@@ -262,11 +240,6 @@ internal sealed partial class VisionService
         });
         return httpRequestMessage;
     }
-
-    private enum AnalysisMode { DescriptionAndTags, WithCollection }
-
-    private static AnalysisMode GetAnalysisMode(IEnumerable<string>? collections) =>
-        collections is null ? AnalysisMode.DescriptionAndTags : AnalysisMode.WithCollection;
 
     private static (string Description, string Tags) ParseAnalysis(JsonDocument jsonDocument)
     {
@@ -286,28 +259,6 @@ internal sealed partial class VisionService
     private static bool HasValidAnalysisContent(string? description, string[] tags) =>
         !string.IsNullOrWhiteSpace(description) && description.Length <= 10_000 && tags.Length <= 100
         && tags.All(tag => tag.Length <= 100 && !tag.Contains(','));
-
-    private static (string Description, string Tags, string Collection, string Warning) ParseAnalysisWithCollection(JsonDocument jsonDocument)
-    {
-        var analysis = ParseAnalysis(jsonDocument);
-        var suggestedCollection = jsonDocument.RootElement.TryGetProperty("collection", out var jsonElement)
-            && jsonElement.ValueKind == JsonValueKind.String ? jsonElement.GetString() : null;
-        var warning = TryNormalizeCollectionName(suggestedCollection, out var collection) ? "" :
-            "The model returned an invalid or missing collection. Description and tags are available for approval; no collection will be added.";
-        return (analysis.Description, analysis.Tags, collection, warning);
-    }
-
-    private static bool TryNormalizeCollectionName(string? collection, out string normalizedCollection)
-    {
-        var candidateCollection = collection?.Trim() ?? "";
-        if (candidateCollection.Length is > 0 and <= 80)
-        {
-            normalizedCollection = candidateCollection;
-            return true;
-        }
-        normalizedCollection = "";
-        return false;
-    }
 
     private static async Task<JsonDocument> ReadCompletionAsync(HttpResponseMessage httpResponseMessage)
     {

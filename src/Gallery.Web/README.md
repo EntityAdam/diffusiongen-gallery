@@ -206,7 +206,6 @@ The floating toolbox contains:
 | Filter media | Text, model, organization, media/dimensions, vision, and import-date filters. Text applies after a short typing pause; other controls apply immediately. **Reset filters** clears them. |
 | Review media one by one | Guided review of pending items. |
 | Organize media | Add collections/tags and remove tags from selected items. |
-| Search | Ask the configured LLM to suggest explicit filters. |
 | Use AI to describe and tag your media | Generate suggestions for approval. |
 | Trash | Restore marked items or permanently remove them. |
 
@@ -385,22 +384,21 @@ copies. **Apply** unmarks kept copies and marks the rest, then advances. **Skip
 group** changes nothing. Shortcuts: Left/Right copies, Up/Down groups, K toggle
 keep, A apply, S skip, O original size, P fit, Escape close.
 
-## AI analysis and search
+## AI analysis
 
 Under **Settings > LLM endpoints**, configure an OpenAI-compatible endpoint,
 optional bearer API key, loaded vision-capable model, and timeout (10-3600 seconds,
 default 180). **Fetch models** checks the connection without saving settings; model
 discovery does not verify vision capability. Save the settings before analysis.
 **Model generation settings** exposes response token limits for vision analysis
-(default 800), collection-aware vision analysis (1,200), and text-only requests
-(500), plus vision temperature (0.2) and text temperature (0.1). Token limits must
+(default 800) and text-only set destination requests (500), plus vision temperature (0.2) and text temperature (0.1). Token limits must
 be positive whole numbers; temperatures must be between 0 and 2. Existing saved
 settings retain these defaults until changed. These settings are encrypted with
 the rest of the LLM configuration and apply to subsequent requests after saving.
 Thinking models may count reasoning against the response budget. If analysis
 reports that the model reached the response token limit, increase the relevant
 limit and, if needed, the request timeout. Your server's context and model limits
-still apply. **Restore default generation settings** resets these five fields;
+still apply. **Restore default generation settings** resets these fields;
 save to apply the defaults.
 LLM and backup destination edits show an unsaved
 status until saved. The auto-lock timer is labeled **Saves automatically** and applies
@@ -421,8 +419,7 @@ In the AI toolbox panel:
 - **Play** analyzes media without vision descriptions or pending suggestions.
 - **Analyze selected** analyzes up to 24 selected media items.
 - The eye-dashed badge opens a pending suggestion in the full-screen viewer.
-  **Approve & save** replaces vision notes, merges tags, and adds the suggested
-  collection when present. **Dismiss** discards the encrypted draft.
+  **Approve & save** replaces vision notes and merges tags. **Dismiss** discards the encrypted draft.
 - Completed suggestions and unfinished queue items are checkpointed in the encrypted
   catalog after each result. Locking cancels the current request and clears the UI;
   completed drafts survive lock/unlock, page reloads, and application restarts.
@@ -444,9 +441,6 @@ view. Other filters still apply.
 The navigation job indicator remains visible across workflows. While an LLM job
 runs, browsing/review remain available, but file operations and gallery
 configuration changes are blocked. Stop and wait for it to finish first.
-
-The **Search** tool converts natural language into explicit filters. Review and
-apply the suggested filters; this is not semantic/vector search.
 
 ## Trash and permanent removal
 

@@ -495,9 +495,7 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var settings = new VisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "private-vision-model", ApiKey = "private-api-token", RequestTimeoutSeconds = 600, SystemPrompt = "Private vision instructions.\nReturn JSON with description and tags.",
-            CollectionAnalysisInstructions = "Private collection analysis instructions.",
-            CollectionSuggestionSystemPrompt = "Private collection suggestion instructions.", SearchSystemPrompt = "Private search instructions." };
+        var settings = new VisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "private-vision-model", ApiKey = "private-api-token", RequestTimeoutSeconds = 600, SystemPrompt = "Private vision instructions.\nReturn JSON with description and tags." };
         // Act
         await fixture.Service.SaveSettingsAsync(settings);
         var reloaded = await fixture.Service.SettingsAsync();
@@ -508,9 +506,6 @@ public sealed class GalleryTests
         Assert.DoesNotContain(settings.Model, Encoding.UTF8.GetString(blob!));
         Assert.DoesNotContain(settings.ApiKey, Encoding.UTF8.GetString(blob!));
         Assert.DoesNotContain("Private vision instructions", Encoding.UTF8.GetString(blob!));
-        Assert.DoesNotContain(settings.CollectionAnalysisInstructions, Encoding.UTF8.GetString(blob!));
-        Assert.DoesNotContain(settings.CollectionSuggestionSystemPrompt, Encoding.UTF8.GetString(blob!));
-        Assert.DoesNotContain(settings.SearchSystemPrompt, Encoding.UTF8.GetString(blob!));
     }
 
     [Fact]
