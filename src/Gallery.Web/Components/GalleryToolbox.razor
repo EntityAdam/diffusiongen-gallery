@@ -1,7 +1,7 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<section @ref="element" class="gallery-toolbox @(ActiveTool.Length > 0 ? "is-expanded" : "")" hidden="@(!Visible)" aria-label="Toolbox">
+<section @ref="element" class="gallery-toolbox @(PanelExpanded ? "is-expanded" : "")" hidden="@(!Visible)" aria-label="Toolbox">
     <div class="gallery-toolbox-bar" role="toolbar" aria-label="Gallery tools">
         <button type="button" class="gallery-toolbox-handle" aria-label="Move toolbox (drag or arrow keys; double-click to reset position)" data-tooltip="Move (double-click to reset)">
             <GripVerticalIcon Size="16" aria-hidden="true" />
@@ -11,7 +11,7 @@
             var active = ActiveTool == tool.Id;
             var badge = Badge?.Invoke(tool.Id) ?? "";
             <button type="button" class="gallery-toolbox-tool" data-tool="@tool.Id" data-tooltip="@tool.Tooltip" aria-label="@tool.Tooltip"
-                    disabled="@(CatalogLoading && tool.Id != "views")" aria-pressed="@(active ? "true" : "false")" aria-controls="@PanelId" @onclick="() => ToggleAsync(tool.Id)">
+                    disabled="@(CatalogLoading && tool.Id != "views")" aria-pressed="@(active ? "true" : "false")" aria-controls="@(tool.Id == "filters" ? FilterDrawerId : PanelId)" @onclick="() => ToggleAsync(tool.Id)">
                 <LucideIcon Name="@tool.Icon" Size="18" aria-hidden="true" />
                 @if (badge.Length > 0) { <span class="gallery-toolbox-badge" aria-hidden="true">@badge</span> }
             </button>
@@ -20,14 +20,15 @@
             <XIcon Size="16" aria-hidden="true" />
         </button>
     </div>
-    <div id="@PanelId" class="gallery-toolbox-panel" role="region" aria-label="@ActiveTitle" hidden="@(ActiveTool.Length == 0)">
-        @if (ActiveTool.Length > 0) { <h3 class="gallery-toolbox-title">@ActiveTitle</h3> }
+    <div id="@PanelId" class="gallery-toolbox-panel" role="region" aria-label="@ActiveTitle" hidden="@(!PanelExpanded)">
+        @if (PanelExpanded) { <h3 class="gallery-toolbox-title">@ActiveTitle</h3> }
         @ChildContent
     </div>
 </section>
 
 @code {
     public const string PanelId = "gallery-toolbox-panel";
+    public const string FilterDrawerId = "gallery-filter-drawer";
 
     public sealed record Tool(string Id, string Icon, string Tooltip, string Title);
 
@@ -56,6 +57,7 @@
     private DotNetObjectReference<GalleryToolbox>? reference;
     private (double? X, double? Y) applied;
     private string ActiveTitle => Tools.FirstOrDefault(tool => tool.Id == ActiveTool)?.Title ?? "";
+    private bool PanelExpanded => ActiveTool.Length > 0 && ActiveTool != "filters";
 
     private Task ToggleAsync(string id) => ActiveToolChanged.InvokeAsync(ActiveTool == id ? "" : id);
 

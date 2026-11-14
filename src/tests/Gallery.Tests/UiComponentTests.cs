@@ -262,6 +262,7 @@ public sealed class UiComponentTests
 
         var collapsed = await RenderAsync("");
         var expanded = await RenderAsync("organize");
+        var filters = await RenderAsync("filters");
 
         foreach (var tool in GalleryToolbox.Tools)
         {
@@ -278,6 +279,9 @@ public sealed class UiComponentTests
         Assert.Single(Regex.Matches(expanded, @"aria-pressed=""true"""));
         Assert.Matches(@"data-tool=""organize""[^>]*aria-pressed=""true""", expanded);
         Assert.Contains(">Organize</h3>", expanded);
+        Assert.DoesNotContain("is-expanded", filters);
+        Assert.Matches(@"class=""gallery-toolbox-panel""[^>]*hidden", filters);
+        Assert.Matches($@"data-tool=""filters""[^>]*aria-controls=""{GalleryToolbox.FilterDrawerId}""", filters);
     }
 
     [Fact]
@@ -858,7 +862,9 @@ public sealed class UiComponentTests
         Assert.Contains(">All media<", html);
         Assert.Contains(">Images only<", html);
         Assert.Contains(">Videos only<", html);
-        Assert.Contains($"value=\"{GalleryFilter.AwaitingApproval}\"", html);
+        Assert.Contains("id=\"analysis-options\"", html);
+        Assert.DoesNotContain("<select", html);
+        Assert.DoesNotContain("<datalist", html);
         Assert.Contains(">Awaiting approval<", html);
         Assert.Equal(1, GalleryFilterPanel.CountActive(activeFilter));
         Assert.Equal(0, GalleryFilterPanel.CountChanged(new GalleryFilter()));

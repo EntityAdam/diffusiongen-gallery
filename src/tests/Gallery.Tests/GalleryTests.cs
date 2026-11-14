@@ -1042,4 +1042,23 @@ public sealed class GalleryTests
         Assert.Equal(other, Assert.Single(marked));
         Assert.Empty(portrait);
     }
+
+    [Theory]
+    [InlineData("green, cinematic", 1)]
+    [InlineData(" GREEN , CINEMATIC, green ", 1)]
+    [InlineData("green, missing", 0)]
+    [InlineData("gre, cinematic", 0)]
+    [InlineData("", 3)]
+    public void GalleryFilter_MultipleTagsRequireEveryExactTag(string tags, int expectedCount)
+    {
+        using var fixture = new TestVault();
+        var both = new ImageRecord { Id = "both", Tags = "green, cinematic" };
+        var one = new ImageRecord { Id = "one", Tags = "green" };
+        var none = new ImageRecord { Id = "none", Tags = "" };
+
+        var results = fixture.Service.Filter([both, one, none], new() { Tag = tags }).ToArray();
+
+        Assert.Equal(expectedCount, results.Length);
+        if (expectedCount == 1) Assert.Equal(both, results[0]);
+    }
 }

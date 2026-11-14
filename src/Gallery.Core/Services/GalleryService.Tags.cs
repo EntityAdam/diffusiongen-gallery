@@ -83,8 +83,10 @@ public sealed partial class GalleryService
                 }).ToArray();
             // Renames follow exact-tag saved filters. Deletion retains those filters so it cannot silently broaden their results.
             IReadOnlyList<SavedView>? views = original is not null && target is not null
-                ? (await galleryStore.LoadViewsAsync(key.Bytes)).Select(view => view.GalleryFilter.Tag.Equals(original, StringComparison.OrdinalIgnoreCase)
-                    ? view with { GalleryFilter = view.GalleryFilter with { Tag = target } } : view).ToArray()
+                ? (await galleryStore.LoadViewsAsync(key.Bytes)).Select(view => view with
+                {
+                    GalleryFilter = view.GalleryFilter.WithRenamedTag(original, target)
+                }).ToArray()
                 : null;
             await galleryStore.CommitTagCatalogAsync(changed, new(nextNames), views, key.Bytes);
         }

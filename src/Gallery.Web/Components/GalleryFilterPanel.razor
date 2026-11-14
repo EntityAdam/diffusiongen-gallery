@@ -5,8 +5,8 @@
                 <Label For="search" Class="mb-2 block">Search</Label>
                 <DebouncedFilterInput Disabled="@Disabled" Id="search" ResetVersion="@ResetVersion" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
                 <Label For="diffusion-model" Class="mt-4 mb-2 block">Diffusion model</Label>
-                <DebouncedFilterInput Disabled="@Disabled" Id="diffusion-model" ResetVersion="@ResetVersion" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" Placeholder="Any diffusion model" List="diffusion-models" />
-                <datalist id="diffusion-models">@foreach (var model in DiffusionModels) { <option value="@model"></option> }</datalist>
+                <AdvancedSelect Disabled="@Disabled" Id="diffusion-model" Label="Diffusion models" ItemLabel="model" Placeholder="Any diffusion model"
+                                Options="@DiffusionModels" AllowCreate="false" MaxLength="4000" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" />
             </div>
 
             @foreach (var section in Sections)
@@ -32,44 +32,40 @@
                                 <AdvancedSelect Disabled="@Disabled" Id="collection-filter" Label="Collections" ItemLabel="collection" Placeholder="All collections"
                                                 Options="@Collections" AllowCreate="false" @bind-Value="draft.Collection" @bind-Value:after="NotifyChangedAsync" />
                                 <div class="mt-3 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.IncludesUnorganizedOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
-                                <Label For="tag" Class="mt-4 mb-2 block">Tag</Label>
-                                <AdvancedSelect Disabled="@Disabled" Id="tag" Label="Tags" ItemLabel="tag" Placeholder="All tags" MaxLength="4000"
-                                                Options="@Tags" AllowCreate="false" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" />
+                                <Label For="tag" Class="mt-4 mb-2 block">Tags</Label>
+                                <AdvancedSelect Disabled="@Disabled" Id="tag" Label="Tags" ItemLabel="tag" Placeholder="All tags" MaxLength="4000" Multiple="true"
+                                                Options="@Tags" AllowCreate="false" @bind-Values="draft.Tags" @bind-Values:after="NotifyChangedAsync" />
+                                <p class="mt-2 text-sm text-muted-foreground">Matches all selected tags.</p>
                                 <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
                                 <DebouncedFilterInput Disabled="@Disabled" Id="folder" ResetVersion="@ResetVersion" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
                                 <div class="grid grid-cols-2 gap-3">
                                     <div>
                                         <Label For="rating-filter" Class="mt-4 mb-2 block">Minimum rating</Label>
-                                        <select disabled="@Disabled" id="rating-filter" @bind="draft.MinRating" @bind:after="NotifyChangedAsync" class="@NativeInputClass">
-                                            <option value="0">Any rating</option>@for (var score = 1; score <= 5; score++) { <option value="@score">@score / 5</option> }
-                                        </select>
+                                        <AdvancedSelect Disabled="@Disabled" Id="rating-filter" Label="Ratings" Placeholder="Any rating"
+                                                        Options="@RatingOptions.Keys" OptionLabels="@RatingOptions" AllowCreate="false" @bind-Value="draft.Rating" @bind-Value:after="NotifyChangedAsync" />
                                     </div>
                                     <div>
                                         <Label For="review-filter" Class="mt-4 mb-2 block">Review</Label>
-                                        <Select Disabled="@Disabled" id="review-filter" @bind-Value="draft.Review" @bind-Value:after="NotifyChangedAsync">
-                                            <option value="all">All media</option><option value="pending">Awaiting review</option><option value="reviewed">Reviewed</option>
-                                        </Select>
+                                        <AdvancedSelect Disabled="@Disabled" Id="review-filter" Label="Review statuses" Placeholder="All media"
+                                                        Options="@ReviewOptions.Keys" OptionLabels="@ReviewOptions" AllowCreate="false" @bind-Value="draft.Review" @bind-Value:after="NotifyChangedAsync" />
                                     </div>
                                 </div>
                                 <div class="mt-4 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-favoritesonly" Class="mt-0.5" @bind-Checked="draft.IncludesFavoritesOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-favoritesonly" Class="text-sm leading-relaxed">Favorites only</Label></div>
                                 <Label For="deletion" Class="mt-4 mb-2 block">Deletion status</Label>
-                                <Select Disabled="@Disabled" id="deletion" @bind-Value="draft.Deletion" @bind-Value:after="NotifyChangedAsync">
-                                    <option value="active">Active media</option><option value="marked">Marked for deletion</option><option value="all">All media</option>
-                                </Select>
+                                <AdvancedSelect Disabled="@Disabled" Id="deletion" Label="Deletion statuses" Placeholder="All media"
+                                                        Options="@DeletionOptions.Keys" OptionLabels="@DeletionOptions" AllowCreate="false" @bind-Value="draft.Deletion" @bind-Value:after="NotifyChangedAsync" />
                                 break;
                             case "media":
                                 <div class="grid grid-cols-2 gap-3">
                                     <div>
                                         <Label For="media-filter" Class="mb-2 block">Media type</Label>
-                                        <Select Disabled="@Disabled" id="media-filter" @bind-Value="draft.Media" @bind-Value:after="NotifyChangedAsync">
-                                            <option value="all">All media</option><option value="image">Images only</option><option value="video">Videos only</option>
-                                        </Select>
+                                        <AdvancedSelect Disabled="@Disabled" Id="media-filter" Label="Media types" Placeholder="All media"
+                                                        Options="@MediaOptions.Keys" OptionLabels="@MediaOptions" AllowCreate="false" @bind-Value="draft.Media" @bind-Value:after="NotifyChangedAsync" />
                                     </div>
                                     <div>
                                         <Label For="orientation" Class="mb-2 block">Orientation</Label>
-                                        <Select Disabled="@Disabled" id="orientation" @bind-Value="draft.Orientation" @bind-Value:after="NotifyChangedAsync">
-                                            <option value="all">All orientations</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option><option value="square">Square</option>
-                                        </Select>
+                                        <AdvancedSelect Disabled="@Disabled" Id="orientation" Label="Orientations" Placeholder="All orientations"
+                                                        Options="@OrientationOptions.Keys" OptionLabels="@OrientationOptions" AllowCreate="false" @bind-Value="draft.Orientation" @bind-Value:after="NotifyChangedAsync" />
                                     </div>
                                     <div><Label For="width" Class="mt-1 mb-2 block">Min width</Label><input disabled="@Disabled" id="width" type="number" min="0" @bind="draft.MinWidth" @bind:after="NotifyChangedAsync" class="@NativeInputClass" /></div>
                                     <div><Label For="height" Class="mt-1 mb-2 block">Min height</Label><input disabled="@Disabled" id="height" type="number" min="0" @bind="draft.MinHeight" @bind:after="NotifyChangedAsync" class="@NativeInputClass" /></div>
@@ -77,20 +73,21 @@
                                 break;
                             case "vision":
                                 <Label For="analysis" Class="mb-2 block">Analysis status</Label>
-                                <Select Disabled="@Disabled" id="analysis" @bind-Value="draft.Analysis" @bind-Value:after="NotifyChangedAsync">
-                                    <option value="all">All media</option><option value="analyzed">Analyzed</option><option value="@GalleryFilter.AwaitingApproval">Awaiting approval</option><option value="pending">Not analyzed yet</option>
-                                </Select>
+                                <AdvancedSelect Disabled="@Disabled" Id="analysis" Label="Analysis statuses" Placeholder="All media"
+                                                        Options="@AnalysisOptions.Keys" OptionLabels="@AnalysisOptions" AllowCreate="false" @bind-Value="draft.Analysis" @bind-Value:after="NotifyChangedAsync" />
                                 <Label For="analysis-model" Class="mt-4 mb-2 block">Vision model</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="analysis-model" ResetVersion="@ResetVersion" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" Placeholder="Model name" />
+                                <AdvancedSelect Disabled="@Disabled" Id="analysis-model" Label="Vision models" Placeholder="Any vision model"
+                                                Options="@VisionModels" AllowCreate="false" MaxLength="4000" @bind-Value="draft.Model" @bind-Value:after="NotifyChangedAsync" />
                                 <p class="mt-4 text-muted-foreground">Structured analysis (experimental): kinds and relationships match exactly; attribute values match a phrase. With an object, attributes apply to that same object. Without one, they apply to the subject.</p>
-                                <datalist id="vision-kinds">@foreach (var kind in VisionKinds) { <option value="@kind"></option> }</datalist>
-                                <datalist id="vision-predicates">@foreach (var predicate in VisionPredicates) { <option value="@predicate"></option> }</datalist>
                                 <Label For="vision-subject" Class="mt-3 mb-2 block">Subject kind</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-subject" List="vision-kinds" ResetVersion="@ResetVersion" @bind-Value="draft.VisionSubject" @bind-Value:after="NotifyChangedAsync" Placeholder="man" />
+                                <AdvancedSelect Disabled="@Disabled" Id="vision-subject" Label="Subject kinds" Placeholder="Any subject kind"
+                                                Options="@VisionKinds" AllowCreate="false" MaxLength="4000" @bind-Value="draft.VisionSubject" @bind-Value:after="NotifyChangedAsync" />
                                 <Label For="vision-relationship" Class="mt-3 mb-2 block">Relationship</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-relationship" List="vision-predicates" ResetVersion="@ResetVersion" @bind-Value="draft.VisionRelationship" @bind-Value:after="NotifyChangedAsync" Placeholder="wearing" />
+                                <AdvancedSelect Disabled="@Disabled" Id="vision-relationship" Label="Relationships" Placeholder="Any relationship"
+                                                Options="@VisionPredicates" AllowCreate="false" MaxLength="4000" @bind-Value="draft.VisionRelationship" @bind-Value:after="NotifyChangedAsync" />
                                 <Label For="vision-object" Class="mt-3 mb-2 block">Object kind</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-object" List="vision-kinds" ResetVersion="@ResetVersion" @bind-Value="draft.VisionObject" @bind-Value:after="NotifyChangedAsync" Placeholder="hat" />
+                                <AdvancedSelect Disabled="@Disabled" Id="vision-object" Label="Object kinds" Placeholder="Any object kind"
+                                                Options="@VisionKinds" AllowCreate="false" MaxLength="4000" @bind-Value="draft.VisionObject" @bind-Value:after="NotifyChangedAsync" />
                                 <Label For="vision-attribute" Class="mt-3 mb-2 block">Attribute name</Label>
                                 <DebouncedFilterInput Disabled="@Disabled" Id="vision-attribute" ResetVersion="@ResetVersion" @bind-Value="draft.VisionAttribute" @bind-Value:after="NotifyChangedAsync" Placeholder="color" />
                                 <Label For="vision-value" Class="mt-3 mb-2 block">Attribute value</Label>
@@ -116,6 +113,31 @@
 </div>
 
 @code {
+    private static readonly IReadOnlyDictionary<string, string> RatingOptions = new Dictionary<string, string>
+    {
+        ["0"] = "Any rating", ["1"] = "1 / 5", ["2"] = "2 / 5", ["3"] = "3 / 5", ["4"] = "4 / 5", ["5"] = "5 / 5"
+    };
+    private static readonly IReadOnlyDictionary<string, string> ReviewOptions = new Dictionary<string, string>
+    {
+        ["all"] = "All media", ["pending"] = "Awaiting review", ["reviewed"] = "Reviewed"
+    };
+    private static readonly IReadOnlyDictionary<string, string> DeletionOptions = new Dictionary<string, string>
+    {
+        ["active"] = "Active media", ["marked"] = "Marked for deletion", ["all"] = "All media"
+    };
+    private static readonly IReadOnlyDictionary<string, string> MediaOptions = new Dictionary<string, string>
+    {
+        ["all"] = "All media", ["image"] = "Images only", ["video"] = "Videos only"
+    };
+    private static readonly IReadOnlyDictionary<string, string> OrientationOptions = new Dictionary<string, string>
+    {
+        ["all"] = "All orientations", ["landscape"] = "Landscape", ["portrait"] = "Portrait", ["square"] = "Square"
+    };
+    private static readonly IReadOnlyDictionary<string, string> AnalysisOptions = new Dictionary<string, string>
+    {
+        ["all"] = "All media", ["analyzed"] = "Analyzed", [GalleryFilter.AwaitingApproval] = "Awaiting approval", ["pending"] = "Not analyzed yet"
+    };
+
     private const string NativeInputClass = "h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 
     [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
@@ -180,6 +202,9 @@
     private IEnumerable<string> DiffusionModels => Images.Select(image => image.Generation?.Model.Trim() ?? "")
         .Where(model => model.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
 
+    private IEnumerable<string> VisionModels => Images.Select(image => image.AnalysisModel.Trim())
+        .Where(model => model.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+
     private IEnumerable<string> VisionKinds => Images.Where(image => image.VisionFacts is not null)
         .SelectMany(image => image.VisionFacts!.Entities).Select(entity => entity.Kind).Where(kind => kind.Length > 0)
         .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
@@ -203,7 +228,7 @@
         public string VisionValue { get; set; } = "";
         public string Search { get; set; } = "";
         public string Folder { get; set; } = "";
-        public string Tag { get; set; } = "";
+        public IReadOnlyList<string> Tags { get; set; } = [];
         public string Model { get; set; } = "";
         public string DiffusionModel { get; set; } = "";
         public bool IncludesFavoritesOnly { get; set; }
@@ -216,6 +241,11 @@
         public DateTime? To { get; set; }
         public string Sort { get; set; } = "newest";
         public string Collection { get; set; } = "";
+        public string Rating
+        {
+            get => MinRating.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            set => MinRating = int.TryParse(value, out var rating) ? rating : 0;
+        }
         public int MinRating { get; set; }
         public string Review { get; set; } = GalleryFilter.AnyValue;
         public bool IncludesUnorganizedOnly { get; set; }
@@ -229,7 +259,7 @@
             VisionObject = filter.Vision?.Object ?? "",
             VisionAttribute = filter.Vision?.Attribute ?? "",
             VisionValue = filter.Vision?.Value ?? "",
-            Search = filter.Search, Folder = filter.Folder, Tag = filter.Tag, Model = filter.Model,
+            Search = filter.Search, Folder = filter.Folder, Tags = filter.Tag.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), Model = filter.Model,
             DiffusionModel = filter.DiffusionModel,
             IncludesFavoritesOnly = filter.IncludesFavoritesOnly, Deletion = filter.Deletion, Analysis = filter.Analysis,
             Orientation = filter.Orientation, MinWidth = filter.MinWidth, MinHeight = filter.MinHeight,
@@ -238,15 +268,17 @@
             Media = filter.Media, Prompt = filter.Prompt
         };
 
+        private static string AnyIfEmpty(string value) => value.Length == 0 ? GalleryFilter.AnyValue : value;
+
         public GalleryFilter ToFilter() => new()
         {
             Vision = new VisionQuery { Subject = VisionSubject.Trim(), Relationship = VisionRelationship.Trim(), Object = VisionObject.Trim(), Attribute = VisionAttribute.Trim(), Value = VisionValue.Trim() },
-            Search = Search, Folder = Folder, Tag = Tag, Model = Model, DiffusionModel = DiffusionModel,
+            Search = Search, Folder = Folder, Tag = string.Join(", ", Tags), Model = Model, DiffusionModel = DiffusionModel,
             IncludesFavoritesOnly = IncludesFavoritesOnly,
-            Deletion = Deletion, Analysis = Analysis, Orientation = Orientation, MinWidth = MinWidth,
+            Deletion = AnyIfEmpty(Deletion), Analysis = AnyIfEmpty(Analysis), Orientation = AnyIfEmpty(Orientation), MinWidth = MinWidth,
             MinHeight = MinHeight, From = From, To = To, Sort = Sort, Collection = Collection,
-            MinRating = MinRating, Review = Review, IncludesUnorganizedOnly = IncludesUnorganizedOnly,
-            Media = Media, Prompt = Prompt
+            MinRating = MinRating, Review = AnyIfEmpty(Review), IncludesUnorganizedOnly = IncludesUnorganizedOnly,
+            Media = AnyIfEmpty(Media), Prompt = Prompt
         };
     }
 }

@@ -707,13 +707,9 @@ else
                 </div>
             </div>
         }
-        @if (catalogPartial && activeTool is "filters" or "review" or "organize" or "intelligence")
+        @if (catalogPartial && activeTool is "review" or "organize" or "intelligence")
         {
             <p class="text-muted-foreground" role="status">This tool will be available when the full library finishes loading.</p>
-        }
-        @if (activeTool == "filters" && !catalogPartial)
-        {
-            <GalleryFilterPanel KnownTags="AllTags" Filter="filter" Images="images" ResultCount="Filtered.Count" Changed="ApplyFilterPanelAsync" Reset="ResetFilters" Disabled="busy" ResetVersion="filterInputRevision" />
         }
         @if (activeTool == "review" && !catalogPartial)
         {
@@ -760,6 +756,24 @@ else
                           Filter="filter" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
                           SuggestionsChanged="SuggestionsChanged" />
     </GalleryToolbox>
+
+    @if (activeTool == "filters" && toolboxVisible && workflow == "gallery" && selected is null && removalPlan.Count == 0)
+    {
+        <aside id="@GalleryToolbox.FilterDrawerId" class="gallery-filter-drawer" aria-labelledby="gallery-filter-drawer-title">
+            <div class="gallery-filter-drawer-header">
+                <h2 id="gallery-filter-drawer-title">Filters</h2>
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="busy" OnClick='() => SetActiveToolAsync("")' aria-label="Close filters"><XIcon aria-hidden="true" /></Button>
+            </div>
+            @if (catalogPartial)
+            {
+                <p class="p-4 text-muted-foreground" role="status">Filters will be available when the full library finishes loading.</p>
+            }
+            else
+            {
+                <GalleryFilterPanel KnownTags="AllTags" Filter="filter" Images="images" ResultCount="Filtered.Count" Changed="ApplyFilterPanelAsync" Reset="ResetFilters" Disabled="busy" ResetVersion="filterInputRevision" />
+            }
+        </aside>
+    }
 
     @if (selected is not null)
     {
@@ -1165,8 +1179,8 @@ else
         .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
     private async Task TagsManagedAsync(TagCatalogChange change)
     {
-        if (change.PreviousName is not null && change.Name is not null && filter.Tag.Equals(change.PreviousName, StringComparison.OrdinalIgnoreCase))
-            filter = filter with { Tag = change.Name };
+        if (change.PreviousName is not null && change.Name is not null)
+            filter = filter.WithRenamedTag(change.PreviousName, change.Name);
         if (workbench is not null) await workbench.UpdateSuggestionTagsAsync(change);
         await ReloadAsync();
     }

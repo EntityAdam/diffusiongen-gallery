@@ -5,10 +5,13 @@ namespace Gallery.Core.Services.Queries;
 internal static class GalleryFilterProcessor
 {
     public static IEnumerable<ImageRecord> Apply(GalleryFilter galleryFilter, IEnumerable<ImageRecord> images,
-        IReadOnlySet<string>? awaitingApprovalIds = null) =>
-        OrderImages(images.Where(imageRecord => Matches(galleryFilter, imageRecord, awaitingApprovalIds)), galleryFilter.Sort);
+        IReadOnlySet<string>? awaitingApprovalIds = null)
+    {
+        var tags = galleryFilter.Tag.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return OrderImages(images.Where(imageRecord => Matches(galleryFilter, imageRecord, awaitingApprovalIds, tags)), galleryFilter.Sort);
+    }
 
-    private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord, IReadOnlySet<string>? awaitingApprovalIds) =>
+    private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord, IReadOnlySet<string>? awaitingApprovalIds, string[] tags) =>
         (galleryFilter.Media == GalleryFilter.AnyValue || imageRecord.MediaType == galleryFilter.Media)
         && Processors.StructuredVision.Matches(imageRecord.VisionFacts, imageRecord.ContentSha256, galleryFilter.Vision)
         && (galleryFilter.Prompt.Length == 0 || imageRecord.Prompt == galleryFilter.Prompt)
@@ -16,8 +19,8 @@ internal static class GalleryFilterProcessor
             .Contains(galleryFilter.Search, StringComparison.OrdinalIgnoreCase))
         && (galleryFilter.Folder.Length == 0 || imageRecord.SourceFolder.Contains(galleryFilter.Folder, StringComparison.OrdinalIgnoreCase)
             || Path.GetDirectoryName(imageRecord.StoredPath)?.Contains(galleryFilter.Folder, StringComparison.OrdinalIgnoreCase) == true)
-        && (galleryFilter.Tag.Length == 0 || imageRecord.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Contains(galleryFilter.Tag, StringComparer.OrdinalIgnoreCase))
+        && (tags.Length == 0 || tags.All(imageRecord.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase).Contains))
         && (galleryFilter.Model.Length == 0 || imageRecord.AnalysisModel.Contains(galleryFilter.Model, StringComparison.OrdinalIgnoreCase))
         && (string.IsNullOrWhiteSpace(galleryFilter.DiffusionModel) || imageRecord.Generation?.Model.Contains(
             galleryFilter.DiffusionModel.Trim(), StringComparison.OrdinalIgnoreCase) == true)
