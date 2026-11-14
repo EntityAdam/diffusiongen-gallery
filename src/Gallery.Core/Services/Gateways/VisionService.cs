@@ -214,6 +214,17 @@ internal sealed partial class VisionService
     {
         var system = settings.BuildImageAnalysisSystemPrompt(existingTags?.Count > 0);
         var prompt = "Describe and tag this image.";
+        if (settings.StructuredAnalysis)
+        {
+            prompt += " In this first response, include top-level tags and suggested_tags arrays alongside scene and entities."
+                + " Keep scene.booru_tags as descriptive metadata only; gallery assignments belong in the top-level arrays.";
+            prompt += settings.UseExistingTags && existingTags?.Count > 0
+                ? " For tags, select only relevant exact names from Existing tags."
+                : " Return tags: []; no existing gallery tags are supplied.";
+            prompt += settings.SuggestNewTags
+                ? " For suggested_tags, propose useful new gallery tags; exclude names in Existing tags when supplied."
+                : " Return suggested_tags: []; new gallery tag suggestions are disabled.";
+        }
         if (settings.UseExistingTags && existingTags?.Count > 0) prompt += " Existing tags: " + JsonSerializer.Serialize(existingTags);
         return (system, prompt);
     }

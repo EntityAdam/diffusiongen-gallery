@@ -125,7 +125,9 @@ public sealed record VisionSettings
         {
             prompt += UseExistingTags ? " Choose only relevant registered tags." : " Do not choose registered gallery tags; no catalog is supplied.";
             prompt += SuggestNewTags ? " You may suggest new gallery tags." : " Do not suggest new gallery tags.";
-            if (!UseExistingTags && !SuggestNewTags) prompt += " Return empty tag arrays. Still describe the image fully.";
+            if (!UseExistingTags && !SuggestNewTags) prompt += StructuredAnalysis
+                ? " Return empty top-level tags and suggested_tags arrays. Still describe the image fully."
+                : " Return empty tag arrays. Still describe the image fully.";
         }
         return prompt;
     }
