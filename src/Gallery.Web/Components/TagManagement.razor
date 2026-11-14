@@ -23,6 +23,7 @@
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <div><strong>@entry.Name</strong> <span class="text-muted-foreground">@(entry.MediaCount == 0 ? "Unused" : $"{entry.MediaCount} media item(s)")</span></div>
                     <div class="flex gap-2">
+                        <Button Type="button" Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(working || ViewDisabled)" aria-label="@($"View media tagged {entry.Name}")" OnClick="() => ViewAsync(entry.Name)">View</Button>
                         <Button Type="button" Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@working" aria-label="@($"Rename tag {entry.Name}")" OnClick="() => Edit(entry.Name, false)">Rename</Button>
                         <Button Type="button" Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@working" aria-label="@($"Delete tag {entry.Name}")" OnClick="() => Edit(entry.Name, true)">Delete</Button>
                     </div>
@@ -49,12 +50,15 @@
 
 @code {
     [Parameter] public EventCallback<TagCatalogChange> Changed { get; set; }
+    [Parameter] public EventCallback<string> View { get; set; }
+    [Parameter] public bool ViewDisabled { get; set; }
     private IReadOnlyList<TagDefinition> entries = [];
     private IEnumerable<string> TagNames => entries.Select(entry => entry.Name);
     private string newTag = "", search = "", replacement = "", message = "", error = "";
     private string? editing;
     private bool working, deleting;
     protected override Task OnInitializedAsync() => RunAsync(async () => entries = await Gallery.LoadTagCatalogAsync());
+    private Task ViewAsync(string name) => working || ViewDisabled ? Task.CompletedTask : View.InvokeAsync(name);
     private void Edit(string name, bool delete) { editing = replacement = name; deleting = delete; error = message = ""; }
     private Task AddAsync() => RunAsync(async () =>
     {
@@ -94,7 +98,7 @@
         catch (Exception exception)
         {
             Logger.LogError(exception, "Tag management operation failed");
-            error = exception is InvalidOperationException ? exception.Message : "Could not update tags. Check the application console.";
+            error = exception is InvalidOperationException or IOException ? exception.Message : "Could not update tags. Check the application console.";
         }
         finally
         {

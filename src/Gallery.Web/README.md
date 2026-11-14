@@ -277,7 +277,23 @@ within the displayed scope, including original names, metadata, tags, and both k
 of notes. Text fields wait 300 ms after typing stops before filtering;
 Enter or leaving the field applies the pending value immediately. While a filter
 is processing, newer text stays visible and only its latest value is queued.
-**Reset filters** cancels pending text updates.
+**Reset filters** cancels pending text updates. In the **Tags** screen, each tag’s
+**View** button opens Gallery, clears the current filters, and filters by that exact tag.
+
+**Settings → Tag import/export** supports **Import CSV** and **Export CSV** for the tag
+catalog. Files use UTF-8, a single `tag` header, and one tag per row. Export includes
+unused definitions and quotes names correctly. Import accepts quoted fields, UTF-8
+BOMs, and blank lines; duplicate names are skipped case-insensitively while existing
+spelling is preserved. Imports add definitions without changing media assignments
+or saved filters. The whole file is validated before saving; invalid CSV or tag
+names leave the catalog unchanged. Files may be up to 10 MiB. Existing tag rules
+still apply: 1–100 characters, without commas or control characters.
+
+```csv
+tag
+landscape
+"soft ""window"" light"
+```
 
 ### Media details
 

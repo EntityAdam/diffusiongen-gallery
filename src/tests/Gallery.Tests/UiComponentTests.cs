@@ -29,8 +29,11 @@ public sealed class UiComponentTests
             return WebUtility.HtmlDecode(root.ToHtmlString());
         });
         Assert.Contains("Manage tags", html);
+        Assert.DoesNotContain("Import CSV", html);
+        Assert.DoesNotContain("Export CSV", html);
         Assert.Contains(">Unused vocabulary</strong>", html);
         Assert.Contains(">Unused</span>", html);
+        Assert.Contains("aria-label=\"View media tagged Unused vocabulary\"", html);
         Assert.Contains("aria-label=\"Rename tag Unused vocabulary\"", html);
         Assert.Contains("aria-label=\"Delete tag Unused vocabulary\"", html);
     }

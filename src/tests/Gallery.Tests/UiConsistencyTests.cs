@@ -1,5 +1,8 @@
 using System.Net;
 using System.Reflection;
+using System.Text;
+using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.JSInterop;
 using System.Text.RegularExpressions;
 using Gallery.Core.Models;
 using Gallery.Web.Components;
@@ -317,6 +320,54 @@ public sealed class UiConsistencyTests
         Assert.Null(typeof(Home).GetField("selectionAnchor", Private)!.GetValue(home));
     }
 
+    [Theory]
+    [InlineData(false, "cat")]
+    [InlineData(true, "cat")]
+    [InlineData(true, "Unused tag")]
+    public async Task ViewingManagedTag_OpensGalleryWithOnlyThatTagAndClearsTrashAndSelection(bool fromTrash, string tag)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var matching = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "matching.png", "folder");
+        var other = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "other.png", "folder");
+        var marked = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(5, 5)), "marked.png", "folder");
+        await vault.Service.UpdateAsync(matching.Id, image => image with { Tags = "cat" });
+        await vault.Service.UpdateAsync(other.Id, image => image with { Tags = "catfish" });
+        await vault.Service.UpdateAsync(marked.Id, image => image with { Tags = "cat", IsMarkedForDeletion = true });
+        await vault.Service.AddTagAsync("Unused tag");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, root) = await Render<Home>(fixture, new());
+        await Invoke(fixture, home, "ReloadAsync");
+        typeof(Home).GetField("filter", Private)!.SetValue(home, new GalleryFilter
+        {
+            Search = "no match", Tag = "previous", MinRating = 5, IncludesFavoritesOnly = true,
+            Collection = "old collection", Vision = new() { Subject = "old subject" }, Sort = "name"
+        });
+        if (fromTrash) await Invoke(fixture, home, "SetActiveToolAsync", "trash");
+        await Invoke(fixture, home, "SwitchWorkflowAsync", "tags");
+        Assert.Contains("View media tagged", await Html(fixture, root));
+        typeof(Home).GetField("page", Private)!.SetValue(home, 2);
+        Field<HashSet<string>>(home, "librarySelection").Add(other.Id);
+        Field<HashSet<string>>(home, "removalSelection").Add(marked.Id);
+        typeof(Home).GetField("selectionAnchor", Private)!.SetValue(home, other.Id);
+        var revision = Field<long>(home, "filterInputRevision");
+
+        await Invoke(fixture, home, "ViewTagAsync", tag);
+
+        Assert.Equal("gallery", Field<string>(home, "workflow"));
+        Assert.Equal(new GalleryFilter { Tag = tag }, Field<GalleryFilter>(home, "filter"));
+        Assert.Equal("filters", Field<string>(home, "activeTool"));
+        Assert.Null(typeof(Home).GetField("browsingFilter", Private)!.GetValue(home));
+        Assert.True(Field<bool>(home, "toolboxVisible"));
+        Assert.Equal(0, Field<int>(home, "page"));
+        Assert.True(Field<long>(home, "filterInputRevision") > revision);
+        Assert.Empty(Field<HashSet<string>>(home, "librarySelection"));
+        Assert.Empty(Field<HashSet<string>>(home, "removalSelection"));
+        Assert.Null(typeof(Home).GetField("selectionAnchor", Private)!.GetValue(home));
+        var filtered = (IReadOnlyList<ImageRecord>)typeof(Home).GetProperty("Filtered", Private)!.GetValue(home)!;
+        Assert.Equal(tag == "cat" ? new[] { matching.Id } : Array.Empty<string>(), filtered.Select(image => image.Id));
+    }
+
     [Fact]
     public async Task Collections_SortingClearsSelectionAndRangeAnchor()
     {
@@ -438,6 +489,98 @@ public sealed class UiConsistencyTests
         await Invoke(fixture, workspace, "ReorderSet", first.Id, 1);
         await Invoke(fixture, home, "UndoOrganizationAsync");
         Assert.Equal(new[] { first.Id, second.Id, third.Id }, (await vault.Service.LoadCollectionCatalogAsync()).Sets.OrderBy(item => item.Order).Select(item => item.Id));
+    }
+
+    [Fact]
+    public async Task TagCsvSettings_ImportRefreshesCatalogAndExportsAllDefinitions()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await vault.Service.AddTagAsync("Unused");
+        var js = new CsvDownloadRuntime();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service, js);
+        var changes = 0;
+        var (manager, root) = await Render<TagCsvSettings>(fixture, new()
+        {
+            [nameof(TagCsvSettings.Changed)] = EventCallback.Factory.Create(this, () => changes++)
+        });
+        await Invoke(fixture, manager, "CsvSelected", new InputFileChangeEventArgs([new CsvBrowserFile("tag\nAdded\nADDED\n")]));
+        Assert.Equal(new[] { "Unused" }, await vault.Service.LoadTagNamesAsync());
+
+        await Invoke(fixture, manager, "ImportCsvAsync");
+
+        Assert.Equal(1, changes);
+        Assert.Contains("Import CSV", await Html(fixture, root));
+        Assert.Equal(new[] { "Added", "Unused" }, await vault.Service.LoadTagNamesAsync());
+        Assert.Null(typeof(TagCsvSettings).GetField("csvFile", Private)!.GetValue(manager));
+        Assert.Equal("Imported 1 tag(s); skipped 1 duplicate(s).", Field<string>(manager, "message"));
+        await Invoke(fixture, manager, "ExportCsvAsync");
+        Assert.Equal("tags.csv", js.FileName);
+        Assert.Equal("\uFEFFtag\r\n\"Added\"\r\n\"Unused\"\r\n", js.Content);
+
+        await Invoke(fixture, manager, "CsvSelected", new InputFileChangeEventArgs([new CsvBrowserFile("tag\nGood\nbad,columns\n")]));
+        await Invoke(fixture, manager, "ImportCsvAsync");
+        Assert.Equal(1, changes);
+        Assert.Equal(new[] { "Added", "Unused" }, await vault.Service.LoadTagNamesAsync());
+        Assert.Contains("exactly one", Field<string>(manager, "error"));
+    }
+
+    [Fact]
+    public async Task TagManagementAndCsvSettings_AreSeparateDestinations()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await vault.Service.AddTagAsync("Unused");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, root) = await Render<Home>(fixture, new());
+        await Invoke(fixture, home, "SwitchWorkflowAsync", "tags");
+        var management = await Html(fixture, root);
+        Assert.Equal("tags", Field<string>(home, "workflow"));
+        Assert.Contains("Manage tags", management);
+        Assert.Contains("View media tagged Unused", management);
+        Assert.DoesNotContain("Import CSV", management);
+        Assert.DoesNotContain("Export CSV", management);
+
+        await Invoke(fixture, home, "SwitchWorkflowAsync", "settings");
+        await Invoke(fixture, home, "SwitchSettingsTabAsync", "tags");
+        var settings = await Html(fixture, root);
+        Assert.Contains("Import CSV", settings);
+        Assert.Contains("Export CSV", settings);
+        Assert.Contains("id=\"tag-csv-file\"", settings);
+        Assert.DoesNotContain("Manage tags", settings);
+        Assert.DoesNotContain("aria-label=\"Tag catalog\"", settings);
+    }
+
+    private sealed class CsvBrowserFile(string content) : IBrowserFile
+    {
+        public string Name => "tags.csv";
+        public DateTimeOffset LastModified => DateTimeOffset.UtcNow;
+        public long Size => Encoding.UTF8.GetByteCount(content);
+        public string ContentType => "text/csv";
+        public Stream OpenReadStream(long maxAllowedSize = 512000, CancellationToken cancellationToken = default)
+        {
+            if (Size > maxAllowedSize) throw new IOException("File exceeds the upload limit.");
+            return new MemoryStream(Encoding.UTF8.GetBytes(content));
+        }
+    }
+
+    private sealed class CsvDownloadRuntime : IJSRuntime
+    {
+        public string? FileName { get; private set; }
+        public string? Content { get; private set; }
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, default, args);
+        public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
+        {
+            if (identifier == "galleryMedia.download")
+            {
+                FileName = (string)args![1]!;
+                var reference = (DotNetStreamReference)args[0]!;
+                using var bytes = new MemoryStream();
+                await reference.Stream.CopyToAsync(bytes, cancellationToken);
+                Content = Encoding.UTF8.GetString(bytes.ToArray());
+            }
+            return default!;
+        }
     }
 
     private static T Field<T>(object target, string name) => (T)target.GetType().GetField(name, Private)!.GetValue(target)!;

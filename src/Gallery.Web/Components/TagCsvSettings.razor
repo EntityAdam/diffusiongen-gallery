@@ -1,0 +1,69 @@
+@inject GalleryService Gallery
+@inject IJSRuntime JS
+@inject ILogger<TagCsvSettings> Logger
+@inject ISonnerService Toasts
+
+<Card Class="mb-6 space-y-4 p-5 md:p-6">
+    <section class="space-y-2" aria-labelledby="tag-csv-heading">
+        <h3 id="tag-csv-heading">Import and export tags</h3>
+        <p class="text-muted-foreground text-sm">Use a UTF-8 CSV with one column headed <code>tag</code> and one tag per row (up to 10 MiB). Import adds tag definitions and skips duplicates; media assignments stay unchanged. Export includes all tags, including unused ones.</p>
+        <Label For="tag-csv-file">Choose a tag CSV</Label>
+        <InputFile @key="csvInputRevision" id="tag-csv-file" accept=".csv,text/csv" OnChange="CsvSelected" disabled="@working" />
+        <div class="flex flex-wrap gap-2">
+            <Button Type="button" Variant="ButtonVariant.Outline" Disabled="@(working || csvFile is null)" OnClick="ImportCsvAsync">Import CSV</Button>
+            <Button Type="button" Variant="ButtonVariant.Outline" Disabled="@working" OnClick="ExportCsvAsync">Export CSV</Button>
+        </div>
+    </section>
+</Card>
+
+@code {
+    [Parameter] public EventCallback Changed { get; set; }
+    private bool working;
+    private string message = "", error = "";
+    private IBrowserFile? csvFile;
+    private int csvInputRevision;
+    private void CsvSelected(InputFileChangeEventArgs args) { if (!working) csvFile = args.File; }
+    private Task ImportCsvAsync() => RunAsync(async () =>
+    {
+        if (csvFile is null) return;
+        await using var input = csvFile.OpenReadStream(GalleryService.MaxTagCsvBytes);
+        var result = await Gallery.ImportTagsCsvAsync(input);
+        csvFile = null;
+        csvInputRevision++;
+        await Changed.InvokeAsync();
+        message = $"Imported {result.Added} tag(s); skipped {result.Skipped} duplicate(s).";
+    });
+    private Task ExportCsvAsync() => RunAsync(async () =>
+    {
+        var file = await Gallery.ExportTagsCsvAsync();
+        var bytes = GalleryService.CopyExportContent(file);
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var reference = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("galleryMedia.download", reference, file.FileName, file.ContentType);
+        }
+        finally
+        {
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
+            GalleryService.ClearExportContent(file);
+        }
+    });
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (working) return;
+        working = true; error = message = "";
+        try { await action(); }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Tag CSV operation failed");
+            error = exception is InvalidOperationException or IOException ? exception.Message : "Could not transfer tags. Check the application console.";
+        }
+        finally
+        {
+            working = false;
+            if (error.Length > 0) Toasts.Show("Could not transfer tags", error, SonnerToastVariant.Destructive, 8000);
+            if (message.Length > 0) Toasts.Show(message, "", SonnerToastVariant.Default, 4000);
+        }
+    }
+}
