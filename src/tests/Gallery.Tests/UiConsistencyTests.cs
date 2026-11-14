@@ -18,6 +18,33 @@ public sealed class UiConsistencyTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
+    [Theory]
+    [InlineData("Review")]
+    [InlineData("Deletion")]
+    [InlineData("Media")]
+    [InlineData("Orientation")]
+    [InlineData("Analysis")]
+    [InlineData("Rating")]
+    public async Task FilterDropdown_ClearingRemovesTheCriterion(string property)
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        GalleryFilter? changed = null;
+        var (panel, _) = await Render<GalleryFilterPanel>(fixture, new()
+        {
+            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter
+            {
+                Review = "reviewed", Deletion = "marked", Media = "video", Orientation = "portrait", Analysis = "analyzed", MinRating = 4
+            },
+            [nameof(GalleryFilterPanel.Changed)] = EventCallback.Factory.Create<GalleryFilter>(this, value => changed = value)
+        });
+        var draft = Field<object>(panel, "draft");
+        draft.GetType().GetProperty(property)!.SetValue(draft, "");
+        await Invoke(fixture, panel, "NotifyChangedAsync");
+
+        if (property == "Rating") Assert.Equal(0, changed!.MinRating);
+        else Assert.Equal(GalleryFilter.AnyValue, typeof(GalleryFilter).GetProperty(property)!.GetValue(changed));
+    }
+
     [Fact]
     public async Task TagFilter_RestoresMultipleSelectionsAndPublishesChangesAndClearing()
     {
@@ -386,6 +413,9 @@ public sealed class UiConsistencyTests
         Assert.Equal("filters", Field<string>(home, "activeTool"));
         Assert.Null(typeof(Home).GetField("browsingFilter", Private)!.GetValue(home));
         Assert.True(Field<bool>(home, "toolboxVisible"));
+        var galleryHtml = await Html(fixture, root);
+        Assert.Contains($"<aside id=\"{GalleryToolbox.FilterDrawerId}\" class=\"gallery-filter-drawer\"", galleryHtml);
+        Assert.Contains("aria-label=\"Close filters\"", galleryHtml);
         Assert.Equal(0, Field<int>(home, "page"));
         Assert.True(Field<long>(home, "filterInputRevision") > revision);
         Assert.Empty(Field<HashSet<string>>(home, "librarySelection"));

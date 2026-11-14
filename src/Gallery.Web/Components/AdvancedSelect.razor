@@ -9,7 +9,7 @@
             else if (!Multiple)
             {
                 <img src="images/advanced-select/users.svg" alt="" width="16" height="16" />
-                <span class="advanced-select-single">@Selection[0]</span>
+                <span class="advanced-select-single">@OptionText(Selection[0])</span>
             }
             else
             {
@@ -70,8 +70,8 @@
                 <button id="@OptionId(position)" type="button" role="option" tabindex="-1" disabled="@Disabled"
                         class="advanced-select-option @(selected ? "is-selected" : "") @(activeIndex == position ? "is-active" : "")"
                         aria-selected="@selected.ToString().ToLowerInvariant()" @onmousedown:preventDefault @onclick="() => ChooseAsync(option)">
-                    <span class="advanced-select-monogram">@Monogram(option)</span>
-                    <span class="advanced-select-option-label">@option</span>
+                    <span class="advanced-select-monogram">@Monogram(OptionText(option))</span>
+                    <span class="advanced-select-option-label">@OptionText(option)</span>
                     @if (Counts?.TryGetValue(option, out var count) == true) { <span class="advanced-select-count">@count</span> }
                     @if (Multiple)
                     {
@@ -116,6 +116,7 @@
     [Parameter] public string ItemLabel { get; set; } = "item";
     [Parameter] public string Placeholder { get; set; } = "Select…";
     [Parameter] public IEnumerable<string> Options { get; set; } = [];
+    [Parameter] public IReadOnlyDictionary<string, string>? OptionLabels { get; set; }
     [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
     [Parameter] public IReadOnlyDictionary<string, int>? SelectionCounts { get; set; }
     [Parameter] public int SelectionTotal { get; set; }
@@ -141,7 +142,8 @@
             .Select(value => value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
         RefreshMatches();
     }
-    private void RefreshMatches() => Matches = AllOptions.Where(value => value.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+    private string OptionText(string value) => OptionLabels?.GetValueOrDefault(value) ?? value;
+    private void RefreshMatches() => Matches = AllOptions.Where(value => OptionText(value).Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
     private bool ExactMatch => AllOptions.Contains(query.Trim(), StringComparer.OrdinalIgnoreCase);
     private bool CanCreate => AllowCreate && query.Trim().Length > 0 && !ExactMatch;
     private string ListId => $"{Id}-options";

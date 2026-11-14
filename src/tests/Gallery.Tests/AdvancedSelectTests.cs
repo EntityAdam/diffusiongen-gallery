@@ -11,6 +11,28 @@ namespace Gallery.Tests;
 public sealed class AdvancedSelectTests
 {
     [Fact]
+    public async Task SingleSelection_SearchesDisplayLabelsAndPublishesFilterValues()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        AdvancedSelect? select = null;
+        IReadOnlyList<string> selected = [];
+        var labels = new Dictionary<string, string> { ["image"] = "Images only", ["video"] = "Videos only" };
+        var root = await Render(fixture, false, false, true, value => select = value, values => selected = values, labels);
+
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => select!.HandleKey("focus"));
+        await Search(fixture, select!, "Videos only");
+        Assert.Contains(">Videos only</span>", await Html(fixture, root));
+        Assert.DoesNotContain(">Images only</span>", await Html(fixture, root));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => select!.HandleKey("enter"));
+
+        Assert.Equal(new[] { "video" }, selected);
+        Assert.Contains("class=\"advanced-select-single\">Videos only</span>", await Html(fixture, root));
+        Assert.Contains("aria-expanded=\"false\"", await Html(fixture, root));
+        await Invoke(fixture, select!, "ClearAsync");
+        Assert.Empty(selected);
+    }
+
+    [Fact]
     public async Task SingleSelection_SearchesCreatesClearsAndClosesOnSelection()
     {
         await using var fixture = ComponentRenderFixture.Create();
@@ -125,11 +147,12 @@ public sealed class AdvancedSelectTests
     }
 
     private static Task<HtmlRootComponent> Render(ComponentRenderFixture fixture, bool multiple, bool disabled, bool filter,
-        Action<AdvancedSelect> capture, Action<IReadOnlyList<string>> changed) => fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
+        Action<AdvancedSelect> capture, Action<IReadOnlyList<string>> changed, IReadOnlyDictionary<string, string>? labels = null) => fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
         fixture.HtmlRenderer.RenderComponentAsync<TestHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
         {
             [nameof(TestHost.Multiple)] = multiple, [nameof(TestHost.Disabled)] = disabled,
-            [nameof(TestHost.AllowCreate)] = !filter, [nameof(TestHost.Capture)] = capture, [nameof(TestHost.Changed)] = changed
+            [nameof(TestHost.AllowCreate)] = !filter, [nameof(TestHost.Capture)] = capture, [nameof(TestHost.Changed)] = changed,
+            [nameof(TestHost.OptionLabels)] = labels
         })));
 
     private static Task<string> Html(ComponentRenderFixture fixture, HtmlRootComponent root) =>
@@ -151,6 +174,7 @@ public sealed class AdvancedSelectTests
         [Parameter] public bool Multiple { get; set; }
         [Parameter] public bool Disabled { get; set; }
         [Parameter] public bool AllowCreate { get; set; }
+        [Parameter] public IReadOnlyDictionary<string, string>? OptionLabels { get; set; }
         [Parameter] public Action<AdvancedSelect>? Capture { get; set; }
         [Parameter] public Action<IReadOnlyList<string>>? Changed { get; set; }
         private string value = "";
@@ -158,7 +182,7 @@ public sealed class AdvancedSelectTests
         protected override void BuildRenderTree(RenderTreeBuilder builder)
         {
             builder.OpenComponent<AdvancedSelect>(0);
-            builder.AddAttribute(1, nameof(AdvancedSelect.Options), new[] { "Design", "DESIGN", "Development", "Marketing" });
+            builder.AddAttribute(1, nameof(AdvancedSelect.Options), OptionLabels is null ? new[] { "Design", "DESIGN", "Development", "Marketing" } : OptionLabels.Keys);
             builder.AddAttribute(2, nameof(AdvancedSelect.Multiple), Multiple);
             builder.AddAttribute(3, nameof(AdvancedSelect.Disabled), Disabled);
             builder.AddAttribute(4, nameof(AdvancedSelect.AllowCreate), AllowCreate);
@@ -170,7 +194,8 @@ public sealed class AdvancedSelectTests
             { value = updated; Changed?.Invoke(string.IsNullOrEmpty(updated) ? [] : new[] { updated }); }));
             builder.AddAttribute(10, nameof(AdvancedSelect.ValuesChanged), EventCallback.Factory.Create<IReadOnlyList<string>>(this, updated =>
             { values = updated; Changed?.Invoke(updated); }));
-            builder.AddComponentReferenceCapture(11, instance => Capture?.Invoke((AdvancedSelect)instance));
+            builder.AddAttribute(11, nameof(AdvancedSelect.OptionLabels), OptionLabels);
+            builder.AddComponentReferenceCapture(12, instance => Capture?.Invoke((AdvancedSelect)instance));
             builder.CloseComponent();
         }
     }
