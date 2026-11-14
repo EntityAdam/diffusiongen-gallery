@@ -515,9 +515,13 @@ else
     {
         <LlmEndpointSettings @ref="llmEndpointSettings" KnownTags="AllTags" SavedSettings="settings" Saved="value => settings = value" />
     }
+    @if (workflow == "tags")
+    {
+        <TagManagement Changed="TagsManagedAsync" View="ViewTagAsync" ViewDisabled="@(WorkspaceBusy || catalogPartial)" />
+    }
     @if (workflow == "settings" && settingsTab == "tags")
     {
-        <TagManagement Changed="TagsManagedAsync" />
+        <TagCsvSettings Changed="ReloadAsync" />
     }
     @if (workflow == "settings" && settingsTab == "backups")
     {
@@ -1088,7 +1092,7 @@ else
     };
     private static readonly (string Id, string Name)[] SettingsTabs =
     [
-        ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("tags", "Tags"), ("security", "Gallery security")
+        ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"), ("endpoints", "LLM endpoints"), ("tags", "Tag import/export"), ("security", "Gallery security")
     ];
     private string settingsTab = "overview";
     private StorageOverview? storageOverview;
@@ -1166,6 +1170,17 @@ else
         if (workbench is not null) await workbench.UpdateSuggestionTagsAsync(change);
         await ReloadAsync();
     }
+    private Task ViewTagAsync(string tag) => RequestSettingsActionAsync(async () =>
+    {
+        if (WorkspaceBusy || catalogPartial) return;
+        filterInputRevision++;
+        filter = new() { Tag = tag };
+        browsingFilter = null;
+        activeTool = "filters";
+        toolboxVisible = true;
+        await SwitchWorkflowCoreAsync("gallery");
+        await SaveToolboxStateAsync();
+    });
     private List<ImageRecord> images = [];
     private List<string> importFailures = [];
     private ImportProgress? importProgress;
@@ -1570,7 +1585,6 @@ else
             workflow = "gallery";activeTool = "review";toolboxVisible = true;
             return FilterChangedAsync();
         }
-        if (value == "tags") { workflow = "settings";settingsTab = "tags";return Task.CompletedTask; }
         workflow = value;
         if (value == "collections") collectionLocation = new();
         if (value == "unorganized") collectionLocation = new(Unorganized: true);

@@ -19,12 +19,12 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         HtmlRenderer = htmlRenderer;
     }
 
-    public static ComponentRenderFixture Create(GalleryService? galleryService = null)
+    public static ComponentRenderFixture Create(GalleryService? galleryService = null, IJSRuntime? jsRuntime = null)
     {
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddLogging();
         serviceCollection.AddShadCnBlazorComponents();
-        serviceCollection.AddSingleton<IJSRuntime, NoOpJsRuntime>();
+        serviceCollection.AddSingleton<IJSRuntime>(jsRuntime ?? new NoOpJsRuntime());
         serviceCollection.AddScoped<Gallery.Web.Components.OrganizationHistory>();
         if (galleryService is not null) serviceCollection.AddSingleton(galleryService);
         ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Core.Services.DataManagers;
@@ -145,6 +146,88 @@ public sealed class TagCatalogTests
         await fixture.InitializeAsync();
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.AddTagAsync(name));
         Assert.Empty(await fixture.Service.LoadTagCatalogAsync());
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task CsvImportAndExport_RoundTripDefinitionsPreserveAssignmentsAndSkipDuplicates(CatalogBackend backend)
+    {
+        using var fixture = new ServiceFixture(backend);
+        await fixture.InitializeAsync();
+        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        await fixture.Service.UpdateAsync(image.Id, edit => edit with { Tags = "Existing", Rating = 4 });
+        await fixture.Service.AddTagAsync("Unused");
+        await fixture.Service.SaveViewAsync("Existing only", new GalleryFilter { Tag = "Existing" });
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes("\uFEFFtag\r\n\"existing\"\r\n\"quoted \"\"tag\"\"\"\r\n\"星空\"\r\nnew\r\nNEW\r\n\r\n"));
+
+        Assert.Equal((3, 2), await fixture.Service.ImportTagsCsvAsync(input));
+
+        var catalog = await fixture.Service.LoadTagCatalogAsync();
+        Assert.Equal(new[] { "Existing", "new", "quoted \"tag\"", "Unused", "星空" }, catalog.Select(tag => tag.Name));
+        Assert.Equal(1, Assert.Single(catalog, tag => tag.Name == "Existing").MediaCount);
+        Assert.All(catalog.Where(tag => tag.Name != "Existing"), tag => Assert.Equal(0, tag.MediaCount));
+        var stored = Assert.Single(await fixture.Service.ListAsync());
+        Assert.Equal("Existing", stored.Tags);
+        Assert.Equal(4, stored.Rating);
+        Assert.Equal("Existing", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
+        var file = await fixture.Service.ExportTagsCsvAsync();
+        try
+        {
+            Assert.Equal("tags.csv", file.FileName);
+            Assert.StartsWith("text/csv", file.ContentType);
+            var bytes = GalleryService.CopyExportContent(file);
+            Assert.Equal("\uFEFFtag\r\n\"Existing\"\r\n\"new\"\r\n\"quoted \"\"tag\"\"\"\r\n\"Unused\"\r\n\"星空\"\r\n", Encoding.UTF8.GetString(bytes));
+            using var reimport = new MemoryStream(bytes);
+            Assert.Equal((0, 5), await fixture.Service.ImportTagsCsvAsync(reimport));
+        }
+        finally { GalleryService.ClearExportContent(file); }
+        var vault = fixture.Service.VaultRoot;
+        await fixture.Service.CloseVaultAsync();
+        await fixture.Service.OpenExistingVaultAsync(vault);
+        await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        Assert.Equal(catalog, await fixture.Service.LoadTagCatalogAsync());
+    }
+
+    [Theory]
+    [InlineData("name\nvalid\n")]
+    [InlineData("tag,count\nvalid,1\n")]
+    [InlineData("tag\nvalid\nwrong,columns\n")]
+    [InlineData("tag\nvalid\n\"unclosed\n")]
+    [InlineData("tag\nvalid\n\"comma,tag\"\n")]
+    [InlineData("tag\nvalid\n\"line\nbreak\"\n")]
+    [InlineData("tag\nvalid\n\"\"\n")]
+    [InlineData("tag\nvalid\n\"bad\"quote\n")]
+    [InlineData("")]
+    public async Task InvalidTagCsv_DoesNotImportAnyRows(string csv)
+    {
+        using var fixture = new ServiceFixture(CatalogBackend.Sqlite);
+        await fixture.InitializeAsync();
+        await fixture.Service.AddTagAsync("Keep");
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(csv));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ImportTagsCsvAsync(input));
+
+        Assert.Equal(new[] { "Keep" }, await fixture.Service.LoadTagNamesAsync());
+    }
+
+    [Fact]
+    public async Task TagCsv_RejectsInvalidEncodingAndOversizedFilesAndAcceptsAnEmptyCatalog()
+    {
+        using var fixture = new ServiceFixture(CatalogBackend.Sqlite);
+        await fixture.InitializeAsync();
+        using var invalid = new MemoryStream([.. Encoding.UTF8.GetBytes("tag\n"), 0xff]);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ImportTagsCsvAsync(invalid));
+        using var oversized = new MemoryStream(new byte[GalleryService.MaxTagCsvBytes + 1]);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ImportTagsCsvAsync(oversized));
+        Assert.Empty(await fixture.Service.LoadTagNamesAsync());
+        var file = await fixture.Service.ExportTagsCsvAsync();
+        try
+        {
+            using var input = new MemoryStream(GalleryService.CopyExportContent(file));
+            Assert.Equal((0, 0), await fixture.Service.ImportTagsCsvAsync(input));
+        }
+        finally { GalleryService.ClearExportContent(file); }
     }
 
     private sealed class CaptureHandler : HttpMessageHandler
