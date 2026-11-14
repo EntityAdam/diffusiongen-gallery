@@ -14,6 +14,10 @@ public static class StructuredVision
         Give a sufficiently complete scene overview; put subject expression on the subject, distinct from scene mood.
         When useful, represent distinct garments/objects as entities so their colors and materials belong to them.
         Include corresponding entities for referenced sub-parts where possible. Dotted IDs are names, not paths.
+        In this first pass, always return top-level tags and suggested_tags arrays alongside scene and entities.
+        Select relevant exact names from the supplied gallery catalog in tags; propose useful new names in suggested_tags.
+        Use empty arrays when no tags apply or the corresponding tag option is disabled.
+        scene.booru_tags contains booru-style visual descriptors only; it does not assign gallery tags.
         interface Attribute {
           name: string; // outfit, pose, expression, color, material, apparent age; open vocabulary
           value: string; // detailed descriptive phrase about this entity; preserve nuance
@@ -40,12 +44,12 @@ public static class StructuredVision
           scene: {
             description: string; // readable overall scene, main subjects, setting, background and mood
             attributes: Attribute[]; // lighting, setting, scene mood, ambient detail
-            helper_tags?: string[]; // prompt-oriented descriptors; NOT gallery tag assignments
+            booru_tags?: string[]; // booru-style visual descriptors; NOT gallery tag assignments
           };
           entities: Entity[]; // distinct subjects, useful garments, objects and visible sub-parts
           relationships?: Relationship[]; // omit if none can be described
-          tags?: string[]; // relevant exact names selected from supplied existing tags
-          suggested_tags?: string[]; // useful NEW gallery tags absent from the existing catalog
+          tags: string[]; // relevant exact names selected from supplied existing tags; [] when disabled or none apply
+          suggested_tags: string[]; // useful NEW gallery tags absent from the existing catalog; [] when disabled or none apply
           visual?: VisualInformation; // optional medium, style and attribution information
         }
         """;
@@ -108,7 +112,11 @@ public static class StructuredVision
 
     private static IEnumerable<string> ReadTags(JsonElement root, string field, List<string> warnings)
     {
-        if (!root.TryGetProperty(field, out var values)) return [];
+        if (!root.TryGetProperty(field, out var values))
+        {
+            warnings.Add($"'{field}' is missing; no gallery tags were taken from it.");
+            return [];
+        }
         if (values.ValueKind != JsonValueKind.Array) { warnings.Add($"'{field}' is not an array; no tags were taken from it."); return []; }
         var result = new List<string>();
         foreach (var value in values.EnumerateArray())

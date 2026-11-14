@@ -12,7 +12,7 @@ namespace Gallery.Tests;
 public sealed class StructuredVisionTests
 {
     private const string Document = """
-        {"scene":{"description":"A man wearing a red hat stands beside a woman wearing a mustard-yellow hat.","helper_tags":["never assign me"]},
+        {"scene":{"description":"A man wearing a red hat stands beside a woman wearing a mustard-yellow hat.","booru_tags":["never assign me"]},
          "entities":[
            {"id":"m","kind":"man","description":"A man","attributes":[]},
            {"id":"w","kind":"woman","description":"A woman","attributes":[]},
@@ -52,6 +52,52 @@ public sealed class StructuredVisionTests
         Assert.Empty(result.Tags);
     }
 
+    [Theory]
+    [InlineData("{}", "'tags' is missing", "'suggested_tags' is missing")]
+    [InlineData("{\"tags\":false,\"suggested_tags\":null}", "'tags' is not an array", "'suggested_tags' is not an array")]
+    public void MissingOrMalformedGalleryTags_PreserveSceneAndBooruMetadataWithWarnings(
+        string fields, string tagsWarning, string suggestionsWarning)
+    {
+        using var tagFields = JsonDocument.Parse(fields);
+        var response = new Dictionary<string, object?>
+        {
+            ["scene"] = new { description = "A sunlit scene.", booru_tags = new[] { "sunlight" } },
+            ["entities"] = Array.Empty<object>()
+        };
+        foreach (var field in tagFields.RootElement.EnumerateObject()) response[field.Name] = field.Value;
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response));
+
+        var result = StructuredVision.Parse(document.RootElement);
+
+        Assert.Equal("A sunlit scene.", result.Description);
+        Assert.Empty(result.Tags);
+        Assert.Contains(tagsWarning, result.Warning);
+        Assert.Contains(suggestionsWarning, result.Warning);
+        Assert.Equal(document.RootElement.GetRawText(), result.Analysis!.Json);
+    }
+
+    [Fact]
+    public async Task FirstPassWithCustomPromptAndEmptyCatalog_RequestsBothGalleryTagArrays()
+    {
+        using var fixture = new Fixture(CatalogBackend.Sqlite);
+        await fixture.InitializeAsync();
+        var image = await fixture.ImportAsync();
+        var settings = Settings() with { SystemPrompt = "Describe the scene and its entities as JSON." };
+
+        var result = await fixture.Service.AnalyzeForDraftAsync(image.Id, settings);
+
+        Assert.Equal(1, fixture.Handler.RequestCount);
+        using var request = JsonDocument.Parse(fixture.Handler.Request!);
+        var messages = request.RootElement.GetProperty("messages");
+        Assert.Equal(settings.SystemPrompt, messages[0].GetProperty("content").GetString());
+        var prompt = messages[1].GetProperty("content")[0].GetProperty("text").GetString()!;
+        Assert.Contains("top-level tags and suggested_tags arrays", prompt);
+        Assert.Contains("Return tags: []", prompt);
+        Assert.Contains("propose useful new gallery tags", prompt);
+        Assert.Contains("new idea", result.Tags);
+        Assert.DoesNotContain("never assign me", result.Tags);
+    }
+
     [Fact]
     public void PositiveSearch_BindsColorToTheSameHatAndRelationshipToTheSamePerson()
     {
@@ -79,10 +125,18 @@ public sealed class StructuredVisionTests
         var settings = Settings() with { UseExistingTags = existing, SuggestNewTags = novel };
         var result = await fixture.Service.AnalyzeForDraftAsync(image.Id, settings);
         Assert.Equal(expected, result.Tags);
+        Assert.Equal(1, fixture.Handler.RequestCount);
+        Assert.Empty(Assert.Single(await fixture.Service.ListAsync()).Tags);
         Assert.NotNull(result.Analysis);
         using var request = JsonDocument.Parse(fixture.Handler.Request!);
         var userPrompt = request.RootElement.GetProperty("messages")[1].GetProperty("content")[0].GetProperty("text").GetString()!;
         Assert.Equal(existing, userPrompt.Contains("Portrait", StringComparison.Ordinal));
+        Assert.Contains("top-level tags and suggested_tags arrays", userPrompt);
+        Assert.Contains("scene.booru_tags as descriptive metadata only", userPrompt);
+        Assert.Contains(existing ? "select only relevant exact names" : "Return tags: []", userPrompt);
+        Assert.Contains(novel ? "propose useful new gallery tags" : "Return suggested_tags: []", userPrompt);
+        using var original = JsonDocument.Parse(result.Analysis!.Json);
+        Assert.Equal("never assign me", original.RootElement.GetProperty("scene").GetProperty("booru_tags")[0].GetString());
         Assert.DoesNotContain("never assign me", result.Tags);
         Assert.Equal(settings.BuildImageAnalysisSystemPrompt(existing), result.Analysis!.EffectiveSystemPrompt);
         await fixture.Service.ApproveVisionAsync(image.Id, result.Description, result.Tags, settings.Model, result.Analysis,
@@ -165,8 +219,10 @@ public sealed class StructuredVisionTests
     private sealed class Handler : HttpMessageHandler
     {
         public string? Request { get; private set; }
+        public int RequestCount { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
+            RequestCount++;
             Request = await request.Content!.ReadAsStringAsync(token);
             return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { choices = new[] { new { message = new { content = Document } } } })) };
         }
