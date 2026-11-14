@@ -1165,8 +1165,8 @@ else
         .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
     private async Task TagsManagedAsync(TagCatalogChange change)
     {
-        if (change.PreviousName is not null && change.Name is not null && filter.Tag.Equals(change.PreviousName, StringComparison.OrdinalIgnoreCase))
-            filter = filter with { Tag = change.Name };
+        if (change.PreviousName is not null && change.Name is not null)
+            filter = filter.WithRenamedTag(change.PreviousName, change.Name);
         if (workbench is not null) await workbench.UpdateSuggestionTagsAsync(change);
         await ReloadAsync();
     }

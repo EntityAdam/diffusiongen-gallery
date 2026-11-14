@@ -32,9 +32,10 @@
                                 <AdvancedSelect Disabled="@Disabled" Id="collection-filter" Label="Collections" ItemLabel="collection" Placeholder="All collections"
                                                 Options="@Collections" AllowCreate="false" @bind-Value="draft.Collection" @bind-Value:after="NotifyChangedAsync" />
                                 <div class="mt-3 flex items-start gap-3"><Checkbox Disabled="@Disabled" id="check-draft-unorganizedonly" Class="mt-0.5" @bind-Checked="draft.IncludesUnorganizedOnly" @bind-Checked:after="NotifyChangedAsync" /><Label For="check-draft-unorganizedonly" Class="text-sm leading-relaxed">Without a collection only</Label></div>
-                                <Label For="tag" Class="mt-4 mb-2 block">Tag</Label>
-                                <AdvancedSelect Disabled="@Disabled" Id="tag" Label="Tags" ItemLabel="tag" Placeholder="All tags" MaxLength="4000"
-                                                Options="@Tags" AllowCreate="false" @bind-Value="draft.Tag" @bind-Value:after="NotifyChangedAsync" />
+                                <Label For="tag" Class="mt-4 mb-2 block">Tags</Label>
+                                <AdvancedSelect Disabled="@Disabled" Id="tag" Label="Tags" ItemLabel="tag" Placeholder="All tags" MaxLength="4000" Multiple="true"
+                                                Options="@Tags" AllowCreate="false" @bind-Values="draft.Tags" @bind-Values:after="NotifyChangedAsync" />
+                                <p class="mt-2 text-sm text-muted-foreground">Matches all selected tags.</p>
                                 <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
                                 <DebouncedFilterInput Disabled="@Disabled" Id="folder" ResetVersion="@ResetVersion" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
                                 <div class="grid grid-cols-2 gap-3">
@@ -203,7 +204,7 @@
         public string VisionValue { get; set; } = "";
         public string Search { get; set; } = "";
         public string Folder { get; set; } = "";
-        public string Tag { get; set; } = "";
+        public IReadOnlyList<string> Tags { get; set; } = [];
         public string Model { get; set; } = "";
         public string DiffusionModel { get; set; } = "";
         public bool IncludesFavoritesOnly { get; set; }
@@ -229,7 +230,7 @@
             VisionObject = filter.Vision?.Object ?? "",
             VisionAttribute = filter.Vision?.Attribute ?? "",
             VisionValue = filter.Vision?.Value ?? "",
-            Search = filter.Search, Folder = filter.Folder, Tag = filter.Tag, Model = filter.Model,
+            Search = filter.Search, Folder = filter.Folder, Tags = filter.Tag.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), Model = filter.Model,
             DiffusionModel = filter.DiffusionModel,
             IncludesFavoritesOnly = filter.IncludesFavoritesOnly, Deletion = filter.Deletion, Analysis = filter.Analysis,
             Orientation = filter.Orientation, MinWidth = filter.MinWidth, MinHeight = filter.MinHeight,
@@ -241,7 +242,7 @@
         public GalleryFilter ToFilter() => new()
         {
             Vision = new VisionQuery { Subject = VisionSubject.Trim(), Relationship = VisionRelationship.Trim(), Object = VisionObject.Trim(), Attribute = VisionAttribute.Trim(), Value = VisionValue.Trim() },
-            Search = Search, Folder = Folder, Tag = Tag, Model = Model, DiffusionModel = DiffusionModel,
+            Search = Search, Folder = Folder, Tag = string.Join(", ", Tags), Model = Model, DiffusionModel = DiffusionModel,
             IncludesFavoritesOnly = IncludesFavoritesOnly,
             Deletion = Deletion, Analysis = Analysis, Orientation = Orientation, MinWidth = MinWidth,
             MinHeight = MinHeight, From = From, To = To, Sort = Sort, Collection = Collection,

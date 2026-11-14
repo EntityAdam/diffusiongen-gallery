@@ -16,6 +16,24 @@ public sealed class TagCatalogTests
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
+    public async Task Rename_PreservesOtherSelectedTagsAndDeduplicatesMergedSavedFilters(CatalogBackend backend)
+    {
+        using var fixture = new ServiceFixture(backend);
+        await fixture.InitializeAsync();
+        await fixture.Service.AddTagAsync("old");
+        await fixture.Service.AddTagAsync("target");
+        await fixture.Service.SaveViewAsync("Multiple tags", new GalleryFilter { Tag = "old, keep, target" });
+
+        await fixture.Service.RenameTagAsync("OLD", "target");
+        Assert.Equal("target, keep", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
+
+        await fixture.Service.DeleteTagAsync("target");
+        Assert.Equal("target, keep", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
     public async Task UnusedTags_AreIndependentOfMediaAndSurviveReopening(CatalogBackend backend)
     {
         using var fixture = new ServiceFixture(backend);

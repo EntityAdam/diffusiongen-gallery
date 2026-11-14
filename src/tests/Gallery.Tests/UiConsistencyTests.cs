@@ -18,6 +18,33 @@ public sealed class UiConsistencyTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
+    [Fact]
+    public async Task TagFilter_RestoresMultipleSelectionsAndPublishesChangesAndClearing()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        GalleryFilter? changed = null;
+        var (panel, root) = await Render<GalleryFilterPanel>(fixture, new()
+        {
+            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter { Tag = "cat, dog" },
+            [nameof(GalleryFilterPanel.KnownTags)] = new[] { "cat", "dog", "bird" },
+            [nameof(GalleryFilterPanel.Changed)] = EventCallback.Factory.Create<GalleryFilter>(this, value => changed = value)
+        });
+        var html = await Html(fixture, root);
+        Assert.Contains("aria-multiselectable=\"true\"", html);
+        Assert.Contains("aria-label=\"Remove tag cat\"", html);
+        Assert.Contains("aria-label=\"Remove tag dog\"", html);
+
+        var draft = Field<object>(panel, "draft");
+        var tags = draft.GetType().GetProperty("Tags")!;
+        tags.SetValue(draft, new[] { "dog", "bird" });
+        await Invoke(fixture, panel, "NotifyChangedAsync");
+        Assert.Equal("dog, bird", changed!.Tag);
+
+        tags.SetValue(draft, Array.Empty<string>());
+        await Invoke(fixture, panel, "NotifyChangedAsync");
+        Assert.Equal("", changed!.Tag);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
