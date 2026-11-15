@@ -481,7 +481,13 @@ input::placeholder, textarea::placeholder, .advanced-select-placeholder {
 .gallery-entry-back { display: block; margin-top: 12px; padding: 0; border: 0; background: none; color: hsl(var(--muted-foreground)); font-size: 13px; font-weight: 500; }
 .gallery-open-form, .gallery-restore-form { margin-top: 12px; }
 .gallery-open-form .gallery-entry-primary { margin-top: 20px; }
-.gallery-restore-form { display: flex; flex-direction: column; gap: 12px; }
+.gallery-restore-form { display: flex; flex-direction: column; gap: 24px; }
+.gallery-restore-section { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.gallery-restore-section > legend { width: 100%; margin-bottom: 12px; padding: 0; color: hsl(var(--foreground)); font-size: 15px; font-weight: 600; }
+.gallery-restore-section + .gallery-restore-section { border-top: 1px solid hsl(var(--border)); padding-top: 20px; }
+.gallery-restore-form .gallery-entry-field { min-height: 0; }
+.gallery-restore-section > .gallery-entry-link { align-self: flex-start; font-size: 13px; }
+.gallery-restore-hint { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.5; }
 .gallery-entry-status { margin: 12px 0 !important; color: hsl(var(--muted-foreground)); font-size: 12px; overflow-wrap: anywhere; }
 .gallery-empty-card { display: flex; flex-direction: column; justify-content: center; gap: 24px; min-height: 180px; color: hsl(var(--muted-foreground)); }
 .gallery-entry button:focus-visible, .gallery-entry select:focus-visible, .gallery-entry summary:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 3px; }

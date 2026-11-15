@@ -92,44 +92,80 @@
             }
             else
             {
-                <div class="gallery-restore-form">
-                <p class="text-muted-foreground">Restore a full backup or the last incremental backup in its chain. The destination must be a new or empty folder.</p>
-                <Tabs Value="@restoreSourceType" ValueChanged="SetRestoreSource">
-                    <TabsList Class="w-full" aria-label="Backup location">
-                        <TabsTrigger Value="local" Class="flex-1" disabled="@busy"><FolderIcon Size="16" ClassName="mr-2" aria-hidden="true" />Local backup</TabsTrigger>
-                        <TabsTrigger Value="sas" Class="flex-1" disabled="@busy"><CloudIcon Size="16" ClassName="mr-2" aria-hidden="true" />Cloud backup</TabsTrigger>
-                    </TabsList>
-                </Tabs>
-                @if (restoreSourceType == "local")
-                {
-                    <DirectoryPathInput Label="Local folder or SMB path" @bind-Value="restoreSourceDirectory" Disabled="@busy" />
-                }
-                else
-                {
-                    <Label For="restore-sas" Class="mt-4 mb-2 block">Container-level Azure Blob SAS URL</Label>
-                    <Input id="restore-sas" Type="password" @bind-Value="restoreSasUrl" autocomplete="off"
-                           Placeholder="https://account.blob.core.windows.net/container?sv=...&amp;sr=c&amp;sp=rl&amp;sig=..."
-                           pattern="https://[^/?#]+/[^/?#]+\?[^#]+" required Disabled="@busy" />
-                    <p class="text-muted-foreground">Use an HTTPS container SAS with read and list permissions. The SAS URL is used only for this restore and is not saved.</p>
-                    <Label For="restore-prefix" Class="mt-4 mb-2 block">Backup prefix (optional)</Label>
-                    <Input id="restore-prefix" @bind-Value="restoreAzurePrefix" Placeholder="nightly/gallery" Disabled="@busy" />
-                    <p class="text-muted-foreground">Use the same prefix configured when the backups were created. Leave empty for backups at the container root.</p>
-                }
-                <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreSourceType == "sas" ? restoreSasUrl : restoreSourceDirectory))" OnClick="ListRestoreBackupsAsync">Find backups</Button>
-                </div>
-                <Label For="restore-archive" Class="mt-4 mb-2 block">Backup archive</Label>
-                <Select id="restore-archive" @bind-Value="restoreArchive" Disabled="@(busy || restoreArchives.Count == 0)">
-                    <option value="">Select a full or final incremental backup</option>
-                    @foreach (var archive in restoreArchives) { <option value="@archive">@archive</option> }
-                </Select>
-                <Label For="restored-gallery-name" Class="mt-4 mb-2 block">Gallery name</Label>
-                <Input id="restored-gallery-name" @bind-Value="newGalleryName" maxlength="80" Disabled="@busy" />
-                <DirectoryPathInput Label="New local catalog directory" LocalOnly="true" @bind-Value="newGalleryDirectory" Disabled="@busy" />
-                <GalleryCredentialInput @bind-Value="restoreCredential" @bind-UseRecovery="restoreUseRecovery" Disabled="@busy" />
-                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreArchive))" OnClick="RestoreGalleryAsync">Restore gallery <ArrowRightIcon aria-hidden="true" /></Button>
-
-                </div>
+                <form class="gallery-restore-form" @onsubmit="RestoreGalleryAsync" @onsubmit:preventDefault>
+                    <fieldset class="gallery-restore-section">
+                        <legend>Backup</legend>
+                        <Tabs Value="@restoreSourceType" ValueChanged="SetRestoreSource">
+                            <TabsList Class="gallery-entry-tabs" aria-label="Backup location">
+                                <TabsTrigger Value="local" disabled="@busy"><FolderIcon Size="16" ClassName="mr-2" aria-hidden="true" />Local backup</TabsTrigger>
+                                <TabsTrigger Value="sas" disabled="@busy"><CloudIcon Size="16" ClassName="mr-2" aria-hidden="true" />Cloud backup</TabsTrigger>
+                            </TabsList>
+                        </Tabs>
+                        @if (restoreSourceType == "local")
+                        {
+                            <DirectoryPathInput Label="Backup folder" ShowHint="false" @bind-Value="restoreSourceDirectory" @bind-Value:after="ResetRestoreBackups" Disabled="@busy" />
+                        }
+                        else
+                        {
+                            <div class="gallery-entry-field">
+                                <Label For="restore-sas">Backup URL</Label>
+                                <Input id="restore-sas" Type="password" @bind-Value="restoreSasUrl" @bind-Value:after="ResetRestoreBackups" autocomplete="off"
+                                       Placeholder="https://account.blob.core.windows.net/container?..."
+                                       pattern="https://[^/?#]+/[^/?#]+\?[^#]+" required Disabled="@busy" aria-describedby="restore-sas-hint" />
+                                <p id="restore-sas-hint">Use a container SAS URL with read and list access.</p>
+                            </div>
+                            <details class="gallery-storage-options">
+                                <summary><Settings2Icon Size="16" aria-hidden="true" /><span>Cloud options</span><ChevronDownIcon Size="16" ClassName="gallery-storage-chevron" aria-hidden="true" /></summary>
+                                <div class="gallery-storage-fields">
+                                    <div class="gallery-entry-field">
+                                        <Label For="restore-prefix">Backup prefix (optional)</Label>
+                                        <Input id="restore-prefix" @bind-Value="restoreAzurePrefix" @bind-Value:after="ResetRestoreBackups" Placeholder="nightly/gallery" Disabled="@busy" aria-describedby="restore-prefix-hint" />
+                                        <p id="restore-prefix-hint">Use the prefix from your backup settings, or leave blank for the container root.</p>
+                                    </div>
+                                </div>
+                            </details>
+                        }
+                        <Button Variant="ButtonVariant.Outline" Class="w-full" Type="button" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreSourceType == "sas" ? restoreSasUrl : restoreSourceDirectory))" OnClick="ListRestoreBackupsAsync">Find backups</Button>
+                        @if (restoreArchives.Count > 0)
+                        {
+                            <div class="gallery-entry-field">
+                                <Label For="restore-archive">Backup archive</Label>
+                                <Select id="restore-archive" @bind-Value="restoreArchive" Disabled="@busy" aria-describedby="restore-archive-hint">
+                                    <option value="">Choose a backup</option>
+                                    @foreach (var archive in restoreArchives) { <option value="@archive">@archive</option> }
+                                </Select>
+                                <p id="restore-archive-hint">Choose a full backup or the final incremental backup in its chain.</p>
+                            </div>
+                        }
+                        else if (restoreBackupsSearched)
+                        {
+                            <p class="gallery-entry-status" role="status">No backups found. Check the location and try again.</p>
+                        }
+                    </fieldset>
+                    @if (!string.IsNullOrWhiteSpace(restoreArchive))
+                    {
+                        <fieldset class="gallery-restore-section">
+                            <legend>New gallery</legend>
+                            <div class="gallery-entry-field">
+                                <Label For="restored-gallery-name">Gallery name (optional)</Label>
+                                <Input id="restored-gallery-name" @bind-Value="newGalleryName" Placeholder="Keep the original gallery name" maxlength="80" Disabled="@busy" />
+                            </div>
+                            <details class="gallery-storage-options">
+                                <summary><FolderIcon Size="16" aria-hidden="true" /><span>Storage options</span><ChevronDownIcon Size="16" ClassName="gallery-storage-chevron" aria-hidden="true" /></summary>
+                                <div class="gallery-storage-fields">
+                                    <DirectoryPathInput Label="Gallery folder" LocalOnly="true" ShowHint="false" Placeholder="@newGalleryDirectory" @bind-Value="restoreGalleryDirectory" Disabled="@busy" />
+                                    <p class="gallery-restore-hint">Use a new or empty folder on this computer’s SSD.</p>
+                                </div>
+                            </details>
+                        </fieldset>
+                        <fieldset class="gallery-restore-section">
+                            <legend>Unlock backup</legend>
+                            <GalleryCredentialInput Compact="true" @bind-Value="restoreCredential" @bind-UseRecovery="restoreUseRecovery" Disabled="@busy" />
+                        </fieldset>
+                        <Button Class="gallery-entry-primary" Type="submit" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreCredential))">@(busy ? "Restoring gallery..." : "Restore gallery")</Button>
+                        <p class="gallery-restore-hint">Restores into a new gallery. Your backup stays unchanged.</p>
+                    }
+                </form>
             }
             <button class="gallery-entry-back" type="button" disabled="@busy" @onclick="ReturnToWelcome">← Back to welcome</button>
         }
@@ -956,7 +992,8 @@ else
     private string galleryRename = "", moveGalleryDirectory = "", purgeConfirmation = "";
     private string restoreSourceType = "local", restoreSourceDirectory = "", restoreSasUrl = "";
     private string restoreAzurePrefix = "";
-    private string restoreArchive = "", restoreCredential = "";
+    private string restoreArchive = "", restoreCredential = "", restoreGalleryDirectory = "";
+    private bool restoreBackupsSearched;
     private bool restoreUseRecovery;
     private IReadOnlyList<string> restoreArchives = [];
     private static readonly (string Id, string Name)[] GalleryTabs =
@@ -1005,16 +1042,15 @@ else
         galleryTab = tab;
         error = message = "";
         secret = confirm = restoreCredential = restoreSasUrl = "";
-        restoreArchive = "";
-        restoreArchives = [];
+        ResetRestoreBackups();
         useRecovery = restoreUseRecovery = false;
     }
 
     private void SetRestoreSource(string source)
     {
         restoreSourceType = source;
-        restoreArchives = [];
-        restoreArchive = restoreSasUrl = restoreAzurePrefix = "";
+        ResetRestoreBackups();
+        restoreSasUrl = restoreAzurePrefix = "";
         restoreCredential = "";
         restoreUseRecovery = false;
     }
@@ -1102,27 +1138,42 @@ else
         message = "All gallery media and data were permanently destroyed. Backups and original sources were retained.";
     });
 
+    private void ResetRestoreBackups()
+    {
+        restoreArchives = [];
+        restoreArchive = restoreCredential = "";
+        restoreBackupsSearched = false;
+    }
+
     private Task ListRestoreBackupsAsync() => RunAsync("Finding backups...", async () =>
     {
+        ResetRestoreBackups();
         restoreArchives = restoreSourceType == "sas"
             ? await Gallery.ListRestoreBackupsFromSasAsync(restoreSasUrl, restoreAzurePrefix)
             : await Gallery.ListRestoreBackupsAsync("local", restoreSourceDirectory, "", "", "");
-        message = $"Found {restoreArchives.Count} backup archive(s). Select the full or final incremental backup.";
+        restoreBackupsSearched = true;
     });
 
-    private Task RestoreGalleryAsync() => RunAsync("Restoring gallery...", async () =>
+    private Task RestoreGalleryAsync() => busy || string.IsNullOrWhiteSpace(restoreArchive) || string.IsNullOrWhiteSpace(restoreCredential)
+        ? Task.CompletedTask
+        : RunAsync("Restoring gallery...", async () =>
     {
         try
         {
+            var directory = string.IsNullOrWhiteSpace(restoreGalleryDirectory) ? newGalleryDirectory : restoreGalleryDirectory;
+            var name = string.IsNullOrWhiteSpace(newGalleryName) ? null : newGalleryName.Trim();
             if (restoreSourceType == "sas")
-                await Gallery.RestoreGalleryFromSasAsync(restoreSasUrl, restoreArchive, newGalleryDirectory,
-                    restoreCredential, restoreUseRecovery, newGalleryName, restoreAzurePrefix);
+                await Gallery.RestoreGalleryFromSasAsync(restoreSasUrl, restoreArchive, directory,
+                    restoreCredential, restoreUseRecovery, name, restoreAzurePrefix);
             else
                 await Gallery.RestoreVaultAsync("local", restoreSourceDirectory, "", "", "",
-                    restoreArchive, newGalleryDirectory, restoreCredential, restoreUseRecovery, newGalleryName);
+                    restoreArchive, directory, restoreCredential, restoreUseRecovery, name);
             Lock();
             galleryRename = Gallery.VaultName;
             galleryScreen = "welcome";
+            restoreGalleryDirectory = newGalleryName = "";
+            newGalleryDirectory = GalleryService.DefaultVaultDirectory();
+            ResetRestoreBackups();
             message = "Backup restored. Sign in to the restored gallery.";
         }
         finally { restoreCredential = restoreSasUrl = ""; }

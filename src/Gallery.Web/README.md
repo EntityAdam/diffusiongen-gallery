@@ -534,11 +534,15 @@ before another incremental.
 ### Restore a backup
 
 Use **Switch gallery > Restore** with a local/SMB backup folder or an Azure
-container SAS URL with read/list permissions. For cloud backups, enter the same
-**Backup prefix** configured for the destination (for example, `nightly/gallery`),
-or leave it empty for container-root backups. Select **Find backups**, choose a
-full archive or the last desired incremental, and provide the backup gallery's
-passphrase or recovery words, a name, and a new/empty local destination.
+container SAS URL with read/list permissions. **Cloud options** contains the optional
+**Backup prefix** (for example, `nightly/gallery`); leave it empty for container-root
+backups. Select **Find backups**, then choose a full archive or the last desired
+incremental. Changing the source clears previous results and credentials.
+
+After selecting an archive, **New gallery** and **Unlock backup** appear. Leave
+the gallery name blank to keep its original name. **Storage options** lets you
+choose a new/empty local SSD folder; leaving it blank uses the displayed default.
+Enter the backup’s passphrase or select **Use recovery words**, then restore.
 
 Every archive back to the full backup is required. Companion manifests are not
 required for restoration because the archives include them. Restore verifies
