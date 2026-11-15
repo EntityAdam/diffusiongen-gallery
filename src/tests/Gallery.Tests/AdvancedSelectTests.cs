@@ -11,6 +11,27 @@ namespace Gallery.Tests;
 public sealed class AdvancedSelectTests
 {
     [Fact]
+    public async Task RequiredSelection_OpensItsMenu_AndCannotBeCleared()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        AdvancedSelect? select = null;
+        IReadOnlyList<string> selected = [];
+        var root = await Render(fixture, false, false, true, value => select = value,
+            values => selected = values, allowClear: false);
+
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => select!.HandleKey("focus"));
+        Assert.Contains("aria-expanded=\"true\"", await Html(fixture, root));
+        await Search(fixture, select!, "Design");
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => select!.HandleKey("enter"));
+        await Invoke(fixture, select!, "ClearAsync");
+
+        Assert.Equal(new[] { "Design" }, selected);
+        var html = await Html(fixture, root);
+        Assert.DoesNotContain("aria-label=\"Clear Tags\"", html);
+        Assert.Contains("aria-expanded=\"false\"", html);
+    }
+
+    [Fact]
     public async Task SingleSelection_SearchesDisplayLabelsAndPublishesFilterValues()
     {
         await using var fixture = ComponentRenderFixture.Create();
@@ -147,12 +168,12 @@ public sealed class AdvancedSelectTests
     }
 
     private static Task<HtmlRootComponent> Render(ComponentRenderFixture fixture, bool multiple, bool disabled, bool filter,
-        Action<AdvancedSelect> capture, Action<IReadOnlyList<string>> changed, IReadOnlyDictionary<string, string>? labels = null) => fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
+        Action<AdvancedSelect> capture, Action<IReadOnlyList<string>> changed, IReadOnlyDictionary<string, string>? labels = null, bool allowClear = true) => fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
         fixture.HtmlRenderer.RenderComponentAsync<TestHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
         {
             [nameof(TestHost.Multiple)] = multiple, [nameof(TestHost.Disabled)] = disabled,
             [nameof(TestHost.AllowCreate)] = !filter, [nameof(TestHost.Capture)] = capture, [nameof(TestHost.Changed)] = changed,
-            [nameof(TestHost.OptionLabels)] = labels
+            [nameof(TestHost.OptionLabels)] = labels, [nameof(TestHost.AllowClear)] = allowClear
         })));
 
     private static Task<string> Html(ComponentRenderFixture fixture, HtmlRootComponent root) =>
@@ -174,6 +195,7 @@ public sealed class AdvancedSelectTests
         [Parameter] public bool Multiple { get; set; }
         [Parameter] public bool Disabled { get; set; }
         [Parameter] public bool AllowCreate { get; set; }
+        [Parameter] public bool AllowClear { get; set; } = true;
         [Parameter] public IReadOnlyDictionary<string, string>? OptionLabels { get; set; }
         [Parameter] public Action<AdvancedSelect>? Capture { get; set; }
         [Parameter] public Action<IReadOnlyList<string>>? Changed { get; set; }
@@ -195,7 +217,8 @@ public sealed class AdvancedSelectTests
             builder.AddAttribute(10, nameof(AdvancedSelect.ValuesChanged), EventCallback.Factory.Create<IReadOnlyList<string>>(this, updated =>
             { values = updated; Changed?.Invoke(updated); }));
             builder.AddAttribute(11, nameof(AdvancedSelect.OptionLabels), OptionLabels);
-            builder.AddComponentReferenceCapture(12, instance => Capture?.Invoke((AdvancedSelect)instance));
+            builder.AddAttribute(12, nameof(AdvancedSelect.AllowClear), AllowClear);
+            builder.AddComponentReferenceCapture(13, instance => Capture?.Invoke((AdvancedSelect)instance));
             builder.CloseComponent();
         }
     }

@@ -1,14 +1,15 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<div class="advanced-select @(open ? "is-open" : "") @(Disabled ? "is-disabled" : "")" @ref="element" data-advanced-select>
+<div class="advanced-select @Class @(open ? "is-open" : "") @(Disabled ? "is-disabled" : "")" @ref="element" data-advanced-select>
     <div class="advanced-select-trigger">
         <button id="@Id" type="button" class="advanced-select-value @(Multiple && Selection.Count > 0 ? "has-chips" : "")" disabled="@Disabled" @onclick="ToggleAsync"
                 aria-label="@Label" aria-haspopup="listbox" aria-expanded="@open.ToString().ToLowerInvariant()" aria-controls="@ListId">
             @if (Selection.Count == 0) { <span class="advanced-select-placeholder">@Placeholder</span> }
             else if (!Multiple)
             {
-                <img src="images/advanced-select/users.svg" alt="" width="16" height="16" />
+                @if (LeadingIcon is not null) { @LeadingIcon }
+                else { <img src="images/advanced-select/users.svg" alt="" width="16" height="16" /> }
                 <span class="advanced-select-single">@OptionText(Selection[0])</span>
             }
             else
@@ -34,7 +35,7 @@
                 }
             </div>
         }
-        @if (Selection.Count > 0)
+        @if (AllowClear && Selection.Count > 0)
         {
             <button type="button" class="advanced-select-icon-button" disabled="@Disabled" aria-label="@($"Clear {Label}")" @onclick="ClearAsync">
                 <img src="images/advanced-select/x.svg" alt="" width="14" height="14" />
@@ -121,6 +122,9 @@
     [Parameter] public IReadOnlyDictionary<string, int>? SelectionCounts { get; set; }
     [Parameter] public int SelectionTotal { get; set; }
     [Parameter] public bool Multiple { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public RenderFragment? LeadingIcon { get; set; }
+    [Parameter] public bool AllowClear { get; set; } = true;
     [Parameter] public bool AllowCreate { get; set; } = true;
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public int MaxLength { get; set; } = 80;
@@ -183,6 +187,7 @@
     private void ClearSearch() { query = ""; RefreshMatches(); activeIndex = 0; focusSearch = resetSearch = true; }
     private async Task ClearAsync()
     {
+        if (!AllowClear || Disabled) return;
         await PublishAsync([]);
         focusSearch = open;
         focusTrigger = !open;

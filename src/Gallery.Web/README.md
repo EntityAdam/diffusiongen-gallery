@@ -19,10 +19,10 @@ dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj
 Open **http://127.0.0.1:5189**.
 
 1. Choose **Create** from **Switch gallery**.
-2. Choose a gallery name and a new local catalog directory. An automatically
-   generated name and directory are provided.
-3. Optionally enter a separate encrypted media directory, including a NAS/SMB path.
-   Leave it blank to store media beside the catalog.
+2. Enter a gallery name. A unique local catalog directory is provided; change it
+   under **Storage options** if needed.
+3. Enable **Split catalog and media folder** to choose a separate **Media folder**,
+   including a NAS/SMB path. Otherwise media stays beside the catalog.
 4. Choose a unique passphrase of at least 14 characters.
 5. **Save the 32 recovery words offline before continuing.** They are shown only
    once. Losing both the passphrase and recovery words makes the gallery
@@ -655,7 +655,10 @@ saved-view names throw `InvalidSavedViewNameException` before vault access,
 with the normalized name and permitted length range in diagnostic context.
 The workbench preserves the existing caller-facing validation message.
 
-The UI uses ShadCn.Blazor, Lucide, and Tailwind. Generated CSS is checked in, so
+The UI uses ShadCn.Blazor, Lucide, and Tailwind. Select controls must use either
+ShadCn `Select` for browser-native fixed choices or `AdvancedSelect` for an
+in-page dropdown, searchable choices, creation, or multiple choices. The gallery
+switcher uses `AdvancedSelect` with creation and clearing disabled. Do not add raw HTML `<select>` controls. Generated CSS is checked in, so
 Node is not needed just to run the app. After changing Razor utility classes,
 run from `src/Gallery.Web`:
 
@@ -688,3 +691,23 @@ the current card icon is inferred from saved analysis and pending suggestions.
 ## Experimental structured vision analysis
 
 See [the structured vision guide](../../docs/features/structured-vision-analysis.md) for the commented TypeScript prompt, independent tag controls, review workflow, and entity-bound filters. The existing description/tags format remains the default until explicitly changed in settings.
+
+### Gallery entry and remembered galleries
+
+The welcome screen’s **Gallery switcher** lists galleries created, opened, or
+restored on this host. Selecting one returns to its locked sign-in form and clears
+the credential input. Gallery locations persist in `galleries.json` under
+`Gallery:StateDirectory`, alongside the compatible `last-vault.json` selection.
+Existing single-gallery history is included automatically. Locations are unique;
+names are read from the current headers so renames appear without duplicate
+entries. Missing or unreadable galleries are omitted; use **Switch gallery > Open**
+to select a relocated or reconnected folder. Gallery paths and names are not secret;
+credentials are never saved in this list.
+
+**Create** keeps the **Gallery folder** and optional separate **Media folder** under
+**Storage options**. The gallery-folder field starts empty and displays its default
+location as a placeholder; leaving it blank uses that location. Enable **Split catalog
+and media folder** to reveal the media-folder field. Disabling it clears the alternate
+media location. The name field starts empty with “Personal Gallery” as a placeholder.
+The default storage location is a new local catalog directory identified by a GUID;
+subsequent creations receive a fresh default directory.

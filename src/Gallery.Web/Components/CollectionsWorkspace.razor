@@ -20,12 +20,12 @@
     { <div class="collection-tabs" role="group" aria-label="Collection view"><Button Disabled="@ControlsDisabled" Variant="@(!Location.AllMedia ? ButtonVariant.Secondary : ButtonVariant.Ghost)" OnClick="() => Navigate(new(Collection.Id))">Sets @CollectionSets.Count()</Button><Button Disabled="@ControlsDisabled" Variant="@(Location.AllMedia ? ButtonVariant.Secondary : ButtonVariant.Ghost)" OnClick="() => Navigate(new(Collection.Id, AllMedia: true))">All media @CollectionMedia.Count()</Button><Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Ghost" OnClick="() => BeginName(Collection.Id, false)">Rename collection</Button><Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Ghost" OnClick="() => BeginDelete(Collection.Id, false)">Delete collection</Button></div> }
     @if (choosingMedia) { <div class="collection-inbox-banner"><strong>Choose media to move to @Collection?.Name / @Set?.Name</strong><Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Outline" OnClick="EndChooseMedia">Cancel</Button></div> }
     <div class="collection-tools"><DebouncedFilterInput Id="collection-search" Label="@SearchLabel" Placeholder="@SearchLabel" Value="@query" ValueChanged="SearchChanged" ResetVersion="searchResetVersion" Disabled="@ControlsDisabled" />
-        <select disabled="@ControlsDisabled" aria-label="Sort" value="@sort" @onchange="SortChanged">
+        <Select Class="collection-tool-select" Disabled="@ControlsDisabled" aria-label="Sort" Value="@sort" ValueChanged="SortChanged">
             @if (ShowsMedia) { @if (Set is not null && !choosingMedia) { <option value="sequence">Sequence</option> }<option value="newest">Newest first</option><option value="name">Name</option> }
             else if (Collection is null) { <option value="updated">Recently updated</option><option value="name">Name</option> }
             else { <option value="sequence">Manual order</option><option value="name">Name</option> }
-        </select>
-        @if (ShowsMedia) { <select disabled="@ControlsDisabled" aria-label="Minimum rating" value="@minRating" @onchange="RatingFilterChanged"><option value="0">All ratings</option>@for (var i = 1; i <= 5; i++) { <option value="@i">@i+ stars</option> }</select><label class="collection-favorite-filter"><input type="checkbox" disabled="@ControlsDisabled" checked="@favoritesOnly" @onchange="FavoritesChanged" />Favorites</label><label class="collection-favorite-filter"><input type="checkbox" disabled="@ControlsDisabled" checked="@includeTrash" @onchange="IncludeTrashChanged" />Include Trash</label><Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Ghost" OnClick="SelectAll">Select all</Button> }
+        </Select>
+        @if (ShowsMedia) { <Select Class="collection-tool-select" Disabled="@ControlsDisabled" aria-label="Minimum rating" Value="@minRating.ToString()" ValueChanged="RatingFilterChanged"><option value="0">All ratings</option>@for (var i = 1; i <= 5; i++) { <option value="@i">@i+ stars</option> }</Select><label class="collection-favorite-filter"><input type="checkbox" disabled="@ControlsDisabled" checked="@favoritesOnly" @onchange="FavoritesChanged" />Favorites</label><label class="collection-favorite-filter"><input type="checkbox" disabled="@ControlsDisabled" checked="@includeTrash" @onchange="IncludeTrashChanged" />Include Trash</label><Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Ghost" OnClick="SelectAll">Select all</Button> }
         else { <Button Disabled="@ControlsDisabled" Variant="ButtonVariant.Ghost" OnClick="ToggleListView">@(listView ? "Grid view" : "List view")</Button> }
         <Button Variant="ButtonVariant.Ghost" Disabled="@ControlsDisabled" OnClick="RefreshAsync">Refresh</Button>
     </div>
@@ -184,8 +184,8 @@
     private Task Navigate(CollectionLocation location) => ControlsDisabled ? Task.CompletedTask : LocationChanged.InvokeAsync(location);
     private async Task ResetPageAsync() { if (ControlsDisabled) return; page = 0; selection.Clear(); anchor = null; await LoadThumbnailsAsync(); }
     private async Task SearchChanged(string value) { if (ControlsDisabled) return; query = value; await ResetPageAsync(); }
-    private async Task SortChanged(ChangeEventArgs e) { if (ControlsDisabled) return; sort = e.Value?.ToString() ?? "name"; await ResetPageAsync(); }
-    private async Task RatingFilterChanged(ChangeEventArgs e) { if (ControlsDisabled) return; minRating = int.TryParse(e.Value?.ToString(), out var value) ? value : 0; await ResetPageAsync(); }
+    private async Task SortChanged(string value) { if (ControlsDisabled) return; sort = value; await ResetPageAsync(); }
+    private async Task RatingFilterChanged(string selected) { if (ControlsDisabled) return; minRating = int.TryParse(selected, out var value) ? value : 0; await ResetPageAsync(); }
     private async Task ClearFiltersAsync() { if (ControlsDisabled) return; query = ""; searchResetVersion++; minRating = 0; favoritesOnly = includeTrash = false; await ResetPageAsync(); }
     private async Task PreviousPageAsync() { if (ControlsDisabled) return; page--; await LoadThumbnailsAsync(); }
     private async Task NextPageAsync() { if (ControlsDisabled) return; page++; await LoadThumbnailsAsync(); }

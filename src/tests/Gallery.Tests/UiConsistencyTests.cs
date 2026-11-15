@@ -234,7 +234,7 @@ public sealed class UiConsistencyTests
         Assert.NotEmpty(controls);
         foreach (Match control in controls) Assert.Matches(@"\sdisabled(?:=|\s|/?>)", control.Value);
         await Invoke(fixture, workspace, "ClearSelection");
-        await Invoke(fixture, workspace, "SortChanged", new ChangeEventArgs { Value = "name" });
+        await Invoke(fixture, workspace, "SortChanged", "name");
         await Invoke(fixture, workspace, "IncludeTrashChanged", new ChangeEventArgs { Value = true });
         await Invoke(fixture, workspace, "NextPageAsync");
         Assert.Single(Field<HashSet<string>>(workspace, "selection"));
@@ -246,7 +246,7 @@ public sealed class UiConsistencyTests
         Assert.Equal(new[] { true, false }, busyStates);
         Assert.False(Field<bool>(workspace, "working"));
         Assert.Equal("Save failed", Field<string>(workspace, "error"));
-        await Invoke(fixture, workspace, "SortChanged", new ChangeEventArgs { Value = "name" });
+        await Invoke(fixture, workspace, "SortChanged", "name");
         Assert.Equal("name", Field<string>(workspace, "sort"));
         Assert.Empty(Field<HashSet<string>>(workspace, "selection"));
     }
@@ -435,7 +435,7 @@ public sealed class UiConsistencyTests
         var selection = (HashSet<string>)typeof(CollectionsWorkspace).GetField("selection", Private)!.GetValue(workspace)!;
         selection.Add("hidden");
         typeof(CollectionsWorkspace).GetField("anchor", Private)!.SetValue(workspace, "hidden");
-        await Invoke(fixture, workspace, "SortChanged", new ChangeEventArgs { Value = "name" });
+        await Invoke(fixture, workspace, "SortChanged", "name");
         Assert.Empty(selection);
         Assert.Null(typeof(CollectionsWorkspace).GetField("anchor", Private)!.GetValue(workspace));
     }

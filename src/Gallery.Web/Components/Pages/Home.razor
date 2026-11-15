@@ -9,68 +9,90 @@
 
 <PageTitle>DiffusionGen Gallery</PageTitle>
 
-@if (!Gallery.IsUnlocked)
-{
-<section class="hero">
-    <div>
-        <div class="eyebrow"><span></span> YOUR IMAGINATION, KEPT SAFE</div>
-        <h1>A home for<br />every <span>what if.</span></h1>
-        <p>Your private creative library. Organize with intent. Discover with local intelligence.</p>
-    </div>
-    <div class="hero-art" aria-hidden="true"><div class="orbit"></div><div class="orbit second"></div><AsteriskIcon Size="74" ClassName="brand-mark" /><div class="art-caption">CREATE. COLLECT. KEEP.</div></div>
-</section>
-}
-
-@if (error.Length > 0 && !UsesToasts)
+@if (Gallery.IsUnlocked && error.Length > 0 && !UsesToasts)
 {
     <Alert Variant="AlertVariant.Destructive" Class="mb-6 flex items-center justify-between gap-3">@error <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" OnClick="() => error = string.Empty" aria-label="Dismiss error"><XIcon aria-hidden="true" /></Button></Alert>
 }
-@if (message.Length > 0 && !UsesToasts)
+@if (Gallery.IsUnlocked && message.Length > 0 && !UsesToasts)
 {
     <div class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@message</div>
 }
 
 @if (!Gallery.IsUnlocked)
 {
-    <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4">
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><span class="eyebrow">ENCRYPTED GALLERY</span><Badge Variant="BadgeVariant.Secondary" Class="border-primary/20 bg-primary/10 text-primary">AES-256-GCM</Badge></div>
+    var knownGalleries = Gallery.KnownGalleries;
+    <section class="gallery-entry @(galleryScreen == "switch" ? "gallery-entry-actions" : "gallery-entry-welcome")" aria-label="Gallery access">
+        <header class="gallery-entry-brand"><SparkleIcon Size="26" ClassName="brand-mark" aria-hidden="true" /> <span>DiffusionGen Gallery</span></header>
+        <div class="gallery-entry-heading">
+            <h1>@(galleryScreen == "switch" ? galleryTab switch { "create" => "Create a private gallery", "open" => "Open a gallery", _ => "Restore a gallery" } : Gallery.VaultExists ? "Welcome back." : "Your private gallery.")</h1>
+            <p>@(galleryScreen == "switch" ? "Encrypted media storage and backup." : "A safe space for your media.")</p>
+        </div>
+        @if (error.Length > 0 && !UsesToasts)
+        {
+            <Alert Variant="AlertVariant.Destructive" role="alert">@error</Alert>
+        }
+        @if (message.Length > 0 && !UsesToasts)
+        {
+            <p class="gallery-entry-status" role="status">@message</p>
+        }
         @if (galleryScreen == "switch")
         {
-            <h2>Switch gallery</h2>
             <Tabs Value="@galleryTab" ValueChanged="SetGalleryTab">
-                <TabsList Class="w-full" aria-label="Switch gallery actions">
+                <TabsList Class="gallery-entry-tabs" aria-label="Switch gallery actions">
                     @foreach (var tab in GalleryTabs)
                     {
-                        <TabsTrigger Value="@tab.Id" Class="flex-1" disabled="@busy">@tab.Name</TabsTrigger>
+                        <TabsTrigger Value="@tab.Id" disabled="@busy">@tab.Name</TabsTrigger>
                     }
                 </TabsList>
             </Tabs>
             @if (galleryTab == "create")
             {
-                <h3>Create a gallery</h3>
-                <Label For="new-gallery-name" Class="mt-4 mb-2 block">Gallery name</Label>
-                <Input id="new-gallery-name" @bind-Value="newGalleryName" maxlength="80" Disabled="@busy" />
-                <DirectoryPathInput Label="Local catalog directory (database and encryption header)" LocalOnly="true" @bind-Value="newGalleryDirectory" Disabled="@busy" />
-                <p class="text-muted-foreground">Choose a new or empty folder on this host's SSD/NVMe. SQLite's database must not use NAS/SMB storage.</p>
-                <DirectoryPathInput Label="Encrypted media directory (optional, local or NAS/SMB)" @bind-Value="newMediaDirectory" Disabled="@busy" />
-                <p class="text-muted-foreground">Leave blank to store media beside the catalog. Otherwise choose an existing folder; original media stays encrypted.</p>
-                <form @onsubmit="CreateGalleryAsync" @onsubmit:preventDefault>
-                    <Label For="secret" Class="mt-4 mb-2 block">Passphrase</Label>
-                    <Input id="secret" Type="password" @bind-Value="secret" autocomplete="off" minlength="14" required Disabled="@busy" />
-                    <Label For="confirm" Class="mt-4 mb-2 block">Confirm passphrase</Label>
-                    <Input id="confirm" Type="password" @bind-Value="confirm" autocomplete="off" minlength="14" required Disabled="@busy" />
-                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@busy" Type="submit">@(busy ? "Deriving encryption key..." : "Create gallery") <ArrowRightIcon aria-hidden="true" /></Button>
+                <form class="gallery-create-form" @onsubmit="CreateGalleryAsync" @onsubmit:preventDefault>
+                    <div class="gallery-entry-field">
+                        <Label For="new-gallery-name">Gallery name</Label>
+                        <Input id="new-gallery-name" Placeholder="Personal Gallery" @bind-Value="newGalleryName" maxlength="80" required Disabled="@busy" />
+                    </div>
+                    <div class="gallery-entry-field gallery-passphrase-field">
+                        <Label For="secret">Passphrase</Label>
+                        <Input id="secret" Type="password" @bind-Value="secret" Placeholder="Choose a passphrase" autocomplete="new-password" minlength="14" required Disabled="@busy" aria-describedby="passphrase-hint" />
+                        <p id="passphrase-hint">Use at least 14 characters.</p>
+                    </div>
+                    <div class="gallery-entry-field">
+                        <Label For="confirm">Confirm passphrase</Label>
+                        <Input id="confirm" Type="password" @bind-Value="confirm" Placeholder="Enter your passphrase again" autocomplete="new-password" minlength="14" required Disabled="@busy" />
+                    </div>
+                    <details class="gallery-storage-options">
+                        <summary><FolderIcon Size="16" ClassName="text-muted-foreground" aria-hidden="true" /><span>Storage options</span><ChevronDownIcon Size="16" ClassName="gallery-storage-chevron text-muted-foreground" aria-hidden="true" /></summary>
+                        <div class="gallery-storage-fields">
+                            <DirectoryPathInput Label="Gallery folder" LocalOnly="true" ShowHint="false" Placeholder="@newGalleryDirectory" @bind-Value="createGalleryDirectory" Disabled="@busy" />
+                            <div class="gallery-split-storage">
+                                <Switch id="split-gallery-storage" Checked="@splitGalleryStorage" CheckedChanged="SetSplitGalleryStorage" Disabled="@busy" />
+                                <Label For="split-gallery-storage">Split catalog and media folder</Label>
+                                <Tooltip DelayDuration="0">
+                                    <TooltipTrigger><InfoIcon Size="16" ClassName="text-muted-foreground" role="img" aria-label="About split storage" /></TooltipTrigger>
+                                    <TooltipContent Class="gallery-storage-tooltip">Enable the switch to specify an alternate media location. The database must be on a solid state drive, but encrypted media can be stored on another drive or NAS.</TooltipContent>
+                                </Tooltip>
+                            </div>
+                            @if (splitGalleryStorage)
+                            {
+                                <DirectoryPathInput Label="Media folder" ShowHint="false" @bind-Value="newMediaDirectory" Disabled="@busy" />
+                            }
+                        </div>
+                    </details>
+                    <Button Class="gallery-entry-primary" Disabled="@busy" Type="submit">@(busy ? "Deriving encryption key..." : "Create gallery")</Button>
                 </form>
             }
             else if (galleryTab == "open")
             {
-                <h3>Open an existing gallery</h3>
-                <DirectoryPathInput Label="Local folder or SMB path" @bind-Value="existingGalleryDirectory" Disabled="@busy" />
-                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@busy" OnClick="UseExistingGalleryAsync">Use this gallery <ArrowRightIcon aria-hidden="true" /></Button>
+                <form class="gallery-open-form" @onsubmit="UseExistingGalleryAsync" @onsubmit:preventDefault>
+                    <DirectoryPathInput Label="Gallery directory" @bind-Value="existingGalleryDirectory" Disabled="@busy" />
+                    <p class="text-muted-foreground">Choose an existing gallery folder containing vault.json and gallery.db.</p>
+                    <Button Class="gallery-entry-primary" Disabled="@busy" Type="submit">@(busy ? "Selecting gallery..." : "Open gallery")</Button>
+                </form>
             }
             else
             {
-                <h3>Restore gallery</h3>
+                <div class="gallery-restore-form">
                 <p class="text-muted-foreground">Restore a full backup or the last incremental backup in its chain. The destination must be a new or empty folder.</p>
                 <Tabs Value="@restoreSourceType" ValueChanged="SetRestoreSource">
                     <TabsList Class="w-full" aria-label="Backup location">
@@ -94,7 +116,7 @@
                     <p class="text-muted-foreground">Use the same prefix configured when the backups were created. Leave empty for backups at the container root.</p>
                 }
                 <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ListRestoreBackupsAsync">Find backups</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreSourceType == "sas" ? restoreSasUrl : restoreSourceDirectory))" OnClick="ListRestoreBackupsAsync">Find backups</Button>
                 </div>
                 <Label For="restore-archive" Class="mt-4 mb-2 block">Backup archive</Label>
                 <Select id="restore-archive" @bind-Value="restoreArchive" Disabled="@(busy || restoreArchives.Count == 0)">
@@ -106,33 +128,72 @@
                 <DirectoryPathInput Label="New local catalog directory" LocalOnly="true" @bind-Value="newGalleryDirectory" Disabled="@busy" />
                 <GalleryCredentialInput @bind-Value="restoreCredential" @bind-UseRecovery="restoreUseRecovery" Disabled="@busy" />
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@(busy || string.IsNullOrWhiteSpace(restoreArchive))" OnClick="RestoreGalleryAsync">Restore gallery <ArrowRightIcon aria-hidden="true" /></Button>
+
+                </div>
             }
-            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@busy" OnClick="ReturnToWelcome">Back to welcome</Button>
+            <button class="gallery-entry-back" type="button" disabled="@busy" @onclick="ReturnToWelcome">← Back to welcome</button>
         }
         else
         {
-        <h2>@(Gallery.VaultExists ? "Welcome back." : "Choose a gallery.")</h2>
-        @if (Gallery.VaultExists)
-        {
-            <p><strong>@Gallery.VaultName</strong></p>
-            <p class="text-muted-foreground">Unlock your gallery with your passphrase or recovery words.</p>
-            <form @onsubmit="UnlockAsync" @onsubmit:preventDefault>
-                @if (importRunning && importProgress is not null)
-                {
-                    <p class="mt-4 text-sm text-muted-foreground" role="status">Ingestion is still running: @importProgress.Completed@(importProgress.Total is int lockedTotal ? $" / {lockedTotal}" : "") files processed. Unlock to follow its progress.</p>
-                }
-                <GalleryCredentialInput @bind-Value="secret" @bind-UseRecovery="useRecovery" Disabled="@(busy && !importRunning)" />
-                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@(busy && !importRunning)" Type="submit">@(busy && !importRunning ? "Unlocking gallery..." : "Unlock gallery") <ArrowRightIcon aria-hidden="true" /></Button>
-            </form>
+            @if (Gallery.VaultExists)
+            {
+                <Card Class="gallery-unlock-card">
+                    <div class="gallery-switcher">
+                        <AdvancedSelect Id="gallery-switcher" Label="Galleries" ItemLabel="gallery"
+                                        Options="@knownGalleries.Select(location => location.Directory)"
+                                        OptionLabels="@knownGalleries.ToDictionary(location => location.Directory, location => location.Name)"
+                                        Value="@Gallery.VaultRoot" ValueChanged="SelectKnownGalleryAsync"
+                                        AllowCreate="false" AllowClear="false" Disabled="@busy">
+                            <LeadingIcon><FolderIcon Size="18" ClassName="text-primary" aria-hidden="true" /></LeadingIcon>
+                        </AdvancedSelect>
+                    </div>
+                    <form class="gallery-unlock-form" @onsubmit="UnlockAsync" @onsubmit:preventDefault>
+                        @if (importRunning && importProgress is not null)
+                        {
+                            <p class="gallery-entry-status" role="status">Ingestion is still running: @importProgress.Completed@(importProgress.Total is int lockedTotal ? $" / {lockedTotal}" : "") files processed. Unlock to follow its progress.</p>
+                        }
+                        <div class="gallery-entry-field">
+                            <Label For="unlock-credential">@(useRecovery ? "32 recovery words" : "Passphrase")</Label>
+                            @if (useRecovery)
+                            {
+                                <Textarea id="unlock-credential" @bind-Value="secret" Rows="4" autocomplete="off" spellcheck="false" required Disabled="@(busy && !importRunning)" />
+                            }
+                            else
+                            {
+                                <Input id="unlock-credential" autofocus Type="password" @bind-Value="secret" Placeholder="passphrase" autocomplete="current-password" minlength="14" required Disabled="@(busy && !importRunning)" />
+                            }
+                        </div>
+                        <Button Class="gallery-entry-primary" Disabled="@(busy && !importRunning)" Type="submit">@(busy && !importRunning ? "Unlocking gallery..." : "Unlock gallery")</Button>
+                        <button class="gallery-entry-link gallery-recovery-link" type="button" disabled="@(busy && !importRunning)" @onclick="ToggleWelcomeRecovery">@(useRecovery ? "Use passphrase" : "Use recovery words")</button>
+                    </form>
+                </Card>
+            }
+            else
+            {
+                <Card Class="gallery-unlock-card gallery-empty-card">
+                    @if (Gallery.KnownGalleries.Count > 0)
+                    {
+                        <Label For="remembered-gallery">Choose a remembered gallery</Label>
+                        <Select id="remembered-gallery" Value="" ValueChanged="SelectKnownGalleryAsync" Disabled="@busy">
+                            <option value="" disabled>Select a gallery</option>
+                            @foreach (var location in Gallery.KnownGalleries)
+                            {
+                                <option value="@location.Directory" title="@location.Directory">@location.Name</option>
+                            }
+                        </Select>
+                    }
+                    <p>Create your first gallery, open an existing library, or restore a backup.</p>
+                    <Button Class="gallery-entry-primary" Disabled="@busy" OnClick="OpenGallerySwitcher">Create a gallery</Button>
+                </Card>
+            }
+            <div class="gallery-other-libraries"><span>Looking for another library?</span><button class="gallery-entry-link" type="button" disabled="@busy" @onclick="OpenOtherGallery">Switch gallery</button></div>
+            <div class="gallery-recovery-reminder">
+                <p class="gallery-privacy"><LockIcon Size="15" aria-hidden="true" />Designed from the ground up with privacy in mind.</p>
+                <p>Keep your recovery words safe. Without them or your passphrase, your media cannot be recovered.</p>
+                <p>DiffusionGen Gallery encrypts stored media, thumbnails, catalog content, and settings to help protect your library while locked. Encryption does not protect an unlocked session or a compromised computer.</p>
+            </div>
         }
-        else
-        {
-            <p class="text-muted-foreground">Open, create, or restore a gallery to continue.</p>
-        }
-        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Class="mt-6 w-full justify-between" Disabled="@busy" OnClick="OpenGallerySwitcher">Switch gallery <ArrowRightIcon aria-hidden="true" /></Button>
-        <div class="mt-6 space-y-2 border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground [&>strong]:block [&>strong]:text-foreground"><strong>No reset link. No backdoor.</strong> If you lose both your passphrase and recovery words, your encrypted media cannot be recovered.</div>
-        }
-    </Card>
+    </section>
 }
 else if (recoveryPhrase.Length > 0)
 {
@@ -842,18 +903,18 @@ else
                 @if (removalPlan.Any(item => item.OriginalExists))
                 {
                     <Label For="existing-action" Class="mt-4 mb-2 block">Original exists (@removalPlan.Count(item => item.OriginalExists))</Label>
-                    <select id="existing-action" @bind="existingOriginalAction" disabled="@busy" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                    <Select id="existing-action" @bind-Value:get="existingOriginalAction.ToString()" @bind-Value:set="value => existingOriginalAction = Enum.Parse<ExistingOriginalAction>(value)" Disabled="@busy" Class="w-full min-w-0">
                         <option value="@ExistingOriginalAction.Retain">Remove from gallery, retain original</option>
                         <option value="@ExistingOriginalAction.Delete">Remove from gallery AND delete original</option>
-                    </select>
+                    </Select>
                 }
                 @if (removalPlan.Any(item => !item.OriginalExists))
                 {
                     <Label For="missing-action" Class="mt-4 mb-2 block">No accessible original (@removalPlan.Count(item => !item.OriginalExists))</Label>
-                    <select id="missing-action" @bind="missingOriginalAction" disabled="@busy" class="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+                    <Select id="missing-action" @bind-Value:get="missingOriginalAction.ToString()" @bind-Value:set="value => missingOriginalAction = Enum.Parse<MissingOriginalAction>(value)" Disabled="@busy" Class="w-full min-w-0">
                         <option value="@MissingOriginalAction.RestorePng">Restore the stored copy, then remove from gallery</option>
                         <option value="@MissingOriginalAction.Discard">Remove from gallery without restoration (lost forever)</option>
-                    </select>
+                    </Select>
                     @if (missingOriginalAction == MissingOriginalAction.RestorePng)
                     {
                         <Label For="restore-folder" Class="mt-4 mb-2 block">Existing folder for restored files</Label>
@@ -883,7 +944,10 @@ else
 
 @code {
     private string galleryScreen = "welcome", galleryTab = "create";
+    private string? focusedWelcomeCredential;
     private string existingGalleryDirectory = "", newGalleryName = "", newGalleryDirectory = "";
+    private string createGalleryDirectory = "";
+    private bool splitGalleryStorage;
     private string newMediaDirectory = "", mediaDirectory = "", catalogDirectory = "";
     private IngestionOptions savedIngestionOptions = IngestionOptions.Hdd;
     private bool IngestionSettingsDirty => ingestionWorkers != savedIngestionOptions.Workers || ingestionBatchSize != savedIngestionOptions.CatalogBatchSize;
@@ -902,8 +966,30 @@ else
 
     private void OpenGallerySwitcher()
     {
+        secret = confirm = "";
+        useRecovery = false;
         galleryScreen = "switch";
         error = message = "";
+    }
+
+    private void OpenOtherGallery()
+    {
+        SetGalleryTab("open");
+        OpenGallerySwitcher();
+    }
+
+    private void ToggleWelcomeRecovery()
+    {
+        secret = "";
+        useRecovery = !useRecovery;
+    }
+
+    private Task SelectKnownGalleryAsync(string directory)
+    {
+        secret = confirm = "";
+        useRecovery = false;
+        existingGalleryDirectory = directory;
+        return UseExistingGalleryAsync();
     }
 
     private void ReturnToWelcome()
@@ -939,16 +1025,23 @@ else
         await Gallery.CloseVaultAsync();
         galleryRename = Gallery.VaultName;
         ReturnToWelcome();
-        message = "Gallery selected. Enter its passphrase or recovery words to unlock it.";
     });
+
+    private void SetSplitGalleryStorage(bool enabled)
+    {
+        splitGalleryStorage = enabled;
+        if (!enabled) newMediaDirectory = "";
+    }
 
     private Task CreateGalleryAsync() => RunAsync("Creating gallery...", async () =>
     {
         if (secret != confirm) throw new InvalidOperationException("Passphrases do not match.");
-        await Gallery.SelectNewVaultAsync(newGalleryDirectory);
+        await Gallery.SelectNewVaultAsync(string.IsNullOrWhiteSpace(createGalleryDirectory) ? newGalleryDirectory : createGalleryDirectory);
         recoveryPhrase = await Gallery.CreateVaultAsync(secret, confirm, newGalleryName,
-            new MediaStorageOptions { MediaDirectory = newMediaDirectory });
-        secret = confirm = "";
+            new MediaStorageOptions { MediaDirectory = splitGalleryStorage ? newMediaDirectory : "" });
+        secret = confirm = newMediaDirectory = newGalleryName = createGalleryDirectory = "";
+        splitGalleryStorage = false;
+        newGalleryDirectory = GalleryService.DefaultVaultDirectory();
     });
 
     private Task RenameGalleryAsync() => RunAsync("Renaming gallery...", async () =>
@@ -1001,8 +1094,9 @@ else
         EnsureNoLibraryJob();
         try { await Gallery.PurgeVaultAsync(purgeConfirmation); }
         finally { if (!Gallery.IsUnlocked) Lock(); }
-        newGalleryName = GalleryService.GenerateVaultName();
-        newGalleryDirectory = GalleryService.DefaultVaultDirectory(newGalleryName);
+        newGalleryName = createGalleryDirectory = newMediaDirectory = "";
+        splitGalleryStorage = false;
+        newGalleryDirectory = GalleryService.DefaultVaultDirectory();
         galleryScreen = "switch";
         galleryTab = "create";
         message = "All gallery media and data were permanently destroyed. Backups and original sources were retained.";
@@ -1268,8 +1362,7 @@ else
         Gallery.OnAutoLocked += HandleAutoLocked;
         Gallery.DriveQueueChanged += HandleDriveQueueChanged;
         driveQueue = Gallery.DriveQueueStatus;
-        newGalleryName = GalleryService.GenerateVaultName();
-        newGalleryDirectory = GalleryService.DefaultVaultDirectory(newGalleryName);
+        newGalleryDirectory = GalleryService.DefaultVaultDirectory();
         galleryRename = Gallery.VaultExists ? Gallery.VaultName : "";
     }
 
@@ -1905,6 +1998,14 @@ else
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         PublishToasts();
+        var welcomeCredential = !Gallery.IsUnlocked && Gallery.VaultExists && galleryScreen == "welcome"
+            && (!busy || importRunning) ? $"{Gallery.VaultRoot}:{useRecovery}" : null;
+        if (welcomeCredential != focusedWelcomeCredential)
+        {
+            focusedWelcomeCredential = welcomeCredential;
+            if (welcomeCredential is not null)
+                await JS.InvokeVoidAsync("galleryFocus.byId", "unlock-credential");
+        }
         if (focusCollectionNavigation is { } open)
         {
             focusCollectionNavigation = null;

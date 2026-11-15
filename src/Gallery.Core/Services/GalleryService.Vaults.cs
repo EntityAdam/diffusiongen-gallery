@@ -18,15 +18,30 @@ public sealed partial class GalleryService
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DiffusionGenGallery");
     public string VaultName => vaultStore.Name;
 
-    public static string GenerateVaultName()
+    public IReadOnlyList<GalleryLocation> KnownGalleries
     {
-        string[] adjectives = ["bright", "quiet", "curious", "gentle", "bold", "silver", "cosmic", "merry"];
-        string[] nouns = ["otter", "nebula", "willow", "fox", "comet", "orchid", "raven", "badger"];
-        return $"{adjectives[RandomNumberGenerator.GetInt32(adjectives.Length)]}-{nouns[RandomNumberGenerator.GetInt32(nouns.Length)]}-{RandomNumberGenerator.GetInt32(10000):D4}";
+        get
+        {
+            var roots = (history?.ReadGalleries() ?? []).Prepend(VaultRoot)
+                .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            var galleries = new List<GalleryLocation>();
+            foreach (var root in roots)
+            {
+                try
+                {
+                    var store = new VaultStore(root);
+                    if (store.Exists && File.Exists(Path.Combine(root, CatalogFileName)))
+                        galleries.Add(new(root, store.Name));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                    or System.Text.Json.JsonException or InvalidOperationException or ArgumentException) { }
+            }
+            return galleries;
+        }
     }
 
-    public static string DefaultVaultDirectory(string name) =>
-        Path.Combine(DefaultApplicationDirectory, "galleries", name);
+    public static string DefaultVaultDirectory() =>
+        Path.Combine(DefaultApplicationDirectory, "galleries", Guid.NewGuid().ToString("N"));
 
     private void EnsureActive() => ObjectDisposedException.ThrowIf(galleryLifetime.IsDisposed, this);
     private void EnsureCheckout()
@@ -55,12 +70,13 @@ public sealed partial class GalleryService
                 }
                 await StopDriveOperationPlayerAsync();
                 await vaultSession.LockAndDrainAsync();
+                if (existing) history?.Save(root);
                 return;
             }
             var store = new VaultStore(root);
             if (existing && (!store.Exists || !File.Exists(Path.Combine(root, CatalogFileName))))
                 throw new InvalidOperationException("Select a gallery folder containing vault.json and gallery.db.");
-            var nextCheckout = galleryLifetime.AcquireLocationCheckout(root);
+            VaultCheckout? nextCheckout = galleryLifetime.AcquireLocationCheckout(root);
             try
             {
                 if (!existing)
@@ -72,8 +88,10 @@ public sealed partial class GalleryService
                 await vaultSession.LockAndDrainAsync();
                 EnsureActive();
                 galleryLifetime.PublishLocation(galleryLifetime.StoreFactory.Create(root), store, nextCheckout)?.Dispose();
+                nextCheckout = null; // The published location now owns the checkout, including on history-write failure.
+                if (existing) history?.Save(root);
             }
-            catch { nextCheckout.Dispose(); throw; }
+            catch { nextCheckout?.Dispose(); throw; }
         }
         finally { lifecycleGate.Release(); }
     }

@@ -20,7 +20,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
     {
         ValidateCredentialConfirmation(passphrase, confirmation);
         ValidatePassphrase(passphrase);
-        var galleryName = NormalizeGalleryName(name ?? GalleryService.GenerateVaultName());
+        var galleryName = NormalizeGalleryName(name ?? VaultStore.DefaultGalleryName);
         if (storageOptions is not null)
             storageOptions = GalleryService.NormalizeMediaStorageOptions(storageOptions);
 

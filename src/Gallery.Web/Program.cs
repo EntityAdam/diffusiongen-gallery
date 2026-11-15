@@ -9,7 +9,7 @@ webApplicationBuilder.WebHost.UseUrls(webApplicationBuilder.Configuration["urls"
 webApplicationBuilder.WebHost.UseStaticWebAssets();
 var configuredVaultRoot = webApplicationBuilder.Configuration["Gallery:DataDirectory"];
 var vaultRoot = string.IsNullOrWhiteSpace(configuredVaultRoot)
-    ? GalleryService.DefaultVaultDirectory(GalleryService.GenerateVaultName())
+    ? GalleryService.DefaultVaultDirectory()
     : configuredVaultRoot;
 var normalizedVaultRoot = Path.GetFullPath(vaultRoot);
 webApplicationBuilder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
