@@ -29,6 +29,9 @@ public partial class Home
         CancelCatalogLoad();
         var generation = catalogGeneration;
         collectionCatalog = await Gallery.LoadCollectionCatalogAsync();
+        var savedQuickFilters = await Gallery.LoadViewsAsync();
+        if (!IsCatalogGenerationCurrent(generation)) return;
+        quickFilters = savedQuickFilters.OrderBy(view => view.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         var snapshot = await Gallery.LoadInitialPageAsync(PageSize, TrashActive);
         if (!IsCatalogGenerationCurrent(generation)) return;
         catalogPartial = !snapshot.IsComplete || !snapshot.IsCurrent;
