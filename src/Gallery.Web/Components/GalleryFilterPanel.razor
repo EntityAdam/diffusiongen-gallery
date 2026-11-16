@@ -1,9 +1,29 @@
 <div class="filter-panel">
+        @if (ActiveChips.Count > 0)
+        {
+            <div class="filter-active-chips" role="group" aria-label="Active filters">
+                @foreach (var chip in ActiveChips)
+                {
+                    <span class="filter-chip" @key="chip.Key">
+                        <span>@chip.Label</span>
+                        <button type="button" disabled="@Disabled" aria-label="@($"Remove {chip.Label}")" @onclick="() => RemoveChipAsync(chip.Key)"><XIcon Size="12" aria-hidden="true" /></button>
+                    </span>
+                }
+            </div>
+        }
         <p class="text-muted-foreground text-sm" aria-live="polite">@ResultCount of @Images.Count media items match</p>
         <div class="filter-panel-body">
+            @if (QuickFilters.Count > 0)
+            {
+                <div class="filter-quick-picker">
+                    <Label For="quick-filter" Class="mb-2 block">Quick filters</Label>
+                    <AdvancedSelect Id="quick-filter" Label="Quick filters" Placeholder="Apply a saved filter…" AllowCreate="false" AllowClear="false" Disabled="@Disabled"
+                                    Options="@QuickFilters.Select(view => view.Name)" Value="@(QuickFilters.FirstOrDefault(view => view.GalleryFilter == Filter)?.Name ?? "")" ValueChanged="ApplyQuickFilterAsync" />
+                </div>
+            }
             <div class="filter-primary">
                 <Label For="search" Class="mb-2 block">Search</Label>
-                <DebouncedFilterInput Disabled="@Disabled" Id="search" ResetVersion="@ResetVersion" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
+                <DebouncedFilterInput Disabled="@Disabled" Id="search" ResetVersion="@InputResetVersion" @bind-Value="draft.Search" @bind-Value:after="NotifyChangedAsync" Placeholder="Prompt, name, description..." />
                 <Label For="diffusion-model" Class="mt-4 mb-2 block">Diffusion model</Label>
                 <AdvancedSelect Disabled="@Disabled" Id="diffusion-model" Label="Diffusion models" ItemLabel="model" Placeholder="Any diffusion model"
                                 Options="@DiffusionModels" AllowCreate="false" MaxLength="4000" @bind-Value="draft.DiffusionModel" @bind-Value:after="NotifyChangedAsync" />
@@ -37,7 +57,7 @@
                                                 Options="@Tags" AllowCreate="false" @bind-Values="draft.Tags" @bind-Values:after="NotifyChangedAsync" />
                                 <p class="mt-2 text-sm text-muted-foreground">Matches all selected tags.</p>
                                 <Label For="folder" Class="mt-4 mb-2 block">Folder</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="folder" ResetVersion="@ResetVersion" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
+                                <DebouncedFilterInput Disabled="@Disabled" Id="folder" ResetVersion="@InputResetVersion" @bind-Value="draft.Folder" @bind-Value:after="NotifyChangedAsync" Placeholder="Source or current folder" />
                                 <div class="grid grid-cols-2 gap-3">
                                     <div>
                                         <Label For="rating-filter" Class="mt-4 mb-2 block">Minimum rating</Label>
@@ -89,9 +109,9 @@
                                 <AdvancedSelect Disabled="@Disabled" Id="vision-object" Label="Object kinds" Placeholder="Any object kind"
                                                 Options="@VisionKinds" AllowCreate="false" MaxLength="4000" @bind-Value="draft.VisionObject" @bind-Value:after="NotifyChangedAsync" />
                                 <Label For="vision-attribute" Class="mt-3 mb-2 block">Attribute name</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-attribute" ResetVersion="@ResetVersion" @bind-Value="draft.VisionAttribute" @bind-Value:after="NotifyChangedAsync" Placeholder="color" />
+                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-attribute" ResetVersion="@InputResetVersion" @bind-Value="draft.VisionAttribute" @bind-Value:after="NotifyChangedAsync" Placeholder="color" />
                                 <Label For="vision-value" Class="mt-3 mb-2 block">Attribute value</Label>
-                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-value" ResetVersion="@ResetVersion" @bind-Value="draft.VisionValue" @bind-Value:after="NotifyChangedAsync" Placeholder="yellow" />
+                                <DebouncedFilterInput Disabled="@Disabled" Id="vision-value" ResetVersion="@InputResetVersion" @bind-Value="draft.VisionValue" @bind-Value:after="NotifyChangedAsync" Placeholder="yellow" />
                                 break;
                             case "imported":
                                 <div class="grid grid-cols-2 gap-3">
@@ -104,11 +124,6 @@
                 </section>
             }
 
-            <p class="filter-panel-note">Thumbnails and metadata are encrypted in SQLite. Filters run locally while the gallery is unlocked, and results update as you change them.</p>
-        </div>
-
-        <div class="filter-panel-footer">
-            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" OnClick="Reset" Disabled="@Disabled">Reset filters</Button>
         </div>
 </div>
 
@@ -144,7 +159,7 @@
     [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
     [Parameter] public int ResultCount { get; set; }
     [Parameter] public EventCallback<GalleryFilter> Changed { get; set; }
-    [Parameter] public EventCallback Reset { get; set; }
+    [Parameter] public IReadOnlyList<SavedView> QuickFilters { get; set; } = [];
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public long ResetVersion { get; set; }
 
@@ -211,6 +226,29 @@
     private IEnumerable<string> VisionPredicates => Images.Where(image => image.VisionFacts is not null)
         .SelectMany(image => image.VisionFacts!.Relationships).Select(relation => relation.Predicate)
         .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase);
+
+    private long chipResetRevision;
+    private long InputResetVersion => ResetVersion + chipResetRevision;
+    private IReadOnlyList<GalleryFilterChip> ActiveChips => GalleryFilterChips.Create(Filter);
+
+    private Task RemoveChipAsync(string key)
+    {
+        if (Disabled) return Task.CompletedTask;
+        var updated = GalleryFilterChips.Remove(Filter, key);
+        draft = FilterDraft.CreateFrom(updated);
+        chipResetRevision++;
+        return Changed.InvokeAsync(updated);
+    }
+
+    private Task ApplyQuickFilterAsync(string name)
+    {
+        if (Disabled) return Task.CompletedTask;
+        var saved = QuickFilters.FirstOrDefault(view => view.Name == name);
+        if (saved is null) return Task.CompletedTask;
+        draft = FilterDraft.CreateFrom(saved.GalleryFilter);
+        chipResetRevision++;
+        return Changed.InvokeAsync(saved.GalleryFilter with { });
+    }
 
     private Task NotifyChangedAsync() => Changed.InvokeAsync(draft.ToFilter());
 

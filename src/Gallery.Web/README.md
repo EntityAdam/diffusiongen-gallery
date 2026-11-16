@@ -687,7 +687,7 @@ dotnet test .\src\Gallery.slnx
 node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
 
-Retained but unexposed code includes saved filter views, comparison of two media
+Retained but unexposed code includes comparison of two media
 items, selection ZIP export, and additional bulk organization/review operations. These are not user-facing
 features. Explicit persisted vision-acceptance tracking is a future change;
 the current card icon is inferred from saved analysis and pending suggestions.
@@ -715,3 +715,25 @@ and media folder** to reveal the media-folder field. Disabling it clears the alt
 media location. The name field starts empty with “Personal Gallery” as a placeholder.
 The default storage location is a new local catalog directory identified by a GUID;
 subsequent creations receive a fresh default directory.
+
+### Filter drawer and quick filters
+
+The drawer header contains Close, **Reset filters**, and **Save quick filter**.
+Active criteria appear as removable chips below the header; the chip section is
+hidden when filters match their defaults. Each tag has its own chip. Removing one
+criterion preserves the others and updates its corresponding input.
+
+**Save quick filter** names a snapshot of the current criteria (1–80 characters).
+Saving with an existing name replaces that quick filter, as indicated in the dialog.
+Quick filters are stored in the gallery’s encrypted saved-view settings and can be
+reapplied through the **Quick filters** picker in the drawer. Reset clears the
+current criteria without deleting saved quick filters.
+
+### Sidebar navigation
+
+The main sidebar is ordered as Gallery, Filters; Collections, Tags; Review,
+Duplicate finder, AI analysis; Import media. Horizontal separators divide these
+four groups. Settings stays anchored above Panic lock at the bottom. There is no
+Unorganized or Trash sidebar entry. Filters opens its drawer independently of
+whether the floating toolbox is visible; AI analysis opens its existing panel.
+The toolbox remains available during the gradual navigation migration.

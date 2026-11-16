@@ -18,6 +18,77 @@ public sealed class UiConsistencyTests
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
+    [Fact]
+    public async Task Sidebar_UsesTheRequestedOrderAndOpensGalleryTools()
+    {
+        using var vault = new TestVault();
+        await vault.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, root) = await Render<Home>(fixture, new());
+        var html = await Html(fixture, root);
+        var navigation = Regex.Match(html, @"<nav class=""workspace-navigation""[^>]*>(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
+        var labels = Regex.Matches(navigation, @"aria-label=""([^""]+)""").Select(match => match.Groups[1].Value).ToArray();
+        Assert.Equal(new[] { "Gallery", "Filters", "Collections", "Tags", "Review", "Duplicate finder", "AI analysis", "Import media" }, labels);
+        Assert.Equal(3, Regex.Matches(navigation, "role=\"separator\"").Count);
+        Assert.DoesNotContain("Trash", navigation);
+        Assert.DoesNotContain("Unorganized", navigation);
+        typeof(Home).GetField("toolboxVisible", Private)!.SetValue(home, false);
+        await Invoke(fixture, home, "NavigateSidebarAsync", "filters");
+        Assert.Equal("filters", Field<string>(home, "activeTool"));
+        Assert.Contains("class=\"gallery-filter-drawer\"", await Html(fixture, root));
+        await Invoke(fixture, home, "NavigateSidebarAsync", "tags");
+        await Invoke(fixture, home, "NavigateSidebarAsync", "gallery");
+        Assert.Equal("gallery", Field<string>(home, "workflow"));
+        Assert.Equal("", Field<string>(home, "activeTool"));
+        await Invoke(fixture, home, "NavigateSidebarAsync", "intelligence");
+        Assert.Equal("gallery", Field<string>(home, "workflow"));
+        Assert.Equal("intelligence", Field<string>(home, "activeTool"));
+        Assert.True(Field<bool>(home, "toolboxVisible"));
+    }
+
+    [Fact]
+    public async Task FilterChipRemoval_UpdatesTheCriterionAndInvalidatesPendingTextEdits()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        GalleryFilter? changed = null;
+        var (panel, root) = await Render<GalleryFilterPanel>(fixture, new()
+        {
+            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter { Search = "portrait", Tag = "cat, dog", MinRating = 4 },
+            [nameof(GalleryFilterPanel.Changed)] = EventCallback.Factory.Create<GalleryFilter>(this, value => changed = value)
+        });
+        var html = await Html(fixture, root);
+        Assert.Contains("aria-label=\"Active filters\"", html);
+        Assert.Contains("aria-label=\"Remove Search: portrait\"", html);
+        Assert.DoesNotContain("filter-panel-footer", html);
+        Assert.DoesNotContain("Reset filters", html);
+        await Invoke(fixture, panel, "RemoveChipAsync", "search");
+        Assert.Equal("", changed!.Search);
+        Assert.Equal("cat, dog", changed.Tag);
+        Assert.Equal(4, changed.MinRating);
+        Assert.True(Field<long>(panel, "chipResetRevision") > 0);
+    }
+
+    [Fact]
+    public async Task QuickFilters_SaveAnEncryptedSnapshotAndClearOnLock()
+    {
+        using var vault = new TestVault();
+        await vault.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, _) = await Render<Home>(fixture, new());
+        var savedFilter = new GalleryFilter { Tag = "cat, dog", MinRating = 4 };
+        typeof(Home).GetField("filter", Private)!.SetValue(home, savedFilter);
+        await Invoke(fixture, home, "BeginSaveQuickFilter");
+        typeof(Home).GetField("quickFilterName", Private)!.SetValue(home, "Portraits");
+        typeof(Home).GetField("filter", Private)!.SetValue(home, new GalleryFilter());
+        await Invoke(fixture, home, "SaveQuickFilterAsync");
+        var saved = Assert.Single(await vault.Service.LoadViewsAsync());
+        Assert.Equal("Portraits", saved.Name);
+        Assert.Equal(savedFilter, saved.GalleryFilter);
+        Assert.Single(Field<IReadOnlyList<SavedView>>(home, "quickFilters"));
+        await Invoke(fixture, home, "Lock");
+        Assert.Empty(Field<IReadOnlyList<SavedView>>(home, "quickFilters"));
+    }
+
     [Theory]
     [InlineData("Review")]
     [InlineData("Deletion")]
