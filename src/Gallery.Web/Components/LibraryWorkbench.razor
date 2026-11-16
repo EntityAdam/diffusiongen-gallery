@@ -71,7 +71,12 @@
     }
     @if (Workflow == "intelligence")
     {
-        <p class="text-muted-foreground text-sm">Describe and tag media with your local vision model. Suggestions are saved as encrypted drafts until you approve: cards with a suggestion show a <SparklesIcon Size="12" aria-hidden="true" /> badge, which opens the media item in full screen for review.</p>
+        <p class="text-muted-foreground text-sm">Describe and tag media with your local vision model. Review pending suggestions individually or accept or discard them together.</p>
+        <div class="flex items-center gap-3">
+            <Switch id="auto-accept-vision" Checked="@AutoAcceptVisionAnalysis" CheckedChanged="SetAutoAcceptVisionAsync" Disabled="@(working || checkpoint is null)" aria-describedby="auto-accept-vision-hint" />
+            <Label For="auto-accept-vision">Auto-accept vision analysis</Label>
+        </div>
+        <p id="auto-accept-vision-hint" class="text-muted-foreground text-xs">Saves automatically for this gallery. Applies to new results; existing suggestions stay pending.</p>
         <div class="flex flex-wrap items-center gap-2">
             @if (analyzing)
             {
@@ -81,19 +86,23 @@
             else
             {
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Icon" Disabled="@(working || UnanalyzedCount == 0)" OnClick="AnalyzeUnanalyzedAsync"
-                        aria-label="Analyze all media without a description" title="Analyze all media without a description"><PlayIcon Size="16" aria-hidden="true" /></Button>
+                        aria-label="Start analyzing unanalyzed media" title="Start analyzing unanalyzed media"><PlayIcon Size="16" aria-hidden="true" /></Button>
             }
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(working || SelectedIds.Count is 0 or > 24)" OnClick="SuggestAsync"
                     title="Analyze up to 24 selected media items">Analyze selected (@SelectedIds.Count)</Button>
         </div>
-        <p class="text-muted-foreground text-sm">@UnanalyzedCount without a description · @suggestions.Count awaiting approval</p>
+        <p class="text-muted-foreground text-sm">@UnanalyzedCount unanalyzed · @suggestions.Count awaiting approval</p>
+        <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Pending analysis suggestions">
+            <Button Size="ButtonSize.Sm" Disabled="@(working || suggestions.Count == 0)" OnClick="AcceptAllVisionAsync">Accept all (@suggestions.Count)</Button>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(working || suggestions.Count == 0)" OnClick="DiscardAllVisionAsync">Discard all (@suggestions.Count)</Button>
+        </div>
     }
     @if (!working && PendingAnalysisCount > 0)
     {
         <div class="flex flex-wrap items-center gap-2" role="status">
-            <p>@PendingAnalysisCount unfinished analysis item(s). Completed suggestions are saved.</p>
-            <Button Variant="ButtonVariant.Outline" OnClick="ResumeAnalysisAsync">Resume analysis</Button>
-            <Button Variant="ButtonVariant.Ghost" OnClick="DiscardQueueAsync">Discard unfinished queue</Button>
+            <p>@PendingAnalysisCount unfinished selected media item(s). Completed suggestions are saved.</p>
+            <Button Variant="ButtonVariant.Outline" OnClick="ResumeAnalysisAsync">Resume selected media</Button>
+            <Button Variant="ButtonVariant.Ghost" OnClick="DiscardQueueAsync">Discard selected queue</Button>
         </div>
     }
     @if (working) { <p class="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm break-words" role="status">@status</p> }
@@ -156,8 +165,7 @@
         .GroupBy(tag => tag, StringComparer.OrdinalIgnoreCase)
         .Select(group => (group.First(), group.Count()))
         .OrderBy(item => item.Item1, StringComparer.OrdinalIgnoreCase).ToList();
-    private IEnumerable<ImageRecord> UnanalyzedImages => Images.Where(image => image.Description.Length == 0 && !image.IsMarkedForDeletion
-        && !suggestions.Any(suggestion => suggestion.Id == image.Id));
+    private IEnumerable<ImageRecord> UnanalyzedImages => Images.Where(NeedsVisionAnalysis);
     private int UnanalyzedCount => UnanalyzedImages.Count();
     private IReadOnlyList<string> TagValues => tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private void SetTagValues(IReadOnlyList<string> values) => tags = string.Join(", ", values);
@@ -235,8 +243,15 @@
     public async Task DismissSuggestionAsync(OrganizationSuggestion suggestion)
     {
         await EnsureCheckpointAsync();
-        await checkpoint!.DismissAsync(suggestion.Id);
-        suggestions.RemoveAll(item => item.Id == suggestion.Id);
+        await visionApprovalGate.WaitAsync(checkpoint!.RevocationToken);
+        try
+        {
+            var draft = checkpoint.State.Drafts.FirstOrDefault(item => item.Id == suggestion.Id && !item.TagsOnly);
+            if (draft is not null && ToSuggestion(draft) == suggestion)
+                await checkpoint.UpdateAsync(state => state with { Drafts = [.. state.Drafts.Where(item => item != draft)] });
+        }
+        finally { visionApprovalGate.Release(); }
+        suggestions = checkpoint.State.Drafts.Where(draft => !draft.TagsOnly).Select(ToSuggestion).ToList();
         if (!working) jobMessage = $"{suggestions.Count} suggestions await approval.";
         await PublishSuggestionsAsync();
         await PublishJobAsync();
@@ -306,8 +321,6 @@
         return AnalyzeAsync(Images.Where(image => SelectedIds.Contains(image.Id)).ToArray(), target, "Analyzing selection...");
     }
 
-    private Task AnalyzeUnanalyzedAsync() => AnalyzeAsync(UnanalyzedImages.ToArray(), suggestions, "Analyzing media without a description...");
-
     private Task ApplyTagsAsync() => RunAsync("Applying tags...", async () =>
     {
         if (string.IsNullOrWhiteSpace(tags) || tags.Length > 4000) throw new InvalidOperationException("Enter tags of up to 4000 characters.");
@@ -329,8 +342,8 @@
     {
         await EnsureCheckpointAsync();
         checkpoint!.RevocationToken.ThrowIfCancellationRequested();
-        var imageRecord = await PersistApprovedSuggestionAsync(Gallery, suggestion);
-        await checkpoint.DismissAsync(suggestion.Id);
+        var imageRecord = await ApprovePendingVisionAsync(suggestion);
+        if (imageRecord is null) return null;
         suggestions.RemoveAll(item => item.Id == suggestion.Id);
         if (!working) jobMessage = $"{suggestions.Count} suggestions await approval.";
         await PublishSuggestionsAsync();
