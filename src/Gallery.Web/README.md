@@ -432,21 +432,33 @@ operator and use HTTPS when available. The gallery itself remains loopback-only.
 
 In the AI toolbox panel:
 
-- **Play** analyzes media without vision descriptions or pending suggestions.
+- **Play** reads the current gallery and analyzes media without saved analysis,
+  vision descriptions, or pending vision suggestions. Whole-library runs do not
+  create a saved queue. Start again after stopping to pick up what remains.
 - **Analyze selected** analyzes up to 24 selected media items.
 - The eye-dashed badge opens a pending suggestion in the full-screen viewer.
   **Approve & save** replaces vision notes and merges tags. **Dismiss** discards the encrypted draft.
-- Completed suggestions and unfinished queue items are checkpointed in the encrypted
-  catalog after each result. Locking cancels the current request and clears the UI;
-  completed drafts survive lock/unlock, page reloads, and application restarts.
-- After unlocking, **Resume analysis** retries unfinished and failed items using the
-  currently saved LLM settings. A canceled in-flight item runs again. Completed
-  results are not repeated. **Discard unfinished queue** keeps completed drafts.
+- **Accept all** applies all pending vision suggestions, including drafts outside the
+  current page. Failed or stale suggestions remain pending; other suggestions continue.
+  **Discard all** removes pending vision suggestions without changing saved analysis,
+  tag-only suggestions, or unfinished queue items.
+- **Auto-accept vision analysis** defaults off and saves automatically per gallery.
+  When enabled, future full vision results use the same approval rules as manual
+  acceptance. Existing drafts and tag-only suggestions still require a decision.
+  Results are checkpointed before acceptance, so failed acceptance retains a draft.
+- Completed suggestions are checkpointed in the encrypted catalog after each result.
+  Locking cancels the current request and clears the UI; completed drafts survive
+  lock/unlock, page reloads, and application restarts.
+- Explicitly selected media use a saved queue. **Resume selected media** retries
+  unfinished and failed selection items with the current LLM settings.
+  **Discard selected queue** keeps completed drafts. Whole-library runs simply
+  use **Play** again; completed results are skipped and failures remain eligible.
 - **Stop** finishes the current request before stopping; the configured timeout
   still applies. Per-item failures are reported.
 
 Analysis runs only when requested and does not change rating, review state,
-deletion marks, or media files. The details dialog's **Analyze locally** action
+deletion marks, or media files. Auto-accept saves successful vision notes, tags,
+and structured analysis immediately when enabled. The details dialog's **Analyze locally** action
 uses the same encrypted draft and approval workflow. Drafts are separate from saved
 vision notes; creating a draft does not mark the image as analyzed.
 Choose **Vision analysis → Analysis status → Awaiting approval** in the gallery

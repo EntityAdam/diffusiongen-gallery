@@ -11,6 +11,7 @@ public sealed record VisionQueueItem(string Id, bool TagsOnly = false, bool Fail
 
 public sealed record VisionCheckpoint
 {
+    public bool AutoAcceptVisionAnalysis { get; init; }
     public ImmutableArray<VisionDraft> Drafts { get; init; } = [];
     public ImmutableArray<VisionQueueItem> Queue { get; init; } = [];
 }
