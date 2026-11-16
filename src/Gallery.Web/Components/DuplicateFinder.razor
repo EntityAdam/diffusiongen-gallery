@@ -1,0 +1,73 @@
+<Card Class="mb-6 p-5 md:p-6 duplicates" aria-labelledby="duplicates-title">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h3 id="duplicates-title">Duplicate finder</h3>
+        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="StartScan">@(Scan is null ? "Scan for duplicates" : "Scan again")</Button>
+    </div>
+    <p class="text-muted-foreground">Compares a perceptual fingerprint of each encrypted thumbnail, so resized or re-encoded copies are found too. Fingerprints stay encrypted in the gallery and only changed media are re-hashed. Nothing is deleted here: extra copies are marked for deletion and removed from <em>Trash</em>.</p>
+    @if (Busy && ProgressText.StartsWith("Scanning")) { <p class="flex items-center gap-2 pb-4 text-primary" role="status"><span class="status-dot"></span> @ProgressText</p> }
+    @if (Scan is not null)
+    {
+        var groups = Groups;
+        var pendingMarks = groups.Sum(group => group.ImageIds.Count(id => id != KeeperOf(group).Id && !Lookup(id)!.IsMarkedForDeletion));
+        <div class="my-4 flex flex-col gap-2">
+            <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.ImageIds.Length - 1)</strong> extra copies &middot; <strong>@GalleryService.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
+            <span class="text-muted-foreground">Scanned @Scan.ScannedCount.ToString("N0") media items <time datetime="@Scan.ScannedAt.ToString("O")">@Scan.ScannedAt.ToLocalTime().ToString("g")</time></span>
+            <div class="flex flex-wrap items-center gap-2">
+                <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || groups.Count == 0)" OnClick="() => Review.InvokeAsync(0)">Review in full screen</Button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || pendingMarks == 0)" OnClick="() => Mark.InvokeAsync(groups)">Mark all extra copies (@pendingMarks)</Button>
+                <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="OpenTrash">Go to Trash</Button>
+            </div>
+        </div>
+        @if (groups.Count == 0) { <p class="text-muted-foreground">No likely duplicates found.</p> }
+        @foreach (var (group, groupNumber) in groups.Take(DisplayLimit).Select((group, index) => (group, index)))
+        {
+            var keeper = KeeperOf(group);
+            var groupMarks = group.ImageIds.Count(id => id != keeper.Id && !Lookup(id)!.IsMarkedForDeletion);
+            <article class="mt-4 rounded-xl border border-border p-4 [&>header]:mb-3 [&>header]:flex [&>header]:flex-wrap [&>header]:items-center [&>header]:justify-between [&>header]:gap-3 [&>header]:text-sm" @key="group.ImageIds[0]">
+                <header>
+                    <span>@(group.IsExact ? "Exact copies" : $"Similar media (difference {group.MaxDistance}/64)") &middot; @GalleryService.FormatBytes(group.ReclaimableBytes) reclaimable</span>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="() => Review.InvokeAsync(groupNumber)">Review &amp; choose keepers</Button>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || groupMarks == 0)" OnClick="() => Mark.InvokeAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</Button>
+                    </div>
+                </header>
+                <div class="duplicate-items grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3 [&_figure]:min-w-0 [&_figure]:overflow-hidden [&_figure]:rounded-lg [&_figure]:border [&_figure]:border-border [&_figure]:bg-background [&_img]:aspect-square [&_img]:w-full [&_img]:object-contain [&_figcaption]:flex [&_figcaption]:flex-col [&_figcaption]:gap-1 [&_figcaption]:p-3 [&_figcaption]:text-xs [&_strong]:truncate [&_figcaption>span]:text-muted-foreground">
+                    @foreach (var id in group.ImageIds.OrderByDescending(id => id == keeper.Id))
+                    {
+                        var image = Lookup(id)!;
+                        <figure class="@(id == keeper.Id ? "keep" : "") @(image.IsMarkedForDeletion ? "marked" : "")">
+                            @if (Thumbnails.TryGetValue(id, out var thumbnail)) { <img src="@thumbnail" alt="@image.Name" draggable="false" /> }
+                            else { <div class="grid h-full place-items-center text-xs text-muted-foreground">Preview</div> }
+                            <figcaption>
+                                <strong title="@image.Name">@image.Name</strong>
+                                <span>@image.Width &times; @image.Height &middot; @GalleryService.FormatBytes(image.OriginalBytes)@(image.Rating > 0 ? $" · {image.Rating}★" : "")@(image.IsFavorite ? " · Favorite" : "")</span>
+                                @if (id == keeper.Id) { <Badge Variant="BadgeVariant.Secondary" Class="self-start">Keep</Badge> }
+                                else if (image.IsMarkedForDeletion) { <Badge Variant="BadgeVariant.Destructive" Class="self-start">Marked</Badge> }
+                            </figcaption>
+                        </figure>
+                    }
+                </div>
+            </article>
+        }
+        @if (groups.Count > DisplayLimit)
+        {
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="ShowMore">Show more groups (@(groups.Count - DisplayLimit) remaining)</Button>
+        }
+    }
+</Card>
+
+@code {
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string ProgressText { get; set; } = "";
+    [Parameter] public DuplicateScan? Scan { get; set; }
+    [Parameter] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = default!;
+    [Parameter] public int DisplayLimit { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, string> Thumbnails { get; set; } = default!;
+    [Parameter] public Func<string, ImageRecord?> Lookup { get; set; } = default!;
+    [Parameter] public Func<DuplicateGroup, ImageRecord> KeeperOf { get; set; } = default!;
+    [Parameter] public EventCallback StartScan { get; set; }
+    [Parameter] public EventCallback ShowMore { get; set; }
+    [Parameter] public EventCallback OpenTrash { get; set; }
+    [Parameter] public EventCallback<int> Review { get; set; }
+    [Parameter] public EventCallback<IReadOnlyCollection<DuplicateGroup>> Mark { get; set; }
+}

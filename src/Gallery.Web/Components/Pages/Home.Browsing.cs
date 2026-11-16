@@ -102,7 +102,6 @@ public partial class Home
     {
         browsingSource = null;
         mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
-        catalogDirectory = "";
         savedIngestionOptions = await Gallery.LoadIngestionOptionsAsync();
         ApplyIngestionProfile(savedIngestionOptions);
         imagesById = images.ToDictionary(image => image.Id);
@@ -129,4 +128,31 @@ public partial class Home
         if (catalogPartial && !catalogLoading) StartCatalogLoad();
         return Task.CompletedTask;
     }
+
+    private string grouping = "none";
+    private GalleryBrowsingProjection browsingProjection = GalleryBrowsingProjection.Empty;
+    private IReadOnlyList<ImageRecord>? browsingSource;
+    private GalleryFilter? projectedFilter;
+    private string? projectedGrouping;
+    private IReadOnlyDictionary<string, PromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
+    private IReadOnlyDictionary<string, DiffusionModelGroup> diffusionModelGroupOf => Browsing.DiffusionModelGroupsByImageId;
+
+    private GalleryBrowsingProjection Browsing
+    {
+        get
+        {
+            if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != grouping)
+            {
+                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, catalogPartial ? "none" : grouping,
+                    aiSuggestions.Keys.ToHashSet());
+                browsingSource = images;
+                projectedFilter = filter;
+                projectedGrouping = grouping;
+            }
+            return browsingProjection;
+        }
+    }
+    private IReadOnlyList<ImageRecord> Filtered => Browsing.Images;
+    private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
+    private IEnumerable<ImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
 }

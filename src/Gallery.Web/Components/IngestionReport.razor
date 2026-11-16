@@ -1,0 +1,41 @@
+@if (ProgressInfo is not null)
+{
+    <div class="mt-5 space-y-2" aria-busy="@(Busy ? "true" : "false")">
+        <Label For="ingestion-progress" Class="mt-4 mb-2 block">Media ingestion</Label>
+        @if (ProgressInfo.Total is int progressTotal)
+        {
+            <Progress id="ingestion-progress" Value="@(Math.Clamp((int)(100L * ProgressInfo.Completed / Math.Max(1, progressTotal)), 0, 100))" aria-label="Media ingestion progress" />
+        }
+        else
+        {
+            <div id="ingestion-progress" class="flex items-center gap-2 text-primary" role="status"><LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" />Discovering files...</div>
+        }
+        <p class="text-muted-foreground">
+            @if (ProgressInfo.Total is int total)
+            {
+                <span>@ProgressInfo.Completed / @total files processed &middot; @ProgressInfo.Imported imported &middot; @ProgressInfo.Failed reported issues</span>
+            }
+        </p>
+        <p role="status">@ProgressInfo.Status</p>
+    </div>
+}
+@if (Failures.Count > 0)
+{
+    <details open class="text-destructive"><summary>@Failures.Count file(s) reported issues</summary>
+        @foreach (var failure in Failures) { <p>@failure</p> }
+    </details>
+}
+@if (TimingReport is not null)
+{
+    <details open class="mt-4"><summary>Performance timings</summary>
+        <p class="text-sm text-muted-foreground">Also written to the application log. Contains no file or folder names.</p>
+        <pre class="mt-2 overflow-x-auto rounded-md bg-muted p-3 text-xs">@TimingReport</pre>
+    </details>
+}
+
+@code {
+    [Parameter] public ImportProgress? ProgressInfo { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public IReadOnlyList<string> Failures { get; set; } = default!;
+    [Parameter] public string? TimingReport { get; set; }
+}

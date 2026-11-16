@@ -1,0 +1,55 @@
+<nav class="workspace-navigation" aria-label="Gallery workflows">
+    @foreach (var item in SidebarItems)
+    {
+        var active = SidebarItemActive(item.Id);
+        var isDestination = item.Id is "tags" or "collections" or "duplicates" or "ingest" || item.Id == "gallery" && Workflow != "gallery";
+        @if (isDestination && !ItemDisabled(item.Id))
+        {
+            <a href="@item.Id" class="workspace-nav-button workspace-nav-link" aria-label="@item.Name"
+               title="@item.Name" aria-current="@(active ? "page" : null)">
+                <LucideIcon Name="@item.Icon" Size="16" aria-hidden="true" />
+                <span class="sidebar-label">@item.Name</span>
+            </a>
+        }
+        else
+        {
+            <Button Variant="@(active ? ButtonVariant.Secondary : ButtonVariant.Ghost)"
+                    Disabled="@ItemDisabled(item.Id)" Class="workspace-nav-button"
+                    aria-label="@item.Name" title="@item.Name" aria-current="@(active ? "page" : null)"
+                    OnClick="() => Navigate.InvokeAsync(item.Id)">
+                <LucideIcon Name="@item.Icon" Size="16" aria-hidden="true" />
+                <span class="sidebar-label">@item.Name</span>
+            </Button>
+        }
+        @if (item.Id is "filters" or "tags" or "intelligence")
+        {
+            <Separator Class="my-2" Decorative="false" />
+        }
+    }
+</nav>
+
+@code {
+    [Parameter] public string Workflow { get; set; } = "";
+    [Parameter] public string ActiveTool { get; set; } = "";
+    [Parameter] public Func<string, bool> ItemDisabled { get; set; } = default!;
+    [Parameter] public EventCallback<string> Navigate { get; set; }
+
+    private static readonly (string Id, string Name, string Icon)[] SidebarItems =
+    [
+        ("gallery", "Gallery", "images"),
+        ("filters", "Filters", "funnel"),
+        ("collections", "Collections", "folders"),
+        ("tags", "Tags", "tags"),
+        ("review", "Review", "circle-check"),
+        ("duplicates", "Duplicate finder", "copy"),
+        ("intelligence", "AI analysis", "sparkles"),
+        ("ingest", "Import media", "image-plus")
+    ];
+
+    private bool SidebarItemActive(string id) => id switch
+    {
+        "filters" or "review" or "intelligence" => Workflow == "gallery" && ActiveTool == id,
+        "gallery" => Workflow == "gallery" && ActiveTool is not ("filters" or "review" or "intelligence" or "trash"),
+        _ => Workflow == id
+    };
+}

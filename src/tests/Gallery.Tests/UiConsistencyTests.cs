@@ -19,6 +19,23 @@ public sealed class UiConsistencyTests
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
     [Fact]
+    public async Task SettingsDeepLink_RequiresUnlockAndThenOpensRequestedTab()
+    {
+        using var vault = new TestVault();
+        await vault.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        vault.Service.LockVault();
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (home, root) = await Render<Home>(fixture, new() { [nameof(Home.Route)] = "settings/security" });
+
+        var locked = await Html(fixture, root);
+        Assert.Contains("unlock-credential", locked);
+        Assert.DoesNotContain("new-confirm", locked);
+
+        await Invoke(fixture, home, "UnlockAsync", (TestVault.Passphrase, false));
+        Assert.Contains("new-confirm", await Html(fixture, root));
+    }
+
+    [Fact]
     public async Task Sidebar_UsesTheRequestedOrderAndOpensGalleryTools()
     {
         using var vault = new TestVault();

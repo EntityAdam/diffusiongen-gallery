@@ -1,0 +1,21 @@
+<Card Class="mb-6 p-5 md:p-6 mx-auto max-w-4xl">
+    <span class="eyebrow">SAVE THIS BEFORE CONTINUING</span>
+    <h2>Your recovery words.</h2>
+    <p>Write these 32 words down, in order, and keep them offline in a safe place. Anyone with these words can unlock your gallery. They are shown only now.</p>
+    <div class="my-6 grid grid-cols-2 gap-2 md:grid-cols-4 [&>div]:rounded-md [&>div]:border [&>div]:border-border [&>div]:bg-background [&>div]:p-3 [&>div]:font-mono [&>div]:text-xs [&_small]:text-muted-foreground">
+        @foreach (var (word, index) in Phrase.Split(' ').Select((word, index) => (word, index)))
+        {
+            <div><small>@(index + 1).</small> @word</div>
+        }
+    </div>
+    <div class="mt-4 flex items-start gap-3"><Checkbox id="check-recoverysaved" Class="mt-0.5" @bind-Checked="recoverySaved"  /><Label For="check-recoverysaved" Class="text-sm leading-relaxed">I saved all 32 words securely and understand there is no other recovery method.</Label></div>
+    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Disabled="@(!recoverySaved || Busy)" OnClick="ContinueAsync">Open my gallery <ArrowRightIcon aria-hidden="true" /></Button>
+</Card>
+
+@code {
+    [Parameter, EditorRequired] public string Phrase { get; set; } = "";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback OnContinue { get; set; }
+    private bool recoverySaved;
+    private Task ContinueAsync() => recoverySaved && !Busy ? OnContinue.InvokeAsync() : Task.CompletedTask;
+}

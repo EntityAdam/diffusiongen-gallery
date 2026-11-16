@@ -1,0 +1,27 @@
+@page "/"
+@page "/gallery"
+@page "/collections"
+@page "/unorganized"
+@page "/tags"
+@page "/duplicates"
+@page "/ingest"
+@page "/settings"
+@page "/settings/gallery"
+@page "/settings/backups"
+@page "/settings/endpoints"
+@page "/settings/tags"
+@page "/settings/security"
+@implements IDisposable
+@inject NavigationManager Navigation
+
+<Home Route="@Navigation.ToBaseRelativePath(Navigation.Uri)" Router="Navigation" />
+
+
+@code {
+    protected override void OnInitialized() => Navigation.LocationChanged += LocationChanged;
+
+    private void LocationChanged(object? sender, LocationChangedEventArgs args) =>
+        _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Navigation.LocationChanged -= LocationChanged;
+}
