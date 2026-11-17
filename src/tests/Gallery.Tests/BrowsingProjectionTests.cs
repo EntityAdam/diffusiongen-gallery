@@ -619,13 +619,13 @@ public sealed class BrowsingProjectionTests
         ComponentTestAccess.Call(home, "StartReview");
 
         // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
+        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
             Goal = GetProperty<int>(home, "Browser.ReviewGoal"), ImageIds = actualImageRecords.Select(imageRecord => imageRecord.Id).ToArray(),
-            InitialId = GetField<string>(home, "viewerInitialId"), ReviewMode = GetField<bool>(home, "reviewMode"),
+            InitialId = GetField<string>(home, "Presentation.ViewerInitialId"), ReviewMode = GetField<bool>(home, "Presentation.ReviewMode"),
             IsDetachedSnapshot = actualImageRecords.Count > 0 && !ReferenceEquals(imageRecords[2], actualImageRecords[0])
         });
     }
@@ -656,7 +656,7 @@ public sealed class BrowsingProjectionTests
         ComponentTestAccess.Call(home, "StartReview");
 
         // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
+        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -694,7 +694,7 @@ public sealed class BrowsingProjectionTests
         ComponentTestAccess.Call(home, "StartReview");
 
         // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
+        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -727,7 +727,7 @@ public sealed class BrowsingProjectionTests
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario,
-            new { Goal = GetProperty<int>(home, "Browser.ReviewGoal"), SessionCount = GetField<List<ImageRecord>>(home, "viewerImages").Count });
+            new { Goal = GetProperty<int>(home, "Browser.ReviewGoal"), SessionCount = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages").Count });
     }
 
     [Fact]

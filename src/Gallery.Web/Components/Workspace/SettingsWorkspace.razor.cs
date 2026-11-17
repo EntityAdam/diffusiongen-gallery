@@ -69,6 +69,9 @@ public partial class SettingsWorkspace
         });
     }
 
+    public UnsavedChangesSource Draft => new("settings", () => HasUnsavedChanges, () => IsBusy,
+        SaveAsync, () => { Discard(); return Task.CompletedTask; });
+
     public void Discard()
     {
         if (Tab == "endpoints") llmEndpointSettings?.DiscardDraft();

@@ -16,13 +16,13 @@ public partial class GalleryWorkspace
     {
         if (SidebarItemDisabled(id)) return Task.CompletedTask;
         if (id == "gallery")
-            return RequestSettingsActionAsync(async () =>
+            return RequestNavigationAsync(async () =>
             {
                 if (workflow != "gallery") await SwitchWorkflowCoreAsync("gallery");
                 await SetActiveToolAsync("");
             });
         if (id is not ("views" or "filters" or "organize" or "review" or "intelligence")) return SwitchWorkflowAsync(id);
-        return RequestSettingsActionAsync(async () =>
+        return RequestNavigationAsync(async () =>
         {
             if (workflow != "gallery") await SwitchWorkflowCoreAsync("gallery");
             await SetActiveToolAsync(Browser.ActiveTool == id ? "" : id);
@@ -57,7 +57,7 @@ public partial class GalleryWorkspace
         await SetActiveToolAsync("trash");
     }
     private Task SwitchWorkflowAsync(string value) => value == workflow
-        ? Task.CompletedTask : RequestSettingsActionAsync(() => SwitchWorkflowCoreAsync(value));
+        ? Task.CompletedTask : RequestNavigationAsync(() => SwitchWorkflowCoreAsync(value));
 
     private async Task SwitchWorkflowCoreAsync(string value)
     {
@@ -91,7 +91,7 @@ public partial class GalleryWorkspace
         return FilterChangedAsync();
     }
     private Task SwitchSettingsTabAsync(string value) => value == settingsTab
-        ? Task.CompletedTask : RequestSettingsActionAsync(() => SwitchSettingsTabCoreAsync(value));
+        ? Task.CompletedTask : RequestNavigationAsync(() => SwitchSettingsTabCoreAsync(value));
 
     private async Task SwitchSettingsTabCoreAsync(string value)
     {

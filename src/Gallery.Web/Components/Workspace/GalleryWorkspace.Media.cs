@@ -1,140 +1,71 @@
 using Gallery.Core.Models;
-using Microsoft.JSInterop;
 
 namespace Gallery.Web.Components.Workspace;
 
 public partial class GalleryWorkspace
 {
-    private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
+    private MediaPresentationState? presentation;
+    private MediaPresentationHost? mediaHost;
+    private RemovalWorkflowState? removal;
+    private MediaCurationCommands? curation;
+    private MediaPresentationState Presentation => presentation ??= new(Gallery, JS, commands);
+    private RemovalWorkflowState Removal => removal ??= new(Gallery, commands, Logger, async () =>
     {
-        ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current =>
-            Gallery.SetCuration(current, current.Rating == value ? 0 : value, null)));
-        await Browser.LoadThumbnailsAsync();
+        Presentation.CloseDetail();
+        await ReloadAsync();
     });
+    private MediaCurationCommands Curation => curation ??= new(Gallery, ReloadAsync);
 
+    private Task OpenAsync(ImageRecord image) => Presentation.OpenAsync(image);
+    private void OpenViewer(string? initialId = null) => Presentation.OpenViewer(Browser.PageImages, initialId);
+    private void StartReview() => Presentation.StartReview(Browser.ReviewPool, Browser.ReviewGoal, Browser.ReviewRandomOrder);
+    private Task PrepareBulkRemovalAsync() => Removal.PrepareAsync(Browser.RemovalSelection);
+    private Task PrepareRemovalAsync(IReadOnlyCollection<string> ids) => Removal.PrepareAsync(ids);
+
+    private Task RateFromBrowserAsync((ImageRecord Image, int Rating) request) => RunAsync("Saving rating...", async () =>
+        await ApplyCurationAsync([await Curation.RateAsync(request.Image, request.Rating)], reloadThumbnails: true));
     private Task FavoriteAsync(ImageRecord image) => RunAsync("Saving favorite...", async () =>
-    {
-        ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current => current with { IsFavorite = !current.IsFavorite }));
-        await Browser.LoadThumbnailsAsync();
-    });
-
+        await ApplyCurationAsync([await Curation.FavoriteAsync(image)], reloadThumbnails: true));
     private Task MarkAsync(ImageRecord image) => RunAsync("Saving deletion mark...", async () =>
+        await ApplyCurationAsync([await Curation.MarkAsync(image)], reloadThumbnails: true));
+    private Task CurateFromBrowserAsync((string Id, Func<ImageRecordEdit, ImageRecordEdit> Update, string Message) request) =>
+        RunAsync("Saving...", () => CurateAsync([request.Id], request.Update, request.Message));
+    private Task CurateAsync(IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update, string done) =>
+        ApplyBulkCurationAsync(() => Curation.UpdateManyAsync(ids, update), done);
+    private Task RestoreRemovalSelectionAsync() => RunAsync("Updating deletion marks...", () =>
+        ApplyBulkCurationAsync(() => Curation.MarkManyAsync(Browser.RemovalSelection.ToArray(), false), "Deletion marks cleared"));
+    private async Task ApplyBulkCurationAsync(Func<Task<IReadOnlyList<ImageRecord>>> update, string done)
     {
-        ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.IsMarkedForDeletion)));
-        await Browser.LoadThumbnailsAsync();
-    });
-
-    private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(Browser.RemovalSelection.ToArray());
-    private Task PrepareRemovalAsync(IEnumerable<string> ids) => RunAsync("Checking originals...", async () =>
-    {
-        EnsureNoLibraryJob();
-        removalPlan = await Gallery.PrepareRemovalAsync(ids);
-        removalResults.Clear();
-    });
-
-    private void CancelRemoval() => removalPlan.Clear();
-
-    private Task ExecuteRemovalAsync((ExistingOriginalAction Existing, MissingOriginalAction Missing, string Folder) choices) => RunAsync("Removing marked media...", async () =>
-    {
-        EnsureNoLibraryJob();
-        removalResults = [];
-        try
-        {
-            await Gallery.RemoveAsync(removalPlan, choices.Existing, choices.Missing, choices.Folder, removalResults.Add);
-        }
-        finally
-        {
-            foreach (var result in removalResults.Where(result => result.Error is not null))
-                Logger.LogWarning("Media removal issue for {ImageId}: {Error}", result.Id, result.Error);
-            CancelRemoval();
-            CloseDetail();
-            await ReloadAsync();
-        }
-        Activity.Message = $"Removed {removalResults.Count(result => result.WasRemoved)} media item(s). {removalResults.Count(result => result.Error is not null)} issue(s); review the removal results.";
-    });
-
-    private Task OpenAsync(ImageRecord image) => RunAsync("Decrypting preview...", async () =>
-    {
-        await ReleaseVideoAsync();
-        var data = await Gallery.PreviewAsync(image.Id);
-        if (image.IsVideo)
-        {
-            Activity.Progress = "Decrypting video...";
-            var (content, type) = await Gallery.OpenMediaAsync(image.Id);
-            using var reference = new DotNetStreamReference(content);
-            videoUrl = await JS.InvokeAsync<string>("galleryMedia.createStreamUrl", reference, type);
-        }
-        detailViewerImages = null;
-        selected = image;
-        preview = data;
-    });
-
-    private void CloseDetail()
-    {
-        detailDialog = null;
-        detailViewerImages = null;
-        selected = null;
-        preview = "";
-        _ = ReleaseVideoAsync();
+        var updated = await update();
+        if (updated.Count == 0 || disposed) return;
+        await ApplyCurationAsync(updated, reloadThumbnails: false);
+        Activity.Message = done;
     }
-
-    private async Task ReleaseVideoAsync()
+    private async Task ApplyCurationAsync(IReadOnlyList<ImageRecord> updated, bool reloadThumbnails)
     {
-        if (videoUrl.Length == 0) return;
-        var url = videoUrl;
-        videoUrl = "";
-        try { await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)new[] { url }); }
-        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        if (disposed) return;
+        foreach (var image in updated) ViewerImageChanged(image);
+        if (reloadThumbnails) await Browser.LoadThumbnailsAsync();
+        else
+        {
+            Browser.Page = Math.Min(Browser.Page, Browser.PageCount - 1);
+            await Browser.LoadMissingThumbnailsAsync();
+        }
     }
 
     private async Task ShowPromptAsync(string prompt)
     {
         if (Catalog.IsPartial) return;
-        CloseDetail();
+        Presentation.CloseDetail();
         if (workflow != "gallery") await SwitchWorkflowAsync("gallery");
         Browser.Filter = Browser.Filter with { Prompt = prompt };
         await FilterChangedAsync();
     }
-
-    private void OpenViewer(string? initialId = null)
-    {
-        reviewMode = false;
-        viewerImages = (detailViewerImages ?? Browser.PageImages).Select(image => image with { }).ToList();
-        if (initialId is not null && !viewerImages.Any(image => image.Id == initialId) && selected is not null)
-            viewerImages.Add(selected with { });
-        viewerInitialId = initialId ?? viewerImages.FirstOrDefault()?.Id ?? "";
-        viewerInitialPreview = selected?.Id == viewerInitialId && !selected.IsVideo ? preview : "";
-        CloseDetail();
-    }
-
-    private void StartReview()
-    {
-        var pool = Browser.ReviewPool.ToArray();
-        if (Browser.ReviewRandomOrder) Random.Shared.Shuffle(pool);
-        viewerImages = pool.Take(Browser.ReviewGoal).Select(image => image with { }).ToList();
-        viewerInitialId = viewerImages.FirstOrDefault()?.Id ?? "";
-        viewerInitialPreview = "";
-        reviewMode = true;
-        CloseDetail();
-    }
-
-    private Task CloseViewerAsync()
-    {
-        viewerImages.Clear();
-        viewerInitialId = "";
-        viewerInitialPreview = "";
-        return RunAsync("Refreshing gallery...", ReloadAsync);
-    }
-
-    private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>
+    private Task AnalyzeAsync(ImageRecord image) => RunAsync("Analyzing with your local vision model...", async () =>
     {
         EnsureNoLibraryJob();
-        if (selected is null || galleryBrowser is null) return;
-        await galleryBrowser.AnalyzeDetailAsync(selected);
+        if (galleryBrowser is null) return;
+        await galleryBrowser.AnalyzeDetailAsync(image);
         if (Gallery.IsUnlocked) Activity.Message = "Review available suggestions in the AI analysis drawer. Unfinished analysis can be resumed there.";
     });
-
-    private List<RemovalItem> removalPlan = [];
-    private List<RemovalResult> removalResults = [];
-
 }

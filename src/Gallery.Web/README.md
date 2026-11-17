@@ -627,6 +627,12 @@ and tools; the state survives workflow switches and is disposed on lock.
 `SettingsWorkspace` owns settings loading and drafts and exposes save/discard
 and dirty/busy status to the workspace navigation guard. Catalog refreshes do
 not reload feature settings or overwrite settings drafts.
+`MediaPresentationHost` and its state own details/fullscreen sessions, preview
+handoff, and video URL cleanup. `RemovalWorkflow` owns removal planning,
+confirmation, and per-item results. `MediaCurationCommands` returns committed
+records and reloads the catalog after partial bulk failures without replaying
+edits. Notes, settings, and ingestion expose draft actions to a shared
+`UnsavedChangesGuard`, which owns the confirmation dialog and pending navigation.
 
 `Gallery.Migrations` owns schema definitions and DbUp upgrade execution for both
 catalog adapters. The adapters open/configure their connections, then invoke the

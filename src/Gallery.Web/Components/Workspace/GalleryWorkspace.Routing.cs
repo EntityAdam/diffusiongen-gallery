@@ -11,7 +11,7 @@ public partial class GalleryWorkspace
     private string? lastRoute;
     private string CurrentPath => workflow == "settings" && settingsTab != "overview"
         ? $"settings/{settingsTab}" : workflow;
-    private bool HasUnsavedChanges => SettingsDirty || selected is not null && detailDialog?.NotesDirty == true;
+    private bool HasUnsavedChanges => DraftSources.Any(source => source.HasUnsavedChanges());
 
     protected override async Task OnParametersSetAsync()
     {
@@ -66,16 +66,14 @@ public partial class GalleryWorkspace
         if (HasUnsavedChanges)
         {
             context.PreventNavigation();
-            Task ContinueAsync() => RequestSettingsActionAsync(() =>
+            await RequestNavigationAsync(() =>
             {
                 Router.NavigateTo(context.TargetLocation);
                 return Task.CompletedTask;
             });
-            if (selected is not null && detailDialog is not null) await detailDialog.RequestDetailActionAsync(ContinueAsync);
-            else await ContinueAsync();
             StateHasChanged();
             return;
         }
-        if (selected is not null) CloseDetail();
+        Presentation.CloseDetail();
     }
 }

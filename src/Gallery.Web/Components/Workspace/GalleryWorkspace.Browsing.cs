@@ -35,8 +35,7 @@ public partial class GalleryWorkspace
         previousCollections = Catalog.Collections;
         duplicates.UpdateGroups(Catalog.ImagesById);
         if (workflow == "duplicates") await duplicates.LoadThumbnailsAsync(Gallery);
-        selected = selected is null ? null : Catalog.ImagesById.GetValueOrDefault(selected.Id);
-        if (selected is null) { preview = ""; await ReleaseVideoAsync(); }
+        await Presentation.ReconcileAsync(Catalog.ImagesById);
         await Browser.CatalogChangedAsync();
         RefreshWorkspace();
     }

@@ -128,17 +128,17 @@ public sealed class CollectionBrowsingTests
     [InlineData(true)]
     public void OpeningTheViewerHandsOffTheImagePreviewBeforeClosingDetails(bool isVideo)
     {
-        var home = new GalleryWorkspace();
+        using var presentation = new MediaPresentationState(null!, null!, null!);
         var image = new ImageRecord { Id = "image", MediaType = isVideo ? "video" : "image" };
-        typeof(GalleryWorkspace).GetField("selected", Private)!.SetValue(home, image);
-        typeof(GalleryWorkspace).GetField("preview", Private)!.SetValue(home, "detail-preview");
-        typeof(GalleryWorkspace).GetField("detailViewerImages", Private)!.SetValue(home, new[] { image });
+        ComponentTestAccess.Set(presentation, "Selected", image);
+        ComponentTestAccess.Set(presentation, "Preview", "detail-preview");
+        ComponentTestAccess.Set(presentation, "DetailViewerImages", new[] { image });
 
-        typeof(GalleryWorkspace).GetMethod("OpenViewer", Private)!.Invoke(home, [image.Id]);
+        presentation.OpenViewer([], image.Id);
 
-        Assert.Null(typeof(GalleryWorkspace).GetField("selected", Private)!.GetValue(home));
-        Assert.Equal("", typeof(GalleryWorkspace).GetField("preview", Private)!.GetValue(home));
-        Assert.Equal(isVideo ? "" : "detail-preview", typeof(GalleryWorkspace).GetField("viewerInitialPreview", Private)!.GetValue(home));
+        Assert.Null(presentation.Selected);
+        Assert.Equal("", presentation.Preview);
+        Assert.Equal(isVideo ? "" : "detail-preview", presentation.ViewerInitialPreview);
     }
 
     [Fact]

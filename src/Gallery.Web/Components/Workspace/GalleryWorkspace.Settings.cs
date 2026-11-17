@@ -3,48 +3,33 @@ namespace Gallery.Web.Components.Workspace;
 public partial class GalleryWorkspace
 {
     private SettingsWorkspace? settingsWorkspace;
-    private Func<Task>? pendingSettingsAction;
-    private bool SettingsDirty => workflow == "ingest" && ingestion.SettingsDirty
-        || workflow == "settings" && settingsWorkspace?.HasUnsavedChanges == true;
-
-    private Task RequestSettingsActionAsync(Func<Task> action)
-    {
-        if (Activity.Busy || settingsWorkspace?.IsBusy == true) return Task.CompletedTask;
-        if (!SettingsDirty) return action();
-        Activity.Error = "";
-        pendingSettingsAction = action;
-        return Task.CompletedTask;
-    }
-
-    private void KeepEditingSettings()
-    {
-        if (!Activity.Busy && settingsWorkspace?.IsBusy != true) pendingSettingsAction = null;
-    }
-
-    private async Task DiscardSettingsAndContinueAsync()
-    {
-        if (Activity.Busy || settingsWorkspace?.IsBusy == true || pendingSettingsAction is not { } action) return;
-        if (workflow == "ingest") ingestion.ApplyProfile(ingestion.SavedOptions);
-        else settingsWorkspace?.Discard();
-        pendingSettingsAction = null;
-        await action();
-    }
-
-    private async Task SaveSettingsAndContinueAsync()
-    {
-        if (Activity.Busy || settingsWorkspace?.IsBusy == true || pendingSettingsAction is not { } action) return;
-        if (workflow == "ingest") await RunAsync("Saving ingestion settings...", () => ingestion.SaveOptionsAsync(Gallery));
-        else if (settingsWorkspace is not null && !await settingsWorkspace.SaveAsync()) return;
-        if (pendingSettingsAction != action || SettingsDirty || Activity.Error.Length > 0) return;
-        pendingSettingsAction = null;
-        if (Activity.Message.Length > 0)
-        {
-            Toasts.Show(Activity.Message, "", ShadCn.Blazor.Components.SonnerToastVariant.Default, 4000);
-            Activity.Message = "";
-        }
-        await action();
-    }
-
     private string settingsTab = "overview";
-
+    private UnsavedChangesGuardState? guard;
+    private UnsavedChangesGuardState Guard => guard ??= new(Activity,
+        () => WorkspaceBusy || settingsWorkspace?.IsBusy == true, FlushSavedFeedback);
+    private IEnumerable<UnsavedChangesSource> DraftSources
+    {
+        get
+        {
+            if (mediaHost?.Draft is { } notes) yield return notes;
+            if (workflow == "settings" && settingsWorkspace is not null) yield return settingsWorkspace.Draft;
+            if (workflow == "ingest") yield return new("settings", () => ingestion.SettingsDirty,
+                () => Activity.Busy, async () =>
+                {
+                    await RunAsync("Saving ingestion settings...", () => ingestion.SaveOptionsAsync(Gallery));
+                    return !ingestion.SettingsDirty && Activity.Error.Length == 0;
+                }, () => { ingestion.ApplyProfile(ingestion.SavedOptions); return Task.CompletedTask; });
+        }
+    }
+    private Task RequestNavigationAsync(Func<Task> action) => Guard.RequestAsync(DraftSources, () =>
+    {
+        Presentation.CloseDetail();
+        return action();
+    });
+    private void FlushSavedFeedback()
+    {
+        if (Activity.Message.Length == 0) return;
+        Toasts.Show(Activity.Message, "", ShadCn.Blazor.Components.SonnerToastVariant.Default, 4000);
+        Activity.Message = "";
+    }
 }

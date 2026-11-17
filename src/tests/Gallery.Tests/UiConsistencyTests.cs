@@ -61,6 +61,32 @@ public sealed class UiConsistencyTests
     }
 
     [Fact]
+    public async Task SidebarNavigationUsesTheSameNotesGuardAsClosingDetails()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (workspace, root) = await Render<GalleryWorkspace>(fixture, new());
+        await Invoke(fixture, workspace, "OpenAsync", image);
+        var detail = ComponentTestAccess.Get<MediaDetailDialog>(workspace, "mediaHost.detailDialog");
+        ComponentTestAccess.Set(detail, "editUserDescription", "unsaved notes");
+        await Invoke(fixture, detail, "RequestCloseDetailAsync");
+        await Invoke(fixture, workspace, "SwitchWorkflowAsync", "settings");
+        var guard = ComponentTestAccess.Get<UnsavedChangesGuardState>(workspace, "Guard");
+        Assert.True(guard.IsPending);
+        Assert.Single(Regex.Matches(await Html(fixture, root), "id=\"unsaved-notes-title\""));
+        guard.KeepEditing();
+
+        await Invoke(fixture, workspace, "SwitchWorkflowAsync", "settings");
+        Assert.Equal("gallery", Field<string>(workspace, "workflow"));
+        await Invoke(fixture, workspace, "Guard.DiscardAsync");
+        Assert.Equal("settings", Field<string>(workspace, "workflow"));
+        Assert.Null(ComponentTestAccess.Get<MediaPresentationState>(workspace, "Presentation").Selected);
+        Assert.Empty(Assert.Single(await vault.Service.ListAsync()).UserDescription);
+    }
+
+    [Fact]
     public async Task Sidebar_UsesTheRequestedOrderAndOpensGalleryTools()
     {
         using var vault = new TestVault();
@@ -614,14 +640,14 @@ public sealed class UiConsistencyTests
         var (home, _) = await Render<GalleryWorkspace>(fixture, new());
         await Invoke(fixture, home, "SwitchWorkflowAsync", "unorganized");
         await Invoke(fixture, home, "OpenCollectionDetailsAsync", (new[] { second, first }, first.Id));
-        Assert.Equal(first.Id, Field<ImageRecord>(home, "selected").Id);
-        Assert.Empty(Field<List<ImageRecord>>(home, "viewerImages"));
+        Assert.Equal(first.Id, Field<ImageRecord>(home, "Presentation.Selected").Id);
+        Assert.Empty(Field<List<ImageRecord>>(home, "Presentation.ViewerImages"));
         await Invoke(fixture, home, "FavoriteAsync", first);
-        await Invoke(fixture, Field<MediaDetailDialog>(home, "detailDialog"), "RequestDetailViewerAsync");
-        Assert.True(Field<List<ImageRecord>>(home, "viewerImages").Single(image => image.Id == first.Id).IsFavorite);
-        Assert.Null(Field<ImageRecord?>(home, "selected"));
-        Assert.Equal(new[] { second.Id, first.Id }, Field<List<ImageRecord>>(home, "viewerImages").Select(image => image.Id));
-        Assert.Equal(first.Id, Field<string>(home, "viewerInitialId"));
+        await Invoke(fixture, Field<MediaDetailDialog>(home, "mediaHost.detailDialog"), "RequestDetailViewerAsync");
+        Assert.True(Field<List<ImageRecord>>(home, "Presentation.ViewerImages").Single(image => image.Id == first.Id).IsFavorite);
+        Assert.Null(Field<ImageRecord?>(home, "Presentation.Selected"));
+        Assert.Equal(new[] { second.Id, first.Id }, Field<List<ImageRecord>>(home, "Presentation.ViewerImages").Select(image => image.Id));
+        Assert.Equal(first.Id, Field<string>(home, "Presentation.ViewerInitialId"));
     }
 
     [Fact]

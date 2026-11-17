@@ -18,9 +18,6 @@ public partial class GalleryWorkspace
     private WorkspaceCommands commands = default!;
     private Task RunOperationAsync((string Status, Func<Task> Action) operation) =>
         RunAsync(operation.Status, operation.Action);
-    private MediaDetailDialog? detailDialog;
-    private string preview = "";
-    private string videoUrl = "";
     private CollectionLocation collectionLocation = new();
     private bool collectionWorking;
     private bool WorkspaceBusy => Activity.Busy || collectionWorking || OrganizationHistory.IsBusy;
@@ -36,20 +33,11 @@ public partial class GalleryWorkspace
         return Task.CompletedTask;
     }
     private CollectionsWorkspace? collectionsWorkspace;
-    private IReadOnlyList<ImageRecord>? detailViewerImages;
-    private async Task OpenCollectionDetailsAsync((ImageRecord[] Images, string InitialId) request)
-    {
-        var image = request.Images.First(item => item.Id == request.InitialId);
-        await OpenAsync(image);
-        if (selected?.Id == image.Id) detailViewerImages = request.Images;
-    }
-    // Action feedback uses toasts across workflows; native dialogs retain inline validation.
-    private bool UsesToasts => selected is null && removalPlan.Count == 0 && pendingSettingsAction is null;
+    private Task OpenCollectionDetailsAsync((ImageRecord[] Images, string InitialId) request) =>
+        Presentation.OpenAsync(request.Images.First(image => image.Id == request.InitialId), request.Images);
+    // Native dialogs retain inline validation while the rest of the workspace uses toasts.
+    private bool UsesToasts => !Presentation.DetailsOpen && !Removal.IsOpen && !Guard.IsPending;
     private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
-    private List<ImageRecord> viewerImages = [];
-    private string viewerInitialId = "";
-    private string viewerInitialPreview = "";
-    private bool reviewMode;
     private DotNetObjectReference<GalleryWorkspace>? gridReference;
     private int autoLockMinutes = UiPreferences.DefaultAutoLockMinutes;
     private DuplicateCatalog duplicates = new();
@@ -63,7 +51,7 @@ public partial class GalleryWorkspace
         if (galleryBrowser is not null) await galleryBrowser.UpdateSuggestionTagsAsync(change);
         await ReloadAsync();
     }
-    private Task ViewTagAsync(string tag) => RequestSettingsActionAsync(async () =>
+    private Task ViewTagAsync(string tag) => RequestNavigationAsync(async () =>
     {
         if (WorkspaceBusy || Catalog.IsPartial) return;
         Browser.FilterInputRevision++;
@@ -74,7 +62,6 @@ public partial class GalleryWorkspace
         await SwitchWorkflowCoreAsync("gallery");
         await SaveToolboxStateAsync();
     });
-    private ImageRecord? selected;
     private IngestionSession ingestion => Activity.Ingestion;
     private void RefreshWorkspace() { if (!disposed) StateHasChanged(); }
     private bool disposed;
@@ -149,45 +136,20 @@ public partial class GalleryWorkspace
     private void ViewerImageChanged(ImageRecord updated)
     {
         Catalog.Update(updated);
-        if (selected?.Id == updated.Id) selected = updated;
-        if (detailViewerImages is not null)
-            detailViewerImages = detailViewerImages.Select(image => image.Id == updated.Id ? updated : image).ToArray();
+        Presentation.Update(updated);
     }
-    private Task CurateFromBrowserAsync((string Id, Func<ImageRecordEdit, ImageRecordEdit> Update, string Message) request) =>
-        RunAsync("Saving...", () => CurateAsync([request.Id], request.Update, request.Message));
-    private Task RateFromBrowserAsync((ImageRecord Image, int Rating) request) => RateImageAsync(request.Image, request.Rating);
-
-    private async Task CurateAsync(IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update, string done)
-    {
-        if (ids.Count == 0) return;
-        List<ImageRecord> updated;
-        try { updated = await Gallery.UpdateManyAsync(ids, update); }
-        catch (AggregateException)
-        {
-            await ReloadAsync();
-            throw;
-        }
-        foreach (var image in updated) ViewerImageChanged(image);
-        Browser.Page = Math.Min(Browser.Page, Browser.PageCount - 1);
-        await Browser.LoadMissingThumbnailsAsync();
-        Activity.Message = done;
-    }
-
-    private Task MarkRemovalSelectionAsync(bool value) =>
-        RunAsync("Updating deletion marks...", () => CurateAsync(Browser.RemovalSelection.ToList(),
-            image => Gallery.SetDeletionMark(image, value), value ? "Marked for deletion" : "Deletion marks cleared"));
     [JSInvokable]
     public async Task HandleGridKey(string key, string id, bool shift)
     {
         if (key == "`")
         {
-            if (!Gallery.IsUnlocked || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || DuplicateReviewOpen) return;
+            if (!Gallery.IsUnlocked || Presentation.IsOpen || Removal.IsOpen || DuplicateReviewOpen) return;
             if (Activity.Busy) return;
             if (shift) await ResetToolboxPositionAsync(); else await ToggleToolboxAsync();
             StateHasChanged();
             return;
         }
-        if (!Gallery.IsUnlocked || Activity.Busy || selected is not null || removalPlan.Count > 0 || viewerImages.Count > 0 || DuplicateReviewOpen) return;
+        if (!Gallery.IsUnlocked || Activity.Busy || Presentation.IsOpen || Removal.IsOpen || DuplicateReviewOpen) return;
         if (workflow is "collections" or "unorganized" && collectionsWorkspace is not null)
         {
             await collectionsWorkspace.HandleGridKeyAsync(key, id, shift);
@@ -237,7 +199,9 @@ public partial class GalleryWorkspace
         catalog?.Dispose();
         browser?.Dispose();
         previousCollections = CollectionCatalog.Empty;
-        _ = ReleaseVideoAsync();
+        presentation?.Dispose();
+        removal?.Dispose();
+        guard?.Dispose();
         if (gridReference is not null) _ = DetachGridAsync(gridReference);
     }
 

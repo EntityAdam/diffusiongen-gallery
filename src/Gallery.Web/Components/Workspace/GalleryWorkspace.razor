@@ -21,6 +21,7 @@
     <div class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@Activity.Message</div>
 }
 
+<CascadingValue Value="Guard" IsFixed="true">
 <CascadingValue Value="commands" IsFixed="true">
     <GalleryWorkspaceLayout @ref="layout" Workflow="@workflow" ActiveTool="@Browser.ActiveTool" ItemDisabled="SidebarItemDisabled"
                             Navigate="NavigateSidebarAsync" Location="collectionLocation" LocationChanged="NavigateCollectionsAsync"
@@ -68,37 +69,19 @@
     </GalleryWorkspaceLayout>
 
     <GalleryBrowser @ref="galleryBrowser" State="Browser" Catalog="Catalog" Activity="Activity"
-                    Active='@(workflow == "gallery")' OverlayOpen="@(selected is not null || removalPlan.Count > 0)"
+                    Active='@(workflow == "gallery")' OverlayOpen="@(Presentation.DetailsOpen || Removal.IsOpen)"
                     Open="OpenAsync" Rate="RateFromBrowserAsync" Favorite="FavoriteAsync" Mark="MarkAsync" Curate="CurateFromBrowserAsync"
                     ShowPrompt="ShowPromptAsync" Fullscreen="OpenViewer" StartReview="StartReview"
                     SetActiveTool="SetActiveToolAsync" ToggleToolbox="ToggleToolboxAsync" ResetToolboxPosition="ResetToolboxPositionAsync"
                     Reload="ReloadAsync" JobChanged="LibraryJobChanged" Refreshed="RefreshWorkspace" PreferencesChanged="SaveToolboxStateAsync"
-                    Delete="PrepareBulkRemovalAsync" Restore="() => MarkRemovalSelectionAsync(false)" RemovalResults="removalResults" />
+                    Delete="PrepareBulkRemovalAsync" Restore="RestoreRemovalSelectionAsync" RemovalResults="Removal.Results" />
 
-    @if (selected is not null)
-    {
-        <MediaDetailDialog @key="selected.Id" @ref="detailDialog" Image="selected" Preview="@preview" VideoUrl="@videoUrl"
-                           Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" Progress="@Activity.Progress" Error="@Activity.Error"
-                           Close="CloseDetail" Fullscreen="() => OpenViewer(selected.Id)" Rate="value => RateImageAsync(selected, value)"
-                           Favorite="() => FavoriteAsync(selected)" Mark="() => MarkAsync(selected)" Analyze="AnalyzeAsync"
-                           ShowPrompt="() => ShowPromptAsync(selected.Prompt)" Remove="() => PrepareRemovalAsync([selected.Id])"
-                           Suggestion="@Browser.Suggestions.GetValueOrDefault(selected.Id)" Approve="ApproveSuggestionAsync" Dismiss="DismissSuggestionAsync"
-                           Changed="ViewerImageChanged" DraftChanged="RefreshWorkspace" />
-    }
-    @if (pendingSettingsAction is not null)
-    {
-        <UnsavedChangesDialog Subject="settings" Busy="@(Activity.Busy || settingsWorkspace?.IsBusy == true)" Error="@Activity.Error"
-                     Keep="KeepEditingSettings" Discard="DiscardSettingsAndContinueAsync" Save="SaveSettingsAndContinueAsync" />
-    }
-    @if (removalPlan.Count > 0)
-    {
-        <RemovalDialog Items="removalPlan" Busy="Activity.Busy" Error="@Activity.Error" Progress="@Activity.Progress"
-                       Cancel="CancelRemoval" Confirm="ExecuteRemovalAsync" />
-    }
-
-    @if (Gallery.IsUnlocked && viewerImages.Count > 0)
-    {
-        <FullscreenViewer KnownTags="Catalog.AllTags" Images="viewerImages" InitialId="@viewerInitialId" InitialPreview="@viewerInitialPreview" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
-                          Suggestions="Browser.Suggestions" ApproveSuggestion="ApproveSuggestionAsync" DismissSuggestion="DismissSuggestionAsync" />
-    }
+    <MediaPresentationHost @ref="mediaHost" State="Presentation" Catalog="Catalog" Activity="Activity" Suggestions="Browser.Suggestions"
+                           Rate="RateFromBrowserAsync" Favorite="FavoriteAsync" Mark="MarkAsync" Analyze="AnalyzeAsync"
+                           ShowPrompt="ShowPromptAsync" Remove="PrepareRemovalAsync" Fullscreen="OpenViewer"
+                           Approve="ApproveSuggestionAsync" Dismiss="DismissSuggestionAsync" ImageChanged="ViewerImageChanged"
+                           Changed="RefreshWorkspace" Reload="ReloadAsync" />
+    <RemovalWorkflow State="Removal" Activity="Activity" Changed="RefreshWorkspace" />
+    <UnsavedChangesGuard State="Guard" Error="@Activity.Error" Changed="RefreshWorkspace" />
+</CascadingValue>
 </CascadingValue>
