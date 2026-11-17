@@ -1,7 +1,9 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Components.Tags;
+using Gallery.Web.Components.Workspace;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Analysis;
 
 // The drawer owns the workbench UI. Other features use this session-scoped
 // interface to its analysis actions without reaching into the drawer.

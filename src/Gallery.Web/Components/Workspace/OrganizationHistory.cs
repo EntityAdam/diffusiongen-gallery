@@ -1,7 +1,7 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Workspace;
 
 // One pending organization change per browser circuit, independent of the active screen.
 public sealed class OrganizationHistory(GalleryService gallery)

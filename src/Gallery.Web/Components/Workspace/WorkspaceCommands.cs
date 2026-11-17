@@ -1,4 +1,4 @@
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Workspace;
 
 // Shared operations run through the session so busy state and feedback are
 // rendered even when a nested form initiates the operation.

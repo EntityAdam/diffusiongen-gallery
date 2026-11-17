@@ -1,5 +1,4 @@
 using Gallery.Core.Models;
-using Gallery.Web.Components;
 using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Logging.Abstractions;

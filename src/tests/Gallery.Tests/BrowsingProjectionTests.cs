@@ -5,7 +5,6 @@ using System.Collections.Immutable;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Gallery.Web.Components;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,6 +12,8 @@ using Microsoft.Extensions.DependencyInjection;
 using ShadCn.Blazor.Components;
 using Microsoft.JSInterop;
 using Gallery.Web.Components.Browsing;
+using Gallery.Web.Components.Analysis;
+using Gallery.Web.Components.Ingestion;
 
 namespace Gallery.Tests;
 

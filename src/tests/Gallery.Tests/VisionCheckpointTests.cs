@@ -4,9 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Web.Components;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
+using Gallery.Web.Components.Analysis;
 
 namespace Gallery.Tests;
 

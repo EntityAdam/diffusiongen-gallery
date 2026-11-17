@@ -1,3 +1,4 @@
+@using Gallery.Web.Components.Shared
 <Label For="@id" Class="mt-4 mb-2 block">@(Restoring ? "Backup source" : "Destination")</Label>
 <Select id="@id" Value="@Type" ValueChanged='value => TypeChanged.InvokeAsync(value ?? "local")' Disabled="@Disabled">
     <option value="local">Local folder / SMB network share</option>

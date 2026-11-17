@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Duplicates;
 
 public sealed class DuplicateCatalog : IDisposable
 {

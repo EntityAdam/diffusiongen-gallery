@@ -2,12 +2,12 @@ using System.Net;
 using System.Text.Json;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Web.Components;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ShadCn.Blazor.Components;
+using Gallery.Web.Components.Settings;
 
 #pragma warning disable BL0006 // This test deliberately dispatches real rendered input and submit events.
 

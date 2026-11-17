@@ -41,7 +41,7 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         serviceCollection.AddSingleton<IComponentActivator>(provider => provider.GetRequiredService<ComponentActivator>());
         serviceCollection.AddShadCnBlazorComponents();
         serviceCollection.AddSingleton<IJSRuntime>(jsRuntime ?? new NoOpJsRuntime());
-        serviceCollection.AddScoped<Gallery.Web.Components.OrganizationHistory>();
+        serviceCollection.AddScoped<Gallery.Web.Components.Workspace.OrganizationHistory>();
         if (galleryService is not null) serviceCollection.AddSingleton(galleryService);
         ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
         try

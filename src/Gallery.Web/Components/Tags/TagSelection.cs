@@ -1,6 +1,6 @@
 using Gallery.Core.Services;
 
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Tags;
 
 internal static class TagSelection
 {

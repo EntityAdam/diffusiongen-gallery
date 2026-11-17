@@ -1,7 +1,7 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Settings;
 
 public sealed class BackupDraft
 {

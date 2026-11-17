@@ -4,6 +4,9 @@ using Microsoft.AspNetCore.Components.Routing;
 using Gallery.Web.Components.Browsing;
 using Gallery.Web.Components.Collections;
 using Gallery.Web.Components.Media;
+using Gallery.Web.Components.Analysis;
+using Gallery.Web.Components.Duplicates;
+using Gallery.Web.Components.Settings;
 
 namespace Gallery.Web.Components.Workspace;
 

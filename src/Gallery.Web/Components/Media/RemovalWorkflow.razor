@@ -1,3 +1,4 @@
+@using Gallery.Web.Components.Workspace
 @if (State.IsOpen)
 {
     <RemovalDialog Items="State.Plan" Busy="Activity.Busy" Error="@Activity.Error" Progress="@Activity.Progress"

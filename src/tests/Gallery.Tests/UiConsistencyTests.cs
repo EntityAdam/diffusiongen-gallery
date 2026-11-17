@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.JSInterop;
 using System.Text.RegularExpressions;
 using Gallery.Core.Models;
-using Gallery.Web.Components;
 using Gallery.Web.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
@@ -14,6 +13,10 @@ using Microsoft.AspNetCore.Components.Web.HtmlRendering;
 using Gallery.Web.Components.Browsing;
 using Gallery.Web.Components.Collections;
 using Gallery.Web.Components.Media;
+using Gallery.Web.Components.Analysis;
+using Gallery.Web.Components.Settings;
+using Gallery.Web.Components.Shared;
+using Gallery.Web.Components.Tags;
 
 namespace Gallery.Tests;
 

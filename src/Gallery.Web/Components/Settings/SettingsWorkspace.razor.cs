@@ -1,7 +1,9 @@
 using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Duplicates;
+using Gallery.Web.Components.Workspace;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Settings;
 
 public partial class SettingsWorkspace
 {

@@ -1,3 +1,4 @@
+@using Gallery.Web.Components.Shared
 <ModalDialog LabelledBy="removal-title" Busy="@Busy" Close="Cancel">
     <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="removal-title" class="min-w-0 flex-1 break-words">Remove @Items.Count marked media item(s)</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" OnClick="Cancel" aria-label="Cancel removal" autofocus><XIcon aria-hidden="true" /></Button></div>

@@ -1,13 +1,13 @@
-using Gallery.Web.Components.Workspace;
 using System.Net;
 using System.Reflection;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Web.Components;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Gallery.Web.Components.Collections;
 using Gallery.Web.Components.Media;
+using Gallery.Web.Components.Analysis;
+using Gallery.Web.Components.Settings;
 
 namespace Gallery.Tests;
 

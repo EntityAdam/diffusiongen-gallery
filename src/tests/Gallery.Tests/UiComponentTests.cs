@@ -3,7 +3,6 @@ using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Collections.Immutable;
-using Gallery.Web.Components;
 using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
@@ -12,6 +11,12 @@ using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.Extensions.Logging.Abstractions;
 using Gallery.Web.Components.Browsing;
 using Gallery.Web.Components.Media;
+using Gallery.Web.Components.Access;
+using Gallery.Web.Components.Analysis;
+using Gallery.Web.Components.Duplicates;
+using Gallery.Web.Components.Settings;
+using Gallery.Web.Components.Shared;
+using Gallery.Web.Components.Tags;
 
 namespace Gallery.Tests;
 

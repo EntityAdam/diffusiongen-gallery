@@ -1,6 +1,7 @@
 using Gallery.Core.Models;
-using Gallery.Web.Components;
 using Microsoft.Extensions.Logging.Abstractions;
+using Gallery.Web.Components.Ingestion;
+using Gallery.Web.Components.Workspace;
 
 namespace Gallery.Tests;
 

@@ -1,7 +1,8 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Components.Workspace;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Duplicates;
 
 public sealed class DuplicateWorkflowState(GalleryService gallery, WorkspaceCatalog catalog) : IDisposable
 {

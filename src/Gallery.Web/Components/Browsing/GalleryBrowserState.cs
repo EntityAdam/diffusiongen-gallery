@@ -1,6 +1,8 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Web.Components.Workspace;
+using Gallery.Web.Components.Analysis;
+using Gallery.Web.Components.Tags;
 
 namespace Gallery.Web.Components.Browsing;
 

@@ -1,6 +1,7 @@
 using Gallery.Core.Exceptions;
+using Gallery.Web.Components.Ingestion;
 
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Workspace;
 
 // The circuit's import and operation status survive locking and reopening the workspace.
 public sealed class GalleryActivity

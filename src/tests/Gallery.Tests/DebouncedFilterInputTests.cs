@@ -1,5 +1,5 @@
-using Gallery.Web.Components;
 using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Shared;
 
 namespace Gallery.Tests;
 

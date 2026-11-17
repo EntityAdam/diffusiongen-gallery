@@ -1,6 +1,7 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.JSInterop;
+using Gallery.Web.Components.Workspace;
 
 namespace Gallery.Web.Components.Media;
 

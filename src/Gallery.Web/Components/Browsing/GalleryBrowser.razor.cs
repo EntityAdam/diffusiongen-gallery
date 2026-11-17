@@ -3,6 +3,7 @@ using Gallery.Core.Services;
 using Microsoft.AspNetCore.Components;
 using Gallery.Web.Components.Media;
 using Gallery.Web.Components.Workspace;
+using Gallery.Web.Components.Analysis;
 
 namespace Gallery.Web.Components.Browsing;
 
