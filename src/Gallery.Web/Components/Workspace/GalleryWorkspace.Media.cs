@@ -137,7 +137,7 @@ public partial class GalleryWorkspace
         EnsureNoLibraryJob();
         if (selected is null || workbench is null) return;
         await workbench.AnalyzeDetailAsync(selected);
-        if (Gallery.IsUnlocked) Activity.Message = "Review available suggestions in the AI toolbox. Unfinished analysis can be resumed there.";
+        if (Gallery.IsUnlocked) Activity.Message = "Review available suggestions in the AI analysis drawer. Unfinished analysis can be resumed there.";
     });
 
     private readonly HashSet<string> removalSelection = [];

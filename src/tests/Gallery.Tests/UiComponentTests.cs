@@ -262,24 +262,32 @@ public sealed class UiComponentTests
         });
 
         var collapsed = await RenderAsync("");
-        var expanded = await RenderAsync("organize");
+        var expanded = await RenderAsync("trash");
+        var organize = await RenderAsync("organize");
         var filters = await RenderAsync("filters");
+        var review = await RenderAsync("review");
+        var intelligence = await RenderAsync("intelligence");
 
         foreach (var tool in GalleryToolbox.Tools)
         {
             Assert.Contains($"data-tool=\"{tool.Id}\"", collapsed);
             Assert.Contains($"data-tooltip=\"{tool.Tooltip}\"", collapsed);
         }
-        Assert.Contains("Change view", collapsed);
-        Assert.Contains("Use AI to describe and tag your media", collapsed);
+        Assert.DoesNotContain("Change view", collapsed);
+        Assert.DoesNotContain("data-tool=\"review\"", collapsed);
+        Assert.DoesNotContain("data-tool=\"intelligence\"", collapsed);
+        Assert.DoesNotContain("data-tool=\"organize\"", collapsed);
         Assert.Contains("double-click to reset", collapsed);
         Assert.Matches(@"class=""gallery-toolbox-panel""[^>]*hidden", collapsed);
         Assert.DoesNotContain("aria-pressed=\"true\"", collapsed);
         Assert.Contains("gallery-toolbox-badge", collapsed);
         Assert.Contains("is-expanded", expanded);
         Assert.Single(Regex.Matches(expanded, @"aria-pressed=""true"""));
-        Assert.Matches(@"data-tool=""organize""[^>]*aria-pressed=""true""", expanded);
-        Assert.Contains(">Organize</h3>", expanded);
+        Assert.Matches(@"data-tool=""trash""[^>]*aria-pressed=""true""", expanded);
+        Assert.Contains(">Trash</h3>", expanded);
+        Assert.DoesNotContain("is-expanded", organize);
+        Assert.DoesNotContain("is-expanded", intelligence);
+        Assert.DoesNotContain("is-expanded", review);
         Assert.DoesNotContain("is-expanded", filters);
         Assert.Matches(@"class=""gallery-toolbox-panel""[^>]*hidden", filters);
         Assert.Matches($@"data-tool=""filters""[^>]*aria-controls=""{GalleryToolbox.FilterDrawerId}""", filters);

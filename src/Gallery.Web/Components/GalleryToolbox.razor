@@ -11,7 +11,7 @@
             var active = ActiveTool == tool.Id;
             var badge = Badge?.Invoke(tool.Id) ?? "";
             <button type="button" class="gallery-toolbox-tool" data-tool="@tool.Id" data-tooltip="@tool.Tooltip" aria-label="@tool.Tooltip"
-                    disabled="@(CatalogLoading && tool.Id != "views")" aria-pressed="@(active ? "true" : "false")" aria-controls="@(tool.Id == "filters" ? FilterDrawerId : PanelId)" @onclick="() => ToggleAsync(tool.Id)">
+                    disabled="@CatalogLoading" aria-pressed="@(active ? "true" : "false")" aria-controls="@(tool.Id == "filters" ? FilterDrawerId : PanelId)" @onclick="() => ToggleAsync(tool.Id)">
                 <LucideIcon Name="@tool.Icon" Size="18" aria-hidden="true" />
                 @if (badge.Length > 0) { <span class="gallery-toolbox-badge" aria-hidden="true">@badge</span> }
             </button>
@@ -34,11 +34,7 @@
 
     public static readonly Tool[] Tools =
     [
-        new("views", "layout-grid", "Change view", "View"),
         new("filters", "funnel", "Filter media", "Filters"),
-        new("review", "circle-check", "Review media one by one", "Guided review"),
-        new("organize", "folder", "Organize media", "Organize"),
-        new("intelligence", "sparkles", "Use AI to describe and tag your media", "Local intelligence"),
         new("trash", "trash", "Trash", "Trash")
     ];
 
@@ -57,7 +53,7 @@
     private DotNetObjectReference<GalleryToolbox>? reference;
     private (double? X, double? Y) applied;
     private string ActiveTitle => Tools.FirstOrDefault(tool => tool.Id == ActiveTool)?.Title ?? "";
-    private bool PanelExpanded => ActiveTool.Length > 0 && ActiveTool != "filters";
+    private bool PanelExpanded => ActiveTool.Length > 0 && ActiveTool is not ("views" or "filters" or "organize" or "review" or "intelligence");
 
     private Task ToggleAsync(string id) => ActiveToolChanged.InvokeAsync(ActiveTool == id ? "" : id);
 

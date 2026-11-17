@@ -9,7 +9,7 @@ public partial class GalleryWorkspace
         ("gallery", "Gallery"), ("collections", "Collections"), ("review", "Review"), ("unorganized", "Unorganized"), ("tags", "Tags"), ("duplicates", "Duplicates"), ("ingest", "Import media"), ("settings", "Settings")
     ];
     private bool SidebarItemDisabled(string id) => WorkspaceBusy
-        || catalogPartial && id is "filters" or "review" or "intelligence" or "ingest" or "duplicates"
+        || catalogPartial && id is "filters" or "organize" or "review" or "intelligence" or "ingest" or "duplicates"
         || libraryJob.IsRunning && id == "ingest";
 
     private Task NavigateSidebarAsync(string id)
@@ -21,11 +21,10 @@ public partial class GalleryWorkspace
                 if (workflow != "gallery") await SwitchWorkflowCoreAsync("gallery");
                 await SetActiveToolAsync("");
             });
-        if (id is not ("filters" or "intelligence")) return SwitchWorkflowAsync(id);
+        if (id is not ("views" or "filters" or "organize" or "review" or "intelligence")) return SwitchWorkflowAsync(id);
         return RequestSettingsActionAsync(async () =>
         {
             if (workflow != "gallery") await SwitchWorkflowCoreAsync("gallery");
-            if (id == "intelligence") toolboxVisible = true;
             await SetActiveToolAsync(activeTool == id ? "" : id);
         });
     }
@@ -116,7 +115,6 @@ public partial class GalleryWorkspace
         {
             workflow = "gallery";
             activeTool = "review";
-            toolboxVisible = true;
             return FilterChangedAsync();
         }
         workflow = value;

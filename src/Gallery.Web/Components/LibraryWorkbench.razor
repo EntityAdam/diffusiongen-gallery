@@ -5,6 +5,7 @@
 @inject ILogger<LibraryWorkbench> Logger
 @implements IDisposable
 
+<Microsoft.AspNetCore.Components.Sections.SectionContent SectionName="gallery-workbench">
 <div class="toolbox-workbench space-y-4" hidden="@(!Visible)">
     @if (Workflow == "organize")
     {
@@ -132,6 +133,8 @@
         </div>
     }
 </div>
+
+</Microsoft.AspNetCore.Components.Sections.SectionContent>
 
 @code {
     [Parameter] public string Workflow { get; set; } = "organize";

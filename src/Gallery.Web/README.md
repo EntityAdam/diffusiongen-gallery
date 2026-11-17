@@ -192,9 +192,15 @@ Unsaved LLM, backup destination, and ingestion settings offer **Save changes**,
 **Discard changes**, or **Keep editing** before changing sections. Escape keeps the
 draft open; a failed save preserves the draft and pending navigation.
 
-The sidebar contains **Gallery**, **Duplicate finder**, **Ingest media**,
-**Settings**, and a **Toolbox** toggle. Collapse it to an icon rail when you need
+The sidebar includes **Gallery**, **Change view**, **Filters**, **Organize**, **Review**,
+**AI analysis**, **Collections**, **Tags**, **Duplicates**, and **Import media**. Collapse it to an icon rail when you need
 more space.
+
+**Change view**, between Gallery and Filters, opens a drawer with thumbnail size,
+grouping, sorting, full-screen view, and toolbox-position reset controls.
+
+**Organize**, directly below Filters, opens a right-side drawer for moving selected
+media into collection sets and adding or removing tags.
 
 ### Gallery toolbox
 
@@ -202,11 +208,7 @@ The floating toolbox contains:
 
 | Tool | Purpose |
 |---|---|
-| Change view | Card size, grouping, sorting, full-screen viewer, and toolbox-position reset. |
 | Filter media | Text, model, organization, media/dimensions, vision, and import-date filters. Text applies after a short typing pause; other controls apply immediately. **Reset filters** clears them. |
-| Review media one by one | Guided review of pending items. |
-| Organize media | Add collections/tags and remove tags from selected items. |
-| Use AI to describe and tag your media | Generate suggestions for approval. |
 | Trash | Restore marked items or permanently remove them. |
 
 Click a tool to expand its panel; click it again to collapse it. Toggle the toolbox
@@ -368,6 +370,9 @@ Video playback depends on the browser's codec support.
 
 ### Guided review
 
+Choose **Review** in the sidebar to open the right-side drawer with random order,
+review goal, and **Start Review** controls.
+
 In the Review tool, choose a **Goal** (default 10) and **Start Review**. It selects
 pending, unmarked items from the current filtered results across all pages,
 limited to the number available. **Random order** samples without duplicates;
@@ -430,7 +435,8 @@ addresses, redirects, and proxies are not supported.
 text to that server. A private LAN endpoint is still another machine: trust its
 operator and use HTTPS when available. The gallery itself remains loopback-only.
 
-In the AI toolbox panel:
+Choose **AI analysis** in the sidebar to open its right-side drawer.
+In the drawer:
 
 - **Play** reads the current gallery and analyzes media without saved analysis,
   vision descriptions, or pending vision suggestions. Whole-library runs do not

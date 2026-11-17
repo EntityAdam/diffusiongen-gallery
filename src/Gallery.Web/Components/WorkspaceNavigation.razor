@@ -21,7 +21,7 @@
                 <span class="sidebar-label">@item.Name</span>
             </Button>
         }
-        @if (item.Id is "filters" or "duplicates" or "intelligence")
+        @if (item.Id is "intelligence" or "duplicates")
         {
             <Separator Class="my-2" Decorative="false" />
         }
@@ -37,19 +37,21 @@
     private static readonly (string Id, string Name, string Icon)[] SidebarItems =
     [
         ("gallery", "Gallery", "images"),
+        ("views", "Change view", "layout-grid"),
         ("filters", "Filters", "funnel"),
+        ("organize", "Organize", "folder"),
+        ("review", "Review", "circle-check"),
+        ("intelligence", "AI analysis", "sparkles"),
         ("collections", "Collections", "folders"),
         ("tags", "Tags", "tags"),
         ("duplicates", "Duplicates", "copy"),
-        ("review", "Review", "circle-check"),
-        ("intelligence", "AI analysis", "sparkles"),
         ("ingest", "Import media", "image-plus")
     ];
 
     private bool SidebarItemActive(string id) => id switch
     {
-        "filters" or "review" or "intelligence" => Workflow == "gallery" && ActiveTool == id,
-        "gallery" => Workflow == "gallery" && ActiveTool is not ("filters" or "review" or "intelligence" or "trash"),
+        "views" or "filters" or "organize" or "review" or "intelligence" => Workflow == "gallery" && ActiveTool == id,
+        "gallery" => Workflow == "gallery" && ActiveTool is not ("views" or "filters" or "organize" or "review" or "intelligence" or "trash"),
         _ => Workflow == id
     };
 }
