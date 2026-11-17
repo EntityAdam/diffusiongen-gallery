@@ -139,44 +139,85 @@
 
     <GalleryToolbox @ref="toolbox" Visible="@(toolboxVisible && workflow == "gallery" && selected is null && removalPlan.Count == 0)" ActiveTool="@activeTool" ActiveToolChanged="SetActiveToolAsync"
                     CatalogLoading="catalogPartial" Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="toolboxX" Y="toolboxY" Badge="ToolBadge">
-        @if (activeTool == "views")
-        {
-            <GalleryViewOptions Density="@density" DensityChanged="SetDensityAsync" @bind-Grouping="grouping"
-                                @bind-Grouping:after="FilterChangedAsync" Sort="@filter.Sort" SortChanged="SetSort"
-                                Busy="Activity.Busy" CatalogPartial="catalogPartial" HasImages="PageImages.Any()"
-                                Fullscreen="() => OpenViewer()" ResetPosition="ResetToolboxPositionAsync" />
-        }
-        @if (catalogPartial && activeTool is "review" or "organize" or "intelligence")
-        {
-            <p class="text-muted-foreground" role="status">This tool will be available when the full library finishes loading.</p>
-        }
-        @if (activeTool == "review" && !catalogPartial)
-        {
-            <div class="review-intro space-y-4">
-                <p class="text-muted-foreground text-sm">Review media one item at a time. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
-                <div class="flex items-center gap-3">
-                    <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(reviewRandomOrder ? "true" : "false")"
-                            aria-labelledby="review-random-order-label" disabled="@Activity.Busy" @onclick="() => reviewRandomOrder = !reviewRandomOrder"><span></span></button>
-                    <Label id="review-random-order-label" For="review-random-order">Random order</Label>
-                </div>
-                <div class="flex flex-wrap items-center gap-3">
-                    <Label For="review-goal">Goal:</Label>
-                    <input id="review-goal" type="number" min="@(ReviewPoolCount > 0 ? 1 : 0)" max="@ReviewPoolCount" step="1"
-                           class="review-goal-input" disabled="@(Activity.Busy || ReviewPoolCount == 0)" @bind="ReviewGoal" />
-                    <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(Activity.Busy || ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
-                </div>
-                <p class="text-muted-foreground text-sm">@ReviewPoolCount of the filtered media items await review.</p>
-            </div>
-        }
         @if (activeTool == "trash")
         {
             <TrashTool Busy="Activity.Busy" SelectedCount="removalSelection.Count" Results="removalResults"
                        ClearSelection="ClearSelection" Delete="PrepareBulkRemovalAsync" Restore="() => MarkRemovalSelectionAsync(false)" />
         }
-        <LibraryWorkbench KnownTags="AllTags" @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
-                          Filter="filter" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
-                          SuggestionsChanged="SuggestionsChanged" />
     </GalleryToolbox>
+
+    <LibraryWorkbench KnownTags="AllTags" @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
+                      Filter="filter" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
+                      SuggestionsChanged="SuggestionsChanged" />
+
+    @if (activeTool is "organize" or "intelligence")
+    {
+        var drawerTitle = activeTool == "organize" ? "Organize" : "AI analysis";
+        <aside class="gallery-filter-drawer @(activeTool == "organize" ? "gallery-organize-drawer" : "gallery-analysis-drawer")" aria-labelledby="gallery-workbench-drawer-title"
+               hidden="@(workflow != "gallery" || selected is not null || removalPlan.Count > 0)">
+            <div class="gallery-filter-drawer-header">
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="@($"Close {drawerTitle}")"><XIcon aria-hidden="true" /></Button>
+                <h2 id="gallery-workbench-drawer-title">@drawerTitle</h2>
+            </div>
+            <div class="gallery-analysis-drawer-body">
+                @if (catalogPartial)
+                {
+                    <p class="text-muted-foreground" role="status">@drawerTitle will be available when the full library finishes loading.</p>
+                }
+                <Microsoft.AspNetCore.Components.Sections.SectionOutlet SectionName="gallery-workbench" />
+            </div>
+        </aside>
+    }
+
+    @if (activeTool == "review" && workflow == "gallery" && selected is null && removalPlan.Count == 0)
+    {
+        <aside class="gallery-filter-drawer gallery-review-drawer" aria-labelledby="gallery-review-drawer-title">
+            <div class="gallery-filter-drawer-header">
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="Close guided review"><XIcon aria-hidden="true" /></Button>
+                <h2 id="gallery-review-drawer-title">Guided review</h2>
+            </div>
+            <div class="gallery-review-drawer-body">
+                @if (catalogPartial)
+                {
+                    <p class="text-muted-foreground" role="status">Guided review will be available when the full library finishes loading.</p>
+                }
+                else
+                {
+                    <div class="review-intro space-y-4">
+                        <p class="text-muted-foreground text-sm">Review media one item at a time. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
+                        <div class="flex items-center gap-3">
+                            <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(reviewRandomOrder ? "true" : "false")"
+                                    aria-labelledby="review-random-order-label" disabled="@Activity.Busy" @onclick="() => reviewRandomOrder = !reviewRandomOrder"><span></span></button>
+                            <Label id="review-random-order-label" For="review-random-order">Random order</Label>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-3">
+                            <Label For="review-goal">Goal:</Label>
+                            <input id="review-goal" type="number" min="@(ReviewPoolCount > 0 ? 1 : 0)" max="@ReviewPoolCount" step="1"
+                                   class="review-goal-input" disabled="@(Activity.Busy || ReviewPoolCount == 0)" @bind="ReviewGoal" />
+                            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(Activity.Busy || ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
+                        </div>
+                        <p class="text-muted-foreground text-sm">@ReviewPoolCount of the filtered media items await review.</p>
+                    </div>
+                }
+            </div>
+        </aside>
+    }
+
+    @if (activeTool == "views" && workflow == "gallery" && selected is null && removalPlan.Count == 0)
+    {
+        <aside class="gallery-filter-drawer gallery-view-drawer" aria-labelledby="gallery-view-drawer-title">
+            <div class="gallery-filter-drawer-header">
+                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="Close change view"><XIcon aria-hidden="true" /></Button>
+                <h2 id="gallery-view-drawer-title">Change view</h2>
+            </div>
+            <div class="gallery-view-drawer-body">
+                <GalleryViewOptions Density="@density" DensityChanged="SetDensityAsync" @bind-Grouping="grouping"
+                                    @bind-Grouping:after="FilterChangedAsync" Sort="@filter.Sort" SortChanged="SetSort"
+                                    Busy="Activity.Busy" CatalogPartial="catalogPartial" HasImages="PageImages.Any()"
+                                    Fullscreen="() => OpenViewer()" ResetPosition="ResetToolboxPositionAsync" />
+            </div>
+        </aside>
+    }
 
     @if (activeTool == "filters" && workflow == "gallery" && selected is null && removalPlan.Count == 0)
     {
