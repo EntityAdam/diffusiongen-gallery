@@ -1,8 +1,8 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Web.Components.Pages;
+namespace Gallery.Web.Components.Workspace;
 
-public partial class Home
+public partial class GalleryWorkspace
 {
     private static readonly (string Id, string Name)[] Workflows =
     [
@@ -52,7 +52,7 @@ public partial class Home
     };
     private async Task SetActiveToolAsync(string value)
     {
-        if (busy) return;
+        if (Activity.Busy) return;
         if (catalogPartial && value is not ("" or "views")) return;
         value = UiPreferences.ToolboxTools.Contains(value) ? value : "";
         if (activeTool == value) return;
@@ -72,7 +72,7 @@ public partial class Home
     }
     private async Task ToggleToolboxAsync()
     {
-        if (busy) return;
+        if (Activity.Busy) return;
         if (workflow != "gallery")
         {
             toolboxVisible = true;
@@ -111,10 +111,12 @@ public partial class Home
     private Task ApplyWorkflowAsync(string value)
     {
         if (WorkspaceBusy && value != workflow) return Task.CompletedTask;
-        collectionNavigationOpen = false;
+        layout?.ResetNavigation();
         if (value == "review")
         {
-            workflow = "gallery";activeTool = "review";toolboxVisible = true;
+            workflow = "gallery";
+            activeTool = "review";
+            toolboxVisible = true;
             return FilterChangedAsync();
         }
         workflow = value;
@@ -125,8 +127,8 @@ public partial class Home
         {
             return RunAsync("Loading duplicates...", async () =>
             {
-                await LoadCachedDuplicatesAsync();
-                await LoadDuplicateThumbnailsAsync();
+                await duplicates.LoadAsync(Gallery, imagesById);
+                await duplicates.LoadThumbnailsAsync(Gallery);
             });
         }
         if (value == "settings")
@@ -137,7 +139,7 @@ public partial class Home
                 page = 0;
                 await LoadThumbnailsAsync();
                 storageOverview = await Gallery.CachedStorageOverviewAsync();
-                await LoadCachedDuplicatesAsync();
+                await duplicates.LoadAsync(Gallery, imagesById);
             });
         }
         return FilterChangedAsync();
@@ -162,14 +164,10 @@ public partial class Home
         settingsTab = value;
         return value == "overview"
             ? RunAsync("Loading gallery overview...", async () => storageOverview = await Gallery.CachedStorageOverviewAsync())
-            : value == "backups" && backupOptions is null
+            : value == "backups" && backup.Saved is null
                 ? RunAsync("Loading backup settings...", async () =>
                 {
-                    backupOptions = await Gallery.LoadBackupOptionsAsync();
-                    backupDestinationType = backupOptions.DestinationType;
-                    backupLocalDirectory = backupOptions.LocalDirectory;
-                    backupAzureContainer = backupOptions.AzureContainer;
-                    backupAzurePrefix = backupOptions.AzurePrefix;
+                    backup.Load(await Gallery.LoadBackupOptionsAsync());
                 })
             : Task.CompletedTask;
     }

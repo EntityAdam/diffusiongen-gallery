@@ -34,7 +34,10 @@ public sealed class VaultOpenTelemetryTests
             ShouldListenTo = source => source.Name == GalleryService.VaultOpenActivitySourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
                 options.TraceId == traceId ? ActivitySamplingResult.AllData : ActivitySamplingResult.None,
-            ActivityStopped = activity => activities.Enqueue(activity)
+            ActivityStopped = activity =>
+            {
+                if (activity.TraceId == traceId) activities.Enqueue(activity);
+            }
         };
         ActivitySource.AddActivityListener(activityListener);
         using var meterListener = new MeterListener

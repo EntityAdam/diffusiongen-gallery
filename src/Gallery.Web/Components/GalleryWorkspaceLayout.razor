@@ -1,0 +1,83 @@
+@inject IJSRuntime JS
+
+<AppLayout Class="@($"workspace-layout {(collectionNavigationOpen ? "collection-nav-open" : "")}")" @onkeydown="HandleCollectionNavigationKey">
+    <Sidebar Collapsible="true" @bind-Collapsed="sidebarCollapsed" ExpandedWidth="250px" CollapsedWidth="64px" Class="@($"workspace-sidebar {(sidebarCollapsed ? "is-collapsed" : "")}")" aria-label="Gallery workflows">
+        <div class="workspace-sidebar-heading">
+            <SidebarTrigger aria-expanded="@(sidebarCollapsed ? "false" : "true")" aria-label="@(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")" />
+        </div>
+        <WorkspaceNavigation Workflow="@Workflow" ActiveTool="@ActiveTool" ItemDisabled="ItemDisabled" Navigate="Navigate" />
+        @if (Workflow is "collections" or "unorganized" && !sidebarCollapsed)
+        {
+            <CollectionHierarchy Catalog="Catalog" Location="Location" Images="Images" Busy="Busy" Selected="SelectLocation" />
+        }
+        <div class="workspace-sidebar-actions">
+            <Button Variant="@(Workflow == "settings" ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(Busy || JobRunning)" Class="workspace-nav-button" aria-label="Settings" title="Settings" aria-current="@(Workflow == "settings" ? "page" : null)" OnClick='() => Settings.InvokeAsync()'><SettingsIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Settings</span></Button>
+            <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="workspace-panic" aria-label="Panic lock gallery (Ctrl+Shift+L)" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="Panic">
+                <ShieldAlertIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Panic <kbd>Ctrl+Shift+L</kbd></span>
+            </Button>
+        </div>
+        <WorkspaceSidebarFooter />
+    </Sidebar>
+    <AppLayoutMain Class="workspace-main">
+    <AppLayoutBody Class="workspace-body">
+        @if (Workflow is "collections" or "unorganized" && !CatalogPartial)
+        {
+            <Button Variant="ButtonVariant.Outline" Class="collection-navigation-toggle" aria-label="Show collection navigation" aria-expanded="@(collectionNavigationOpen ? "true" : "false")" OnClick="ToggleCollectionNavigation">Collections navigation</Button>
+            @if (collectionNavigationOpen) { <button class="collection-nav-backdrop" aria-label="Close collection navigation" @onclick="CloseCollectionNavigation"></button> }
+        }
+        @ChildContent
+    </AppLayoutBody>
+    </AppLayoutMain>
+</AppLayout>
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public string Workflow { get; set; } = "";
+    [Parameter] public string ActiveTool { get; set; } = "";
+    [Parameter] public Func<string, bool> ItemDisabled { get; set; } = default!;
+    [Parameter] public EventCallback<string> Navigate { get; set; }
+    [Parameter] public EventCallback Settings { get; set; }
+    [Parameter] public EventCallback Panic { get; set; }
+    [Parameter] public EventCallback<CollectionLocation> LocationChanged { get; set; }
+    [Parameter] public CollectionCatalog Catalog { get; set; } = CollectionCatalog.Empty;
+    [Parameter] public CollectionLocation Location { get; set; } = new();
+    [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool JobRunning { get; set; }
+    [Parameter] public bool CatalogPartial { get; set; }
+
+    private bool sidebarCollapsed;
+    private bool collectionNavigationOpen;
+    private bool? focusCollectionNavigation;
+
+    private void ToggleCollectionNavigation()
+    {
+        collectionNavigationOpen = !collectionNavigationOpen;
+        focusCollectionNavigation = collectionNavigationOpen;
+    }
+
+    private void CloseCollectionNavigation()
+    {
+        collectionNavigationOpen = false;
+        focusCollectionNavigation = false;
+    }
+
+    internal void ResetNavigation() => collectionNavigationOpen = false;
+
+    private Task SelectLocation(CollectionLocation location)
+    {
+        ResetNavigation();
+        return LocationChanged.InvokeAsync(location);
+    }
+
+    private void HandleCollectionNavigationKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape" && collectionNavigationOpen) CloseCollectionNavigation();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusCollectionNavigation is not { } open) return;
+        focusCollectionNavigation = null;
+        await JS.InvokeVoidAsync("galleryViewer.focusCollectionNavigation", open);
+    }
+}

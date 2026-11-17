@@ -1,3 +1,4 @@
+using Gallery.Web.Components.Workspace;
 // Class tests pin projection identity, enumeration and private component transitions that HTTP cannot expose.
 using System.Collections;
 using System.Collections.Immutable;
@@ -67,7 +68,7 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public void IngestionDefaults_WhenHomeIsCreated_ThenUsesTheSafeHddSettings()
+    public void IngestionDefaults_WhenSessionIsCreated_ThenUsesTheSafeHddSettings()
     {
         // Arrange
         var expectedScenario = ExpectedScenario.CreateFrom("Ingestion starts recursively with safe HDD settings and no source deletion.", new
@@ -77,14 +78,14 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        var home = new Home();
+        var session = new IngestionSession();
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            Recursive = GetField<bool>(home, "recursive"), DeleteSources = GetField<bool>(home, "deleteSources"),
-            RecordTimings = GetField<bool>(home, "recordTimings"), Profile = GetField<string>(home, "ingestionProfile"),
-            Workers = GetField<int>(home, "ingestionWorkers"), BatchSize = GetField<int>(home, "ingestionBatchSize")
+            Recursive = session.Recursive, DeleteSources = session.DeleteSources,
+            RecordTimings = session.RecordTimings, Profile = session.Profile,
+            Workers = session.Workers, BatchSize = session.BatchSize
         });
     }
 
@@ -96,7 +97,7 @@ public sealed class BrowsingProjectionTests
     public void IngestionProfile_WhenApplied_ThenCopiesTheSettingsAndProfileName(string expectedProfile)
     {
         // Arrange
-        var home = new Home();
+        var session = new IngestionSession();
         var ingestionOptions = expectedProfile switch
         {
             "ssd" => IngestionOptions.Ssd,
@@ -110,14 +111,13 @@ public sealed class BrowsingProjectionTests
         var profileOverride = expectedProfile == "ssd" ? expectedProfile : null;
 
         // Act
-        typeof(Home).GetMethod("ApplyIngestionProfile", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(home, [ingestionOptions, profileOverride]);
+        session.ApplyProfile(ingestionOptions, profileOverride);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            Profile = GetField<string>(home, "ingestionProfile"),
-            Workers = GetField<int>(home, "ingestionWorkers"), BatchSize = GetField<int>(home, "ingestionBatchSize")
+            Profile = session.Profile,
+            Workers = session.Workers, BatchSize = session.BatchSize
         });
     }
 
@@ -134,21 +134,19 @@ public sealed class BrowsingProjectionTests
         bool hasScan, bool isBusy, long mediaAvailableBytes, int fileCount, bool deletesSources, bool expectedCanIngest)
     {
         // Arrange
-        var home = new Home();
+        var session = new IngestionSession();
         var ingestionScan = new IngestionScan(
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), FolderSearchScope.Descendants,
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
             [new IngestionScanFile(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + ".png", 100, DateTime.UtcNow, false)]);
         var ingestionSpaceEstimate = GalleryService.CalculateIngestionSpace(1, 100,
             long.MaxValue, long.MaxValue, true) with { MediaAvailableBytes = mediaAvailableBytes, FileCount = fileCount };
-        if (hasScan) SetField(home, "ingestionScan", ingestionScan);
-        SetField(home, "ingestionSpace", ingestionSpaceEstimate);
-        SetField(home, "busy", isBusy);
-        SetField(home, "deleteSources", deletesSources);
+        if (hasScan) session.Scan = ingestionScan;
+        session.Space = ingestionSpaceEstimate;
+        session.DeleteSources = deletesSources;
 
         // Act
-        var actualCanIngest = (bool)typeof(Home).GetProperty("CanIngestScan", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(home)!;
+        var actualCanIngest = session.CanIngest(isBusy);
 
         // Assert
         Assert.Equal(expectedCanIngest, actualCanIngest);
@@ -161,10 +159,10 @@ public sealed class BrowsingProjectionTests
     public void IngestionEstimate_WhenSourceDeletionIsToggled_ThenReflectsTheSelectedSourceBytes(bool initiallyDeletesSources)
     {
         // Arrange
-        var home = new Home();
+        var session = new IngestionSession();
         var ingestionSpaceEstimate = GalleryService.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
-        SetField(home, "ingestionSpace", ingestionSpaceEstimate);
-        SetField(home, "deleteSources", initiallyDeletesSources);
+        session.Space = ingestionSpaceEstimate;
+        session.DeleteSources = initiallyDeletesSources;
         var expectedScenario = ExpectedScenario.CreateFrom("Source deletion subtracts selected source bytes from the estimated storage change.", new
         {
             DeletesSources = !initiallyDeletesSources,
@@ -174,13 +172,13 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        typeof(Home).GetMethod("ToggleSourceDeletion", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        session.DeleteSources = !session.DeleteSources;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            DeletesSources = GetField<bool>(home, "deleteSources"),
-            ChangeBytes = GetProperty<long>(home, "EstimatedIngestionChangeBytes")
+            DeletesSources = session.DeleteSources,
+            ChangeBytes = session.EstimatedChangeBytes
         });
     }
 
@@ -188,26 +186,26 @@ public sealed class BrowsingProjectionTests
     public void IngestionScan_WhenRecursionChanges_ThenDisablesRecursionAndIngestionAndClearsTheScanAndSpaceEstimate()
     {
         // Arrange
-        var home = new Home();
-        SetField(home, "ingestionScan", new IngestionScan(
+        var session = new IngestionSession();
+        session.Scan = new IngestionScan(
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), FolderSearchScope.Descendants,
-            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), []));
-        SetField(home, "ingestionSpace", GalleryService.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true));
+            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), []);
+        session.Space = GalleryService.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
         var expectedScenario = ExpectedScenario.CreateFrom("Changing recursion invalidates the scan and estimate and disables ingestion.", new
         {
             Recursive = false, HasScan = false, HasSpaceEstimate = false, CanIngest = false
         });
 
         // Act
-        typeof(Home).GetMethod("ToggleImportRecursion", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        session.ToggleRecursion();
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            Recursive = GetField<bool>(home, "recursive"),
-            HasScan = GetField<IngestionScan?>(home, "ingestionScan") is not null,
-            HasSpaceEstimate = GetField<IngestionSpaceEstimate?>(home, "ingestionSpace") is not null,
-            CanIngest = GetProperty<bool>(home, "CanIngestScan")
+            Recursive = session.Recursive,
+            HasScan = session.Scan is not null,
+            HasSpaceEstimate = session.Space is not null,
+            CanIngest = session.CanIngest(false)
         });
     }
 
@@ -449,7 +447,7 @@ public sealed class BrowsingProjectionTests
             new { ReusesSnapshot = true, PageCount = 2, PageImageCount = 11 });
 
         // Act
-        var actualImageRecords = (IReadOnlyList<ImageRecord>)typeof(Home)
+        var actualImageRecords = (IReadOnlyList<ImageRecord>)typeof(GalleryWorkspace)
             .GetProperty("Filtered", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
 
         // Assert
@@ -474,7 +472,7 @@ public sealed class BrowsingProjectionTests
             new { ReusesSnapshot = false, ImageIds = new[] { imageRecords[1].Id } });
 
         // Act
-        var actualImageRecords = (IReadOnlyList<ImageRecord>)typeof(Home)
+        var actualImageRecords = (IReadOnlyList<ImageRecord>)typeof(GalleryWorkspace)
             .GetProperty("Filtered", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
 
         // Assert
@@ -498,7 +496,7 @@ public sealed class BrowsingProjectionTests
         var expectedImageIds = imageRecords.Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray();
 
         // Act
-        typeof(Home).GetMethod("ViewerImageChanged", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [updatedImageRecord]);
+        typeof(GalleryWorkspace).GetMethod("ViewerImageChanged", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [updatedImageRecord]);
 
         // Assert - gather the updated projection
         var actualImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
@@ -524,7 +522,7 @@ public sealed class BrowsingProjectionTests
             });
 
         // Act
-        var actualPromptGroupsByImageId = (IReadOnlyDictionary<string, PromptGroup>)typeof(Home)
+        var actualPromptGroupsByImageId = (IReadOnlyDictionary<string, PromptGroup>)typeof(GalleryWorkspace)
             .GetProperty("promptGroupOf", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
 
         // Assert
@@ -538,7 +536,7 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public void HomeProjection_WhenLocked_ThenClearsImagesAndGroups()
+    public void WorkspaceProjection_WhenDisposed_ThenClearsImagesAndGroups()
     {
         // Arrange
         using var testVault = new TestVault();
@@ -549,7 +547,7 @@ public sealed class BrowsingProjectionTests
             new { ImageCount = 0, GroupCount = 0 });
 
         // Act
-        typeof(Home).GetMethod("Lock", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        home.Dispose();
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -582,7 +580,7 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        await (Task)typeof(Home).GetMethod("CurateAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+        await (Task)typeof(GalleryWorkspace).GetMethod("CurateAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(home, [new[] { staleImageRecord.Id, staleImageRecord.Id }, (Func<ImageRecordEdit, ImageRecordEdit>)Edit, "saved"])!;
 
         // Assert - gather the persisted and displayed records
@@ -620,7 +618,7 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        typeof(Home).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
 
         // Assert - gather the review session
         var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
@@ -652,12 +650,12 @@ public sealed class BrowsingProjectionTests
             };
         var home = CreateHome(testVault, imageRecords);
         SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
-        typeof(Home).GetProperty("ReviewGoal", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, requestedGoal);
+        typeof(GalleryWorkspace).GetProperty("ReviewGoal", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, requestedGoal);
         var expectedScenario = ExpectedScenario.CreateFrom("Review goals and session sizes stay within the eligible filtered pool.",
             new { Goal = expectedGoal, SessionCount = expectedGoal, AllEligible = true });
 
         // Act
-        typeof(Home).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
 
         // Assert - gather the review session
         var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
@@ -695,7 +693,7 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        typeof(Home).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
 
         // Assert - gather the review session
         var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
@@ -727,7 +725,7 @@ public sealed class BrowsingProjectionTests
             new { Goal = expectedCount, SessionCount = expectedCount });
 
         // Act
-        typeof(Home).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario,
@@ -751,7 +749,7 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        typeof(Home).GetMethod("SelectCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [imageRecords[2].Id, true]);
+        typeof(GalleryWorkspace).GetMethod("SelectCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [imageRecords[2].Id, true]);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -776,7 +774,7 @@ public sealed class BrowsingProjectionTests
         var expectedSelectedIds = new[] { imageRecords[0].Id, imageRecords[2].Id }.Order(StringComparer.Ordinal);
 
         // Act
-        typeof(Home).GetMethod(SelectCardMethod, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [imageRecords[1].Id, false]);
+        typeof(GalleryWorkspace).GetMethod(SelectCardMethod, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [imageRecords[1].Id, false]);
 
         // Assert
         Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "removalSelection").Order(StringComparer.Ordinal));
@@ -820,7 +818,7 @@ public sealed class BrowsingProjectionTests
         string[] expectedSelectedIds = [];
 
         // Act
-        typeof(Home).GetMethod("ClearSelection", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        typeof(GalleryWorkspace).GetMethod("ClearSelection", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
 
         // Assert
         Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "removalSelection"));
@@ -839,7 +837,7 @@ public sealed class BrowsingProjectionTests
             new { Deletion = "marked", ImageIds = new[] { imageRecords[1].Id } });
 
         // Act
-        await (Task)typeof(Home).GetMethod("SetActiveToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, ["trash"])!;
+        await (Task)typeof(GalleryWorkspace).GetMethod("SetActiveToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, ["trash"])!;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -864,7 +862,7 @@ public sealed class BrowsingProjectionTests
             new { FilterRestored = true, HasSavedBrowsingFilter = false });
 
         // Act
-        await (Task)typeof(Home).GetMethod("SetActiveToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, ["views"])!;
+        await (Task)typeof(GalleryWorkspace).GetMethod("SetActiveToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, ["views"])!;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -890,28 +888,28 @@ public sealed class BrowsingProjectionTests
             Id = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Name = index.ToString("D2")
         }).ToList();
 
-    private static Home CreateHome(TestVault testVault, List<ImageRecord> imageRecords)
+    private static GalleryWorkspace CreateHome(TestVault testVault, List<ImageRecord> imageRecords)
     {
-        var home = new Home();
-        typeof(Home).GetProperty("Gallery", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, testVault.Service);
-        typeof(Home).GetProperty("OrganizationHistory", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new OrganizationHistory(testVault.Service));
-        typeof(Home).GetProperty("JS", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new NoOpJsRuntime());
+        var home = new GalleryWorkspace();
+        typeof(GalleryWorkspace).GetProperty("Gallery", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, testVault.Service);
+        typeof(GalleryWorkspace).GetProperty("OrganizationHistory", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new OrganizationHistory(testVault.Service));
+        typeof(GalleryWorkspace).GetProperty("JS", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new NoOpJsRuntime());
         SetField(home, "images", imageRecords);
         SetField(home, "imagesById", imageRecords.ToDictionary(imageRecord => imageRecord.Id));
         return home;
     }
 
-    private static void SetField(Home home, string name, object value) =>
-        typeof(Home).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, value);
+    private static void SetField(GalleryWorkspace home, string name, object value) =>
+        typeof(GalleryWorkspace).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, value);
 
-    private static T GetField<T>(Home home, string name) =>
-        (T)typeof(Home).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
+    private static T GetField<T>(GalleryWorkspace home, string name) =>
+        (T)typeof(GalleryWorkspace).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
 
-    private static T GetProperty<T>(Home home, string name) =>
-        (T)typeof(Home).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
+    private static T GetProperty<T>(GalleryWorkspace home, string name) =>
+        (T)typeof(GalleryWorkspace).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
 
-    private static object? Invoke(Home home, string name, params object?[] arguments) =>
-        typeof(Home).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, arguments);
+    private static object? Invoke(GalleryWorkspace home, string name, params object?[] arguments) =>
+        typeof(GalleryWorkspace).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, arguments);
 
     private sealed class NoOpJsRuntime : IJSRuntime
     {

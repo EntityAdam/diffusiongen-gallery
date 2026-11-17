@@ -1,0 +1,216 @@
+@inject GalleryService Gallery
+@inject ILogger<IngestionWorkspace> Logger
+
+<Card Class="mb-6 p-5 md:p-6">
+    <p class="text-muted-foreground">Load media into your secure library. It is encrypted with your passphrase, and you can optionally delete the originals.</p>
+    <section class="mt-4 space-y-3" aria-labelledby="supported-media-heading">
+        <h3 id="supported-media-heading">Supported Media</h3>
+        <div class="flex flex-wrap items-center gap-2"><span>Images</span><Badge Variant="BadgeVariant.Secondary">PNG</Badge><Badge Variant="BadgeVariant.Secondary">JPEG</Badge><Badge Variant="BadgeVariant.Secondary">WEBP</Badge><span>Up to 50MB</span></div>
+        <div class="flex flex-wrap items-center gap-2"><span>Videos</span><Badge Variant="BadgeVariant.Secondary">MP4</Badge><span>Up to 256MB</span></div>
+    </section>
+    <section class="mt-6 space-y-3" aria-labelledby="third-party-heading">
+        <h3 id="third-party-heading">3rd party</h3>
+        <p class="text-muted-foreground">3rd Party tools are required for certain features and are not bundled with the application. You will need to install them separately.</p>
+        <h4>Video encoding</h4>
+        <div class="flex items-center gap-2"><strong>FFMPEG</strong><Badge Class="@(Gallery.VideoToolsAvailable ? "ingest-tool-available" : "ingest-tool-unavailable")">@(Gallery.VideoToolsAvailable ? "available" : "not available")</Badge></div>
+    </section>
+    <h3 class="mt-6">Ingest</h3>
+        <form @onsubmit="ScanImportFolderAsync" @onsubmit:preventDefault>
+            <Label For="source" Class="mt-4 mb-2 block">Ingest Media From</Label>
+            <Input id="source" @bind-Value="Session.SourcePath" @bind-Value:after="Session.ClearScan" Placeholder="C:\Pictures\Diffusion" required Disabled="@Busy" />
+            <div class="mt-4 flex items-center gap-3"><button id="check-recursive" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.Recursive ? "true" : "false")" aria-labelledby="recursive-label" disabled="@Busy" @onclick="Session.ToggleRecursion"><span></span></button><Label id="recursive-label" For="check-recursive">Include subfolders</Label></div>
+            <div class="mt-4 flex items-center gap-3"><button id="check-recordtimings" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.RecordTimings ? "true" : "false")" aria-labelledby="record-timings-label" disabled="@Busy" @onclick="() => Session.RecordTimings = !Session.RecordTimings"><span></span></button><Label id="record-timings-label" For="check-recordtimings">Save performance information</Label></div>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Class="mt-4" Disabled="@(Busy || string.IsNullOrWhiteSpace(Session.SourcePath))" Type="submit">Scan</Button>
+        </form>
+        @if (Session.Scan is not null)
+        {
+            <section class="mt-4 space-y-3" aria-labelledby="ingestion-scan-heading" aria-live="polite">
+            <h4 id="ingestion-scan-heading">Scan results</h4>
+            <p>@Session.Scan.ImageCount images &middot; @Session.Scan.VideoCount videos &middot; Source file size total: @FormatIngestionBytes(Session.Scan.SourceBytes)</p>
+            <div class="flex items-center gap-3"><button id="include-images" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.IncludeImages ? "true" : "false")" aria-labelledby="include-images-label" disabled="@Busy" @onclick="ToggleIncludeImagesAsync"><span></span></button><Label id="include-images-label" For="include-images">Include Images</Label></div>
+            <div class="flex items-center gap-3"><button id="include-videos" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.IncludeVideos ? "true" : "false")" aria-labelledby="include-videos-label" disabled="@(Busy || !Gallery.VideoToolsAvailable)" @onclick="ToggleIncludeVideosAsync"><span></span></button><Label id="include-videos-label" For="include-videos">Include Videos</Label></div>
+            @if (!Gallery.VideoToolsAvailable && Session.Scan.VideoCount > 0)
+            {
+                <p class="text-muted-foreground">Install ffmpeg and ffprobe to include videos.</p>
+            }
+            <div class="flex items-center gap-3"><button id="check-deletesources" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.DeleteSources ? "true" : "false")" aria-labelledby="delete-sources-label" disabled="@Busy" @onclick="() => Session.DeleteSources = !Session.DeleteSources"><span></span></button><Label id="delete-sources-label" For="check-deletesources">Delete original media</Label></div>
+            @if (Session.DeleteSources)
+            {
+                <Alert Variant="AlertVariant.Destructive"><LucideIcon Name="triangle-alert" Size="16" aria-hidden="true" /><span>Originals will be <strong>permanently</strong> deleted after the import is verified.</span></Alert>
+            }
+            @if (Session.Space is not null)
+            {
+                <p>@Session.Space.FileCount files selected &middot; @FormatIngestionBytes(Session.Space.SelectedSourceBytes) source media</p>
+                <p>Available disk space: @FormatIngestionBytes(Session.Space.MediaAvailableBytes)</p>
+                <p>Estimated change: @FormatIngestionBytes(Session.EstimatedChangeBytes)</p>
+                <p class="text-muted-foreground" title="Uses the encryption envelope size plus an allowance of 128 KiB per thumbnail and 4 KiB per catalog entry. Actual growth varies; duplicates may reduce it. The free-space safety check uses a separate, larger allowance before deleting originals.">Includes an <strong>estimate</strong> for encryption and thumbnails.</p>
+                @if (Session.Space.FileCount == 0)
+                {
+                    <p role="status">No files selected. Enable a media type with scanned files, or scan another folder.</p>
+                }
+                else if (!Session.Space.HasEnoughSpace)
+                {
+                    <Alert Variant="AlertVariant.Destructive">Not enough available disk space for the selected media and catalog growth.</Alert>
+                }
+            }
+            @if (Session.SettingsDirty) { <p role="status">Save your changes under Advanced before ingesting media.</p> }
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(!Session.CanIngest(Busy))" OnClick="ImportFolderAsync">Ingest <ArrowRightIcon aria-hidden="true" /></Button>
+            </section>
+        }
+    <details class="mt-6">
+        <summary>Advanced</summary>
+        <div class="mt-4 space-y-3">
+            <h3>Ingestion performance</h3>
+            <Label Class="block">Performance profile</Label>
+            <div class="flex flex-wrap gap-2" role="group" aria-label="Performance profile">
+                <Button Variant="@(Session.Profile == "hdd" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(Session.Profile == "hdd" ? "true" : "false")" Disabled="@Busy" OnClick='() => Session.ApplyProfile(IngestionOptions.Hdd, "hdd")'>HDD</Button>
+                <Button Variant="@(Session.Profile == "ssd" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(Session.Profile == "ssd" ? "true" : "false")" Disabled="@Busy" OnClick='() => Session.ApplyProfile(IngestionOptions.Ssd, "ssd")'>SSD</Button>
+                <Button Variant="@(Session.Profile == "custom" ? ButtonVariant.Secondary : ButtonVariant.Outline)" aria-pressed="@(Session.Profile == "custom" ? "true" : "false")" Disabled="@Busy" OnClick='() => Session.Profile = "custom"'>Custom</Button>
+            </div>
+            <p class="text-muted-foreground">Performance settings: @Session.Workers workers, batch size @Session.BatchSize.</p>
+            @if (Session.Profile == "custom")
+            {
+                <div class="space-y-3">
+                    <Label For="ingestion-workers">Workers</Label>
+                    <input id="ingestion-workers" type="number" min="1" max="32" @bind="Session.Workers" disabled="@Busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                    <Label For="ingestion-batch">Batch Size</Label>
+                    <input id="ingestion-batch" type="number" min="1" max="64" @bind="Session.BatchSize" disabled="@Busy" class="h-10 rounded-md border border-input bg-background px-3" />
+                    <p class="text-muted-foreground">Use 1-32 workers and a batch size of 1-64, at least as large as the worker count. More workers use more memory.</p>
+                </div>
+            }
+            <p class="text-muted-foreground" role="status">@(Session.SettingsDirty ? "Unsaved changes. Save ingestion settings before ingesting media." : "Ingestion settings are saved. Changes require Save ingestion settings.")</p>
+            <Button Variant="ButtonVariant.Outline" Disabled="@(Busy || !Session.SettingsDirty)" OnClick="SaveOptionsAsync">Save ingestion settings</Button>
+        </div>
+    </details>
+    <IngestionReport ProgressInfo="Session.Progress" Busy="@Busy" Failures="Session.Failures" TimingReport="@Session.TimingReport" />
+</Card>
+
+@code {
+    [Parameter, EditorRequired] public IngestionSession Session { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback Reload { get; set; }
+    [Parameter] public CancellationToken Lifetime { get; set; }
+    private bool SessionEnded => Lifetime.IsCancellationRequested;
+    private Task SaveOptionsAsync() => Commands.RunAsync("Saving ingestion settings...", async () =>
+    {
+        await Session.SaveOptionsAsync(Gallery);
+        Commands.Activity.Message = "Performance settings saved for this gallery.";
+    });
+
+    private Task ScanImportFolderAsync() => Commands.RunLibraryChangeAsync("Scanning selected folder...", async () =>
+    {
+        Session.ClearScan();
+        Session.Progress = null;
+        Session.Failures = [];
+        Session.TimingReport = null;
+        var scan = await Gallery.ScanFolderAsync(Session.SourcePath,
+            Session.Recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder);
+        if (SessionEnded || !Gallery.IsUnlocked) return;
+        Session.IncludeImages = true;
+        Session.IncludeVideos = Gallery.VideoToolsAvailable;
+        var space = await Gallery.EstimateIngestionSpaceAsync(scan, Session.IncludeImages, Session.IncludeVideos);
+        if (SessionEnded || !Gallery.IsUnlocked) return;
+        Session.Scan = scan;
+        Session.Space = space;
+    });
+
+    private Task ToggleIncludeImagesAsync() => Commands.RunAsync("Updating disk space estimate...", async () =>
+    {
+        Session.IncludeImages = !Session.IncludeImages;
+        await RefreshIngestionSpaceAsync();
+    });
+
+    private Task ToggleIncludeVideosAsync() => Commands.RunAsync("Updating disk space estimate...", async () =>
+    {
+        Session.IncludeVideos = !Session.IncludeVideos;
+        await RefreshIngestionSpaceAsync();
+    });
+
+    private async Task RefreshIngestionSpaceAsync()
+    {
+        Session.Space = null;
+        if (Session.Scan is not { } scan) throw new InvalidOperationException("Scan the source folder first.");
+        var space = await Gallery.EstimateIngestionSpaceAsync(scan, Session.IncludeImages, Session.IncludeVideos);
+        if (Gallery.IsUnlocked && ReferenceEquals(scan, Session.Scan)) Session.Space = space;
+    }
+
+    private static string FormatIngestionBytes(long bytes) => bytes < 1024L * 1024
+        ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes / (1024d * 1024):0.######} MB")
+        : GalleryService.FormatBytes(bytes);
+
+    private Task ImportFolderAsync() => Commands.RunLibraryChangeAsync("Ingesting scanned media...", async () =>
+    {
+        if (Session.SettingsDirty) throw new InvalidOperationException("Save ingestion settings before ingesting media.");
+        var scan = Session.Scan ?? throw new InvalidOperationException("Scan the source folder before ingesting.");
+        if (Session.Space?.HasEnoughSpace != true)
+            throw new InvalidOperationException("Select media and check available disk space before ingesting.");
+        var deletingSources = Session.DeleteSources;
+        var sourcePath = Session.SourcePath;
+        var scope = Session.Recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder;
+        var options = Session.SavedOptions;
+        var includeImages = Session.IncludeImages;
+        var includeVideos = Session.IncludeVideos;
+        var recordTimings = Session.RecordTimings;
+        Session.Failures = [];
+        Session.TimingReport = null;
+        IngestionTimingReport? completedTimingReport = null;
+        Session.Progress = new ImportProgress(Session.Space.FileCount, 0, 0, 0, "Checking scanned files and disk space...");
+        Session.IsRunning = true;
+        await Changed.InvokeAsync();
+        var lastProgressRender = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            try
+            {
+                await Gallery.ImportFolderAsync(sourcePath, scope, sourceRetention: deletingSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
+                    reportProgress: update => InvokeAsync(async () =>
+                    {
+                        if (SessionEnded) return;
+                        var render = update.Total != Session.Progress?.Total || update.Completed == update.Total
+                            || update.Failed != Session.Progress?.Failed || lastProgressRender.ElapsedMilliseconds >= 100;
+                        Session.Progress = update;
+                        if (render)
+                        {
+                            await Changed.InvokeAsync();
+                            lastProgressRender.Restart();
+                        }
+                    }), reportTimings: recordTimings ? report => completedTimingReport = report : null,
+                    options: options,
+                    scan: scan, includeImages: includeImages, includeVideos: includeVideos);
+            }
+            catch (ImportFolderException exception)
+            {
+                Session.Failures = exception.Failures.InnerExceptions.Select(failure => failure.Message).ToList();
+                if (Gallery.IsUnlocked) await Reload.InvokeAsync();
+                throw;
+            }
+            if (SessionEnded) return;
+            Session.Progress = Session.Progress with { Status = "Refreshing library..." };
+            await Changed.InvokeAsync();
+            if (Gallery.IsUnlocked) await Reload.InvokeAsync();
+            if (SessionEnded) return;
+            Session.Progress = Session.Progress with { Status = Session.Progress.Total == 0 ? "No supported media found." : "Ingestion complete." };
+            Commands.Activity.Message = $"Imported {Session.Progress.Imported} media item(s). {Session.Failures.Count} file(s) reported errors."
+                + (deletingSources ? " Sources of verified imports were deleted unless an error was reported; duplicates were retained." : " Sources were retained.");
+        }
+        catch
+        {
+            if (Session.Progress is not null)
+                Session.Progress = Session.Progress with { Status = "Ingestion stopped. See the error above; completed imports were retained." };
+            throw;
+        }
+        finally
+        {
+            Session.IsRunning = false;
+            Session.ClearScan();
+            if (completedTimingReport is not null)
+            {
+                Session.TimingReport = completedTimingReport.ToString();
+                Logger.LogInformation("{IngestionTimings}", Session.TimingReport);
+            }
+        }
+        Session.DeleteSources = false;
+    });
+}

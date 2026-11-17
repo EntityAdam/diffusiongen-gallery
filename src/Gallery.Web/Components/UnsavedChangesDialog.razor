@@ -1,0 +1,22 @@
+<ModalDialog LabelledBy="@TitleId" Busy="Busy" Close="Keep">
+    <Card Class="mx-auto max-w-lg space-y-4 p-5">
+        <h2 id="@TitleId">Save your @Subject?</h2>
+        <p>@(Subject == "notes" ? "Your notes" : "These settings") have unsaved changes.</p>
+        <div class="flex flex-wrap gap-2">
+            <Button Variant="ButtonVariant.Outline" Disabled="Busy" OnClick="Keep" autofocus>Keep editing</Button>
+            <Button Variant="ButtonVariant.Outline" Disabled="Busy" OnClick="Discard">Discard changes</Button>
+            <Button Disabled="Busy" OnClick="Save">Save changes</Button>
+        </div>
+        @if (Error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@Error</Alert> }
+    </Card>
+</ModalDialog>
+
+@code {
+    [Parameter, EditorRequired] public string Subject { get; set; } = "";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public EventCallback Keep { get; set; }
+    [Parameter] public EventCallback Discard { get; set; }
+    [Parameter] public EventCallback Save { get; set; }
+    private string TitleId => $"unsaved-{Subject}-title";
+}

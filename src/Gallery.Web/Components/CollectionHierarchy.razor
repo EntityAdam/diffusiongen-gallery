@@ -1,0 +1,42 @@
+<nav class="collection-hierarchy" aria-label="Collection hierarchy">
+    <small>COLLECTIONS</small>
+    @foreach (var collection in Catalog.Collections.OrderBy(item => item.Name))
+    {
+        var current = Location.CollectionId == collection.Id;
+        var sets = setsByCollection[collection.Id];
+        <button disabled="@Busy" class="@(current ? "is-current" : "")" title="@collection.Name"
+                aria-current="@(current && Location.SetId is null ? "page" : null)"
+                @onclick="() => Selected.InvokeAsync(new(collection.Id))">
+            <span>@collection.Name</span><small>@sets.Sum(set => countsBySet.GetValueOrDefault(set.Id))</small>
+        </button>
+        @if (current)
+        {
+            @foreach (var set in sets.OrderBy(item => item.Order))
+            {
+                <button disabled="@Busy" class="collection-hierarchy-set @(Location.SetId == set.Id ? "is-current" : "")"
+                        title="@set.Name" aria-current="@(Location.SetId == set.Id ? "page" : null)"
+                        @onclick="() => Selected.InvokeAsync(new(collection.Id, set.Id))">
+                    <span>@set.Name</span><small>@countsBySet.GetValueOrDefault(set.Id)</small>
+                </button>
+            }
+        }
+    }
+</nav>
+
+@code {
+    [Parameter, EditorRequired] public CollectionCatalog Catalog { get; set; } = CollectionCatalog.Empty;
+    [Parameter, EditorRequired] public CollectionLocation Location { get; set; } = new();
+    [Parameter, EditorRequired] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<CollectionLocation> Selected { get; set; }
+
+    private ILookup<string, MediaSet> setsByCollection = default!;
+    private Dictionary<string, int> countsBySet = [];
+
+    protected override void OnParametersSet()
+    {
+        setsByCollection = Catalog.Sets.ToLookup(set => set.CollectionId);
+        countsBySet = Images.Where(image => !image.IsMarkedForDeletion && image.SetId is not null)
+            .CountBy(image => image.SetId!).ToDictionary();
+    }
+}

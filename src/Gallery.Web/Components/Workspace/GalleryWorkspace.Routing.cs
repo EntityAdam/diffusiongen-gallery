@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
 
-namespace Gallery.Web.Components.Pages;
+namespace Gallery.Web.Components.Workspace;
 
-public partial class Home
+public partial class GalleryWorkspace
 {
     [Parameter] public string? Route { get; set; }
     [Parameter] public NavigationManager? Router { get; set; }
@@ -11,18 +11,24 @@ public partial class Home
     private string? lastRoute;
     private string CurrentPath => workflow == "settings" && settingsTab != "overview"
         ? $"settings/{settingsTab}" : workflow;
-    private bool HasUnsavedChanges => SettingsDirty || NotesDirty;
+    private bool HasUnsavedChanges => SettingsDirty || selected is not null && detailDialog?.NotesDirty == true;
 
     protected override async Task OnParametersSetAsync()
     {
-        if (Route == lastRoute) return;
+        if (!initialized || Route == lastRoute) return;
         lastRoute = Route;
+        if (ingestion.IsRunning)
+        {
+            workflow = "ingest";
+            PublishRoute();
+            return;
+        }
         await ApplyRouteAsync();
     }
 
     private async Task ApplyRouteAsync()
     {
-        if (Route is null || !Gallery.IsUnlocked || recoveryPhrase.Length > 0) return;
+        if (Route is null || !Gallery.IsUnlocked) return;
         var path = NormalizePath(Route);
         if (path.Length == 0) path = "gallery";
         var parts = path.Split('/');
@@ -60,11 +66,13 @@ public partial class Home
         if (HasUnsavedChanges)
         {
             context.PreventNavigation();
-            await RequestDetailActionAsync(() => RequestSettingsActionAsync(() =>
+            Task ContinueAsync() => RequestSettingsActionAsync(() =>
             {
                 Router.NavigateTo(context.TargetLocation);
                 return Task.CompletedTask;
-            }));
+            });
+            if (selected is not null && detailDialog is not null) await detailDialog.RequestDetailActionAsync(ContinueAsync);
+            else await ContinueAsync();
             StateHasChanged();
             return;
         }

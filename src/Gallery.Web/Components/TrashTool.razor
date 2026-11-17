@@ -1,0 +1,29 @@
+<div class="space-y-3">
+    <p class="text-muted-foreground text-sm">Showing media marked for deletion. Select with X or the check mark, then delete forever or restore.</p>
+    <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <strong>@SelectedCount selected</strong>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" Disabled="@(Busy || SelectedCount == 0)" OnClick="ClearSelection">Clear selection <kbd>Esc</kbd></Button>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Sm" Disabled="@(Busy || SelectedCount == 0)" OnClick="Delete"><TrashIcon aria-hidden="true" />Delete Forever</Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(Busy || SelectedCount == 0)" OnClick="Restore"><RotateCcwIcon aria-hidden="true" />Restore</Button>
+    </div>
+    @if (Results.Count > 0)
+    {
+        <details open><summary>Removal results: @Results.Count(result => result.WasRemoved) removed, @Results.Count(result => result.Error is not null) reported issues</summary>
+            @foreach (var result in Results)
+            {
+                <p class="break-all text-muted-foreground">@result.Id: @(result.WasRemoved ? "Removed" : "Retained"). @result.Error @(result.RestoredPath is null ? "" : $"Restored copy to {result.RestoredPath}")</p>
+            }
+        </details>
+    }
+</div>
+
+@code {
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public int SelectedCount { get; set; }
+    [Parameter] public IReadOnlyList<RemovalResult> Results { get; set; } = [];
+    [Parameter] public EventCallback ClearSelection { get; set; }
+    [Parameter] public EventCallback Delete { get; set; }
+    [Parameter] public EventCallback Restore { get; set; }
+}
