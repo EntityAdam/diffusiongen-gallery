@@ -8,15 +8,16 @@ public sealed class GalleryBrowserState : IDisposable
 {
     private readonly GalleryService gallery;
     private readonly WorkspaceCatalog catalog;
-    private readonly Func<Task> savePreferences;
+    private readonly WorkspacePreferences preferences;
+    private CollectionCatalog previousCollections = CollectionCatalog.Empty;
     private readonly ILogger logger;
     private bool disposed;
     internal ThumbnailCache Thumbnails { get; }
-    public GalleryBrowserState(GalleryService gallery, WorkspaceCatalog catalog, ILogger logger, Action changed, Func<Task> savePreferences)
+    public GalleryBrowserState(GalleryService gallery, WorkspaceCatalog catalog, ILogger logger, Action changed, WorkspacePreferences preferences)
     {
         this.gallery = gallery;
         this.catalog = catalog;
-        this.savePreferences = savePreferences;
+        this.preferences = preferences;
         this.logger = logger;
         Thumbnails = new(gallery, logger, changed);
     }
@@ -108,10 +109,59 @@ public sealed class GalleryBrowserState : IDisposable
 
     public Task CatalogChangedAsync()
     {
+        Filter = UpdateCollectionName(Filter);
+        if (BrowsingFilter is { } saved) BrowsingFilter = UpdateCollectionName(saved);
+        previousCollections = catalog.Collections;
         RemovalSelection.IntersectWith(catalog.Images.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
         LibrarySelection.IntersectWith(catalog.Images.Select(image => image.Id));
         Page = Math.Min(Page, PageCount - 1);
         return LoadThumbnailsAsync();
+    }
+
+    private GalleryFilter UpdateCollectionName(GalleryFilter filter)
+    {
+        var previous = previousCollections.Collections.FirstOrDefault(item =>
+            item.Name.Equals(filter.Collection, StringComparison.OrdinalIgnoreCase));
+        var current = previous is null ? null : catalog.Collections.Collections.FirstOrDefault(item => item.Id == previous.Id);
+        return current is null ? filter : filter with { Collection = current.Name };
+    }
+
+    internal Task RecordsChangedAsync(bool reloadThumbnails)
+    {
+        Page = Math.Min(Page, PageCount - 1);
+        return reloadThumbnails ? LoadThumbnailsAsync() : LoadMissingThumbnailsAsync();
+    }
+
+    internal void RenameTag(TagCatalogChange change)
+    {
+        if (change.PreviousName is not null && change.Name is not null)
+        {
+            Filter = Filter.WithRenamedTag(change.PreviousName, change.Name);
+            if (BrowsingFilter is { } saved) BrowsingFilter = saved.WithRenamedTag(change.PreviousName, change.Name);
+        }
+    }
+
+    internal async Task ViewTagAsync(string tag)
+    {
+        FilterInputRevision++;
+        Filter = new() { Tag = tag };
+        BrowsingFilter = null;
+        ActiveTool = "filters";
+        ToolboxVisible = true;
+        await FilterChangedAsync();
+        await SaveToolboxStateAsync();
+    }
+
+    internal Task ToggleToolboxAsync()
+    {
+        ToolboxVisible = !ToolboxVisible;
+        return SaveToolboxStateAsync();
+    }
+
+    internal Task ShowToolboxAsync()
+    {
+        ToolboxVisible = true;
+        return SaveToolboxStateAsync();
     }
 
     public Task FilterChangedAsync()
@@ -159,17 +209,20 @@ public sealed class GalleryBrowserState : IDisposable
         if (catalog.IsPartial) await catalog.OpenAsync(PageSize, TrashActive);
         Page = Math.Min(first / PageSize, PageCount - 1);
         await LoadThumbnailsAsync();
-        await savePreferences();
+        await SavePreferencesAsync();
     }
     public async Task SaveToolboxStateAsync()
     {
         if (disposed || !gallery.IsUnlocked) return;
-        try { await savePreferences(); }
+        try { await SavePreferencesAsync(); }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
         {
             logger.LogWarning(exception, "Toolbox preferences were not saved");
         }
     }
+    private Task SavePreferencesAsync() =>
+        preferences.SaveBrowserAsync(Density, ToolboxVisible, ToolboxX, ToolboxY, ActiveTool);
+
     public Task SuggestionsChangedAsync(IReadOnlyList<OrganizationSuggestion> suggestions)
     {
         if (disposed) return Task.CompletedTask;
@@ -198,6 +251,7 @@ public sealed class GalleryBrowserState : IDisposable
         Suggestions = new Dictionary<string, OrganizationSuggestion>();
         Filter = new();
         BrowsingFilter = null;
+        previousCollections = CollectionCatalog.Empty;
         browsingProjection = GalleryBrowsingProjection.Empty;
         browsingSource = null;
     }

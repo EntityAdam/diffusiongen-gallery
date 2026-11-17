@@ -1,87 +1,95 @@
 @implements IDisposable
-@inject GalleryService Gallery
-@inject ILogger<GalleryWorkspace> Logger
-@inject IJSRuntime JS
-@inject ISonnerService Toasts
-@inject OrganizationHistory OrganizationHistory
 
-@if (Router is not null)
+@if (Catalog.CanRead)
 {
-    <NavigationLock OnBeforeInternalNavigation="BeforeNavigationAsync" ConfirmExternalNavigation="HasUnsavedChanges" />
+    @if (Router is not null)
+    {
+        <NavigationLock OnBeforeInternalNavigation="Navigation.BeforeNavigationAsync" ConfirmExternalNavigation="Navigation.HasUnsavedChanges" />
+    }
+
+    <WorkspaceFeedback Activity="Activity" Enabled="UsesToasts" />
+
+    @if (Activity.Error.Length > 0 && !UsesToasts)
+    {
+        <Alert Variant="AlertVariant.Destructive" Class="mb-6 flex items-center justify-between gap-3">@Activity.Error <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" OnClick="() => Activity.Error = string.Empty" aria-label="Dismiss error"><XIcon aria-hidden="true" /></Button></Alert>
+    }
+    @if (Activity.Message.Length > 0 && !UsesToasts)
+    {
+        <div class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@Activity.Message</div>
+    }
+
+    <CascadingValue Value="Navigation" IsFixed="true">
+    <CascadingValue Value="Session.Guard" IsFixed="true">
+    <CascadingValue Value="Session.Commands" IsFixed="true">
+        <GalleryWorkspaceLayout Workflow="@Section" ActiveTool="@Browser.ActiveTool" ItemDisabled="Navigation.SidebarItemDisabled"
+                                Navigate="Navigation.NavigateSidebarAsync" Location="Session.Collections.Location" LocationChanged="Navigation.NavigateCollectionsAsync"
+                                Catalog="Catalog.Collections" Images="Catalog.Images" CatalogPartial="Catalog.IsPartial" Busy="Session.IsBusy" JobRunning="JobRunning"
+                                Settings='() => Navigation.SwitchWorkflowAsync("settings")' Panic="Panic">
+            @if (Session.CanUndo)
+            {
+                <div class="mb-4 flex flex-wrap items-center gap-2" aria-label="Organization actions">
+                    <Button Variant="ButtonVariant.Outline" Disabled="@(Session.IsBusy || JobRunning || Catalog.IsPartial)" OnClick="Session.UndoOrganizationAsync">Undo organization change</Button>
+                </div>
+            }
+            @if (Section is not ("gallery" or "collections" or "unorganized"))
+            {
+                <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+                    <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@WorkspaceNavigationState.Sections.Single(item => item.Id == Section).Name</h2></div></div>
+                </div>
+            }
+
+            @if (Section == "ingest")
+            {
+                <IngestionWorkspace Session="Activity.Ingestion" Busy="Activity.Busy" Lifetime="Session.ImportLifetime" />
+            }
+            <SettingsWorkspace Active='@(Section == "settings")' Tab="@Navigation.SettingsTab"
+                               TabChanged="Navigation.SwitchSettingsTabAsync" Activity="Activity" Catalog="Catalog" Duplicates="Session.Duplicates"
+                               JobRunning="JobRunning" Locked="Locked" Purged="Purged" Panic="Panic"
+                               FindDuplicates='() => Navigation.SwitchWorkflowAsync("duplicates")' Reload="Catalog.ReloadAsync"
+                               Preferences="Session.Preferences" />
+            @if (Section == "duplicates")
+            {
+                <DuplicateFinder @ref="duplicateFinder" Catalog="Session.Duplicates.Results" Lookup="Catalog.ImagesById.GetValueOrDefault"
+                                 Busy="Activity.Busy" Reload="Catalog.ReloadAsync" OpenTrash="Navigation.OpenTrashAsync" />
+            }
+            @if (Section == "tags")
+            {
+                <TagManagement Changed="Session.TagsManagedAsync" View="Navigation.ViewTagAsync" ViewDisabled="@(Session.IsBusy || Catalog.IsPartial)" />
+            }
+
+            @if (Section is "collections" or "unorganized")
+            {
+                @if (Catalog.IsPartial)
+                {
+                    <div class="collection-empty" role="status">
+                        <p>Loading the full collection library…</p>
+                        @if (Catalog.LoadError.Length > 0)
+                        {
+                            <p role="alert">@Catalog.LoadError</p><Button OnClick="RetryCatalogLoadAsync">Retry</Button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <CollectionsWorkspace @ref="collectionsWorkspace" Disabled="@Activity.Busy" Catalog="Catalog.Collections" Images="Catalog.Images"
+                                          KnownTags="Catalog.AllTags" Location="Session.Collections.Location" LocationChanged="Navigation.NavigateCollectionsAsync"
+                                          Reload="Session.Collections.ReloadAsync" ImageChanged="Catalog.UpdateAsync" BusyChanged="value => Session.Collections.IsBusy = value"
+                                          Open="OpenCollectionDetailsAsync" BackToGallery='() => Navigation.SwitchWorkflowAsync("gallery")' />
+                }
+            }
+            <Microsoft.AspNetCore.Components.Sections.SectionOutlet SectionName="gallery-browser" />
+        </GalleryWorkspaceLayout>
+
+        <GalleryBrowser @ref="galleryBrowser" State="Browser" Catalog="Catalog" Active='@(Section == "gallery")'
+                        Presentation="Presentation" Removal="Session.Removal" Curation="Session.Curation"
+                        Analysis="Session.Analysis" Refreshed="RefreshWorkspace" />
+        <MediaPresentationHost State="Presentation" Catalog="Catalog" Activity="Activity" PageImages="Browser.PageImages"
+                               Suggestions="Browser.Suggestions" Curation="Session.Curation" Analysis="Session.Analysis"
+                               Removal="Session.Removal" Changed="RefreshWorkspace" />
+        <RemovalWorkflow State="Session.Removal" Activity="Activity" Changed="RefreshWorkspace" />
+        <UnsavedChangesGuard State="Session.Guard" Error="@Activity.Error" Changed="RefreshWorkspace" />
+        <GalleryGridShortcuts Blocked="GridBlocked" Toolbox="HandleToolboxShortcutAsync" Grid="HandleGridShortcutAsync" />
+    </CascadingValue>
+    </CascadingValue>
+    </CascadingValue>
 }
-
-<WorkspaceFeedback Activity="Activity" Enabled="UsesToasts" />
-
-@if (Gallery.IsUnlocked && Activity.Error.Length > 0 && !UsesToasts)
-{
-    <Alert Variant="AlertVariant.Destructive" Class="mb-6 flex items-center justify-between gap-3">@Activity.Error <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" OnClick="() => Activity.Error = string.Empty" aria-label="Dismiss error"><XIcon aria-hidden="true" /></Button></Alert>
-}
-@if (Gallery.IsUnlocked && Activity.Message.Length > 0 && !UsesToasts)
-{
-    <div class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@Activity.Message</div>
-}
-
-<CascadingValue Value="Guard" IsFixed="true">
-<CascadingValue Value="commands" IsFixed="true">
-    <GalleryWorkspaceLayout @ref="layout" Workflow="@workflow" ActiveTool="@Browser.ActiveTool" ItemDisabled="SidebarItemDisabled"
-                            Navigate="NavigateSidebarAsync" Location="collectionLocation" LocationChanged="NavigateCollectionsAsync"
-                            Catalog="Catalog.Collections" Images="Catalog.Images" CatalogPartial="Catalog.IsPartial" Busy="WorkspaceBusy" JobRunning="libraryJob.IsRunning"
-                            Settings='() => SwitchWorkflowAsync("settings")' Panic="PanicAsync">
-        @if (OrganizationHistory.Current is not null)
-        {
-            <div class="mb-4 flex flex-wrap items-center gap-2" aria-label="Organization actions">
-                <Button Variant="ButtonVariant.Outline" Disabled="@(WorkspaceBusy || libraryJob.IsRunning || Catalog.IsPartial)" OnClick="UndoOrganizationAsync">Undo organization change</Button>
-            </div>
-        }
-        @if (workflow is not ("gallery" or "collections" or "unorganized"))
-        {
-        <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
-            <div><span class="eyebrow">THE COLLECTION</span><div class="mt-2 flex items-center gap-2"><h2 class="mb-0">@Workflows.Single(item => item.Id == workflow).Name</h2></div></div>
-        </div>
-        }
-
-        @if (workflow == "ingest")
-        {
-            <IngestionWorkspace Session="ingestion" Busy="Activity.Busy"
-                                Changed="ImportChanged" Reload="ImportCompleted" Lifetime="Lifetime" />
-        }
-        <SettingsWorkspace @ref="settingsWorkspace" Active='@(workflow == "settings")' Tab="@settingsTab"
-                           TabChanged="SwitchSettingsTabAsync" Activity="Activity" Catalog="Catalog" Duplicates="duplicates"
-                           JobRunning="libraryJob.IsRunning" Locked="Locked" Purged="Purged" Panic="Panic"
-                           FindDuplicates='() => SwitchWorkflowAsync("duplicates")' Reload="ReloadAsync"
-                           AutoLockMinutes="autoLockMinutes" UpdateTimer="UpdateAutoLockMinutesAsync" />
-        @if (workflow == "duplicates")
-        {
-            <DuplicateFinder @ref="duplicateFinder" Catalog="duplicates" Lookup="ImageById" Busy="Activity.Busy" Reload="ReloadAsync" OpenTrash="OpenTrashAsync" />
-        }
-        @if (workflow == "tags")
-        {
-            <TagManagement Changed="TagsManagedAsync" View="ViewTagAsync" ViewDisabled="@(WorkspaceBusy || Catalog.IsPartial)" />
-        }
-
-        @if (workflow is "collections" or "unorganized")
-        {
-            @if (Catalog.IsPartial) { <div class="collection-empty" role="status"><p>Loading the full collection library…</p>@if (Catalog.LoadError.Length > 0) { <p role="alert">@Catalog.LoadError</p><Button OnClick="RetryCatalogLoadAsync">Retry</Button> }</div> }
-            else {
-                <CollectionsWorkspace Disabled="@Activity.Busy" @ref="collectionsWorkspace" Catalog="Catalog.Collections" Images="Catalog.Images" KnownTags="Catalog.AllTags" Location="collectionLocation" LocationChanged="CollectionLocationChangedAsync" Reload="ReloadCollectionsAsync" ImageChanged="ViewerImageChanged" BusyChanged="value => collectionWorking = value" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
-        }
-        <Microsoft.AspNetCore.Components.Sections.SectionOutlet SectionName="gallery-browser" />
-    </GalleryWorkspaceLayout>
-
-    <GalleryBrowser @ref="galleryBrowser" State="Browser" Catalog="Catalog" Activity="Activity"
-                    Active='@(workflow == "gallery")' OverlayOpen="@(Presentation.DetailsOpen || Removal.IsOpen)"
-                    Open="OpenAsync" Rate="RateFromBrowserAsync" Favorite="FavoriteAsync" Mark="MarkAsync" Curate="CurateFromBrowserAsync"
-                    ShowPrompt="ShowPromptAsync" Fullscreen="OpenViewer" StartReview="StartReview"
-                    SetActiveTool="SetActiveToolAsync" ToggleToolbox="ToggleToolboxAsync" ResetToolboxPosition="ResetToolboxPositionAsync"
-                    Reload="ReloadAsync" JobChanged="LibraryJobChanged" Refreshed="RefreshWorkspace" PreferencesChanged="SaveToolboxStateAsync"
-                    Delete="PrepareBulkRemovalAsync" Restore="RestoreRemovalSelectionAsync" RemovalResults="Removal.Results" />
-
-    <MediaPresentationHost @ref="mediaHost" State="Presentation" Catalog="Catalog" Activity="Activity" Suggestions="Browser.Suggestions"
-                           Rate="RateFromBrowserAsync" Favorite="FavoriteAsync" Mark="MarkAsync" Analyze="AnalyzeAsync"
-                           ShowPrompt="ShowPromptAsync" Remove="PrepareRemovalAsync" Fullscreen="OpenViewer"
-                           Approve="ApproveSuggestionAsync" Dismiss="DismissSuggestionAsync" ImageChanged="ViewerImageChanged"
-                           Changed="RefreshWorkspace" Reload="ReloadAsync" />
-    <RemovalWorkflow State="Removal" Activity="Activity" Changed="RefreshWorkspace" />
-    <UnsavedChangesGuard State="Guard" Error="@Activity.Error" Changed="RefreshWorkspace" />
-</CascadingValue>
-</CascadingValue>

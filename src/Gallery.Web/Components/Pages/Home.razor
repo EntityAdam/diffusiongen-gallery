@@ -3,6 +3,7 @@
 @inject ILogger<Home> Logger
 @inject IJSRuntime JS
 @inject OrganizationHistory OrganizationHistory
+@inject ISonnerService Toasts
 @using Gallery.Web.Components.Workspace
 
 <PageTitle>DiffusionGen Gallery</PageTitle>
@@ -20,9 +21,12 @@ else if (recoveryPhrase.Length > 0)
     <WorkspaceFeedback Activity="activity" />
     <RecoveryWords Phrase="@recoveryPhrase" Busy="activity.Busy" OnContinue="FinishSetupAsync" />
 }
+else if (session is { IsInitialized: true })
+{
+    <GalleryWorkspace @key="accessRevision" Session="session" Route="@Route" Router="Router"
+                      Locked="Lock" Purged="GalleryPurged" Panic="PanicAsync" />
+}
 else
 {
-    <GalleryWorkspace @key="accessRevision" @ref="workspace" Activity="activity" Lifetime="lifetime.Token"
-                      Route="@Route" Router="Router" Locked="Lock" Purged="GalleryPurged" Panic="PanicAsync"
-                      ImportChanged="RenderImportProgress" ImportCompleted="ReloadAfterImportAsync" />
+    <WorkspaceFeedback Activity="activity" />
 }

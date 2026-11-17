@@ -15,7 +15,7 @@
     {
         case "overview":
             <GalleryStorageOverview @bind-Overview="storageOverview" Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial"
-                                    HasScan="@(Duplicates.Scan is not null)" Groups="Duplicates.Groups" FindDuplicates="FindDuplicates" />
+                                    HasScan="Duplicates.HasScan" Groups="Duplicates.Groups" FindDuplicates="FindDuplicates" />
             break;
         case "gallery":
             <GalleryManagement Busy="Activity.Busy" JobRunning="JobRunning" Locked="Locked" Purged="Purged" />
@@ -30,7 +30,7 @@
             <BackupWorkspace Draft="backup" Busy="Activity.Busy" />
             break;
         case "security":
-            <SecuritySettings AutoLockMinutes="AutoLockMinutes" Busy="Activity.Busy" UpdateTimer="UpdateTimer" Panic="Panic" />
+            <SecuritySettings AutoLockMinutes="Preferences.AutoLockMinutes" Busy="Activity.Busy" UpdateTimer="UpdateTimerAsync" Panic="Panic" />
             break;
     }
 }

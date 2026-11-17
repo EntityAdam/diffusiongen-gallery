@@ -61,11 +61,20 @@
         focusCollectionNavigation = false;
     }
 
-    internal void ResetNavigation() => collectionNavigationOpen = false;
+    private string? previousWorkflow;
+    private CollectionLocation? previousLocation;
+
+    protected override void OnParametersSet()
+    {
+        if (previousWorkflow != Workflow || previousLocation != Location)
+            collectionNavigationOpen = false;
+        previousWorkflow = Workflow;
+        previousLocation = Location;
+    }
 
     private Task SelectLocation(CollectionLocation location)
     {
-        ResetNavigation();
+        collectionNavigationOpen = false;
         return LocationChanged.InvokeAsync(location);
     }
 

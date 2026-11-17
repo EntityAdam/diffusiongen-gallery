@@ -17,6 +17,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
     public bool IsLoading { get; private set; }
     public string LoadError { get; private set; } = "";
     public event Func<Task>? Changed;
+    internal event Func<IReadOnlyList<ImageRecord>, bool, Task>? RecordsChanged;
 
     private long generation;
     private CancellationTokenSource? cancellation;
@@ -25,11 +26,21 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
 
     private static IEnumerable<string> SplitTags(string tags) =>
         tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    private bool IsCurrent(long revision) => !disposed && revision == generation && gallery.IsUnlocked;
-    private Task NotifyAsync() => Changed?.Invoke() ?? Task.CompletedTask;
+    internal bool CanRead => !disposed && gallery.IsUnlocked;
+    private bool IsCurrent(long revision) => CanRead && revision == generation;
+    private async Task NotifyAsync(long revision)
+    {
+        if (Changed is not { } handlers) return;
+        foreach (Func<Task> handler in handlers.GetInvocationList())
+        {
+            if (!IsCurrent(revision)) return;
+            await handler();
+        }
+    }
 
     public async Task OpenAsync(int pageSize, bool trash)
     {
+        if (!CanRead) return;
         CancelLoad();
         var revision = generation;
         var initial = await gallery.LoadInitialPageAsync(pageSize, trash);
@@ -40,6 +51,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
 
     public async Task ReloadAsync()
     {
+        if (!CanRead) return;
         CancelLoad();
         var revision = generation;
         List<ImageRecord> records;
@@ -69,18 +81,28 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
         IsPartial = partial;
         IsLoading = false;
         LoadError = "";
-        await NotifyAsync();
+        await NotifyAsync(revision);
     }
 
-    public void Update(ImageRecord updated)
+    public Task UpdateAsync(ImageRecord updated) => UpdateAsync([updated], reloadThumbnails: false);
+
+    internal async Task UpdateAsync(IReadOnlyList<ImageRecord> updated, bool reloadThumbnails)
     {
-        if (disposed || !gallery.IsUnlocked) return;
-        Tags = AllTags.Concat(SplitTags(updated.Tags)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        Images = Images.Select(image => image.Id == updated.Id ? updated : image).ToArray();
+        if (!CanRead || updated.Count == 0) return;
+        Tags = AllTags.Concat(updated.SelectMany(image => SplitTags(image.Tags))).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var edits = updated.ToDictionary(image => image.Id);
+        Images = Images.Select(image => edits.GetValueOrDefault(image.Id, image)).ToArray();
         var updatedIndex = ImagesById.ToDictionary(pair => pair.Key, pair => pair.Value);
-        updatedIndex[updated.Id] = updated;
+        foreach (var image in updated) updatedIndex[image.Id] = image;
         ImagesById = updatedIndex;
         if (IsPartial) StartLoad();
+        var revision = generation;
+        if (RecordsChanged is not { } handlers) return;
+        foreach (Func<IReadOnlyList<ImageRecord>, bool, Task> handler in handlers.GetInvocationList())
+        {
+            if (!IsCurrent(revision)) return;
+            await handler(updated, reloadThumbnails);
+        }
     }
 
     public void RetryLoad()
@@ -99,7 +121,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
     {
         var previous = load;
         CancelLoad();
-        if (disposed || !gallery.IsUnlocked) return;
+        if (!CanRead) return;
         var next = new CancellationTokenSource();
         cancellation = next;
         var revision = generation;
@@ -134,7 +156,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
                 logger.LogError(exception, "Background catalog load failed");
                 LoadError = "The rest of the library could not be loaded. The initial page is still available.";
                 IsLoading = false;
-                await NotifyAsync();
+                await NotifyAsync(revision);
             });
         }
         finally
@@ -149,6 +171,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
         disposed = true;
         CancelLoad();
         Changed = null;
+        RecordsChanged = null;
         Images = [];
         ImagesById = new Dictionary<string, ImageRecord>();
         Collections = CollectionCatalog.Empty;

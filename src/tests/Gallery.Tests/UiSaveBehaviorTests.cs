@@ -73,16 +73,14 @@ public sealed class UiSaveBehaviorTests
         var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
         image = await vault.Service.UpdateAsync(image.Id, edit => edit with { UserDescription = "original" });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        GalleryWorkspace home = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<GalleryWorkspace>>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
+        var (home, _) = await fixture.RenderWorkspaceAsync();
         MediaDetailDialog detail = null!;
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "ReloadAsync");
-            await Invoke(home, "OpenAsync", image);
+            await Invoke(home, "Catalog.ReloadAsync");
+            await Invoke(home, "Presentation.OpenAsync", image, null!);
             Call(home, "StateHasChanged");
-            detail = Get<MediaDetailDialog>(home, "mediaHost.detailDialog");
+            detail = fixture.LatestComponent<MediaDetailDialog>();
             Set(detail, "editUserDescription", "edited");
             await Invoke(detail, "RequestCloseDetailAsync");
             Assert.True(Get<bool>(detail, "Guard.IsPending"));
@@ -101,14 +99,12 @@ public sealed class UiSaveBehaviorTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        GalleryWorkspace home = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<GalleryWorkspace>>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
+        var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             Set(home, "Presentation.Selected", new ImageRecord { Id = "missing" });
             Call(home, "StateHasChanged");
-            var detail = Get<MediaDetailDialog>(home, "mediaHost.detailDialog");
+            var detail = fixture.LatestComponent<MediaDetailDialog>();
             Set(detail, "editUserDescription", "draft");
             var left = false;
             await detail.RequestDetailActionAsync(() => { left = true; return Task.CompletedTask; });
@@ -116,7 +112,7 @@ public sealed class UiSaveBehaviorTests
             Assert.False(left);
             Assert.Equal("draft", Get<string>(detail, "editUserDescription"));
             Assert.True(Get<bool>(detail, "Guard.IsPending"));
-            Assert.NotEmpty(home.Activity.Error);
+            Assert.NotEmpty(home.Session.Activity.Error);
         });
     }
 
@@ -131,21 +127,19 @@ public sealed class UiSaveBehaviorTests
         image = await vault.Service.UpdateAsync(image.Id, edit => edit with
         { Description = "old analysis", UserDescription = "my notes", Tags = "existing" });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        GalleryWorkspace home = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<GalleryWorkspace>>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
+        var (home, _) = await fixture.RenderWorkspaceAsync();
         MediaDetailDialog detail = null!;
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "ReloadAsync");
-            await Invoke(home, "OpenAsync", image);
+            await Invoke(home, "Catalog.ReloadAsync");
+            await Invoke(home, "Presentation.OpenAsync", image, null!);
             Call(home, "StateHasChanged");
-            detail = Get<MediaDetailDialog>(home, "mediaHost.detailDialog");
+            detail = fixture.LatestComponent<MediaDetailDialog>();
             Set(detail, "editUserDescription", "unsaved draft");
-            await Invoke(home, "AnalyzeAsync", image);
+            await detail.Analyze.InvokeAsync();
         });
-        Assert.Empty(home.Activity.Error);
-        Assert.NotNull(Get<LibraryWorkbench?>(home, "galleryBrowser.workbench"));
+        Assert.Empty(home.Session.Activity.Error);
+        Assert.NotNull(fixture.LatestComponent<LibraryWorkbench>());
         var unchanged = Assert.Single(await vault.Service.ListAsync());
         Assert.Equal("old analysis", unchanged.Description);
         Assert.Equal("existing", unchanged.Tags);
@@ -199,25 +193,25 @@ public sealed class UiSaveBehaviorTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        GalleryWorkspace home = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<GalleryWorkspace>>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
+        var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "ReloadAsync");
-            home.Activity.Ingestion.Workers = 2;
-            Assert.True(home.Activity.Ingestion.SettingsDirty);
+            await Invoke(home, "Catalog.ReloadAsync");
+            home.Session.Activity.Ingestion.Workers = 2;
+            Assert.True(home.Session.Activity.Ingestion.SettingsDirty);
             Assert.NotEqual(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
-            await home.Activity.Ingestion.SaveOptionsAsync(vault.Service);
+            await home.Session.Activity.Ingestion.SaveOptionsAsync(vault.Service);
             Assert.Equal(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
-            Assert.False(home.Activity.Ingestion.SettingsDirty);
-            await Invoke(home, "SwitchSettingsTabAsync", "backups");
-            Get<BackupDraft>(home, "settingsWorkspace.backup").LocalDirectory = vault.Root + "-backups";
-            Assert.True(Get<BackupDraft>(home, "settingsWorkspace.backup").HasChanges);
-            Assert.False(Get<BackupDraft>(home, "settingsWorkspace.backup").Ready);
-            await Get<BackupDraft>(home, "settingsWorkspace.backup").SaveAsync(vault.Service);
-            Assert.False(Get<BackupDraft>(home, "settingsWorkspace.backup").HasChanges);
-            Assert.True(Get<BackupDraft>(home, "settingsWorkspace.backup").Ready);
+            Assert.False(home.Session.Activity.Ingestion.SettingsDirty);
+            await Invoke(home, "Navigation.SwitchWorkflowAsync", "settings");
+            await Invoke(home, "Navigation.SwitchSettingsTabAsync", "backups");
+            Call(home, "StateHasChanged");
+            Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").LocalDirectory = vault.Root + "-backups";
+            Assert.True(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").HasChanges);
+            Assert.False(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").Ready);
+            await Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").SaveAsync(vault.Service);
+            Assert.False(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").HasChanges);
+            Assert.True(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").Ready);
         });
     }
 
@@ -231,28 +225,27 @@ public sealed class UiSaveBehaviorTests
         await vault.InitializeAsync();
         await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "original" });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        GalleryWorkspace home = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<GalleryWorkspace>>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
+        var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "SwitchWorkflowAsync", "settings");
-            await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
+            await Invoke(home, "Navigation.SwitchWorkflowAsync", "settings");
+            await Invoke(home, "Navigation.SwitchSettingsTabAsync", "endpoints");
             Call(home, "StateHasChanged");
         });
-        var component = Get<LlmEndpointSettings>(home, "settingsWorkspace.llmEndpointSettings");
+        var component = fixture.LatestComponent<LlmEndpointSettings>();
         var draft = Get<object>(component, "draft");
         draft.GetType().GetProperty("Model")!.SetValue(draft, "edited");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "SwitchSettingsTabAsync", "overview");
-            Assert.True(Get<bool>(home, "Guard.IsPending"));
-            Assert.Equal("endpoints", Get<string>(home, "settingsTab"));
-            if (Call(home, choice) is Task task) await task;
+            await Invoke(home, "Navigation.SwitchSettingsTabAsync", "overview");
+            Assert.True(Get<bool>(home, "Session.Guard.IsPending"));
+            Assert.Equal("endpoints", Get<string>(home, "Navigation.SettingsTab"));
+            if (Call(home, "Session." + choice) is Task task) await task;
+            Call(home, "StateHasChanged");
         });
-        Assert.Equal(leaves ? "overview" : "endpoints", Get<string>(home, "settingsTab"));
+        Assert.Equal(leaves ? "overview" : "endpoints", Get<string>(home, "Navigation.SettingsTab"));
         Assert.Equal(saves ? "edited" : "original", (await vault.Service.SettingsAsync()).Model);
-        Assert.False(Get<bool>(home, "Guard.IsPending"));
+        Assert.False(Get<bool>(home, "Session.Guard.IsPending"));
         Assert.Equal(!leaves, component.HasUnsavedChanges);
     }
 
@@ -263,26 +256,24 @@ public sealed class UiSaveBehaviorTests
         await vault.InitializeAsync();
         await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "original" });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        GalleryWorkspace home = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<GalleryWorkspace>>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
+        var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "SwitchWorkflowAsync", "settings");
-            await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
+            await Invoke(home, "Navigation.SwitchWorkflowAsync", "settings");
+            await Invoke(home, "Navigation.SwitchSettingsTabAsync", "endpoints");
             Call(home, "StateHasChanged");
         });
-        var component = Get<LlmEndpointSettings>(home, "settingsWorkspace.llmEndpointSettings");
+        var component = fixture.LatestComponent<LlmEndpointSettings>();
         var draft = Get<object>(component, "draft");
         draft.GetType().GetProperty("Endpoint")!.SetValue(draft, "invalid-url");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "SwitchWorkflowAsync", "gallery");
-            await Invoke(home, "Guard.SaveAsync");
+            await Invoke(home, "Navigation.SwitchWorkflowAsync", "gallery");
+            await Invoke(home, "Session.Guard.SaveAsync");
         });
-        Assert.Equal("settings", Get<string>(home, "workflow"));
-        Assert.Equal("endpoints", Get<string>(home, "settingsTab"));
-        Assert.True(Get<bool>(home, "Guard.IsPending"));
+        Assert.Equal("settings", Get<string>(home, "Navigation.Section"));
+        Assert.Equal("endpoints", Get<string>(home, "Navigation.SettingsTab"));
+        Assert.True(Get<bool>(home, "Session.Guard.IsPending"));
         Assert.True(component.HasUnsavedChanges);
         Assert.Equal("invalid-url", draft.GetType().GetProperty("Endpoint")!.GetValue(draft));
         Assert.Equal("original", (await vault.Service.SettingsAsync()).Model);
@@ -298,30 +289,29 @@ public sealed class UiSaveBehaviorTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        GalleryWorkspace home = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<GalleryWorkspace>>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
+        var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await Invoke(home, "ReloadAsync");
+            await Invoke(home, "Catalog.ReloadAsync");
             if (section == "ingest")
             {
-                await Invoke(home, "SwitchWorkflowAsync", "ingest");
-                home.Activity.Ingestion.Workers = 2;
+                await Invoke(home, "Navigation.SwitchWorkflowAsync", "ingest");
+                home.Session.Activity.Ingestion.Workers = 2;
             }
             else
             {
-                await Invoke(home, "SwitchWorkflowAsync", "settings");
-                await Invoke(home, "SwitchSettingsTabAsync", "backups");
-                Get<BackupDraft>(home, "settingsWorkspace.backup").LocalDirectory = vault.Root + "-backups";
+                await Invoke(home, "Navigation.SwitchWorkflowAsync", "settings");
+                await Invoke(home, "Navigation.SwitchSettingsTabAsync", "backups");
+                Call(home, "StateHasChanged");
+                Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").LocalDirectory = vault.Root + "-backups";
             }
-            await Invoke(home, "SwitchWorkflowAsync", "gallery");
-            Assert.True(Get<bool>(home, "Guard.IsPending"));
-            Assert.NotEqual("gallery", Get<string>(home, "workflow"));
-            await Invoke(home, save ? "Guard.SaveAsync" : "Guard.DiscardAsync");
+            await Invoke(home, "Navigation.SwitchWorkflowAsync", "gallery");
+            Assert.True(Get<bool>(home, "Session.Guard.IsPending"));
+            Assert.NotEqual("gallery", Get<string>(home, "Navigation.Section"));
+            await Invoke(home, save ? "Session.Guard.SaveAsync" : "Session.Guard.DiscardAsync");
         });
-        Assert.Equal("gallery", Get<string>(home, "workflow"));
-        Assert.False(Get<bool>(home, "Guard.IsPending"));
+        Assert.Equal("gallery", Get<string>(home, "Navigation.Section"));
+        Assert.False(Get<bool>(home, "Session.Guard.IsPending"));
         if (section == "ingest") Assert.Equal(save, (await vault.Service.LoadIngestionOptionsAsync()).Workers == 2);
         else Assert.Equal(save ? vault.Root + "-backups" : "", (await vault.Service.LoadBackupOptionsAsync()).LocalDirectory);
     }

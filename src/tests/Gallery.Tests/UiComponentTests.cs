@@ -296,31 +296,28 @@ public sealed class UiComponentTests
     [Fact]
     public async Task Home_WhileImportRuns_ToolboxCannotLeaveIngestionProgress()
     {
-        var home = new GalleryWorkspace();
-        void Set(string name, object value) => ComponentTestAccess.Set(home, name, value);
-        T Get<T>(string name) => ComponentTestAccess.Get<T>(home, name);
-        Task Invoke(string name, params object[] args) =>
-            (Task)ComponentTestAccess.Call(home, name, args)!;
-
-        Set("workflow", "ingest");
-        Set("Browser.ToolboxVisible", false);
-        Set("Browser.ActiveTool", "filters");
+        using var fixture = new TestVault();
+        using var home = new WorkspaceSession(fixture.Service, new(), new(fixture.Service), null!,
+            NullLogger.Instance, action => action(), () => { });
+        ComponentTestAccess.Set(home.Navigation, "Section", "ingest");
+        home.Browser.ToolboxVisible = false;
+        home.Browser.ActiveTool = "filters";
         home.Activity.Busy = true;
         home.Activity.Ingestion.IsRunning = true;
 
-        await Invoke("ToggleToolboxAsync");
-        await Invoke("SetActiveToolAsync", "trash");
-        await Invoke("SwitchWorkflowAsync", "gallery");
+        await home.Navigation.ToggleToolboxAsync();
+        await home.Navigation.SetActiveToolAsync("trash");
+        await home.Navigation.SwitchWorkflowAsync("gallery");
 
-        Assert.Equal("ingest", Get<string>("workflow"));
-        Assert.False(Get<bool>("Browser.ToolboxVisible"));
-        Assert.Equal("filters", Get<string>("Browser.ActiveTool"));
+        Assert.Equal("ingest", home.Navigation.Section);
+        Assert.False(home.Browser.ToolboxVisible);
+        Assert.Equal("filters", home.Browser.ActiveTool);
 
         home.Activity.Ingestion.IsRunning = false;
-        await Invoke("ToggleToolboxAsync");
-        await Invoke("SwitchWorkflowAsync", "gallery");
-        Assert.Equal("ingest", Get<string>("workflow"));
-        Assert.False(Get<bool>("Browser.ToolboxVisible"));
+        await home.Navigation.ToggleToolboxAsync();
+        await home.Navigation.SwitchWorkflowAsync("gallery");
+        Assert.Equal("ingest", home.Navigation.Section);
+        Assert.False(home.Browser.ToolboxVisible);
     }
 
     [Fact]
@@ -329,16 +326,13 @@ public sealed class UiComponentTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         fixture.Service.LockVault();
-        var home = new GalleryWorkspace();
-        ComponentTestAccess.Set(home, "Gallery", fixture.Service);
-        ComponentTestAccess.Set(home, "Logger", NullLogger<GalleryWorkspace>.Instance);
-        ComponentTestAccess.Set(home, "autoLockMinutes", 15);
+        using var home = new WorkspaceSession(fixture.Service, new(), new(fixture.Service), null!,
+            NullLogger.Instance, action => action(), () => { });
 
-        await (Task)ComponentTestAccess.Call(home, "UpdateAutoLockMinutesAsync", ["30"])!;
+        await home.Preferences.UpdateAutoLockAsync("30", home.Commands);
 
-        Assert.Equal(15, ComponentTestAccess.Get<object>(home, "autoLockMinutes"));
-        Assert.Contains("previous timer is still active",
-            home.Activity.Error);
+        Assert.Equal(15, home.Preferences.AutoLockMinutes);
+        Assert.Contains("previous timer is still active", home.Activity.Error);
     }
 
     [Fact]

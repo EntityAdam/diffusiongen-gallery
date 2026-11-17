@@ -11,15 +11,15 @@ public partial class SettingsWorkspace
     [Parameter] public EventCallback<string> TabChanged { get; set; }
     [Parameter, EditorRequired] public GalleryActivity Activity { get; set; } = default!;
     [Parameter, EditorRequired] public WorkspaceCatalog Catalog { get; set; } = default!;
-    [Parameter, EditorRequired] public DuplicateCatalog Duplicates { get; set; } = default!;
+    [Parameter, EditorRequired] public DuplicateWorkflowState Duplicates { get; set; } = default!;
     [Parameter] public bool JobRunning { get; set; }
     [Parameter] public EventCallback Locked { get; set; }
     [Parameter] public EventCallback Purged { get; set; }
     [Parameter] public EventCallback Panic { get; set; }
     [Parameter] public EventCallback FindDuplicates { get; set; }
     [Parameter] public EventCallback Reload { get; set; }
-    [Parameter] public int AutoLockMinutes { get; set; }
-    [Parameter] public EventCallback<string?> UpdateTimer { get; set; }
+    [Parameter, EditorRequired] public WorkspacePreferences Preferences { get; set; } = default!;
+    [CascadingParameter] public WorkspaceNavigationState? Navigation { get; set; }
 
     internal static readonly (string Id, string Name)[] Tabs =
     [
@@ -36,6 +36,12 @@ public partial class SettingsWorkspace
     public bool HasUnsavedChanges => Active && (Tab == "endpoints" && llmEndpointSettings?.HasUnsavedChanges == true
         || Tab == "backups" && backup.HasChanges);
 
+    protected override void OnInitialized() => Navigation?.AddDraftSource(GetDraft);
+
+    private UnsavedChangesSource? GetDraft() => Active ? Draft : null;
+
+    private Task UpdateTimerAsync(string? value) => Preferences.UpdateAutoLockAsync(value, Commands);
+
     protected override async Task OnParametersSetAsync()
     {
         if (!Active) { loadedTab = null; return; }
@@ -43,7 +49,7 @@ public partial class SettingsWorkspace
         await LoadAsync(Tab);
     }
 
-    public async Task LoadAsync(string tab)
+    private async Task LoadAsync(string tab)
     {
         if (disposed || Activity.Busy) return;
         // Set before awaiting: shared feedback can render the parent while loading.
@@ -64,7 +70,7 @@ public partial class SettingsWorkspace
             {
                 var value = await Gallery.CachedStorageOverviewAsync();
                 if (!disposed) storageOverview = value;
-                if (!disposed) await Duplicates.LoadAsync(Gallery, Catalog.ImagesById);
+                if (!disposed) await Duplicates.LoadSummaryAsync();
             }
         });
     }
@@ -87,5 +93,9 @@ public partial class SettingsWorkspace
         }
         return !HasUnsavedChanges && Activity.Error.Length == 0;
     }
-    public void Dispose() => disposed = true;
+    public void Dispose()
+    {
+        disposed = true;
+        Navigation?.RemoveDraftSource(GetDraft);
+    }
 }
