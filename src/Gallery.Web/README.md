@@ -743,8 +743,8 @@ current criteria without deleting saved quick filters.
 
 ### Sidebar navigation
 
-The main sidebar is ordered as Gallery, Filters; Collections, Tags; Review,
-Duplicate finder, AI analysis; Import media. Horizontal separators divide these
+The main sidebar is ordered as Gallery, Filters; Collections, Tags, Duplicates;
+Review, AI analysis; Import media. Horizontal separators divide these
 four groups. Settings stays anchored above Panic lock at the bottom. There is no
 Unorganized or Trash sidebar entry. Filters opens its drawer independently of
 whether the floating toolbox is visible; AI analysis opens its existing panel.
