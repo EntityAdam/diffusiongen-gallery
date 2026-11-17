@@ -1,0 +1,46 @@
+@if (State.CanPresent && State.Selected is { } selected)
+{
+    <MediaDetailDialog @key="selected.Id" @ref="detailDialog" Image="selected" Preview="@State.Preview" VideoUrl="@State.VideoUrl"
+                       Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" Progress="@Activity.Progress" Error="@Activity.Error"
+                       Close="CloseDetail" Fullscreen="() => Fullscreen.InvokeAsync(selected.Id)" Rate="value => Rate.InvokeAsync((selected, value))"
+                       Favorite="() => Favorite.InvokeAsync(selected)" Mark="() => Mark.InvokeAsync(selected)" Analyze="() => Analyze.InvokeAsync(selected)"
+                       ShowPrompt="() => ShowPrompt.InvokeAsync(selected.Prompt)" Remove="() => Remove.InvokeAsync(new[] { selected.Id })"
+                       Suggestion="@Suggestions.GetValueOrDefault(selected.Id)" Approve="Approve" Dismiss="Dismiss"
+                       Changed="ImageChanged" DraftChanged="Changed" />
+}
+@if (State.CanPresent && State.ViewerImages.Count > 0)
+{
+    <FullscreenViewer KnownTags="Catalog.AllTags" Images="State.ViewerImages" InitialId="@State.ViewerInitialId" InitialPreview="@State.ViewerInitialPreview"
+                      ReviewMode="State.ReviewMode" OnClose="CloseViewerAsync" OnImageChanged="ImageChanged"
+                      Suggestions="Suggestions" ApproveSuggestion="Approve" DismissSuggestion="Dismiss" />
+}
+
+@code {
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    [Parameter, EditorRequired] public MediaPresentationState State { get; set; } = default!;
+    [Parameter, EditorRequired] public WorkspaceCatalog Catalog { get; set; } = default!;
+    [Parameter, EditorRequired] public GalleryActivity Activity { get; set; } = default!;
+    [Parameter] public IReadOnlyDictionary<string, OrganizationSuggestion> Suggestions { get; set; } = new Dictionary<string, OrganizationSuggestion>();
+    [Parameter] public EventCallback<(ImageRecord Image, int Rating)> Rate { get; set; }
+    [Parameter] public EventCallback<ImageRecord> Favorite { get; set; }
+    [Parameter] public EventCallback<ImageRecord> Mark { get; set; }
+    [Parameter] public EventCallback<ImageRecord> Analyze { get; set; }
+    [Parameter] public EventCallback<string> ShowPrompt { get; set; }
+    [Parameter] public EventCallback<IReadOnlyCollection<string>> Remove { get; set; }
+    [Parameter] public EventCallback<string?> Fullscreen { get; set; }
+    [Parameter] public Func<OrganizationSuggestion, Task<ImageRecord?>> Approve { get; set; } = default!;
+    [Parameter] public EventCallback<OrganizationSuggestion> Dismiss { get; set; }
+    [Parameter] public EventCallback<ImageRecord> ImageChanged { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback Reload { get; set; }
+    private MediaDetailDialog? detailDialog;
+    public UnsavedChangesSource? Draft => State.Selected is { } selected && detailDialog?.Image.Id == selected.Id ? detailDialog.Draft : null;
+    public bool HasUnsavedChanges => Draft?.HasUnsavedChanges() == true;
+
+    private async Task CloseDetail() { State.CloseDetail(); await Changed.InvokeAsync(); }
+    private Task CloseViewerAsync()
+    {
+        State.CloseViewer();
+        return Commands.RunAsync("Refreshing gallery...", () => Reload.InvokeAsync());
+    }
+}

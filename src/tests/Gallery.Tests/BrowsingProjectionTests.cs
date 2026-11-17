@@ -50,21 +50,21 @@ public sealed class BrowsingProjectionTests
         using var vault = new TestVault();
         var images = CreateImages(60);
         var home = CreateHome(vault, images);
-        SetField(home, "filter", new GalleryFilter { Analysis = GalleryFilter.AwaitingApproval });
-        Assert.Empty(GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered"));
+        SetField(home, "Browser.Filter", new GalleryFilter { Analysis = GalleryFilter.AwaitingApproval });
+        Assert.Empty(GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered"));
         var suggestions = images.Select(image => new OrganizationSuggestion(image.Id, image.Name, "Draft", "", "vision")).ToArray();
 
-        await (Task)Invoke(home, "SuggestionsChanged", (object)suggestions)!;
-        Assert.Equal(60, GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered").Count);
-        SetField(home, "page", 4);
+        await (Task)Invoke(home, "Browser.SuggestionsChangedAsync", (object)suggestions)!;
+        Assert.Equal(60, GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered").Count);
+        SetField(home, "Browser.Page", 4);
 
-        await (Task)Invoke(home, "SuggestionsChanged", (object)suggestions.Take(1).ToArray())!;
-        Assert.Equal(images[0].Id, Assert.Single(GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered")).Id);
-        Assert.Equal(0, GetField<int>(home, "page"));
+        await (Task)Invoke(home, "Browser.SuggestionsChangedAsync", (object)suggestions.Take(1).ToArray())!;
+        Assert.Equal(images[0].Id, Assert.Single(GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered")).Id);
+        Assert.Equal(0, GetField<int>(home, "Browser.Page"));
 
-        await (Task)Invoke(home, "SuggestionsChanged", (object)Array.Empty<OrganizationSuggestion>())!;
-        Assert.Empty(GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered"));
-        Assert.Equal(0, GetField<int>(home, "page"));
+        await (Task)Invoke(home, "Browser.SuggestionsChangedAsync", (object)Array.Empty<OrganizationSuggestion>())!;
+        Assert.Empty(GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered"));
+        Assert.Equal(0, GetField<int>(home, "Browser.Page"));
     }
 
     [Fact]
@@ -440,22 +440,21 @@ public sealed class BrowsingProjectionTests
         using var testVault = new TestVault();
         var imageRecords = CreateImages(60);
         var home = CreateHome(testVault, imageRecords);
-        var priorImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
-        SetField(home, "page", 1);
-        SetField(home, "density", "compact");
+        var priorImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered");
+        SetField(home, "Browser.Page", 1);
+        SetField(home, "Browser.Density", "compact");
         var expectedScenario = ExpectedScenario.CreateFrom("Pagination reuses the filtered snapshot while calculating the current page boundaries.",
             new { ReusesSnapshot = true, PageCount = 2, PageImageCount = 11 });
 
         // Act
-        var actualImageRecords = (IReadOnlyList<ImageRecord>)typeof(GalleryWorkspace)
-            .GetProperty("Filtered", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
+        var actualImageRecords = (IReadOnlyList<ImageRecord>)ComponentTestAccess.Get<object>(home, "Browser.Filtered")!;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
             ReusesSnapshot = ReferenceEquals(priorImageRecords, actualImageRecords),
-            PageCount = GetProperty<int>(home, "PageCount"),
-            PageImageCount = GetProperty<IEnumerable<ImageRecord>>(home, "PageImages").Count()
+            PageCount = GetProperty<int>(home, "Browser.PageCount"),
+            PageImageCount = GetProperty<IEnumerable<ImageRecord>>(home, "Browser.PageImages").Count()
         });
     }
 
@@ -466,14 +465,13 @@ public sealed class BrowsingProjectionTests
         using var testVault = new TestVault();
         var imageRecords = CreateRatingImages().ToList();
         var home = CreateHome(testVault, imageRecords);
-        var priorImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
-        SetField(home, "filter", new GalleryFilter { MinRating = 5 });
+        var priorImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered");
+        SetField(home, "Browser.Filter", new GalleryFilter { MinRating = 5 });
         var expectedScenario = ExpectedScenario.CreateFrom("Changing the rating filter replaces the cached snapshot with matching images.",
             new { ReusesSnapshot = false, ImageIds = new[] { imageRecords[1].Id } });
 
         // Act
-        var actualImageRecords = (IReadOnlyList<ImageRecord>)typeof(GalleryWorkspace)
-            .GetProperty("Filtered", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
+        var actualImageRecords = (IReadOnlyList<ImageRecord>)ComponentTestAccess.Get<object>(home, "Browser.Filtered")!;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -484,22 +482,23 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public void HomeProjection_WhenAnImageIsEdited_ThenIncludesTheNewlyMatchingImage()
+    public async Task HomeProjection_WhenAnImageIsEdited_ThenIncludesTheNewlyMatchingImage()
     {
         // Arrange
         using var testVault = new TestVault();
         var imageRecords = CreateRatingImages().ToList();
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "filter", new GalleryFilter { MinRating = 5 });
-        _ = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
+        SetField(home, "Browser.Filter", new GalleryFilter { MinRating = 5 });
+        _ = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered");
+        await testVault.InitializeAsync();
         var updatedImageRecord = imageRecords[0] with { Rating = 5 };
         var expectedImageIds = imageRecords.Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray();
 
         // Act
-        typeof(GalleryWorkspace).GetMethod("ViewerImageChanged", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [updatedImageRecord]);
+        ComponentTestAccess.Call(home, "ViewerImageChanged", [updatedImageRecord]);
 
         // Assert - gather the updated projection
-        var actualImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
+        var actualImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered");
 
         // Assert
         Assert.Equal(expectedImageIds, actualImageRecords.Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal));
@@ -512,8 +511,8 @@ public sealed class BrowsingProjectionTests
         using var testVault = new TestVault();
         var imageRecords = CreateRatingImages().ToList();
         var home = CreateHome(testVault, imageRecords);
-        _ = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
-        SetField(home, "grouping", "prompt");
+        _ = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered");
+        SetField(home, "Browser.Grouping", "prompt");
         var expectedScenario = ExpectedScenario.CreateFrom("Selecting prompt grouping replaces the empty index with complete shared groups.",
             new
             {
@@ -522,8 +521,7 @@ public sealed class BrowsingProjectionTests
             });
 
         // Act
-        var actualPromptGroupsByImageId = (IReadOnlyDictionary<string, PromptGroup>)typeof(GalleryWorkspace)
-            .GetProperty("promptGroupOf", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
+        var actualPromptGroupsByImageId = (IReadOnlyDictionary<string, PromptGroup>)ComponentTestAccess.Get<object>(home, "Browser.Browsing.PromptGroupsByImageId")!;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -541,8 +539,8 @@ public sealed class BrowsingProjectionTests
         // Arrange
         using var testVault = new TestVault();
         var home = CreateHome(testVault, CreateRatingImages().ToList());
-        SetField(home, "grouping", "prompt");
-        _ = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered");
+        SetField(home, "Browser.Grouping", "prompt");
+        _ = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered");
         var expectedScenario = ExpectedScenario.CreateFrom("Locking the gallery removes visible images and their grouping indexes.",
             new { ImageCount = 0, GroupCount = 0 });
 
@@ -552,8 +550,8 @@ public sealed class BrowsingProjectionTests
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            ImageCount = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered").Count,
-            GroupCount = GetProperty<IReadOnlyDictionary<string, PromptGroup>>(home, "promptGroupOf").Count
+            ImageCount = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered").Count,
+            GroupCount = GetProperty<IReadOnlyDictionary<string, PromptGroup>>(home, "Browser.Browsing.PromptGroupsByImageId").Count
         });
     }
 
@@ -569,7 +567,7 @@ public sealed class BrowsingProjectionTests
         var staleImageRecord = await testVault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), sourceFileName, sourceFolder);
         await testVault.Service.UpdateAsync(staleImageRecord.Id, imageRecordEdit => imageRecordEdit with { Description = expectedDescription });
         var home = CreateHome(testVault, [staleImageRecord]);
-        SetField(home, "filter", new GalleryFilter { MinRating = 5 });
+        SetField(home, "Browser.Filter", new GalleryFilter { MinRating = 5 });
         var actualEditInvocationCount = 0;
         ImageRecordEdit Edit(ImageRecordEdit imageRecordEdit) =>
             imageRecordEdit with { Rating = ++actualEditInvocationCount, IsFavorite = !imageRecordEdit.IsFavorite };
@@ -585,7 +583,7 @@ public sealed class BrowsingProjectionTests
 
         // Assert - gather the persisted and displayed records
         var actualImageRecordsStored = await testVault.Service.ListAsync();
-        var actualImageRecordsDisplayed = GetField<List<ImageRecord>>(home, "images");
+        var actualImageRecordsDisplayed = GetField<IReadOnlyList<ImageRecord>>(home, "Catalog.Images");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -607,9 +605,9 @@ public sealed class BrowsingProjectionTests
         imageRecords[0] = imageRecords[0] with { IsReviewed = true };
         imageRecords[1] = imageRecords[1] with { IsMarkedForDeletion = true };
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "filter", new GalleryFilter { Sort = "name" });
-        SetField(home, "density", "detail");
-        SetField(home, "page", 1);
+        SetField(home, "Browser.Filter", new GalleryFilter { Sort = "name" });
+        SetField(home, "Browser.Density", "detail");
+        SetField(home, "Browser.Page", 1);
         const int ExpectedReviewGoal = 10;
         var expectedImageIds = imageRecords.Skip(2).Take(ExpectedReviewGoal).Select(imageRecord => imageRecord.Id).ToArray();
         var expectedScenario = ExpectedScenario.CreateFrom("Default review selects ten eligible images in library sort order, independent of pagination, in a detached session.", new
@@ -618,16 +616,16 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        ComponentTestAccess.Call(home, "StartReview");
 
         // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
+        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            Goal = GetProperty<int>(home, "ReviewGoal"), ImageIds = actualImageRecords.Select(imageRecord => imageRecord.Id).ToArray(),
-            InitialId = GetField<string>(home, "viewerInitialId"), ReviewMode = GetField<bool>(home, "reviewMode"),
+            Goal = GetProperty<int>(home, "Browser.ReviewGoal"), ImageIds = actualImageRecords.Select(imageRecord => imageRecord.Id).ToArray(),
+            InitialId = GetField<string>(home, "Presentation.ViewerInitialId"), ReviewMode = GetField<bool>(home, "Presentation.ReviewMode"),
             IsDetachedSnapshot = actualImageRecords.Count > 0 && !ReferenceEquals(imageRecords[2], actualImageRecords[0])
         });
     }
@@ -649,21 +647,21 @@ public sealed class BrowsingProjectionTests
                 IsFavorite = index < 8, IsReviewed = index == 0, IsMarkedForDeletion = index == 1
             };
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
-        typeof(GalleryWorkspace).GetProperty("ReviewGoal", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, requestedGoal);
+        SetField(home, "Browser.Filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        ComponentTestAccess.Set(home, "Browser.ReviewGoal", requestedGoal);
         var expectedScenario = ExpectedScenario.CreateFrom("Review goals and session sizes stay within the eligible filtered pool.",
             new { Goal = expectedGoal, SessionCount = expectedGoal, AllEligible = true });
 
         // Act
-        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        ComponentTestAccess.Call(home, "StartReview");
 
         // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
+        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            Goal = GetProperty<int>(home, "ReviewGoal"), SessionCount = actualImageRecords.Count,
+            Goal = GetProperty<int>(home, "Browser.ReviewGoal"), SessionCount = actualImageRecords.Count,
             AllEligible = actualImageRecords.All(imageRecord => imageRecord.IsFavorite && !imageRecord.IsReviewed && !imageRecord.IsMarkedForDeletion)
         });
     }
@@ -681,9 +679,9 @@ public sealed class BrowsingProjectionTests
                 IsFavorite = index % 2 == 0, IsReviewed = index < 10, IsMarkedForDeletion = index > 70
             };
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "filter", new GalleryFilter { IncludesFavoritesOnly = true });
-        SetField(home, "reviewRandomOrder", true);
-        SetField(home, "reviewGoal", ExpectedReviewGoal);
+        SetField(home, "Browser.Filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        SetField(home, "Browser.ReviewRandomOrder", true);
+        SetField(home, "Browser.ReviewGoal", ExpectedReviewGoal);
         var eligibleImageIds = imageRecords.Where(imageRecord => imageRecord.IsFavorite && !imageRecord.IsReviewed && !imageRecord.IsMarkedForDeletion)
             .Select(imageRecord => imageRecord.Id).ToHashSet(StringComparer.Ordinal);
         var expectedScenario = ExpectedScenario.CreateFrom("Random review selects unique eligible images without reordering the library.", new
@@ -693,10 +691,10 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        ComponentTestAccess.Call(home, "StartReview");
 
         // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "viewerImages");
+        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -718,18 +716,18 @@ public sealed class BrowsingProjectionTests
         var imageRecords = CreateImages(20);
         for (var index = 0; index < 3; index++) imageRecords[index] = imageRecords[index] with { IsFavorite = true };
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "filter", includesFavorites
+        SetField(home, "Browser.Filter", includesFavorites
             ? new GalleryFilter { IncludesFavoritesOnly = true }
             : new GalleryFilter { MinRating = 5 });
         var expectedScenario = ExpectedScenario.CreateFrom("A reduced eligible pool caps both the displayed goal and the next review session.",
             new { Goal = expectedCount, SessionCount = expectedCount });
 
         // Act
-        typeof(GalleryWorkspace).GetMethod("StartReview", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        ComponentTestAccess.Call(home, "StartReview");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario,
-            new { Goal = GetProperty<int>(home, "ReviewGoal"), SessionCount = GetField<List<ImageRecord>>(home, "viewerImages").Count });
+            new { Goal = GetProperty<int>(home, "Browser.ReviewGoal"), SessionCount = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages").Count });
     }
 
     [Fact]
@@ -739,9 +737,9 @@ public sealed class BrowsingProjectionTests
         using var testVault = new TestVault();
         var imageRecords = CreateImages(4).Select(imageRecord => imageRecord with { IsMarkedForDeletion = true }).ToList();
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "activeTool", "trash");
-        SetField(home, "filter", new GalleryFilter { Deletion = "marked", Sort = "name" });
-        Invoke(home, "SelectCard", imageRecords[0].Id, false);
+        SetField(home, "Browser.ActiveTool", "trash");
+        SetField(home, "Browser.Filter", new GalleryFilter { Deletion = "marked", Sort = "name" });
+        Invoke(home, "Browser.SelectCard", imageRecords[0].Id, false);
         var expectedScenario = ExpectedScenario.CreateFrom("Trash range selection includes the full range without changing library selection.", new
         {
             SelectedIds = imageRecords.Take(3).Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray(),
@@ -749,13 +747,13 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        typeof(GalleryWorkspace).GetMethod("SelectCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [imageRecords[2].Id, true]);
+        ComponentTestAccess.Call(home, "Browser.SelectCard", imageRecords[2].Id, true);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            SelectedIds = GetField<HashSet<string>>(home, "removalSelection").Order(StringComparer.Ordinal).ToArray(),
-            LibrarySelectionCount = GetField<HashSet<string>>(home, "librarySelection").Count
+            SelectedIds = GetField<HashSet<string>>(home, "Browser.RemovalSelection").Order(StringComparer.Ordinal).ToArray(),
+            LibrarySelectionCount = GetField<HashSet<string>>(home, "Browser.LibrarySelection").Count
         });
     }
 
@@ -763,21 +761,21 @@ public sealed class BrowsingProjectionTests
     public void TrashSelection_WhenASelectedCardIsClicked_ThenRemovesOnlyThatCard()
     {
         // Arrange
-        const string SelectCardMethod = "SelectCard";
+        const string SelectCardMethod = "Browser.SelectCard";
         using var testVault = new TestVault();
         var imageRecords = CreateImages(4).Select(imageRecord => imageRecord with { IsMarkedForDeletion = true }).ToList();
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "activeTool", "trash");
-        SetField(home, "filter", new GalleryFilter { Deletion = "marked", Sort = "name" });
+        SetField(home, "Browser.ActiveTool", "trash");
+        SetField(home, "Browser.Filter", new GalleryFilter { Deletion = "marked", Sort = "name" });
         Invoke(home, SelectCardMethod, imageRecords[0].Id, false);
         Invoke(home, SelectCardMethod, imageRecords[2].Id, true);
         var expectedSelectedIds = new[] { imageRecords[0].Id, imageRecords[2].Id }.Order(StringComparer.Ordinal);
 
         // Act
-        typeof(GalleryWorkspace).GetMethod(SelectCardMethod, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, [imageRecords[1].Id, false]);
+        ComponentTestAccess.Call(home, SelectCardMethod, imageRecords[1].Id, false);
 
         // Assert
-        Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "removalSelection").Order(StringComparer.Ordinal));
+        Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "Browser.RemovalSelection").Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -813,15 +811,15 @@ public sealed class BrowsingProjectionTests
         using var testVault = new TestVault();
         var imageRecords = CreateImages(4).Select(imageRecord => imageRecord with { IsMarkedForDeletion = true }).ToList();
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "activeTool", "trash");
-        Invoke(home, "SelectCard", imageRecords[0].Id, false);
+        SetField(home, "Browser.ActiveTool", "trash");
+        Invoke(home, "Browser.SelectCard", imageRecords[0].Id, false);
         string[] expectedSelectedIds = [];
 
         // Act
-        typeof(GalleryWorkspace).GetMethod("ClearSelection", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, null);
+        ComponentTestAccess.Call(home, "ClearSelection");
 
         // Assert
-        Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "removalSelection"));
+        Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "Browser.RemovalSelection"));
     }
 
     [Fact]
@@ -832,18 +830,18 @@ public sealed class BrowsingProjectionTests
         var imageRecords = CreateImages(2);
         imageRecords[1] = imageRecords[1] with { IsMarkedForDeletion = true };
         var home = CreateHome(testVault, imageRecords);
-        SetField(home, "filter", new GalleryFilter { Search = imageRecords[0].Name });
+        SetField(home, "Browser.Filter", new GalleryFilter { Search = imageRecords[0].Name });
         var expectedScenario = ExpectedScenario.CreateFrom("Selecting Trash replaces the browsing filter with marked images.",
             new { Deletion = "marked", ImageIds = new[] { imageRecords[1].Id } });
 
         // Act
-        await (Task)typeof(GalleryWorkspace).GetMethod("SetActiveToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, ["trash"])!;
+        await (Task)ComponentTestAccess.Call(home, "SetActiveToolAsync", ["trash"])!;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            Deletion = GetField<GalleryFilter>(home, "filter").Deletion,
-            ImageIds = GetProperty<IReadOnlyList<ImageRecord>>(home, "Filtered").Select(imageRecord => imageRecord.Id).ToArray()
+            Deletion = GetField<GalleryFilter>(home, "Browser.Filter").Deletion,
+            ImageIds = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered").Select(imageRecord => imageRecord.Id).ToArray()
         });
     }
 
@@ -856,19 +854,19 @@ public sealed class BrowsingProjectionTests
         imageRecords[1] = imageRecords[1] with { IsMarkedForDeletion = true };
         var home = CreateHome(testVault, imageRecords);
         var galleryFilter = new GalleryFilter { Search = imageRecords[0].Name };
-        SetField(home, "filter", galleryFilter);
+        SetField(home, "Browser.Filter", galleryFilter);
         await (Task)Invoke(home, "SetActiveToolAsync", "trash")!;
         var expectedScenario = ExpectedScenario.CreateFrom("Leaving Trash restores the exact browsing filter and clears its saved copy.",
             new { FilterRestored = true, HasSavedBrowsingFilter = false });
 
         // Act
-        await (Task)typeof(GalleryWorkspace).GetMethod("SetActiveToolAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, ["views"])!;
+        await (Task)ComponentTestAccess.Call(home, "SetActiveToolAsync", ["views"])!;
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            FilterRestored = galleryFilter == GetField<GalleryFilter>(home, "filter"),
-            HasSavedBrowsingFilter = GetField<GalleryFilter?>(home, "browsingFilter") is not null
+            FilterRestored = galleryFilter == GetField<GalleryFilter>(home, "Browser.Filter"),
+            HasSavedBrowsingFilter = GetField<GalleryFilter?>(home, "Browser.BrowsingFilter") is not null
         });
     }
 
@@ -891,25 +889,25 @@ public sealed class BrowsingProjectionTests
     private static GalleryWorkspace CreateHome(TestVault testVault, List<ImageRecord> imageRecords)
     {
         var home = new GalleryWorkspace();
-        typeof(GalleryWorkspace).GetProperty("Gallery", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, testVault.Service);
-        typeof(GalleryWorkspace).GetProperty("OrganizationHistory", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new OrganizationHistory(testVault.Service));
-        typeof(GalleryWorkspace).GetProperty("JS", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, new NoOpJsRuntime());
-        SetField(home, "images", imageRecords);
-        SetField(home, "imagesById", imageRecords.ToDictionary(imageRecord => imageRecord.Id));
+        ComponentTestAccess.Set(home, "Gallery", testVault.Service);
+        ComponentTestAccess.Set(home, "OrganizationHistory", new OrganizationHistory(testVault.Service));
+        ComponentTestAccess.Set(home, "JS", new NoOpJsRuntime());
+        SetField(home, "Catalog.Images", imageRecords);
+        SetField(home, "Catalog.ImagesById", imageRecords.ToDictionary(imageRecord => imageRecord.Id));
         return home;
     }
 
     private static void SetField(GalleryWorkspace home, string name, object value) =>
-        typeof(GalleryWorkspace).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(home, value);
+        ComponentTestAccess.Set(home, name, value);
 
     private static T GetField<T>(GalleryWorkspace home, string name) =>
-        (T)typeof(GalleryWorkspace).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
+        ComponentTestAccess.Get<T>(home, name);
 
     private static T GetProperty<T>(GalleryWorkspace home, string name) =>
-        (T)typeof(GalleryWorkspace).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(home)!;
+        ComponentTestAccess.Get<T>(home, name);
 
     private static object? Invoke(GalleryWorkspace home, string name, params object?[] arguments) =>
-        typeof(GalleryWorkspace).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(home, arguments);
+        ComponentTestAccess.Call(home, name, arguments);
 
     private sealed class NoOpJsRuntime : IJSRuntime
     {

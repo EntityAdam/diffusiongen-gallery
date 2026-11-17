@@ -4,153 +4,40 @@ namespace Gallery.Web.Components.Workspace;
 
 public partial class GalleryWorkspace
 {
-    private async Task<(CollectionCatalog Catalog, IReadOnlyList<ImageRecord> Images)> ReloadCollectionsAsync()
-    {
-        await ReloadAsync();
-        return (collectionCatalog, images);
-    }
-
-    private bool catalogPartial;
-    private bool catalogLoading;
-    private string catalogLoadError = "";
-    private long catalogGeneration;
-    private CancellationTokenSource? catalogCancellation;
-    private Task catalogLoad = Task.CompletedTask;
-
-    private void CancelCatalogLoad()
-    {
-        catalogGeneration++;
-        catalogCancellation?.Cancel();
-        catalogLoading = false;
-    }
-
-    private async Task OpenGalleryAsync()
-    {
-        CancelCatalogLoad();
-        var generation = catalogGeneration;
-        collectionCatalog = await Gallery.LoadCollectionCatalogAsync();
-        var savedQuickFilters = await Gallery.LoadViewsAsync();
-        if (!IsCatalogGenerationCurrent(generation)) return;
-        quickFilters = savedQuickFilters.OrderBy(view => view.Name, StringComparer.OrdinalIgnoreCase).ToArray();
-        var snapshot = await Gallery.LoadInitialPageAsync(PageSize, TrashActive);
-        if (!IsCatalogGenerationCurrent(generation)) return;
-        catalogPartial = !snapshot.IsComplete || !snapshot.IsCurrent;
-        catalogLoadError = "";
-        images = snapshot.Records;
-        await ApplyLoadedRecordsAsync();
-        if (catalogPartial) StartCatalogLoad();
-    }
-
-    private bool IsCatalogGenerationCurrent(long generation) =>
-        !disposed && generation == catalogGeneration && Gallery.IsUnlocked;
-
-    private void StartCatalogLoad()
-    {
-        var previous = catalogLoad;
-        CancelCatalogLoad();
-        var cancellation = new CancellationTokenSource();
-        catalogCancellation = cancellation;
-        var generation = catalogGeneration;
-        catalogLoading = true;
-        catalogLoadError = "";
-        catalogLoad = FinishCatalogLoadAsync(previous, generation, cancellation);
-    }
-
-    private async Task FinishCatalogLoadAsync(Task previous, long generation, CancellationTokenSource cancellation)
-    {
-        try
-        {
-            await previous;
-            // Give the initial render and thumbnail requests priority over the full scan.
-            await Task.Delay(250, cancellation.Token);
-            var snapshot = await Gallery.LoadCatalogAsync(cancellation.Token);
-            if (!IsCatalogGenerationCurrent(generation) || cancellation.IsCancellationRequested) return;
-            if (!snapshot.IsCurrent) { StartCatalogLoad(); return; }
-            images = snapshot.Records;
-            imagesById = images.ToDictionary(image => image.Id);
-            browsingSource = null;
-            catalogPartial = false;
-            catalogLoading = false;
-            if (selected is not null) selected = imagesById.GetValueOrDefault(selected.Id);
-            duplicates.UpdateGroups(imagesById);
-            page = Math.Min(page, PageCount - 1);
-            await LoadThumbnailsAsync();
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception exception)
-        {
-            if (!disposed && generation == catalogGeneration && Gallery.IsUnlocked)
-            {
-                Logger.LogError(exception, "Background catalog load failed");
-                catalogLoadError = "The rest of the library could not be loaded. The initial page is still available.";
-                catalogLoading = false;
-            }
-        }
-        finally
-        {
-            if (ReferenceEquals(catalogCancellation, cancellation))
-            {
-                catalogCancellation = null;
-                catalogLoad = Task.CompletedTask;
-            }
-            cancellation.Dispose();
-            if (!disposed && generation == catalogGeneration) StateHasChanged();
-        }
-    }
-
-    private async Task ApplyLoadedRecordsAsync()
-    {
-        browsingSource = null;
-        ingestion.LoadOptions(await Gallery.LoadIngestionOptionsAsync());
-        imagesById = images.ToDictionary(image => image.Id);
-        duplicates.UpdateGroups(imagesById);
-        if (workflow == "duplicates") await duplicates.LoadThumbnailsAsync(Gallery);
-        settings = await Gallery.SettingsAsync();
-        catalogTags = await Gallery.LoadTagNamesAsync();
-        var nextCollections = await Gallery.LoadCollectionCatalogAsync();
-        var currentCollection = collectionCatalog.Collections.FirstOrDefault(item => item.Name.Equals(filter.Collection, StringComparison.OrdinalIgnoreCase));
-        if (currentCollection is not null && nextCollections.Collections.FirstOrDefault(item => item.Id == currentCollection.Id) is { } renamed)
-            filter = filter with { Collection = renamed.Name };
-        collectionCatalog = nextCollections;
-        storageOverview = await Gallery.CachedStorageOverviewAsync();
-        selected = selected is null ? null : images.SingleOrDefault(image => image.Id == selected.Id);
-        if (selected is null) { preview = ""; _ = ReleaseVideoAsync(); }
-        removalSelection.IntersectWith(images.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
-        librarySelection.IntersectWith(images.Select(image => image.Id));
-        page = Math.Min(page, PageCount - 1);
-        await LoadThumbnailsAsync();
-    }
-
-    private Task RetryCatalogLoadAsync()
-    {
-        if (catalogPartial && !catalogLoading) StartCatalogLoad();
-        return Task.CompletedTask;
-    }
-
-    private string grouping = "none";
-    private GalleryBrowsingProjection browsingProjection = GalleryBrowsingProjection.Empty;
-    private IReadOnlyList<ImageRecord>? browsingSource;
-    private GalleryFilter? projectedFilter;
-    private string? projectedGrouping;
-    private IReadOnlyDictionary<string, PromptGroup> promptGroupOf => Browsing.PromptGroupsByImageId;
-    private IReadOnlyDictionary<string, DiffusionModelGroup> diffusionModelGroupOf => Browsing.DiffusionModelGroupsByImageId;
-
-    private GalleryBrowsingProjection Browsing
+    private WorkspaceCatalog? catalog;
+    private GalleryBrowserState? browser;
+    private GalleryBrowser? galleryBrowser;
+    private WorkspaceCatalog Catalog
     {
         get
         {
-            if (!ReferenceEquals(browsingSource, images) || projectedFilter != filter || projectedGrouping != grouping)
-            {
-                browsingProjection = GalleryBrowsingProjector.Create(Gallery, images, filter, catalogPartial ? "none" : grouping,
-                    aiSuggestions.Keys.ToHashSet());
-                browsingSource = images;
-                projectedFilter = filter;
-                projectedGrouping = grouping;
-            }
-            return browsingProjection;
+            if (catalog is not null) return catalog;
+            catalog = new(Gallery, Logger, action => InvokeAsync(action));
+            catalog.Changed += CatalogChangedAsync;
+            return catalog;
         }
     }
-    private IReadOnlyList<ImageRecord> Filtered => Browsing.Images;
-    private int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
-    private IEnumerable<ImageRecord> PageImages => Filtered.Skip(page * PageSize).Take(PageSize);
+    private GalleryBrowserState Browser => browser ??= new(Gallery, Catalog, Logger, RefreshWorkspace, () => SavePreferencesAsync());
+
+    internal Task ReloadAsync() => Catalog.ReloadAsync();
+    private async Task<(CollectionCatalog Catalog, IReadOnlyList<ImageRecord> Images)> ReloadCollectionsAsync()
+    {
+        await ReloadAsync();
+        return (Catalog.Collections, Catalog.Images);
+    }
+    private Task RetryCatalogLoadAsync() { Catalog.RetryLoad(); return Task.CompletedTask; }
+    private async Task CatalogChangedAsync()
+    {
+        if (disposed) return;
+        var currentCollection = previousCollections.Collections.FirstOrDefault(item => item.Name.Equals(Browser.Filter.Collection, StringComparison.OrdinalIgnoreCase));
+        if (currentCollection is not null && Catalog.Collections.Collections.FirstOrDefault(item => item.Id == currentCollection.Id) is { } renamed)
+            Browser.Filter = Browser.Filter with { Collection = renamed.Name };
+        previousCollections = Catalog.Collections;
+        duplicates.UpdateGroups(Catalog.ImagesById);
+        if (workflow == "duplicates") await duplicates.LoadThumbnailsAsync(Gallery);
+        await Presentation.ReconcileAsync(Catalog.ImagesById);
+        await Browser.CatalogChangedAsync();
+        RefreshWorkspace();
+    }
+    private CollectionCatalog previousCollections = CollectionCatalog.Empty;
 }

@@ -14,9 +14,9 @@ namespace Gallery.Tests;
 public sealed class UiSaveBehaviorTests
 {
     private const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-    private static void Set(object target, string field, object value) => target.GetType().GetField(field, Flags)!.SetValue(target, value);
-    private static T Get<T>(object target, string field) => (T)target.GetType().GetField(field, Flags)!.GetValue(target)!;
-    private static object? Call(object target, string method, params object[] args) => target.GetType().GetMethod(method, Flags)!.Invoke(target, args);
+    private static void Set(object target, string field, object value) => ComponentTestAccess.Set(target, field, value);
+    private static T Get<T>(object target, string field) => ComponentTestAccess.Get<T>(target, field);
+    private static object? Call(object target, string method, params object[] args) => ComponentTestAccess.Call(target, method, args);
     private static Task Invoke(object target, string method, params object[] args) => (Task)Call(target, method, args)!;
 
     [Fact]
@@ -63,9 +63,9 @@ public sealed class UiSaveBehaviorTests
     }
 
     [Theory]
-    [InlineData("KeepEditingNotes", false, false)]
-    [InlineData("DiscardNotesAndContinueAsync", true, false)]
-    [InlineData("SaveNotesAndContinueAsync", true, true)]
+    [InlineData("Guard.KeepEditing", false, false)]
+    [InlineData("Guard.DiscardAsync", true, false)]
+    [InlineData("Guard.SaveAsync", true, true)]
     public async Task LeavingDetailsOffersKeepDiscardOrSave(string choice, bool closes, bool saves)
     {
         using var vault = new TestVault();
@@ -82,17 +82,17 @@ public sealed class UiSaveBehaviorTests
             await Invoke(home, "ReloadAsync");
             await Invoke(home, "OpenAsync", image);
             Call(home, "StateHasChanged");
-            detail = Get<MediaDetailDialog>(home, "detailDialog");
+            detail = Get<MediaDetailDialog>(home, "mediaHost.detailDialog");
             Set(detail, "editUserDescription", "edited");
             await Invoke(detail, "RequestCloseDetailAsync");
-            Assert.NotNull(Get<Func<Task>?>(detail, "pendingDetailAction"));
-            Assert.NotNull(Get<ImageRecord?>(home, "selected"));
+            Assert.True(Get<bool>(detail, "Guard.IsPending"));
+            Assert.NotNull(Get<ImageRecord?>(home, "Presentation.Selected"));
             if (Call(detail, choice) is Task task) await task;
         });
-        Assert.Equal(closes, Get<ImageRecord?>(home, "selected") is null);
+        Assert.Equal(closes, Get<ImageRecord?>(home, "Presentation.Selected") is null);
         Assert.Equal(saves ? "edited" : "original", Assert.Single(await vault.Service.ListAsync()).UserDescription);
         if (!closes) Assert.Equal("edited", Get<string>(detail, "editUserDescription"));
-        Assert.Null(Get<Func<Task>?>(detail, "pendingDetailAction"));
+        Assert.False(Get<bool>(detail, "Guard.IsPending"));
     }
 
     [Fact]
@@ -106,16 +106,16 @@ public sealed class UiSaveBehaviorTests
             ParameterView.FromDictionary(new Dictionary<string, object?> { ["Capture"] = (Action<GalleryWorkspace>)(value => home = value) })));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            Set(home, "selected", new ImageRecord { Id = "missing" });
+            Set(home, "Presentation.Selected", new ImageRecord { Id = "missing" });
             Call(home, "StateHasChanged");
-            var detail = Get<MediaDetailDialog>(home, "detailDialog");
+            var detail = Get<MediaDetailDialog>(home, "mediaHost.detailDialog");
             Set(detail, "editUserDescription", "draft");
             var left = false;
             await detail.RequestDetailActionAsync(() => { left = true; return Task.CompletedTask; });
-            await Invoke(detail, "SaveNotesAndContinueAsync");
+            await Invoke(detail, "Guard.SaveAsync");
             Assert.False(left);
             Assert.Equal("draft", Get<string>(detail, "editUserDescription"));
-            Assert.NotNull(Get<Func<Task>?>(detail, "pendingDetailAction"));
+            Assert.True(Get<bool>(detail, "Guard.IsPending"));
             Assert.NotEmpty(home.Activity.Error);
         });
     }
@@ -140,17 +140,17 @@ public sealed class UiSaveBehaviorTests
             await Invoke(home, "ReloadAsync");
             await Invoke(home, "OpenAsync", image);
             Call(home, "StateHasChanged");
-            detail = Get<MediaDetailDialog>(home, "detailDialog");
+            detail = Get<MediaDetailDialog>(home, "mediaHost.detailDialog");
             Set(detail, "editUserDescription", "unsaved draft");
-            await Invoke(home, "AnalyzeAsync");
+            await Invoke(home, "AnalyzeAsync", image);
         });
         Assert.Empty(home.Activity.Error);
-        Assert.NotNull(Get<LibraryWorkbench?>(home, "workbench"));
+        Assert.NotNull(Get<LibraryWorkbench?>(home, "galleryBrowser.workbench"));
         var unchanged = Assert.Single(await vault.Service.ListAsync());
         Assert.Equal("old analysis", unchanged.Description);
         Assert.Equal("existing", unchanged.Tags);
         Assert.Equal("my notes", unchanged.UserDescription);
-        Assert.Single(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "aiSuggestions"));
+        Assert.Single(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "Browser.Suggestions"));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => Invoke(detail, "ApproveDetailSuggestionAsync"));
         Assert.Equal("old analysis", Assert.Single(await vault.Service.ListAsync()).Description);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
@@ -163,7 +163,7 @@ public sealed class UiSaveBehaviorTests
         Assert.Equal("existing, suggested", approved.Tags);
         Assert.Equal("my notes", approved.UserDescription);
         Assert.Equal("vision", approved.AnalysisModel);
-        Assert.Empty(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "aiSuggestions"));
+        Assert.Empty(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "Browser.Suggestions"));
         Assert.Equal("new analysis", Get<string>(detail, "editDescription"));
     }
 
@@ -212,19 +212,19 @@ public sealed class UiSaveBehaviorTests
             Assert.Equal(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
             Assert.False(home.Activity.Ingestion.SettingsDirty);
             await Invoke(home, "SwitchSettingsTabAsync", "backups");
-            Get<BackupDraft>(home, "backup").LocalDirectory = vault.Root + "-backups";
-            Assert.True(Get<BackupDraft>(home, "backup").HasChanges);
-            Assert.False(Get<BackupDraft>(home, "backup").Ready);
-            await Get<BackupDraft>(home, "backup").SaveAsync(vault.Service);
-            Assert.False(Get<BackupDraft>(home, "backup").HasChanges);
-            Assert.True(Get<BackupDraft>(home, "backup").Ready);
+            Get<BackupDraft>(home, "settingsWorkspace.backup").LocalDirectory = vault.Root + "-backups";
+            Assert.True(Get<BackupDraft>(home, "settingsWorkspace.backup").HasChanges);
+            Assert.False(Get<BackupDraft>(home, "settingsWorkspace.backup").Ready);
+            await Get<BackupDraft>(home, "settingsWorkspace.backup").SaveAsync(vault.Service);
+            Assert.False(Get<BackupDraft>(home, "settingsWorkspace.backup").HasChanges);
+            Assert.True(Get<BackupDraft>(home, "settingsWorkspace.backup").Ready);
         });
     }
 
     [Theory]
-    [InlineData("KeepEditingSettings", false, false)]
-    [InlineData("DiscardSettingsAndContinueAsync", true, false)]
-    [InlineData("SaveSettingsAndContinueAsync", true, true)]
+    [InlineData("Guard.KeepEditing", false, false)]
+    [InlineData("Guard.DiscardAsync", true, false)]
+    [InlineData("Guard.SaveAsync", true, true)]
     public async Task LeavingLlmSettingsOffersKeepDiscardOrSave(string choice, bool leaves, bool saves)
     {
         using var vault = new TestVault();
@@ -240,19 +240,19 @@ public sealed class UiSaveBehaviorTests
             await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
             Call(home, "StateHasChanged");
         });
-        var component = Get<LlmEndpointSettings>(home, "llmEndpointSettings");
+        var component = Get<LlmEndpointSettings>(home, "settingsWorkspace.llmEndpointSettings");
         var draft = Get<object>(component, "draft");
         draft.GetType().GetProperty("Model")!.SetValue(draft, "edited");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await Invoke(home, "SwitchSettingsTabAsync", "overview");
-            Assert.NotNull(Get<Func<Task>?>(home, "pendingSettingsAction"));
+            Assert.True(Get<bool>(home, "Guard.IsPending"));
             Assert.Equal("endpoints", Get<string>(home, "settingsTab"));
             if (Call(home, choice) is Task task) await task;
         });
         Assert.Equal(leaves ? "overview" : "endpoints", Get<string>(home, "settingsTab"));
         Assert.Equal(saves ? "edited" : "original", (await vault.Service.SettingsAsync()).Model);
-        Assert.Null(Get<Func<Task>?>(home, "pendingSettingsAction"));
+        Assert.False(Get<bool>(home, "Guard.IsPending"));
         Assert.Equal(!leaves, component.HasUnsavedChanges);
     }
 
@@ -272,17 +272,17 @@ public sealed class UiSaveBehaviorTests
             await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
             Call(home, "StateHasChanged");
         });
-        var component = Get<LlmEndpointSettings>(home, "llmEndpointSettings");
+        var component = Get<LlmEndpointSettings>(home, "settingsWorkspace.llmEndpointSettings");
         var draft = Get<object>(component, "draft");
         draft.GetType().GetProperty("Endpoint")!.SetValue(draft, "invalid-url");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await Invoke(home, "SwitchWorkflowAsync", "gallery");
-            await Invoke(home, "SaveSettingsAndContinueAsync");
+            await Invoke(home, "Guard.SaveAsync");
         });
         Assert.Equal("settings", Get<string>(home, "workflow"));
         Assert.Equal("endpoints", Get<string>(home, "settingsTab"));
-        Assert.NotNull(Get<Func<Task>?>(home, "pendingSettingsAction"));
+        Assert.True(Get<bool>(home, "Guard.IsPending"));
         Assert.True(component.HasUnsavedChanges);
         Assert.Equal("invalid-url", draft.GetType().GetProperty("Endpoint")!.GetValue(draft));
         Assert.Equal("original", (await vault.Service.SettingsAsync()).Model);
@@ -313,15 +313,15 @@ public sealed class UiSaveBehaviorTests
             {
                 await Invoke(home, "SwitchWorkflowAsync", "settings");
                 await Invoke(home, "SwitchSettingsTabAsync", "backups");
-                Get<BackupDraft>(home, "backup").LocalDirectory = vault.Root + "-backups";
+                Get<BackupDraft>(home, "settingsWorkspace.backup").LocalDirectory = vault.Root + "-backups";
             }
             await Invoke(home, "SwitchWorkflowAsync", "gallery");
-            Assert.NotNull(Get<Func<Task>?>(home, "pendingSettingsAction"));
+            Assert.True(Get<bool>(home, "Guard.IsPending"));
             Assert.NotEqual("gallery", Get<string>(home, "workflow"));
-            await Invoke(home, save ? "SaveSettingsAndContinueAsync" : "DiscardSettingsAndContinueAsync");
+            await Invoke(home, save ? "Guard.SaveAsync" : "Guard.DiscardAsync");
         });
         Assert.Equal("gallery", Get<string>(home, "workflow"));
-        Assert.Null(Get<Func<Task>?>(home, "pendingSettingsAction"));
+        Assert.False(Get<bool>(home, "Guard.IsPending"));
         if (section == "ingest") Assert.Equal(save, (await vault.Service.LoadIngestionOptionsAsync()).Workers == 2);
         else Assert.Equal(save ? vault.Root + "-backups" : "", (await vault.Service.LoadBackupOptionsAsync()).LocalDirectory);
     }

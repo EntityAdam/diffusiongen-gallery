@@ -11,7 +11,7 @@ public partial class GalleryWorkspace
     private string? lastRoute;
     private string CurrentPath => workflow == "settings" && settingsTab != "overview"
         ? $"settings/{settingsTab}" : workflow;
-    private bool HasUnsavedChanges => SettingsDirty || selected is not null && detailDialog?.NotesDirty == true;
+    private bool HasUnsavedChanges => DraftSources.Any(source => source.HasUnsavedChanges());
 
     protected override async Task OnParametersSetAsync()
     {
@@ -35,7 +35,7 @@ public partial class GalleryWorkspace
         if (!Workflows.Any(item => item.Id == parts[0])) return;
         if (workflow != parts[0]) await ApplyWorkflowAsync(parts[0]);
         var tab = parts.Length == 2 ? parts[1] : "overview";
-        if (workflow == "settings" && settingsTab != tab && SettingsTabs.Any(item => item.Id == tab))
+        if (workflow == "settings" && settingsTab != tab && SettingsWorkspace.Tabs.Any(item => item.Id == tab))
             await ApplySettingsTabAsync(tab);
         PublishRoute();
     }
@@ -57,7 +57,7 @@ public partial class GalleryWorkspace
         if (Router is null) return;
         var path = NormalizePath(Router.ToBaseRelativePath(Router.ToAbsoluteUri(context.TargetLocation).AbsoluteUri));
         if (!Gallery.IsUnlocked || path == CurrentPath) return;
-        if (WorkspaceBusy || llmEndpointSettings?.IsBusy == true ||
+        if (WorkspaceBusy || settingsWorkspace?.IsBusy == true ||
             (libraryJob.IsRunning && path.Split('/')[0] is "ingest" or "settings"))
         {
             context.PreventNavigation();
@@ -66,16 +66,14 @@ public partial class GalleryWorkspace
         if (HasUnsavedChanges)
         {
             context.PreventNavigation();
-            Task ContinueAsync() => RequestSettingsActionAsync(() =>
+            await RequestNavigationAsync(() =>
             {
                 Router.NavigateTo(context.TargetLocation);
                 return Task.CompletedTask;
             });
-            if (selected is not null && detailDialog is not null) await detailDialog.RequestDetailActionAsync(ContinueAsync);
-            else await ContinueAsync();
             StateHasChanged();
             return;
         }
-        if (selected is not null) CloseDetail();
+        Presentation.CloseDetail();
     }
 }

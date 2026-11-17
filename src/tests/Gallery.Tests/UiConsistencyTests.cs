@@ -38,6 +38,55 @@ public sealed class UiConsistencyTests
     }
 
     [Fact]
+    public async Task EndpointDeepLinkLoadsSavedSettingsAndCatalogReloadPreservesItsDraft()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "saved-model" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (workspace, _) = await Render<GalleryWorkspace>(fixture, new() { [nameof(GalleryWorkspace.Route)] = "settings/endpoints" });
+        var settings = ComponentTestAccess.Get<SettingsWorkspace>(workspace, "settingsWorkspace");
+        var endpoints = ComponentTestAccess.Get<LlmEndpointSettings>(settings, "llmEndpointSettings");
+        Assert.Equal("saved-model", endpoints.SavedSettings.Model);
+        Assert.False(settings.HasUnsavedChanges);
+        var draft = ComponentTestAccess.Get<object>(endpoints, "draft");
+        ComponentTestAccess.Set(draft, "Model", "unsaved-model");
+
+        await Invoke(fixture, workspace, "ReloadAsync");
+
+        Assert.True(settings.HasUnsavedChanges);
+        Assert.Same(endpoints, ComponentTestAccess.Get<LlmEndpointSettings>(settings, "llmEndpointSettings"));
+        Assert.Equal("unsaved-model", ComponentTestAccess.Get<string>(draft, "Model"));
+        Assert.Equal("saved-model", (await vault.Service.SettingsAsync()).Model);
+    }
+
+    [Fact]
+    public async Task SidebarNavigationUsesTheSameNotesGuardAsClosingDetails()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var (workspace, root) = await Render<GalleryWorkspace>(fixture, new());
+        await Invoke(fixture, workspace, "OpenAsync", image);
+        var detail = ComponentTestAccess.Get<MediaDetailDialog>(workspace, "mediaHost.detailDialog");
+        ComponentTestAccess.Set(detail, "editUserDescription", "unsaved notes");
+        await Invoke(fixture, detail, "RequestCloseDetailAsync");
+        await Invoke(fixture, workspace, "SwitchWorkflowAsync", "settings");
+        var guard = ComponentTestAccess.Get<UnsavedChangesGuardState>(workspace, "Guard");
+        Assert.True(guard.IsPending);
+        Assert.Single(Regex.Matches(await Html(fixture, root), "id=\"unsaved-notes-title\""));
+        guard.KeepEditing();
+
+        await Invoke(fixture, workspace, "SwitchWorkflowAsync", "settings");
+        Assert.Equal("gallery", Field<string>(workspace, "workflow"));
+        await Invoke(fixture, workspace, "Guard.DiscardAsync");
+        Assert.Equal("settings", Field<string>(workspace, "workflow"));
+        Assert.Null(ComponentTestAccess.Get<MediaPresentationState>(workspace, "Presentation").Selected);
+        Assert.Empty(Assert.Single(await vault.Service.ListAsync()).UserDescription);
+    }
+
+    [Fact]
     public async Task Sidebar_UsesTheRequestedOrderAndOpensGalleryTools()
     {
         using var vault = new TestVault();
@@ -51,62 +100,62 @@ public sealed class UiConsistencyTests
         Assert.Equal(2, Regex.Matches(navigation, "role=\"separator\"").Count);
         Assert.DoesNotContain("Trash", navigation);
         Assert.DoesNotContain("Unorganized", navigation);
-        typeof(GalleryWorkspace).GetField("toolboxVisible", Private)!.SetValue(home, false);
+        ComponentTestAccess.Set(home, "Browser.ToolboxVisible", false);
         await Invoke(fixture, home, "NavigateSidebarAsync", "views");
-        Assert.Equal("views", Field<string>(home, "activeTool"));
+        Assert.Equal("views", Field<string>(home, "Browser.ActiveTool"));
         var viewHtml = await Html(fixture, root);
         Assert.Contains("gallery-view-drawer", viewHtml);
         Assert.Contains("Thumbnail size", viewHtml);
         Assert.DoesNotContain("data-tool=\"views\"", viewHtml);
-        Assert.False(Field<bool>(home, "toolboxVisible"));
+        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
         await Invoke(fixture, home, "NavigateSidebarAsync", "views");
-        Assert.Equal("", Field<string>(home, "activeTool"));
+        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
         await Invoke(fixture, home, "NavigateSidebarAsync", "filters");
-        Assert.Equal("filters", Field<string>(home, "activeTool"));
+        Assert.Equal("filters", Field<string>(home, "Browser.ActiveTool"));
         Assert.Contains("class=\"gallery-filter-drawer\"", await Html(fixture, root));
         await Invoke(fixture, home, "NavigateSidebarAsync", "tags");
         await Invoke(fixture, home, "NavigateSidebarAsync", "gallery");
         Assert.Equal("gallery", Field<string>(home, "workflow"));
-        Assert.Equal("", Field<string>(home, "activeTool"));
+        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
         await Invoke(fixture, home, "NavigateSidebarAsync", "tags");
         await Invoke(fixture, home, "NavigateSidebarAsync", "review");
         Assert.Equal("gallery", Field<string>(home, "workflow"));
-        Assert.Equal("review", Field<string>(home, "activeTool"));
+        Assert.Equal("review", Field<string>(home, "Browser.ActiveTool"));
         var reviewHtml = await Html(fixture, root);
         Assert.Contains("gallery-review-drawer", reviewHtml);
         Assert.Contains("review-random-order", reviewHtml);
         Assert.Contains("review-goal", reviewHtml);
         Assert.Contains("Start Review", reviewHtml);
         Assert.DoesNotContain("data-tool=\"review\"", reviewHtml);
-        Assert.False(Field<bool>(home, "toolboxVisible"));
+        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
         await Invoke(fixture, home, "NavigateSidebarAsync", "review");
-        Assert.Equal("", Field<string>(home, "activeTool"));
+        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
         await Invoke(fixture, home, "NavigateSidebarAsync", "intelligence");
         Assert.Equal("gallery", Field<string>(home, "workflow"));
-        Assert.Equal("intelligence", Field<string>(home, "activeTool"));
+        Assert.Equal("intelligence", Field<string>(home, "Browser.ActiveTool"));
         var analysisHtml = await Html(fixture, root);
         Assert.Contains("gallery-analysis-drawer", analysisHtml);
         Assert.Contains("auto-accept-vision", analysisHtml);
         Assert.Contains("Start analyzing unanalyzed media", analysisHtml);
         Assert.DoesNotContain("data-tool=\"intelligence\"", analysisHtml);
-        Assert.False(Field<bool>(home, "toolboxVisible"));
-        var workbench = Field<LibraryWorkbench>(home, "workbench");
+        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
+        var workbench = Field<LibraryWorkbench>(home, "galleryBrowser.workbench");
         await Invoke(fixture, home, "NavigateSidebarAsync", "intelligence");
-        Assert.Equal("", Field<string>(home, "activeTool"));
-        Assert.Same(workbench, Field<LibraryWorkbench>(home, "workbench"));
+        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
+        Assert.Same(workbench, Field<LibraryWorkbench>(home, "galleryBrowser.workbench"));
         await Invoke(fixture, home, "NavigateSidebarAsync", "tags");
         await Invoke(fixture, home, "NavigateSidebarAsync", "organize");
         Assert.Equal("gallery", Field<string>(home, "workflow"));
-        Assert.Equal("organize", Field<string>(home, "activeTool"));
+        Assert.Equal("organize", Field<string>(home, "Browser.ActiveTool"));
         var organizeHtml = await Html(fixture, root);
         Assert.Contains("gallery-organize-drawer", organizeHtml);
         Assert.Contains("Move to set", organizeHtml);
         Assert.Contains("bulk-tags", organizeHtml);
         Assert.DoesNotContain("data-tool=\"organize\"", organizeHtml);
-        Assert.False(Field<bool>(home, "toolboxVisible"));
-        Assert.Same(workbench, Field<LibraryWorkbench>(home, "workbench"));
+        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
+        Assert.Same(workbench, Field<LibraryWorkbench>(home, "galleryBrowser.workbench"));
         await Invoke(fixture, home, "NavigateSidebarAsync", "organize");
-        Assert.Equal("", Field<string>(home, "activeTool"));
+        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
     }
 
     [Fact]
@@ -140,17 +189,17 @@ public sealed class UiConsistencyTests
         var (host, root) = await Render<Home>(fixture, new());
         var home = Field<GalleryWorkspace>(host, "workspace");
         var savedFilter = new GalleryFilter { Tag = "cat, dog", MinRating = 4 };
-        typeof(GalleryWorkspace).GetField("filter", Private)!.SetValue(home, savedFilter);
+        ComponentTestAccess.Set(home, "Browser.Filter", savedFilter);
         await Invoke(fixture, home, "SetActiveToolAsync", "filters");
-        var drawer = Field<FilterDrawer>(home, "filterDrawer");
+        var drawer = Field<FilterDrawer>(home, "galleryBrowser.filterDrawer");
         await Invoke(fixture, drawer, "BeginSaveQuickFilter");
         typeof(FilterDrawer).GetField("quickFilterName", Private)!.SetValue(drawer, "Portraits");
-        typeof(GalleryWorkspace).GetField("filter", Private)!.SetValue(home, new GalleryFilter());
+        ComponentTestAccess.Set(home, "Browser.Filter", new GalleryFilter());
         await Invoke(fixture, drawer, "SaveQuickFilterAsync");
         var saved = Assert.Single(await vault.Service.LoadViewsAsync());
         Assert.Equal("Portraits", saved.Name);
         Assert.Equal(savedFilter, saved.GalleryFilter);
-        Assert.Single(Field<IReadOnlyList<SavedView>>(home, "quickFilters"));
+        Assert.Single(Field<IReadOnlyList<SavedView>>(home, "Browser.QuickFilters"));
         await Invoke(fixture, host, "Lock");
         Assert.Null(Field<GalleryWorkspace?>(host, "workspace"));
         Assert.DoesNotContain("Portraits", await Html(fixture, root));
@@ -312,7 +361,7 @@ public sealed class UiConsistencyTests
         await Invoke(fixture, home, "ReloadAsync");
         var moved = await vault.Service.MoveMediaToDestinationAsync([image.Id], "New collection", "New set");
         if (origin == "gallery")
-            await Invoke(fixture, Field<LibraryWorkbench>(home, "workbench"), "DestinationSavedAsync", moved);
+            await Invoke(fixture, Field<LibraryWorkbench>(home, "galleryBrowser.workbench"), "DestinationSavedAsync", moved);
         else if (origin == "collections")
         {
             await Invoke(fixture, home, "SwitchWorkflowAsync", "unorganized");
@@ -400,9 +449,9 @@ public sealed class UiConsistencyTests
         var home = Field<GalleryWorkspace>(host, "workspace");
         await Invoke(fixture, home, "ReloadAsync");
         var moved = await vault.Service.MoveMediaToDestinationAsync([image.Id], "Collection", "Set");
-        await Invoke(fixture, Field<LibraryWorkbench>(home, "workbench"), "DestinationSavedAsync", moved);
+        await Invoke(fixture, Field<LibraryWorkbench>(home, "galleryBrowser.workbench"), "DestinationSavedAsync", moved);
         await Invoke(fixture, home, "SwitchWorkflowAsync", "unorganized");
-        typeof(GalleryWorkspace).GetField("collectionWorking", Private)!.SetValue(home, true);
+        ComponentTestAccess.Set(home, "collectionWorking", true);
         await Invoke(fixture, home, "SwitchWorkflowAsync", "settings");
         await Invoke(fixture, home, "NavigateCollectionsAsync", new CollectionLocation(moved.Catalog.Collections[0].Id));
         Assert.Equal("unorganized", Field<string>(home, "workflow"));
@@ -425,7 +474,7 @@ public sealed class UiConsistencyTests
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         var (home, _) = await Render<GalleryWorkspace>(fixture, new());
         var moved = await vault.Service.MoveMediaToDestinationAsync([image.Id], "New collection", "New set");
-        await Invoke(fixture, Field<LibraryWorkbench>(home, "workbench"), "DestinationSavedAsync", moved);
+        await Invoke(fixture, Field<LibraryWorkbench>(home, "galleryBrowser.workbench"), "DestinationSavedAsync", moved);
         await Invoke(fixture, home, "NavigateCollectionsAsync", new CollectionLocation(moved.Catalog.Collections[0].Id, moved.Catalog.Sets[0].Id));
         await Invoke(fixture, home, "UndoOrganizationAsync");
         Assert.Equal(new CollectionLocation(), Field<CollectionLocation>(home, "collectionLocation"));
@@ -496,22 +545,22 @@ public sealed class UiConsistencyTests
     }
 
     [Theory]
-    [InlineData("SetSort")]
-    [InlineData("ResetFilters")]
+    [InlineData("Browser.SetSortAsync")]
+    [InlineData("Browser.ResetFiltersAsync")]
     public async Task Gallery_ViewChangesClearSelectionAndRangeAnchor(string action)
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         var (home, _) = await Render<GalleryWorkspace>(fixture, new());
-        var selected = (HashSet<string>)typeof(GalleryWorkspace).GetField("librarySelection", Private)!.GetValue(home)!;
-        var trashSelected = (HashSet<string>)typeof(GalleryWorkspace).GetField("removalSelection", Private)!.GetValue(home)!;
+        var selected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.LibrarySelection")!;
+        var trashSelected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.RemovalSelection")!;
         selected.Add("hidden"); trashSelected.Add("marked");
-        typeof(GalleryWorkspace).GetField("selectionAnchor", Private)!.SetValue(home, "hidden");
-        await Invoke(fixture, home, action, action == "SetSort" ? ["name"] : []);
+        ComponentTestAccess.Set(home, "Browser.SelectionAnchor", "hidden");
+        await Invoke(fixture, home, action, action == "Browser.SetSortAsync" ? ["name"] : []);
         Assert.Empty(selected);
         Assert.Empty(trashSelected);
-        Assert.Null(typeof(GalleryWorkspace).GetField("selectionAnchor", Private)!.GetValue(home));
+        Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.SelectionAnchor"));
     }
 
     [Theory]
@@ -532,7 +581,7 @@ public sealed class UiConsistencyTests
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         var (home, root) = await Render<GalleryWorkspace>(fixture, new());
         await Invoke(fixture, home, "ReloadAsync");
-        typeof(GalleryWorkspace).GetField("filter", Private)!.SetValue(home, new GalleryFilter
+        ComponentTestAccess.Set(home, "Browser.Filter", new GalleryFilter
         {
             Search = "no match", Tag = "previous", MinRating = 5, IncludesFavoritesOnly = true,
             Collection = "old collection", Vision = new() { Subject = "old subject" }, Sort = "name"
@@ -540,28 +589,28 @@ public sealed class UiConsistencyTests
         if (fromTrash) await Invoke(fixture, home, "SetActiveToolAsync", "trash");
         await Invoke(fixture, home, "SwitchWorkflowAsync", "tags");
         Assert.Contains("View media tagged", await Html(fixture, root));
-        typeof(GalleryWorkspace).GetField("page", Private)!.SetValue(home, 2);
-        Field<HashSet<string>>(home, "librarySelection").Add(other.Id);
-        Field<HashSet<string>>(home, "removalSelection").Add(marked.Id);
-        typeof(GalleryWorkspace).GetField("selectionAnchor", Private)!.SetValue(home, other.Id);
-        var revision = Field<long>(home, "filterInputRevision");
+        ComponentTestAccess.Set(home, "Browser.Page", 2);
+        Field<HashSet<string>>(home, "Browser.LibrarySelection").Add(other.Id);
+        Field<HashSet<string>>(home, "Browser.RemovalSelection").Add(marked.Id);
+        ComponentTestAccess.Set(home, "Browser.SelectionAnchor", other.Id);
+        var revision = Field<long>(home, "Browser.FilterInputRevision");
 
         await Invoke(fixture, home, "ViewTagAsync", tag);
 
         Assert.Equal("gallery", Field<string>(home, "workflow"));
-        Assert.Equal(new GalleryFilter { Tag = tag }, Field<GalleryFilter>(home, "filter"));
-        Assert.Equal("filters", Field<string>(home, "activeTool"));
-        Assert.Null(typeof(GalleryWorkspace).GetField("browsingFilter", Private)!.GetValue(home));
-        Assert.True(Field<bool>(home, "toolboxVisible"));
+        Assert.Equal(new GalleryFilter { Tag = tag }, Field<GalleryFilter>(home, "Browser.Filter"));
+        Assert.Equal("filters", Field<string>(home, "Browser.ActiveTool"));
+        Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.BrowsingFilter"));
+        Assert.True(Field<bool>(home, "Browser.ToolboxVisible"));
         var galleryHtml = await Html(fixture, root);
         Assert.Contains($"<aside id=\"{GalleryToolbox.FilterDrawerId}\" class=\"gallery-filter-drawer\"", galleryHtml);
         Assert.Contains("aria-label=\"Close filters\"", galleryHtml);
-        Assert.Equal(0, Field<int>(home, "page"));
-        Assert.True(Field<long>(home, "filterInputRevision") > revision);
-        Assert.Empty(Field<HashSet<string>>(home, "librarySelection"));
-        Assert.Empty(Field<HashSet<string>>(home, "removalSelection"));
-        Assert.Null(typeof(GalleryWorkspace).GetField("selectionAnchor", Private)!.GetValue(home));
-        var filtered = (IReadOnlyList<ImageRecord>)typeof(GalleryWorkspace).GetProperty("Filtered", Private)!.GetValue(home)!;
+        Assert.Equal(0, Field<int>(home, "Browser.Page"));
+        Assert.True(Field<long>(home, "Browser.FilterInputRevision") > revision);
+        Assert.Empty(Field<HashSet<string>>(home, "Browser.LibrarySelection"));
+        Assert.Empty(Field<HashSet<string>>(home, "Browser.RemovalSelection"));
+        Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.SelectionAnchor"));
+        var filtered = (IReadOnlyList<ImageRecord>)ComponentTestAccess.Get<object>(home, "Browser.Filtered")!;
         Assert.Equal(tag == "cat" ? new[] { matching.Id } : Array.Empty<string>(), filtered.Select(image => image.Id));
     }
 
@@ -591,14 +640,14 @@ public sealed class UiConsistencyTests
         var (home, _) = await Render<GalleryWorkspace>(fixture, new());
         await Invoke(fixture, home, "SwitchWorkflowAsync", "unorganized");
         await Invoke(fixture, home, "OpenCollectionDetailsAsync", (new[] { second, first }, first.Id));
-        Assert.Equal(first.Id, Field<ImageRecord>(home, "selected").Id);
-        Assert.Empty(Field<List<ImageRecord>>(home, "viewerImages"));
+        Assert.Equal(first.Id, Field<ImageRecord>(home, "Presentation.Selected").Id);
+        Assert.Empty(Field<List<ImageRecord>>(home, "Presentation.ViewerImages"));
         await Invoke(fixture, home, "FavoriteAsync", first);
-        await Invoke(fixture, Field<MediaDetailDialog>(home, "detailDialog"), "RequestDetailViewerAsync");
-        Assert.True(Field<List<ImageRecord>>(home, "viewerImages").Single(image => image.Id == first.Id).IsFavorite);
-        Assert.Null(Field<ImageRecord?>(home, "selected"));
-        Assert.Equal(new[] { second.Id, first.Id }, Field<List<ImageRecord>>(home, "viewerImages").Select(image => image.Id));
-        Assert.Equal(first.Id, Field<string>(home, "viewerInitialId"));
+        await Invoke(fixture, Field<MediaDetailDialog>(home, "mediaHost.detailDialog"), "RequestDetailViewerAsync");
+        Assert.True(Field<List<ImageRecord>>(home, "Presentation.ViewerImages").Single(image => image.Id == first.Id).IsFavorite);
+        Assert.Null(Field<ImageRecord?>(home, "Presentation.Selected"));
+        Assert.Equal(new[] { second.Id, first.Id }, Field<List<ImageRecord>>(home, "Presentation.ViewerImages").Select(image => image.Id));
+        Assert.Equal(first.Id, Field<string>(home, "Presentation.ViewerInitialId"));
     }
 
     [Fact]
@@ -780,12 +829,12 @@ public sealed class UiConsistencyTests
         }
     }
 
-    private static T Field<T>(object target, string name) => (T)target.GetType().GetField(name, Private)!.GetValue(target)!;
+    private static T Field<T>(object target, string name) => ComponentTestAccess.Get<T>(target, name);
 
     private static Task Invoke(ComponentRenderFixture fixture, object target, string method, params object[] args) =>
         fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            var result = target.GetType().GetMethod(method, Private)!.Invoke(target, args);
+            var result = ComponentTestAccess.Call(target, method, args);
             if (result is Task task) await task;
             typeof(ComponentBase).GetMethod("StateHasChanged", Private)!.Invoke(target, null);
         });

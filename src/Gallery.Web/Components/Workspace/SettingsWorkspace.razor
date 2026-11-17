@@ -1,0 +1,36 @@
+@implements IDisposable
+@inject GalleryService Gallery
+
+@if (Active)
+{
+    <Tabs Value="@Tab" ValueChanged="TabChanged" Class="mb-4">
+        <TabsList Class="h-auto max-w-full flex-wrap justify-start gap-1" aria-label="Settings sections">
+            @foreach (var tab in Tabs)
+            {
+                <TabsTrigger Value="@tab.Id" disabled="@Activity.Busy">@tab.Name</TabsTrigger>
+            }
+        </TabsList>
+    </Tabs>
+    @switch (Tab)
+    {
+        case "overview":
+            <GalleryStorageOverview @bind-Overview="storageOverview" Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial"
+                                    HasScan="@(Duplicates.Scan is not null)" Groups="Duplicates.Groups" FindDuplicates="FindDuplicates" />
+            break;
+        case "gallery":
+            <GalleryManagement Busy="Activity.Busy" JobRunning="JobRunning" Locked="Locked" Purged="Purged" />
+            break;
+        case "endpoints":
+            <LlmEndpointSettings @ref="llmEndpointSettings" KnownTags="Catalog.AllTags" SavedSettings="settings" Saved="value => settings = value" />
+            break;
+        case "tags":
+            <TagCsvSettings Changed="Reload" />
+            break;
+        case "backups":
+            <BackupWorkspace Draft="backup" Busy="Activity.Busy" />
+            break;
+        case "security":
+            <SecuritySettings AutoLockMinutes="AutoLockMinutes" Busy="Activity.Busy" UpdateTimer="UpdateTimer" Panic="Panic" />
+            break;
+    }
+}

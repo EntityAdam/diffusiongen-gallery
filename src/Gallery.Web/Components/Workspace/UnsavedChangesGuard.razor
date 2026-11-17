@@ -1,0 +1,14 @@
+@if (State.IsPending)
+{
+    <UnsavedChangesDialog Subject="@State.Subject" Busy="State.IsBusy" Error="@Error"
+                          Keep="KeepEditing" Discard="DiscardAsync" Save="SaveAsync" />
+}
+
+@code {
+    [Parameter, EditorRequired] public UnsavedChangesGuardState State { get; set; } = default!;
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public EventCallback Changed { get; set; }
+    private async Task KeepEditing() { State.KeepEditing(); await Changed.InvokeAsync(); }
+    private async Task DiscardAsync() { await State.DiscardAsync(); await Changed.InvokeAsync(); }
+    private async Task SaveAsync() { await State.SaveAsync(); await Changed.InvokeAsync(); }
+}
