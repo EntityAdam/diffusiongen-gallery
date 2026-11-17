@@ -6,13 +6,13 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Web.Components;
-using Gallery.Web.Components.Pages;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using ShadCn.Blazor.Components;
 using Microsoft.JSInterop;
+using Gallery.Web.Components.Browsing;
 
 namespace Gallery.Tests;
 

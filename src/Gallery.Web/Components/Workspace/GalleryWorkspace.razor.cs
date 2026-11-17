@@ -1,5 +1,8 @@
 using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Browsing;
+using Gallery.Web.Components.Collections;
+using Gallery.Web.Components.Media;
 
 namespace Gallery.Web.Components.Workspace;
 

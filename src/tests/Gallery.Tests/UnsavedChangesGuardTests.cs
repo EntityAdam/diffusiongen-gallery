@@ -1,4 +1,3 @@
-using Gallery.Web.Components;
 using Gallery.Web.Components.Workspace;
 
 namespace Gallery.Tests;

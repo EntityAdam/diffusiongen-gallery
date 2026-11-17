@@ -1,6 +1,6 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Collections;
 
 // Built once per immutable catalog/media snapshot and Trash visibility setting.
 internal sealed class CollectionBrowsingIndex

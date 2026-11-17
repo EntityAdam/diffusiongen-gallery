@@ -1,7 +1,8 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Components.Workspace;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Browsing;
 
 // Browsing state survives workflow switches, but never an unlocked session.
 public sealed class GalleryBrowserState : IDisposable

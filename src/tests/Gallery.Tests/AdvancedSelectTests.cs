@@ -4,6 +4,7 @@ using Gallery.Web.Components;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Gallery.Web.Components.Collections;
 
 namespace Gallery.Tests;
 

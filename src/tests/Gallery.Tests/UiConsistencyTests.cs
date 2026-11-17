@@ -11,6 +11,9 @@ using Gallery.Web.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Gallery.Web.Components.Browsing;
+using Gallery.Web.Components.Collections;
+using Gallery.Web.Components.Media;
 
 namespace Gallery.Tests;
 

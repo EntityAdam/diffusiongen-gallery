@@ -1,6 +1,6 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Web.Components;
+namespace Gallery.Web.Components.Browsing;
 
 internal sealed record GalleryFilterChip(string Key, string Label);
 
