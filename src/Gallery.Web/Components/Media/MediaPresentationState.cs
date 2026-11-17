@@ -2,7 +2,7 @@ using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.JSInterop;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Media;
 
 public sealed class MediaPresentationState(GalleryService gallery, IJSRuntime js, WorkspaceCommands commands) : IDisposable
 {

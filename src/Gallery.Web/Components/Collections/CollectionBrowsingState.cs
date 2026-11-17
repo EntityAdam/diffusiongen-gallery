@@ -1,6 +1,7 @@
 using Gallery.Core.Models;
+using Gallery.Web.Components.Workspace;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Collections;
 
 // Shared by the collections sidebar and the collection browser.
 public sealed class CollectionBrowsingState(WorkspaceCatalog catalog)

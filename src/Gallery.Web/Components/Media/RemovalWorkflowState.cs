@@ -1,7 +1,7 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Media;
 
 public sealed class RemovalWorkflowState(
     GalleryService gallery, WorkspaceCommands commands, ILogger logger, Func<Task> completed) : IDisposable

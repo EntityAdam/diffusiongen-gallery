@@ -4,13 +4,14 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Collections.Immutable;
 using Gallery.Web.Components;
-using Gallery.Web.Components.Pages;
 using Gallery.Core.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.Extensions.Logging.Abstractions;
+using Gallery.Web.Components.Browsing;
+using Gallery.Web.Components.Media;
 
 namespace Gallery.Tests;
 

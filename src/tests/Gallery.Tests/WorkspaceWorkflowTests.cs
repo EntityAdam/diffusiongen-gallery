@@ -4,6 +4,7 @@ using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.JSInterop;
+using Gallery.Web.Components.Media;
 
 namespace Gallery.Tests;
 

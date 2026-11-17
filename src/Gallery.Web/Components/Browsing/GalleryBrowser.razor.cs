@@ -1,8 +1,10 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Media;
+using Gallery.Web.Components.Workspace;
 
-namespace Gallery.Web.Components.Workspace;
+namespace Gallery.Web.Components.Browsing;
 
 public partial class GalleryBrowser
 {
