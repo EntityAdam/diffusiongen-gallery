@@ -6,7 +6,7 @@ public partial class Home
 {
     private static readonly (string Id, string Name)[] Workflows =
     [
-        ("gallery", "Gallery"), ("collections", "Collections"), ("review", "Review"), ("unorganized", "Unorganized"), ("tags", "Tags"), ("duplicates", "Duplicate finder"), ("ingest", "Import media"), ("settings", "Settings")
+        ("gallery", "Gallery"), ("collections", "Collections"), ("review", "Review"), ("unorganized", "Unorganized"), ("tags", "Tags"), ("duplicates", "Duplicates"), ("ingest", "Import media"), ("settings", "Settings")
     ];
     private bool SidebarItemDisabled(string id) => WorkspaceBusy
         || catalogPartial && id is "filters" or "review" or "intelligence" or "ingest" or "duplicates"

@@ -21,7 +21,7 @@
                 <span class="sidebar-label">@item.Name</span>
             </Button>
         }
-        @if (item.Id is "filters" or "tags" or "intelligence")
+        @if (item.Id is "filters" or "duplicates" or "intelligence")
         {
             <Separator Class="my-2" Decorative="false" />
         }
@@ -40,8 +40,8 @@
         ("filters", "Filters", "funnel"),
         ("collections", "Collections", "folders"),
         ("tags", "Tags", "tags"),
+        ("duplicates", "Duplicates", "copy"),
         ("review", "Review", "circle-check"),
-        ("duplicates", "Duplicate finder", "copy"),
         ("intelligence", "AI analysis", "sparkles"),
         ("ingest", "Import media", "image-plus")
     ];
