@@ -1206,7 +1206,18 @@ public sealed partial class GalleryService
 
     public async Task SaveSettingsAsync(VisionSettings settings)
     {
-        VisionService.Validate(settings);
+        if (settings.Lanes.IsDefaultOrEmpty) VisionService.Validate(settings);
+        else
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var lane in settings.Lanes)
+            {
+                if (string.IsNullOrWhiteSpace(lane.Name) || !names.Add(lane.Name.Trim()))
+                    throw new InvalidOperationException("Each vision endpoint needs a unique name.");
+                VisionService.Validate(settings.ForLane(lane));
+            }
+            settings = settings.ForLane(settings.Lanes[0]);
+        }
         await WriteEncryptedSettingAsync(settings, VisionSettingsId, VisionSettingsId);
     }
 

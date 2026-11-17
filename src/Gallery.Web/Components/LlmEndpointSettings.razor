@@ -4,36 +4,59 @@
 
 <Card Class="llm-settings mb-6">
     <header class="llm-header">
-        <div><h3>Local AI</h3><p class="text-muted-foreground">Connect a model, choose how it analyzes images, and tailor its instructions.</p></div>
+        <div><h3>Local AI</h3><p class="text-muted-foreground">Configure vision endpoints and share analysis instructions across them.</p></div>
         <Badge Variant="BadgeVariant.Secondary">OpenAI-compatible</Badge>
     </header>
     <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
         <section class="llm-section" aria-labelledby="llm-connection-title">
-            <h4 id="llm-connection-title">Connection</h4>
+            <h4 id="llm-connection-title">Vision endpoints</h4>
+            <div class="llm-field">
+                <Label For="vision-lane">Endpoint to edit</Label>
+                <select id="vision-lane" class="@GenerationInputClass" @bind="selectedLane" @bind:after="EndpointChanged" disabled="@working">
+                    @for (var index = 0; index < draft.Lanes.Count; index++)
+                    {
+                        <option value="@index">@draft.Lanes[index].Name</option>
+                    }
+                </select>
+                <div class="llm-actions">
+                    <Button id="add-vision-endpoint" Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="AddLane">Add endpoint</Button>
+                    <Button Variant="ButtonVariant.Ghost" Type="button" Disabled="@(working || draft.Lanes.Count == 1)" OnClick="RemoveLane">Remove endpoint</Button>
+                </div>
+                <p class="llm-help">The first endpoint also handles text-only set suggestions.</p>
+            </div>
             <div class="llm-grid">
+                <div class="llm-field"><Label For="lane-name">Name</Label>
+                    <Input id="lane-name" @bind-Value:get="Lane.Name" @bind-Value:set="SetLaneName" Disabled="@working" required /></div>
+                <div class="llm-field"><Label For="request-timeout">Request timeout (seconds)</Label>
+                    <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds"
+                           @bind:get="Lane.RequestTimeoutSeconds" @bind:set="SetLaneTimeout" required disabled="@working" class="@GenerationInputClass" /></div>
                 <div class="llm-field"><Label For="endpoint-url">Endpoint URL</Label>
-                    <Input id="endpoint-url" Type="url" @bind-Value="draft.Endpoint" @bind-Value:after="EndpointChanged" Placeholder="http://127.0.0.1:1234/v1/" Disabled="@working" required /></div>
+                    <Input id="endpoint-url" Type="url" @bind-Value:get="Lane.Endpoint" @bind-Value:set="SetLaneEndpoint" Placeholder="http://127.0.0.1:1234/v1/" Disabled="@working" required /></div>
                 <div class="llm-field"><Label For="api-key">API key <span class="text-muted-foreground">(optional)</span></Label>
-                    <Input id="api-key" Type="password" autocomplete="new-password" @bind-Value="draft.ApiKey" Disabled="@working" Placeholder="Leave blank if not required" /></div>
+                    <Input id="api-key" Type="password" autocomplete="new-password" @bind-Value:get="Lane.ApiKey" @bind-Value:set="SetLaneApiKey" Disabled="@working" Placeholder="Leave blank if not required" /></div>
                 <div class="llm-field llm-full"><Label For="model-select">Model</Label>
                     <div class="llm-model-row">
                         @if (models.Count > 0)
                         {
-                            <Select id="model-select" @bind-Value="draft.Model" Disabled="@working" required>
+                            <Select id="model-select" @bind-Value:get="Lane.Model" @bind-Value:set="SetLaneModel" Disabled="@working" required>
                                 <option value="">Choose a model</option>
                                 @foreach (var model in models) { <option value="@model">@model</option> }
                             </Select>
                         }
-                        else { <Input id="model-select" @bind-Value="draft.Model" Disabled="@working" Placeholder="Enter a model ID or fetch available models" required /> }
+                        else { <Input id="model-select" @bind-Value:get="Lane.Model" @bind-Value:set="SetLaneModel" Disabled="@working" Placeholder="Enter a model ID or fetch available models" required /> }
                         <Button Variant="ButtonVariant.Outline" Type="button" Disabled="@working" OnClick="FetchModelsAsync">@(working ? "Working..." : "Fetch models")</Button>
                     </div>
                     <p class="llm-help">Use a vision-capable model. Discovery lists models but does not verify vision support.</p>
                 </div>
             </div>
+            <div class="llm-tag-options">
+                <div class="llm-check"><Checkbox id="lane-enabled" Disabled="@working" Checked="@Lane.Enabled" CheckedChanged="SetLaneEnabled" /><Label For="lane-enabled">Use for vision analysis</Label></div>
+                <div class="llm-check"><Checkbox id="lane-auto-accept" Disabled="@working" Checked="@Lane.AutoAccept" CheckedChanged="SetLaneAutoAccept" /><Label For="lane-auto-accept">Auto-accept new vision results</Label></div>
+            </div>
             <details class="llm-details">
                 <summary>Connection requirements &amp; privacy</summary>
                 <p class="llm-help">Use LM Studio, Ollama or another OpenAI-compatible server. Include /v1 when required. Only literal loopback or private LAN IP addresses are allowed; public addresses and hostnames are blocked.</p>
-                <p class="llm-help">LAN requests send decrypted previews and metadata to your server. Use a trusted server and HTTPS when supported. Settings and the optional API key are encrypted in your gallery. Fetch models tests the entered connection without saving it.</p>
+                <p class="llm-help">LAN requests send decrypted previews and can include catalog tags. Use a trusted server and HTTPS when supported. Settings and the optional API key are encrypted in your gallery. Fetch models tests the entered connection without saving it.</p>
             </details>
         </section>
 
@@ -76,8 +99,6 @@
             <p class="llm-help">Token budgets include reasoning on servers that count thinking tokens. Server context limits still apply.</p>
             <fieldset class="llm-grid" disabled="@working">
                 <legend class="sr-only">Model generation settings</legend>
-                <div class="llm-field"><Label For="request-timeout">Request timeout (seconds)</Label>
-                    <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds" @bind="draft.RequestTimeoutSeconds" required class="@GenerationInputClass" /></div>
                 <div class="llm-field"><Label For="structured-analysis-max-tokens">Structured vision token limit</Label>
                     <input id="structured-analysis-max-tokens" type="number" min="1" max="@int.MaxValue" step="1" @bind="draft.StructuredAnalysisMaxTokens" required class="@GenerationInputClass" /></div>
                 <div class="llm-field"><Label For="analysis-max-tokens">Standard vision token limit</Label>
@@ -111,13 +132,26 @@
     private VisionSettings? observedSettings;
     private VisionSettings? baseline;
     private string selectedPrompt = "vision";
-    public bool HasUnsavedChanges => draft.ToSettings() != baseline;
+    private int selectedLane;
+    private VisionEndpointLane Lane
+    {
+        get => draft.Lanes[selectedLane];
+        set => draft.Lanes[selectedLane] = value;
+    }
+    public bool HasUnsavedChanges
+    {
+        get
+        {
+            var current = draft.ToSettings();
+            return baseline is null || (current with { Lanes = [] }) != (baseline with { Lanes = [] })
+                || !current.Lanes.SequenceEqual(baseline.Lanes);
+        }
+    }
     protected override void OnParametersSet()
     {
         if (Equals(observedSettings, SavedSettings)) return;
-        draft = VisionSettingsDraft.From(SavedSettings);
         observedSettings = SavedSettings;
-        baseline = draft.ToSettings();
+        DiscardDraft();
     }
     private IReadOnlyList<string> models = [];
     private string message = "", error = "";
@@ -128,6 +162,8 @@
     {
         draft = VisionSettingsDraft.From(SavedSettings);
         baseline = draft.ToSettings();
+        selectedLane = 0;
+        EndpointChanged();
     }
     public async Task<bool> SaveDraftAsync()
     {
@@ -189,15 +225,45 @@
         draft.TextTemperature = defaults.TextTemperature;
     }
 
+    private void AddLane()
+    {
+        var number = draft.Lanes.Count + 1;
+        while (draft.Lanes.Any(lane => string.Equals(lane.Name.Trim(), $"Endpoint {number}", StringComparison.OrdinalIgnoreCase)))
+            number++;
+        draft.Lanes.Add(new() { Name = $"Endpoint {number}" });
+        selectedLane = draft.Lanes.Count - 1;
+        EndpointChanged();
+    }
+
+    private void RemoveLane()
+    {
+        if (draft.Lanes.Count == 1) return;
+        draft.Lanes.RemoveAt(selectedLane);
+        selectedLane = Math.Min(selectedLane, draft.Lanes.Count - 1);
+        EndpointChanged();
+    }
+
+    private void SetLaneName(string value) => Lane = Lane with { Name = value };
+    private void SetLaneModel(string value) => Lane = Lane with { Model = value };
+    private void SetLaneApiKey(string value) => Lane = Lane with { ApiKey = value };
+    private void SetLaneTimeout(int value) => Lane = Lane with { RequestTimeoutSeconds = value };
+    private void SetLaneEnabled(bool value) => Lane = Lane with { Enabled = value };
+    private void SetLaneAutoAccept(bool value) => Lane = Lane with { AutoAccept = value };
+    private void SetLaneEndpoint(string value)
+    {
+        Lane = Lane with { Endpoint = value };
+        EndpointChanged();
+    }
+
     private void EndpointChanged() { models = []; message = error = ""; }
     private Task FetchModelsAsync() => RunAsync(async () =>
     {
         models = [];
-        models = await Gallery.GetVisionModelsAsync(draft.ToSettings());
+        models = await Gallery.GetVisionModelsAsync(draft.ToSettings().ForLane(Lane));
         if (models.Count == 0) message = "The endpoint is reachable, but it returned no models. Load a model or enter its ID manually.";
         else
         {
-            if (!models.Contains(draft.Model, StringComparer.Ordinal)) draft.Model = models[0];
+            if (!models.Contains(Lane.Model, StringComparer.Ordinal)) SetLaneModel(models[0]);
             message = $"Connected: {models.Count} model(s) found. Choose a model and save settings.";
         }
     });
@@ -233,9 +299,7 @@
 
     private sealed class VisionSettingsDraft
     {
-        public string Endpoint { get; set; } = "";
-        public string Model { get; set; } = "";
-        public string ApiKey { get; set; } = "";
+        public List<VisionEndpointLane> Lanes { get; init; } = [new()];
         public string OutputFormat { get; set; } = "legacy";
         public bool IsStructured => OutputFormat == "structured";
         public string LegacyPrompt { get; set; } = VisionSettings.DefaultSystemPrompt;
@@ -253,7 +317,6 @@
         public string SystemPrompt { get; set; } = VisionSettings.DefaultSystemPrompt;
         public string TagVocabularyInstructions { get; set; } = VisionSettings.DefaultTagVocabularyInstructions;
         public string SetSuggestionSystemPrompt { get; set; } = VisionSettings.DefaultSetSuggestionSystemPrompt;
-        public int RequestTimeoutSeconds { get; set; }
         public int StructuredAnalysisMaxTokens { get; set; }
         public int AnalysisMaxTokens { get; set; }
         public int TextMaxTokens { get; set; }
@@ -262,9 +325,7 @@
 
         public static VisionSettingsDraft From(VisionSettings settings) => new()
         {
-            Endpoint = settings.Endpoint,
-            Model = settings.Model,
-            ApiKey = settings.ApiKey,
+            Lanes = [.. settings.GetLanes()],
             OutputFormat = settings.StructuredAnalysis ? "structured" : "legacy",
             UseExistingTags = settings.UseExistingTags, SuggestNewTags = settings.SuggestNewTags,
             SystemPrompt = settings.SystemPrompt,
@@ -272,7 +333,6 @@
             StructuredPrompt = settings.StructuredSystemPrompt ?? (settings.StructuredAnalysis ? settings.SystemPrompt : global::Gallery.Core.Services.Processors.StructuredVision.DefaultSystemPrompt),
             TagVocabularyInstructions = settings.TagVocabularyInstructions,
             SetSuggestionSystemPrompt = settings.SetSuggestionSystemPrompt,
-            RequestTimeoutSeconds = settings.RequestTimeoutSeconds,
             StructuredAnalysisMaxTokens = settings.StructuredAnalysisMaxTokens,
             AnalysisMaxTokens = settings.AnalysisMaxTokens,
             TextMaxTokens = settings.TextMaxTokens,
@@ -280,11 +340,9 @@
             TextTemperature = settings.TextTemperature
         };
 
-        public VisionSettings ToSettings() => new()
+        public VisionSettings ToSettings() => new VisionSettings
         {
-            Endpoint = Endpoint,
-            Model = Model,
-            ApiKey = ApiKey,
+            Lanes = [.. Lanes],
             StructuredAnalysis = OutputFormat == "structured",
             UseExistingTags = UseExistingTags, SuggestNewTags = SuggestNewTags,
             SystemPrompt = SystemPrompt,
@@ -292,12 +350,11 @@
             StructuredSystemPrompt = IsStructured ? SystemPrompt : StructuredPrompt,
             TagVocabularyInstructions = TagVocabularyInstructions,
             SetSuggestionSystemPrompt = SetSuggestionSystemPrompt,
-            RequestTimeoutSeconds = RequestTimeoutSeconds,
             StructuredAnalysisMaxTokens = StructuredAnalysisMaxTokens,
             AnalysisMaxTokens = AnalysisMaxTokens,
             TextMaxTokens = TextMaxTokens,
             AnalysisTemperature = AnalysisTemperature,
             TextTemperature = TextTemperature
-        };
+        }.ForLane(Lanes[0]);
     }
 }

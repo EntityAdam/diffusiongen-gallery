@@ -1,5 +1,6 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using System.Net;
 
 namespace Gallery.Web.Components;
 
@@ -8,14 +9,6 @@ public partial class LibraryWorkbench
     private VisionCheckpointSession? checkpoint;
     private readonly CancellationTokenSource analysisLifetime = new();
     private readonly SemaphoreSlim visionApprovalGate = new(1, 1);
-    private bool AutoAcceptVisionAnalysis => checkpoint?.State.AutoAcceptVisionAnalysis == true;
-
-    private Task SetAutoAcceptVisionAsync(bool enabled) => RunAsync("Saving analysis approval preference...", async () =>
-    {
-        await EnsureCheckpointAsync();
-        await checkpoint!.UpdateAsync(state => state with { AutoAcceptVisionAnalysis = enabled });
-    });
-
     private async Task<ImageRecord?> ApprovePendingVisionAsync(OrganizationSuggestion suggestion)
     {
         await visionApprovalGate.WaitAsync(checkpoint!.RevocationToken);
@@ -165,87 +158,141 @@ public partial class LibraryWorkbench
     {
         cancelRequested = false;
         analyzing = true;
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(analysisLifetime.Token, checkpoint!.RevocationToken);
+        var runCheckpoint = checkpoint!;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(analysisLifetime.Token, runCheckpoint.RevocationToken);
         var token = cancellation.Token;
-        token.ThrowIfCancellationRequested();
         var settings = await Gallery.SettingsAsync();
         token.ThrowIfCancellationRequested();
-        // Read the authoritative catalog: the UI can still be loading pages after unlock.
+        var availableLanes = new Queue<VisionEndpointLane>(settings.GetLanes(runCheckpoint.State.AutoAcceptVisionAnalysis)
+            .Where(lane => lane.Enabled));
+        if (availableLanes.Count == 0)
+            throw new InvalidOperationException("Enable a vision endpoint in LLM settings before starting analysis.");
+
         var records = (catalog ?? await Gallery.ListAsync()).ToDictionary(image => image.Id);
+        var pending = new LinkedList<VisionQueueItem>(items);
+        var inFlight = new Dictionary<Task<VisionAnalysisResult>, (VisionEndpointLane Lane, VisionQueueItem Item, ImageRecord Image)>();
+        var activeIds = new HashSet<string>(StringComparer.Ordinal);
         var failures = new List<string>();
+        var laneFailures = new List<string>();
         var completed = 0;
         var accepted = 0;
         try
         {
-            foreach (var item in items)
+            while (true)
             {
                 token.ThrowIfCancellationRequested();
-                if (cancelRequested) break;
-                // A user may discard a queue while another UI callback is completing.
-                if (useSavedQueue && !checkpoint.State.Queue.Any(pending => pending.Id == item.Id && pending.TagsOnly == item.TagsOnly)) continue;
-                if (!useSavedQueue)
+                while (!cancelRequested && availableLanes.Count > 0)
                 {
-                    var current = (await Gallery.ReloadRecordsAsync([item.Id], token)).SingleOrDefault();
-                    if (current is null || !NeedsVisionAnalysis(current)) continue;
-                    records[item.Id] = current;
+                    // A saved queue can contain both full and tag-only work for one image.
+                    // Wait for its current result to be checkpointed before starting the other mode.
+                    var next = pending.First;
+                    while (next is not null && activeIds.Contains(next.Value.Id)) next = next.Next;
+                    if (next is null) break;
+                    var item = next.Value;
+                    pending.Remove(next);
+
+                    if (useSavedQueue && !runCheckpoint.State.Queue.Any(entry => entry.Id == item.Id && entry.TagsOnly == item.TagsOnly))
+                        continue;
+                    var image = useSavedQueue
+                        ? records.GetValueOrDefault(item.Id)
+                        : (await Gallery.ReloadRecordsAsync([item.Id], token)).SingleOrDefault();
+                    if (!useSavedQueue && (image is null || !NeedsVisionAnalysis(image))) continue;
+                    if (image is null || image.IsMarkedForDeletion)
+                    {
+                        await runCheckpoint.UpdateAsync(state => state with { Queue = [.. state.Queue.Where(entry => entry != item)] });
+                        continue;
+                    }
+
+                    token.ThrowIfCancellationRequested();
+                    if (cancelRequested) break;
+                    var lane = availableLanes.Dequeue();
+                    var request = Gallery.AnalyzeForDraftAsync(image.Id, settings.ForLane(lane), token);
+                    inFlight.Add(request, (lane, item, image));
+                    activeIds.Add(item.Id);
                 }
-                if (!records.TryGetValue(item.Id, out var image) || image.IsMarkedForDeletion)
+
+                if (inFlight.Count == 0) break;
+                if (!cancelRequested)
                 {
-                    if (useSavedQueue)
-                        await checkpoint.UpdateAsync(state => state with { Queue = [.. state.Queue.Where(pending => pending != item)] });
-                    continue;
+                    status = $"Analyzing media · {completed} of {items.Length} processed · {inFlight.Count} active";
+                    await PublishJobAsync();
+                    await InvokeAsync(StateHasChanged);
                 }
-                status = $"Analyzing {completed + 1} / {items.Length}: {image.Name}";
-                await PublishJobAsync();
-                await InvokeAsync(StateHasChanged);
-                VisionDraft draft;
+
+                var finished = await Task.WhenAny(inFlight.Keys);
+                var (finishedLane, finishedItem, finishedImage) = inFlight[finished];
+                inFlight.Remove(finished);
+                activeIds.Remove(finishedItem.Id);
+                VisionAnalysisResult result;
                 try
                 {
-                    token.ThrowIfCancellationRequested();
-                    var result = await Gallery.AnalyzeForDraftAsync(image.Id, settings, token);
-                    draft = new(image.Id, image.Name, result.Description, result.Tags, settings.Model,
-                        result.Warning, item.TagsOnly, result.Analysis, settings.UseExistingTags, settings.SuggestNewTags);
+                    result = await finished;
                     token.ThrowIfCancellationRequested();
                 }
-                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                catch (Exception) when (token.IsCancellationRequested) { token.ThrowIfCancellationRequested(); throw; }
-                catch (Exception exception)
+                catch (Exception exception) when (!token.IsCancellationRequested)
                 {
-                    Logger.LogError(exception, "Local analysis failed for {ImageId}", image.Id);
-                    failures.Add($"{image.Name}: {exception.Message}");
-                    if (useSavedQueue)
-                        await checkpoint.UpdateAsync(state => state with
-                        {
-                            Queue = [.. state.Queue.Select(pending => pending.Id == item.Id && pending.TagsOnly == item.TagsOnly ? pending with { Failed = true } : pending)]
-                        });
-                    completed++;
+                    Logger.LogError(exception, "Vision endpoint {EndpointName} failed for {ImageId}", finishedLane.Name, finishedImage.Id);
+                    if (IsVisionEndpointUnavailable(exception))
+                    {
+                        laneFailures.Add($"{finishedLane.Name} is unavailable for this run. {exception.Message}");
+                        pending.AddFirst(finishedItem);
+                    }
+                    else
+                    {
+                        availableLanes.Enqueue(finishedLane);
+                        failures.Add($"{finishedImage.Name} ({finishedLane.Name}): {exception.Message}");
+                        if (useSavedQueue)
+                            await runCheckpoint.UpdateAsync(state => state with
+                            {
+                                Queue = [.. state.Queue.Select(entry => entry.Id == finishedItem.Id && entry.TagsOnly == finishedItem.TagsOnly
+                                    ? entry with { Failed = true } : entry)]
+                            });
+                        completed++;
+                    }
                     continue;
                 }
-                // Checkpoint failures stop the run; never report an unpersisted result as completed.
-                await checkpoint.StageAsync(draft);
+
+                var draft = new VisionDraft(finishedImage.Id, finishedImage.Name, result.Description, result.Tags, finishedLane.Model,
+                    result.Warning, finishedItem.TagsOnly, result.Analysis, settings.UseExistingTags, settings.SuggestNewTags);
+                // Keep persistence and approval serial, even when several results arrive together.
+                await runCheckpoint.StageAsync(draft);
                 token.ThrowIfCancellationRequested();
-                if (AutoAcceptVisionAnalysis && !draft.TagsOnly)
+                if (finishedLane.AutoAccept && !draft.TagsOnly)
                 {
                     try
                     {
                         if (await ApprovePendingVisionAsync(ToSuggestion(draft)) is not null) accepted++;
                     }
-                    catch (Exception) when (token.IsCancellationRequested) { throw; }
-                    catch (Exception exception)
+                    catch (Exception exception) when (!token.IsCancellationRequested)
                     {
                         Logger.LogError(exception, "Automatic vision approval failed for {ImageId}", draft.Id);
-                        failures.Add($"{image.Name}: automatic acceptance failed; suggestion retained for review. {exception.Message}");
+                        failures.Add($"{finishedImage.Name} ({finishedLane.Name}): automatic acceptance failed; suggestion retained for review. {exception.Message}");
                     }
                 }
                 await RestoreDraftsAsync();
                 completed++;
+                availableLanes.Enqueue(finishedLane);
             }
         }
         finally
         {
-            if (accepted > 0 && !disposed && !token.IsCancellationRequested) await Changed.InvokeAsync();
+            if (inFlight.Count > 0)
+            {
+                // A fatal checkpoint error or revocation ends the run and cancels outstanding work.
+                await cancellation.CancelAsync();
+                try { await Task.WhenAll(inFlight.Keys); }
+                catch (Exception) when (token.IsCancellationRequested) { }
+            }
+            if (accepted > 0 && !disposed && !runCheckpoint.RevocationToken.IsCancellationRequested)
+                await Changed.InvokeAsync();
         }
-        notice = $"{(cancelRequested ? "Stopped" : "Analysis finished")}: {completed} / {items.Length} processed; {accepted} auto-accepted; {failures.Count} failed. Other completed suggestions are saved as encrypted drafts.";
-        error = string.Join(" / ", failures);
+
+        var outcome = cancelRequested ? "Stopped" : availableLanes.Count == 0 ? "No vision endpoints remain available" : "Analysis finished";
+        notice = $"{outcome}. {completed} of {items.Length} processed, {accepted} auto-accepted, {failures.Count} failed.";
+        error = string.Join(" / ", laneFailures.Concat(failures));
     }
+
+    private static bool IsVisionEndpointUnavailable(Exception exception) =>
+        exception is HttpRequestException { StatusCode: null or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden }
+        || exception.InnerException is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden };
 }

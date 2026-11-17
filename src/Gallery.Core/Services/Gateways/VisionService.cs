@@ -161,9 +161,10 @@ internal sealed partial class VisionService
             throw new InvalidOperationException($"Local LLM request timed out after {requestTimeoutSeconds} seconds.", operationCanceledException);
         }
         if (httpResponseMessage.IsSuccessStatusCode) return httpResponseMessage;
-        var status = (int)httpResponseMessage.StatusCode;
+        var status = httpResponseMessage.StatusCode;
         httpResponseMessage.Dispose();
-        throw new InvalidOperationException($"Local LLM endpoint returned HTTP {status}. Check the endpoint, API key, model and server logs.");
+        var failure = new HttpRequestException(null, null, status);
+        throw new InvalidOperationException($"Local LLM endpoint returned HTTP {(int)status}. Check the endpoint, API key, model and server logs.", failure);
     }
 
     public async Task<(string Description, string Tags)> AnalyzeAsync(string model, int requestTimeoutSeconds, string imageData, IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default)

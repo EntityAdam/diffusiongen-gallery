@@ -49,6 +49,112 @@ public sealed class VisionCheckpointTests
         Assert.Equal(failSecond ? 5 : 4, handler.RequestCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Parallel_lanes_keep_pulling_work_and_stop_or_lock_preserves_the_unfinished_queue(bool lockVault)
+    {
+        var slowStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thirdStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requestCount = 0;
+        var fastRequestCount = 0;
+        using var handler = new LaneVisionHandler(async (port, token) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (port == 1234)
+            {
+                slowStarted.TrySetResult();
+                await release.Task.WaitAsync(token);
+            }
+            else
+            {
+                Assert.Equal(1235, port);
+                if (Interlocked.Increment(ref fastRequestCount) == 2)
+                {
+                    thirdStarted.TrySetResult();
+                    await release.Task.WaitAsync(token);
+                }
+            }
+            return LaneVisionHandler.Success();
+        });
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault(vision: new VisionManager(client));
+        await vault.InitializeAsync();
+        var images = new List<ImageRecord>();
+        for (var index = 0; index < 4; index++)
+            images.Add(await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20 + index, 20)), $"{index}.png", "folder"));
+        await vault.Service.SaveSettingsAsync(new()
+        {
+            Lanes =
+            [
+                new() { Name = "Slow", Model = "manual" },
+                new() { Name = "Fast", Endpoint = "http://127.0.0.1:1235/v1/", Model = "automatic", AutoAccept = true },
+                new() { Name = "Disabled", Endpoint = "http://127.0.0.1:1236/v1/", Model = "disabled", Enabled = false }
+            ]
+        });
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var workbench = await RenderAsync(fixture, [.. images]);
+        var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "SuggestAsync"));
+        try
+        {
+            await Task.WhenAll(slowStarted.Task, thirdStarted.Task).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("automatic", Assert.Single(await vault.Service.ListAsync(), image => image.AnalysisModel.Length > 0).AnalysisModel);
+            if (lockVault) vault.Service.LockVault();
+            else await fixture.HtmlRenderer.Dispatcher.InvokeAsync(workbench.StopAnalysisAsync);
+            if (!lockVault) release.TrySetResult();
+            await run.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { release.TrySetResult(); }
+
+        Assert.Equal(3, requestCount);
+        if (lockVault) await vault.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        var saved = (await vault.Service.OpenVisionCheckpointAsync()).State;
+        Assert.Equal(lockVault ? 3 : 1, saved.Queue.Length);
+        if (lockVault) Assert.Empty(saved.Drafts);
+        else Assert.Equal("manual", Assert.Single(saved.Drafts).Model);
+        Assert.Equal(lockVault ? 1 : 2, (await vault.Service.ListAsync()).Count(image => image.AnalysisModel == "automatic"));
+    }
+
+    [Fact]
+    public async Task Unavailable_lane_is_retired_and_healthy_lane_picks_up_its_image()
+    {
+        var rejected = 0;
+        var succeeded = 0;
+        using var handler = new LaneVisionHandler((port, _) =>
+        {
+            if (port == 1234)
+            {
+                Interlocked.Increment(ref rejected);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+            }
+            Interlocked.Increment(ref succeeded);
+            return Task.FromResult(LaneVisionHandler.Success());
+        });
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault(vision: new VisionManager(client));
+        await vault.InitializeAsync();
+        var first = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "second.png", "folder");
+        await vault.Service.SaveSettingsAsync(new()
+        {
+            Lanes =
+            [
+                new() { Name = "Unauthorized", Model = "rejected" },
+                new() { Name = "Healthy", Endpoint = "http://127.0.0.1:1235/v1/", Model = "healthy" }
+            ]
+        });
+        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var workbench = await RenderAsync(fixture, [first, second]);
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "SuggestAsync"));
+        var state = (await vault.Service.OpenVisionCheckpointAsync()).State;
+        Assert.Equal(1, rejected);
+        Assert.Equal(2, succeeded);
+        Assert.Empty(state.Queue);
+        Assert.Equal(2, state.Drafts.Length);
+        Assert.All(state.Drafts, draft => Assert.Equal("healthy", draft.Model));
+    }
+
     [Fact]
     public async Task Whole_library_start_uses_current_catalog_and_skips_pending_and_accepted_results()
     {
@@ -87,9 +193,10 @@ public sealed class VisionCheckpointTests
         var first = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
         var second = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "second.png", "folder");
         await vault.Service.SaveSettingsAsync(new() { Model = "vision" });
+        var legacyCheckpoint = await vault.Service.OpenVisionCheckpointAsync();
+        await legacyCheckpoint.UpdateAsync(state => state with { AutoAcceptVisionAnalysis = autoAccept });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         var original = await RenderAsync(fixture, [first, second]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(original, "SetAutoAcceptVisionAsync", autoAccept));
         var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(original, "AnalyzeUnanalyzedAsync"));
         await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(autoAccept ? "completed response" : "", (await vault.Service.ListAsync()).Single(image => image.Id == first.Id).Description);
@@ -168,16 +275,15 @@ public sealed class VisionCheckpointTests
         await vault.InitializeAsync();
         var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "new.png", "folder");
         var pending = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "pending.png", "folder");
-        await vault.Service.SaveSettingsAsync(new() { Model = "vision" });
+        await vault.Service.SaveSettingsAsync(new() { Lanes = [new() { Name = "Primary", Model = "vision", AutoAccept = true }] });
         var checkpoint = await vault.Service.OpenVisionCheckpointAsync();
         VisionDraft oldDraft = new(pending.Id, pending.Name, "Awaiting review", "old", "vision");
         await checkpoint.StageAsync(oldDraft);
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         var workbench = await RenderAsync(fixture, [image]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "SetAutoAcceptVisionAsync", true));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, tagsOnly ? "SuggestTagsAsync" : "AnalyzeUnanalyzedAsync"));
         var state = (await vault.Service.OpenVisionCheckpointAsync()).State;
-        Assert.True(state.AutoAcceptVisionAnalysis);
+        Assert.True(Assert.Single((await vault.Service.SettingsAsync()).Lanes).AutoAccept);
         Assert.Contains(oldDraft, state.Drafts);
         Assert.Empty(state.Queue);
         var records = await vault.Service.ListAsync();
@@ -489,6 +595,17 @@ public sealed class VisionCheckpointTests
             builder.AddComponentReferenceCapture(4, value => Capture?.Invoke((LibraryWorkbench)value));
             builder.CloseComponent();
         }
+    }
+
+    private sealed class LaneVisionHandler(Func<int, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            send(request.RequestUri!.Port, cancellationToken);
+
+        public static HttpResponseMessage Success() => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A photo.\",\"tags\":[\"sunlit\"]}"}}]}""")
+        };
     }
 
     private sealed class InterruptibleVisionHandler : HttpMessageHandler
