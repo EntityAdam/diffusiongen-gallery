@@ -1,8 +1,8 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Web.Components.Pages;
+namespace Gallery.Web.Components.Workspace;
 
-public partial class Home
+public partial class GalleryWorkspace
 {
     private async Task<(CollectionCatalog Catalog, IReadOnlyList<ImageRecord> Images)> ReloadCollectionsAsync()
     {
@@ -72,7 +72,7 @@ public partial class Home
             catalogPartial = false;
             catalogLoading = false;
             if (selected is not null) selected = imagesById.GetValueOrDefault(selected.Id);
-            UpdateDuplicateGroups();
+            duplicates.UpdateGroups(imagesById);
             page = Math.Min(page, PageCount - 1);
             await LoadThumbnailsAsync();
         }
@@ -101,12 +101,10 @@ public partial class Home
     private async Task ApplyLoadedRecordsAsync()
     {
         browsingSource = null;
-        mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
-        savedIngestionOptions = await Gallery.LoadIngestionOptionsAsync();
-        ApplyIngestionProfile(savedIngestionOptions);
+        ingestion.LoadOptions(await Gallery.LoadIngestionOptionsAsync());
         imagesById = images.ToDictionary(image => image.Id);
-        UpdateDuplicateGroups();
-        if (workflow == "duplicates") await LoadDuplicateThumbnailsAsync();
+        duplicates.UpdateGroups(imagesById);
+        if (workflow == "duplicates") await duplicates.LoadThumbnailsAsync(Gallery);
         settings = await Gallery.SettingsAsync();
         catalogTags = await Gallery.LoadTagNamesAsync();
         var nextCollections = await Gallery.LoadCollectionCatalogAsync();

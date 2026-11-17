@@ -1,0 +1,45 @@
+<div class="space-y-4">
+    <div class="space-y-2">
+        <Label>Thumbnail size</Label>
+        <Tabs Value="@Density" ValueChanged="DensityChanged">
+            <TabsList aria-label="Thumbnail size">
+                @foreach (var option in UiPreferences.Densities)
+                {
+                    <TabsTrigger Value="@option" disabled="@Busy">@(char.ToUpperInvariant(option[0]) + option[1..])</TabsTrigger>
+                }
+            </TabsList>
+        </Tabs>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+        <div class="space-y-2">
+            <Label For="view-grouping">Grouping</Label>
+            <Select id="view-grouping" Disabled="@(Busy || CatalogPartial)" Class="w-full" Value="@Grouping" ValueChanged="GroupingChanged">
+                <option value="none">No grouping</option><option value="prompt">Same prompt</option><option value="model">Diffusion model</option>
+            </Select>
+        </div>
+        <div class="space-y-2">
+            <Label For="view-sorting">Sorting</Label>
+            <Select id="view-sorting" Disabled="@(Busy || CatalogPartial)" Class="w-full" Value="@Sort" ValueChanged="SortChanged">
+                <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A-Z</option><option value="size">Largest first</option><option value="rating">Highest rated</option>
+            </Select>
+        </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(Busy || !HasImages)" OnClick="Fullscreen"><MaximizeIcon aria-hidden="true" />Full screen view</Button>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" OnClick="ResetPosition" title="Move the toolbox back to its default place (Shift+`)"><LocateFixedIcon aria-hidden="true" />Reset toolbox position</Button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Density { get; set; } = UiPreferences.DetailDensity;
+    [Parameter] public EventCallback<string> DensityChanged { get; set; }
+    [Parameter] public string Grouping { get; set; } = "none";
+    [Parameter] public EventCallback<string> GroupingChanged { get; set; }
+    [Parameter] public string Sort { get; set; } = "newest";
+    [Parameter] public EventCallback<string> SortChanged { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool CatalogPartial { get; set; }
+    [Parameter] public bool HasImages { get; set; }
+    [Parameter] public EventCallback Fullscreen { get; set; }
+    [Parameter] public EventCallback ResetPosition { get; set; }
+}

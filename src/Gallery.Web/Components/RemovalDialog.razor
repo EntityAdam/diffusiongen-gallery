@@ -1,0 +1,55 @@
+<ModalDialog LabelledBy="removal-title" Busy="@Busy" Close="Cancel">
+    <Card Class="mb-6 p-5 md:p-6 mx-auto max-w-lg space-y-4">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="removal-title" class="min-w-0 flex-1 break-words">Remove @Items.Count marked media item(s)</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" OnClick="Cancel" aria-label="Cancel removal" autofocus><XIcon aria-hidden="true" /></Button></div>
+        <p>This removes gallery records, thumbnails and encrypted files. Each media item is checked again before removal. Unmarked media cannot be removed.</p>
+        <details><summary>Review affected media</summary>
+            @foreach (var item in Items)
+            {
+                <p class="break-all text-muted-foreground">@item.Name: @(item.OriginalExists ? $"Original exists: {item.OriginalPath}" : "No accessible original (missing or browser upload)")</p>
+            }
+        </details>
+        @if (Items.Any(item => item.OriginalExists))
+        {
+            <Label For="existing-action" Class="mt-4 mb-2 block">Original exists (@Items.Count(item => item.OriginalExists))</Label>
+            <Select id="existing-action" @bind-Value:get="existingOriginalAction.ToString()" @bind-Value:set="value => existingOriginalAction = Enum.Parse<ExistingOriginalAction>(value)" Disabled="@Busy" Class="w-full min-w-0">
+                <option value="@ExistingOriginalAction.Retain">Remove from gallery, retain original</option>
+                <option value="@ExistingOriginalAction.Delete">Remove from gallery AND delete original</option>
+            </Select>
+        }
+        @if (Items.Any(item => !item.OriginalExists))
+        {
+            <Label For="missing-action" Class="mt-4 mb-2 block">No accessible original (@Items.Count(item => !item.OriginalExists))</Label>
+            <Select id="missing-action" @bind-Value:get="missingOriginalAction.ToString()" @bind-Value:set="value => missingOriginalAction = Enum.Parse<MissingOriginalAction>(value)" Disabled="@Busy" Class="w-full min-w-0">
+                <option value="@MissingOriginalAction.RestorePng">Restore the stored copy, then remove from gallery</option>
+                <option value="@MissingOriginalAction.Discard">Remove from gallery without restoration (lost forever)</option>
+            </Select>
+            @if (missingOriginalAction == MissingOriginalAction.RestorePng)
+            {
+                <Label For="restore-folder" Class="mt-4 mb-2 block">Existing folder for restored files</Label>
+                <Input id="restore-folder" @bind-Value="restoreFolder" Disabled="@Busy" />
+                <p class="text-muted-foreground">Restores the stored file in its stored format, named by media ID; never overwrites. Media imported by this version restore as their exact original bytes; image files imported by earlier versions restore as the PNG they were converted to. Browser uploads may still have originals the app cannot access.</p>
+            }
+        }
+        <Alert Variant="AlertVariant.Destructive">Removal bypasses the Recycle Bin. Without a retained or restored copy, media are lost from this gallery. Backups may still contain them. This is not secure SSD/NVMe erasure.</Alert>
+        <div class="mt-4 flex items-start gap-3"><Checkbox id="check-confirmremoval" Class="mt-0.5" @bind-Checked="confirmRemoval" Disabled="@Busy"  /><Label For="check-confirmremoval" Class="text-sm leading-relaxed">I reviewed these media items and actions and confirm permanent removal.</Label></div>
+        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Class="mt-6 w-full justify-between" Disabled="@(Busy || !confirmRemoval)" OnClick="SubmitAsync">Confirm removal of @Items.Count media item(s)</Button>
+        @if (Error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@Error</Alert> }
+        @if (Busy) { <p role="status">@Progress</p> }
+    </Card>
+</ModalDialog>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<RemovalItem> Items { get; set; } = [];
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public string Progress { get; set; } = "";
+    [Parameter] public EventCallback Cancel { get; set; }
+    [Parameter] public EventCallback<(ExistingOriginalAction Existing, MissingOriginalAction Missing, string Folder)> Confirm { get; set; }
+    private ExistingOriginalAction existingOriginalAction = ExistingOriginalAction.Retain;
+    private MissingOriginalAction missingOriginalAction = MissingOriginalAction.RestorePng;
+    private string restoreFolder = "";
+    private bool confirmRemoval;
+    private Task SubmitAsync() => !Busy && confirmRemoval
+        ? Confirm.InvokeAsync((existingOriginalAction, missingOriginalAction, restoreFolder))
+        : Task.CompletedTask;
+}

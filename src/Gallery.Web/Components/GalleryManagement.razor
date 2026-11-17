@@ -9,31 +9,28 @@
     }
     <DirectoryPathInput Label="Local catalog directory (new or empty)" LocalOnly="true" @bind-Value="catalogDirectory" Disabled="@Busy" />
     <p class="text-muted-foreground">Relocates only gallery.db and vault.json. Existing encrypted media stays at its current paths. Sign in again after relocating; new imports keep using the current media directory.</p>
-    <Button Variant="ButtonVariant.Outline" Disabled="@(Busy || JobRunning || string.IsNullOrWhiteSpace(catalogDirectory))" OnClick="() => Relocate.InvokeAsync(catalogDirectory)">Relocate catalog only</Button>
+    <Button Variant="ButtonVariant.Outline" Disabled="@(Busy || JobRunning || string.IsNullOrWhiteSpace(catalogDirectory))" OnClick="RelocateCatalogAsync">Relocate catalog only</Button>
     <DirectoryPathInput Label="Encrypted media directory for future imports (optional, local or NAS/SMB)" @bind-Value="mediaDirectory" Disabled="@Busy" />
     <p class="text-muted-foreground">Leave blank to use the local catalog directory. Choose an existing folder otherwise. Changing this does not move existing files; backups still include them.</p>
-    <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="() => SaveMediaDirectory.InvokeAsync(mediaDirectory)">Save media location</Button>
+    <Button Variant="ButtonVariant.Outline" Disabled="@Busy" OnClick="SaveMediaStorageAsync">Save media location</Button>
     <Label For="rename-gallery" Class="mt-4 mb-2 block">Gallery name</Label>
     <Input id="rename-gallery" @bind-Value="galleryRename" maxlength="80" Disabled="@Busy" />
-    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="() => Rename.InvokeAsync(galleryRename)">Rename</Button>
+    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="RenameGalleryAsync">Rename</Button>
     <DirectoryPathInput Label="Move whole gallery to a new or empty local folder" LocalOnly="true" @bind-Value="moveGalleryDirectory" Disabled="@Busy" />
     <p class="text-muted-foreground">Moves the catalog and all encrypted media, including media stored outside the gallery. The destination is verified before source files are removed. Sign in again after moving.</p>
-    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || JobRunning)" OnClick="() => Move.InvokeAsync(moveGalleryDirectory)">Move gallery</Button>
+    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || JobRunning)" OnClick="MoveGalleryAsync">Move gallery</Button>
     <Alert Variant="AlertVariant.Destructive">Purge permanently destroys all media and gallery data, including encrypted media stored outside this folder. Original source files and backups are not deleted. This is not secure disk erasure.</Alert>
     <Label For="purge-gallery" Class="mt-4 mb-2 block">Type PURGE to confirm</Label>
     <Input id="purge-gallery" @bind-Value="purgeConfirmation" autocomplete="off" Disabled="@Busy" />
-    <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || JobRunning || purgeConfirmation != "PURGE")" OnClick="() => Purge.InvokeAsync(purgeConfirmation)">Purge gallery</Button>
+    <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || JobRunning || purgeConfirmation != "PURGE")" OnClick="PurgeGalleryAsync">Purge gallery</Button>
 </Card>
 
 @code {
     [Parameter] public bool Busy { get; set; }
     [Parameter] public bool JobRunning { get; set; }
-    [Parameter] public string InitialMediaDirectory { get; set; } = "";
-    [Parameter] public EventCallback<string> Rename { get; set; }
-    [Parameter] public EventCallback<string> Move { get; set; }
-    [Parameter] public EventCallback<string> Relocate { get; set; }
-    [Parameter] public EventCallback<string> SaveMediaDirectory { get; set; }
-    [Parameter] public EventCallback<string> Purge { get; set; }
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    [Parameter] public EventCallback Locked { get; set; }
+    [Parameter] public EventCallback Purged { get; set; }
 
     private string galleryRename = "";
     private string mediaDirectory = "";
@@ -41,9 +38,43 @@
     private string moveGalleryDirectory = "";
     private string purgeConfirmation = "";
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         galleryRename = Gallery.VaultName;
-        mediaDirectory = InitialMediaDirectory;
+        mediaDirectory = (await Gallery.LoadMediaStorageOptionsAsync()).MediaDirectory;
     }
+
+    private Task RenameGalleryAsync() => Commands.RunAsync("Renaming gallery...", async () =>
+    {
+        await Gallery.RenameVaultAsync(galleryRename);
+        Commands.Activity.Message = "Gallery renamed.";
+    });
+
+    private Task SaveMediaStorageAsync() => Commands.RunAsync("Saving media location...", async () =>
+    {
+        await Gallery.SaveMediaStorageOptionsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory });
+        Commands.Activity.Message = "Media location saved for future imports. Existing files were not moved.";
+    });
+
+    private Task RelocateCatalogAsync() => Commands.RunLibraryChangeAsync("Relocating catalog...", async () =>
+    {
+        try { await Gallery.RelocateCatalogAsync(catalogDirectory); }
+        finally { if (!Gallery.IsUnlocked) await Locked.InvokeAsync(); }
+        Commands.Activity.Message = "Catalog relocated to local storage. Media was not moved. Sign in at the new catalog location.";
+    });
+
+    private Task MoveGalleryAsync() => Commands.RunLibraryChangeAsync("Moving gallery...", async () =>
+    {
+        try { await Gallery.MoveVaultAsync(moveGalleryDirectory); }
+        finally { if (!Gallery.IsUnlocked) await Locked.InvokeAsync(); }
+        Commands.Activity.Message = "Gallery moved. Sign in at the new location.";
+    });
+
+    private Task PurgeGalleryAsync() => Commands.RunLibraryChangeAsync("Purging gallery...", async () =>
+    {
+        try { await Gallery.PurgeVaultAsync(purgeConfirmation); }
+        finally { if (!Gallery.IsUnlocked) await Locked.InvokeAsync(); }
+        await Purged.InvokeAsync();
+        Commands.Activity.Message = "All gallery media and data were permanently destroyed. Backups and original sources were retained.";
+    });
 }

@@ -1,0 +1,45 @@
+@implements IDisposable
+@inject ISonnerService Toasts
+
+@code {
+    [Parameter, EditorRequired] public GalleryActivity Activity { get; set; } = default!;
+    [Parameter] public bool Enabled { get; set; } = true;
+    private Guid? progressToast;
+    private bool progressToastScheduled;
+    private bool disposed;
+    public void Dispose()
+    {
+        disposed = true;
+        DismissProgressToast();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!Enabled) { DismissProgressToast(); return; }
+        if (Activity.Error.Length > 0) { Toasts.Show("Something went wrong", Activity.Error, SonnerToastVariant.Destructive, 8000); Activity.Error = ""; }
+        if (Activity.Message.Length > 0) { Toasts.Show(Activity.Message, "", SonnerToastVariant.Default, 4000); Activity.Message = ""; }
+        if (!Activity.Busy) DismissProgressToast();
+        else if (progressToast is null && !progressToastScheduled)
+        {
+            progressToastScheduled = true;
+            _ = ShowProgressToastAsync();
+        }
+    }
+    // Only operations that are still running after a short delay get a progress toast, so quick actions stay quiet.
+    private async Task ShowProgressToastAsync()
+    {
+        await Task.Delay(600);
+        await InvokeAsync(() =>
+        {
+            progressToastScheduled = false;
+            if (!disposed && Activity.Busy && Enabled && progressToast is null)
+                progressToast = Toasts.Show(Activity.Progress.Length > 0 ? Activity.Progress : "Working...", "", SonnerToastVariant.Default, 600_000);
+        });
+    }
+    private void DismissProgressToast()
+    {
+        if (progressToast is not { } id) return;
+        progressToast = null;
+        Toasts.Dismiss(id);
+    }
+}

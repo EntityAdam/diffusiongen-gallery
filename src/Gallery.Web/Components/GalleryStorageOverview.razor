@@ -1,7 +1,9 @@
+@inject GalleryService Gallery
+
 <Card Class="mb-6 p-5 md:p-6 storage-overview" aria-labelledby="storage-overview-title" aria-busy="@(Refreshing ? "true" : "false")">
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 id="storage-overview-title">Gallery overview</h3>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || CatalogPartial)" OnClick="Refresh">
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || CatalogPartial)" OnClick="RefreshStorageOverviewAsync">
             @if (Refreshing) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
             @(Refreshing ? "Refreshing..." : "Refresh")
         </Button>
@@ -33,7 +35,7 @@
     }
     <p class="text-muted-foreground flex flex-wrap items-center gap-2">
         <span>Sizes come from a cached file index. Rebuild it if files were changed outside the gallery.</span>
-        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@(Busy || CatalogPartial)" OnClick="Rebuild">Rebuild file index</Button>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@(Busy || CatalogPartial)" OnClick="RebuildStorageIndexAsync">Rebuild file index</Button>
     </p>
     <p class="text-muted-foreground flex flex-wrap items-center gap-2">
         @if (!HasScan) { <span>Duplicates have not been scanned yet.</span> }
@@ -44,12 +46,36 @@
 
 @code {
     [Parameter] public StorageOverview? Overview { get; set; }
-    [Parameter] public bool Refreshing { get; set; }
     [Parameter] public bool Busy { get; set; }
     [Parameter] public bool CatalogPartial { get; set; }
     [Parameter] public bool HasScan { get; set; }
     [Parameter] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = default!;
-    [Parameter] public EventCallback Refresh { get; set; }
-    [Parameter] public EventCallback Rebuild { get; set; }
+    [Parameter] public EventCallback<StorageOverview?> OverviewChanged { get; set; }
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
     [Parameter] public EventCallback FindDuplicates { get; set; }
+
+    private bool Refreshing;
+    private Task RebuildStorageIndexAsync() => Commands.RunAsync("Scheduling file index rebuild...", async () =>
+    {
+        await Gallery.RebuildStorageIndexAsync();
+        await OverviewChanged.InvokeAsync(await Gallery.CachedStorageOverviewAsync());
+        Commands.Activity.Message = "The file index is being rebuilt in the background. Refresh the overview when it finishes.";
+    });
+
+    private async Task RefreshStorageOverviewAsync()
+    {
+        if (Busy) return;
+        Refreshing = true;
+        try
+        {
+            await Commands.RunAsync("Measuring gallery storage...", async () =>
+            {
+                // SQLite reads/decryption can run synchronously before the service's first yield.
+                // Keep that work off the renderer so the busy state is visible throughout the refresh.
+                await OverviewChanged.InvokeAsync(await Task.Run(Gallery.RefreshStorageOverviewAsync));
+                Commands.Activity.Message = "Gallery overview refreshed.";
+            });
+        }
+        finally { Refreshing = false; }
+    }
 }

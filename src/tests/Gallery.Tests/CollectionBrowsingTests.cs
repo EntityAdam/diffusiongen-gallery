@@ -1,3 +1,4 @@
+using Gallery.Web.Components.Workspace;
 using System.Collections;
 using System.Reflection;
 using Gallery.Core.Models;
@@ -127,17 +128,17 @@ public sealed class CollectionBrowsingTests
     [InlineData(true)]
     public void OpeningTheViewerHandsOffTheImagePreviewBeforeClosingDetails(bool isVideo)
     {
-        var home = new Home();
+        var home = new GalleryWorkspace();
         var image = new ImageRecord { Id = "image", MediaType = isVideo ? "video" : "image" };
-        typeof(Home).GetField("selected", Private)!.SetValue(home, image);
-        typeof(Home).GetField("preview", Private)!.SetValue(home, "detail-preview");
-        typeof(Home).GetField("detailViewerImages", Private)!.SetValue(home, new[] { image });
+        typeof(GalleryWorkspace).GetField("selected", Private)!.SetValue(home, image);
+        typeof(GalleryWorkspace).GetField("preview", Private)!.SetValue(home, "detail-preview");
+        typeof(GalleryWorkspace).GetField("detailViewerImages", Private)!.SetValue(home, new[] { image });
 
-        typeof(Home).GetMethod("OpenViewer", Private)!.Invoke(home, [image.Id]);
+        typeof(GalleryWorkspace).GetMethod("OpenViewer", Private)!.Invoke(home, [image.Id]);
 
-        Assert.Null(typeof(Home).GetField("selected", Private)!.GetValue(home));
-        Assert.Equal("", typeof(Home).GetField("preview", Private)!.GetValue(home));
-        Assert.Equal(isVideo ? "" : "detail-preview", typeof(Home).GetField("viewerInitialPreview", Private)!.GetValue(home));
+        Assert.Null(typeof(GalleryWorkspace).GetField("selected", Private)!.GetValue(home));
+        Assert.Equal("", typeof(GalleryWorkspace).GetField("preview", Private)!.GetValue(home));
+        Assert.Equal(isVideo ? "" : "detail-preview", typeof(GalleryWorkspace).GetField("viewerInitialPreview", Private)!.GetValue(home));
     }
 
     [Fact]

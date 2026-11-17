@@ -1,3 +1,4 @@
+using Gallery.Web.Components.Workspace;
 using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -287,18 +288,18 @@ public sealed class UiComponentTests
     [Fact]
     public async Task Home_WhileImportRuns_ToolboxCannotLeaveIngestionProgress()
     {
-        var home = new Home();
+        var home = new GalleryWorkspace();
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        void Set(string name, object value) => typeof(Home).GetField(name, flags)!.SetValue(home, value);
-        T Get<T>(string name) => (T)typeof(Home).GetField(name, flags)!.GetValue(home)!;
+        void Set(string name, object value) => typeof(GalleryWorkspace).GetField(name, flags)!.SetValue(home, value);
+        T Get<T>(string name) => (T)typeof(GalleryWorkspace).GetField(name, flags)!.GetValue(home)!;
         Task Invoke(string name, params object[] args) =>
-            (Task)typeof(Home).GetMethod(name, flags)!.Invoke(home, args)!;
+            (Task)typeof(GalleryWorkspace).GetMethod(name, flags)!.Invoke(home, args)!;
 
         Set("workflow", "ingest");
         Set("toolboxVisible", false);
         Set("activeTool", "filters");
-        Set("busy", true);
-        Set("importRunning", true);
+        home.Activity.Busy = true;
+        home.Activity.Ingestion.IsRunning = true;
 
         await Invoke("ToggleToolboxAsync");
         await Invoke("SetActiveToolAsync", "trash");
@@ -308,7 +309,7 @@ public sealed class UiComponentTests
         Assert.False(Get<bool>("toolboxVisible"));
         Assert.Equal("filters", Get<string>("activeTool"));
 
-        Set("importRunning", false);
+        home.Activity.Ingestion.IsRunning = false;
         await Invoke("ToggleToolboxAsync");
         await Invoke("SwitchWorkflowAsync", "gallery");
         Assert.Equal("ingest", Get<string>("workflow"));
@@ -321,18 +322,18 @@ public sealed class UiComponentTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         fixture.Service.LockVault();
-        var home = new Home();
+        var home = new GalleryWorkspace();
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-        typeof(Home).GetProperty("Gallery", flags)!.SetValue(home, fixture.Service);
-        typeof(Home).GetProperty("Logger", flags)!.SetValue(home, NullLogger<Home>.Instance);
-        typeof(Home).GetField("autoLockMinutes", flags)!.SetValue(home, 15);
+        typeof(GalleryWorkspace).GetProperty("Gallery", flags)!.SetValue(home, fixture.Service);
+        typeof(GalleryWorkspace).GetProperty("Logger", flags)!.SetValue(home, NullLogger<GalleryWorkspace>.Instance);
+        typeof(GalleryWorkspace).GetField("autoLockMinutes", flags)!.SetValue(home, 15);
 
-        await (Task)typeof(Home).GetMethod("UpdateAutoLockMinutesAsync", flags)!
+        await (Task)typeof(GalleryWorkspace).GetMethod("UpdateAutoLockMinutesAsync", flags)!
             .Invoke(home, ["30"])!;
 
-        Assert.Equal(15, typeof(Home).GetField("autoLockMinutes", flags)!.GetValue(home));
+        Assert.Equal(15, typeof(GalleryWorkspace).GetField("autoLockMinutes", flags)!.GetValue(home));
         Assert.Contains("previous timer is still active",
-            (string)typeof(Home).GetField("error", flags)!.GetValue(home)!);
+            home.Activity.Error);
     }
 
     [Fact]
