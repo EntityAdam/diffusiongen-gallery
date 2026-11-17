@@ -1,0 +1,34 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@code {
+    [Parameter, EditorRequired] public Func<bool> Blocked { get; set; } = default!;
+    [Parameter] public EventCallback<bool> Toolbox { get; set; }
+    [Parameter] public EventCallback<(string Key, string Id, bool Shift)> Grid { get; set; }
+
+    private static int nextOwner;
+    private readonly int owner = Interlocked.Increment(ref nextOwner);
+    private DotNetObjectReference<GalleryGridShortcuts>? reference;
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return Task.CompletedTask;
+        reference = DotNetObjectReference.Create(this);
+        return JS.InvokeVoidAsync("galleryGrid.attach", reference, null, owner).AsTask();
+    }
+
+    [JSInvokable]
+    public Task HandleGridKey(string key, string id, bool shift)
+    {
+        if (Blocked()) return Task.CompletedTask;
+        return key == "`" ? Toolbox.InvokeAsync(shift) : Grid.InvokeAsync((key, id, shift));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (reference is null) return;
+        try { await JS.InvokeVoidAsync("galleryGrid.detach", owner); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        finally { reference.Dispose(); }
+    }
+}

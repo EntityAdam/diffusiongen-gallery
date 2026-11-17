@@ -1,18 +1,20 @@
+@implements IDisposable
+
 @if (State.CanPresent && State.Selected is { } selected)
 {
     <MediaDetailDialog @key="selected.Id" @ref="detailDialog" Image="selected" Preview="@State.Preview" VideoUrl="@State.VideoUrl"
                        Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" Progress="@Activity.Progress" Error="@Activity.Error"
-                       Close="CloseDetail" Fullscreen="() => Fullscreen.InvokeAsync(selected.Id)" Rate="value => Rate.InvokeAsync((selected, value))"
-                       Favorite="() => Favorite.InvokeAsync(selected)" Mark="() => Mark.InvokeAsync(selected)" Analyze="() => Analyze.InvokeAsync(selected)"
-                       ShowPrompt="() => ShowPrompt.InvokeAsync(selected.Prompt)" Remove="() => Remove.InvokeAsync(new[] { selected.Id })"
-                       Suggestion="@Suggestions.GetValueOrDefault(selected.Id)" Approve="Approve" Dismiss="Dismiss"
-                       Changed="ImageChanged" DraftChanged="Changed" />
+                       Close="CloseDetail" Fullscreen="() => OpenViewerAsync(selected.Id)" Rate="value => Curation.ToggleRatingAsync(selected, value)"
+                       Favorite="() => Curation.ToggleFavoriteAsync(selected)" Mark="() => Curation.ToggleMarkAsync(selected)" Analyze="() => Analysis.AnalyzeAsync(selected, Commands)"
+                       ShowPrompt="() => Navigation!.ShowPromptAsync(selected.Prompt)" Remove="() => Removal.PrepareAsync([selected.Id])"
+                       Suggestion="@Suggestions.GetValueOrDefault(selected.Id)" Approve="Analysis.ApproveAsync" Dismiss="Analysis.DismissAsync"
+                       Changed="Catalog.UpdateAsync" DraftChanged="Changed" />
 }
 @if (State.CanPresent && State.ViewerImages.Count > 0)
 {
     <FullscreenViewer KnownTags="Catalog.AllTags" Images="State.ViewerImages" InitialId="@State.ViewerInitialId" InitialPreview="@State.ViewerInitialPreview"
-                      ReviewMode="State.ReviewMode" OnClose="CloseViewerAsync" OnImageChanged="ImageChanged"
-                      Suggestions="Suggestions" ApproveSuggestion="Approve" DismissSuggestion="Dismiss" />
+                      ReviewMode="State.ReviewMode" OnClose="CloseViewerAsync" OnImageChanged="Catalog.UpdateAsync"
+                      Suggestions="Suggestions" ApproveSuggestion="Analysis.ApproveAsync" DismissSuggestion="Analysis.DismissAsync" />
 }
 
 @code {
@@ -21,26 +23,30 @@
     [Parameter, EditorRequired] public WorkspaceCatalog Catalog { get; set; } = default!;
     [Parameter, EditorRequired] public GalleryActivity Activity { get; set; } = default!;
     [Parameter] public IReadOnlyDictionary<string, OrganizationSuggestion> Suggestions { get; set; } = new Dictionary<string, OrganizationSuggestion>();
-    [Parameter] public EventCallback<(ImageRecord Image, int Rating)> Rate { get; set; }
-    [Parameter] public EventCallback<ImageRecord> Favorite { get; set; }
-    [Parameter] public EventCallback<ImageRecord> Mark { get; set; }
-    [Parameter] public EventCallback<ImageRecord> Analyze { get; set; }
-    [Parameter] public EventCallback<string> ShowPrompt { get; set; }
-    [Parameter] public EventCallback<IReadOnlyCollection<string>> Remove { get; set; }
-    [Parameter] public EventCallback<string?> Fullscreen { get; set; }
-    [Parameter] public Func<OrganizationSuggestion, Task<ImageRecord?>> Approve { get; set; } = default!;
-    [Parameter] public EventCallback<OrganizationSuggestion> Dismiss { get; set; }
-    [Parameter] public EventCallback<ImageRecord> ImageChanged { get; set; }
+    [CascadingParameter] public WorkspaceNavigationState? Navigation { get; set; }
+    [Parameter, EditorRequired] public MediaCurationCommands Curation { get; set; } = default!;
+    [Parameter, EditorRequired] public LibraryAnalysis Analysis { get; set; } = default!;
+    [Parameter, EditorRequired] public RemovalWorkflowState Removal { get; set; } = default!;
+    [Parameter] public IEnumerable<ImageRecord> PageImages { get; set; } = [];
     [Parameter] public EventCallback Changed { get; set; }
-    [Parameter] public EventCallback Reload { get; set; }
     private MediaDetailDialog? detailDialog;
-    public UnsavedChangesSource? Draft => State.Selected is { } selected && detailDialog?.Image.Id == selected.Id ? detailDialog.Draft : null;
-    public bool HasUnsavedChanges => Draft?.HasUnsavedChanges() == true;
+
+    protected override void OnInitialized() => Navigation?.AddDraftSource(GetDraft);
+    public void Dispose() => Navigation?.RemoveDraftSource(GetDraft);
+
+    private UnsavedChangesSource? GetDraft() =>
+        State.Selected is { } selected && detailDialog?.Image.Id == selected.Id ? detailDialog.Draft : null;
+
+    private async Task OpenViewerAsync(string id)
+    {
+        State.OpenViewer(PageImages, id);
+        await Changed.InvokeAsync();
+    }
 
     private async Task CloseDetail() { State.CloseDetail(); await Changed.InvokeAsync(); }
     private Task CloseViewerAsync()
     {
         State.CloseViewer();
-        return Commands.RunAsync("Refreshing gallery...", () => Reload.InvokeAsync());
+        return Commands.RunAsync("Refreshing gallery...", Catalog.ReloadAsync);
     }
 }

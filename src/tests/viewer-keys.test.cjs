@@ -152,6 +152,19 @@ test("detach removes the document listeners", () => {
     assert.equal(listeners.size, 0);
 });
 
+test("detaching a retired grid leaves the replacement listener attached", async () => {
+    const { window, listeners, doc, key, calls } = setup();
+    const reference = { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } };
+    window.galleryGrid.attach(reference, doc, 1);
+    window.galleryGrid.attach(reference, doc, 2);
+    window.galleryGrid.detach(1);
+    key("`", {});
+    await flush();
+    assert.deepEqual(calls, [["HandleGridKey", "`", "", false]]);
+    window.galleryGrid.detach(2);
+    assert.equal(listeners.size, 0);
+});
+
 test("backtick toggles the toolbox without a card and Shift+backtick is forwarded by physical key", async () => {
     const { calls, key, input } = setup();
     assert.equal(key("`", {}, { code: "Backquote" }).defaultPrevented, true);

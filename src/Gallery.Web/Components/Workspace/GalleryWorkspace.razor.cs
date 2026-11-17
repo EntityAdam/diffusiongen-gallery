@@ -1,214 +1,66 @@
-using Microsoft.AspNetCore.Components;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Microsoft.JSInterop;
+using Microsoft.AspNetCore.Components;
 
 namespace Gallery.Web.Components.Workspace;
 
 public partial class GalleryWorkspace
 {
-    [Parameter] public GalleryActivity Activity { get; set; } = new();
+    [Parameter, EditorRequired] public WorkspaceSession Session { get; set; } = default!;
+    [Parameter] public string? Route { get; set; }
+    [Parameter] public NavigationManager? Router { get; set; }
     [Parameter] public EventCallback Locked { get; set; }
     [Parameter] public EventCallback Purged { get; set; }
     [Parameter] public EventCallback Panic { get; set; }
-    [Parameter] public EventCallback ImportChanged { get; set; }
-    [Parameter] public EventCallback ImportCompleted { get; set; }
-    [Parameter] public CancellationToken Lifetime { get; set; }
-    private Task PanicAsync() => Panic.InvokeAsync();
-    private WorkspaceCommands commands = default!;
-    private Task RunOperationAsync((string Status, Func<Task> Action) operation) =>
-        RunAsync(operation.Status, operation.Action);
-    private CollectionLocation collectionLocation = new();
-    private bool collectionWorking;
-    private bool WorkspaceBusy => Activity.Busy || collectionWorking || OrganizationHistory.IsBusy;
-    private GalleryWorkspaceLayout? layout;
-    private Task NavigateCollectionsAsync(CollectionLocation location) => WorkspaceBusy
-        ? Task.CompletedTask : CollectionLocationChangedAsync(location);
-    private Task CollectionLocationChangedAsync(CollectionLocation location)
-    {
-        collectionLocation = location;
-        layout?.ResetNavigation();
-        workflow = location.Unorganized ? "unorganized" : "collections";
-        PublishRoute();
-        return Task.CompletedTask;
-    }
+
+    private GalleryActivity Activity => Session.Activity;
+    private WorkspaceCatalog Catalog => Session.Catalog;
+    private WorkspaceNavigationState Navigation => Session.Navigation;
+    private MediaPresentationState Presentation => Session.Presentation;
+    private GalleryBrowserState Browser => Session.Browser;
+    private string Section => Navigation.Section;
+    private bool UsesToasts => !Presentation.DetailsOpen && !Session.Removal.IsOpen && !Session.Guard.IsPending;
+    private bool JobRunning => Session.Analysis.Status.IsRunning;
+
+    private GalleryBrowser? galleryBrowser;
     private CollectionsWorkspace? collectionsWorkspace;
+    private DuplicateFinder? duplicateFinder;
+    private bool disposed;
+
+    protected override void OnInitialized() => Session.Changed += RefreshWorkspace;
+
+    protected override Task OnParametersSetAsync() => Navigation.ReceiveRouteAsync(Route, Router);
+
+    private void RefreshWorkspace()
+    {
+        if (!disposed) StateHasChanged();
+    }
+
     private Task OpenCollectionDetailsAsync((ImageRecord[] Images, string InitialId) request) =>
         Presentation.OpenAsync(request.Images.First(image => image.Id == request.InitialId), request.Images);
-    // Native dialogs retain inline validation while the rest of the workspace uses toasts.
-    private bool UsesToasts => !Presentation.DetailsOpen && !Removal.IsOpen && !Guard.IsPending;
-    private LibraryJobStatus libraryJob = new(false, "", "", 0, false);
-    private DotNetObjectReference<GalleryWorkspace>? gridReference;
-    private int autoLockMinutes = UiPreferences.DefaultAutoLockMinutes;
-    private DuplicateCatalog duplicates = new();
-    private DuplicateFinder? duplicateFinder;
-    private bool DuplicateReviewOpen => workflow == "duplicates" && duplicateFinder?.ReviewOpen == true;
-    private ImageRecord? ImageById(string id) => Catalog.ImagesById.GetValueOrDefault(id);
-    private async Task TagsManagedAsync(TagCatalogChange change)
-    {
-        if (change.PreviousName is not null && change.Name is not null)
-            Browser.Filter = Browser.Filter.WithRenamedTag(change.PreviousName, change.Name);
-        if (galleryBrowser is not null) await galleryBrowser.UpdateSuggestionTagsAsync(change);
-        await ReloadAsync();
-    }
-    private Task ViewTagAsync(string tag) => RequestNavigationAsync(async () =>
-    {
-        if (WorkspaceBusy || Catalog.IsPartial) return;
-        Browser.FilterInputRevision++;
-        Browser.Filter = new() { Tag = tag };
-        Browser.BrowsingFilter = null;
-        Browser.ActiveTool = "filters";
-        Browser.ToolboxVisible = true;
-        await SwitchWorkflowCoreAsync("gallery");
-        await SaveToolboxStateAsync();
-    });
-    private IngestionSession ingestion => Activity.Ingestion;
-    private void RefreshWorkspace() { if (!disposed) StateHasChanged(); }
-    private bool disposed;
-    private bool initialized;
-    private Task RunAsync(string status, Func<Task> action, bool allowDuringImport = false) =>
-        Activity.RunAsync(status, async () =>
-        {
-            try
-            {
-                await Browser.PauseAsync();
-                await action();
-            }
-            finally
-            {
-                if (Lifetime.IsCancellationRequested) Gallery.LockVault();
-                else if (!disposed && Gallery.IsUnlocked) Browser.Resume();
-            }
-        }, Logger, allowDuringImport);
 
-    protected override async Task OnInitializedAsync()
-    {
-        commands = new(Activity, EventCallback.Factory.Create<(string, Func<Task>)>(this, RunOperationAsync), EnsureNoLibraryJob);
-        OrganizationHistory.Changed += HandleOrganizationHistoryChanged;
-        await RunAsync("Opening gallery...", async () =>
-        {
-            try
-            {
-                var preferences = await Gallery.LoadPreferencesAsync();
-                autoLockMinutes = preferences.AutoLockMinutes;
-                await Browser.InitializeAsync(preferences);
-                ingestion.LoadOptions(await Gallery.LoadIngestionOptionsAsync());
-                await Catalog.OpenAsync(Browser.PageSize, Browser.TrashActive);
-            }
-            catch
-            {
-                await Locked.InvokeAsync();
-                throw;
-            }
-        }, allowDuringImport: true);
-        initialized = !disposed && Gallery.IsUnlocked;
-    }
+    private bool GridBlocked() => !Presentation.CanPresent || Activity.Busy || Presentation.IsOpen
+        || Session.Removal.IsOpen || Section == "duplicates" && duplicateFinder?.ReviewOpen == true;
 
-    private void HandleOrganizationHistoryChanged()
-    {
-        if (!disposed) _ = InvokeAsync(StateHasChanged);
-    }
+    private Task HandleToolboxShortcutAsync(bool reset) => reset
+        ? galleryBrowser?.ResetToolboxPositionAsync() ?? Task.CompletedTask
+        : Navigation.ToggleToolboxAsync();
 
-    private Task UndoOrganizationAsync() => WorkspaceBusy ? Task.CompletedTask : RunAsync("Restoring organization...", async () =>
+    private Task HandleGridShortcutAsync((string Key, string Id, bool Shift) shortcut) => Section switch
     {
-        EnsureNoLibraryJob();
-        await OrganizationHistory.UndoAsync();
-        await ReloadAsync();
-        if (collectionLocation.CollectionId is { } collectionId && !Catalog.Collections.Collections.Any(item => item.Id == collectionId))
-            collectionLocation = new();
-        else if (collectionLocation.SetId is { } setId && !Catalog.Collections.Sets.Any(item => item.Id == setId))
-            collectionLocation = new(collectionLocation.CollectionId);
-        Activity.Message = "Organization restored.";
-    });
+        "collections" or "unorganized" => collectionsWorkspace?.HandleGridKeyAsync(shortcut.Key, shortcut.Id, shortcut.Shift) ?? Task.CompletedTask,
+        "gallery" => galleryBrowser?.HandleGridKeyAsync(shortcut.Key, shortcut.Id, shortcut.Shift) ?? Task.CompletedTask,
+        _ => Task.CompletedTask
+    };
 
-    private Task SavePreferencesAsync(int? autoLockMinutesOverride = null) => Gallery.SavePreferencesAsync(new UiPreferences
+    private Task RetryCatalogLoadAsync()
     {
-        GridDensity = Browser.Density, AutoLockMinutes = autoLockMinutesOverride ?? autoLockMinutes, ToolboxVisible = Browser.ToolboxVisible,
-        ToolboxX = Browser.ToolboxX, ToolboxY = Browser.ToolboxY, ToolboxTool = Browser.ActiveTool
-    });
-    private Task SaveToolboxStateAsync() => Browser.SaveToolboxStateAsync();
-    private void LibraryJobChanged(LibraryJobStatus status) => libraryJob = status;
-    private Task<ImageRecord?> ApproveSuggestionAsync(OrganizationSuggestion suggestion) =>
-        galleryBrowser?.ApproveSuggestionAsync(suggestion) ?? Task.FromResult<ImageRecord?>(null);
-    private Task DismissSuggestionAsync(OrganizationSuggestion suggestion) =>
-        galleryBrowser?.DismissSuggestionAsync(suggestion) ?? Task.CompletedTask;
-    private void ClearSelection() => Browser.ClearSelection();
-    private void ViewerImageChanged(ImageRecord updated)
-    {
-        Catalog.Update(updated);
-        Presentation.Update(updated);
-    }
-    [JSInvokable]
-    public async Task HandleGridKey(string key, string id, bool shift)
-    {
-        if (key == "`")
-        {
-            if (!Gallery.IsUnlocked || Presentation.IsOpen || Removal.IsOpen || DuplicateReviewOpen) return;
-            if (Activity.Busy) return;
-            if (shift) await ResetToolboxPositionAsync(); else await ToggleToolboxAsync();
-            StateHasChanged();
-            return;
-        }
-        if (!Gallery.IsUnlocked || Activity.Busy || Presentation.IsOpen || Removal.IsOpen || DuplicateReviewOpen) return;
-        if (workflow is "collections" or "unorganized" && collectionsWorkspace is not null)
-        {
-            await collectionsWorkspace.HandleGridKeyAsync(key, id, shift);
-            StateHasChanged();
-            return;
-        }
-        if (workflow == "gallery" && galleryBrowser is not null)
-            await galleryBrowser.HandleGridKeyAsync(key, id, shift);
-        StateHasChanged();
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (!firstRender) return;
-        gridReference = DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync("galleryGrid.attach", gridReference);
-    }
-
-    private void EnsureNoLibraryJob()
-    {
-        if (libraryJob.IsRunning) throw new InvalidOperationException("Wait for the running LLM job to finish, or stop it after the current media item, before changing files or gallery settings.");
-    }
-
-    private async Task UpdateAutoLockMinutesAsync(string? value)
-    {
-        if (Activity.Busy) return;
-        if (int.TryParse(value, out var minutes))
-        {
-            minutes = Math.Clamp(minutes, 0, 1440);
-            await RunAsync("Saving auto-lock timer...", () => SavePreferencesAsync(minutes));
-            if (Activity.Error.Length > 0)
-            {
-                Activity.Error = "Auto-lock timer could not be saved. The previous timer is still active.";
-                return;
-            }
-            autoLockMinutes = minutes;
-            Gallery.ConfigureAutoLock(autoLockMinutes);
-            try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
-            catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-        }
+        Catalog.RetryLoad();
+        return Task.CompletedTask;
     }
 
     public void Dispose()
     {
         disposed = true;
-        OrganizationHistory.Changed -= HandleOrganizationHistoryChanged;
-        catalog?.Dispose();
-        browser?.Dispose();
-        previousCollections = CollectionCatalog.Empty;
-        presentation?.Dispose();
-        removal?.Dispose();
-        guard?.Dispose();
-        if (gridReference is not null) _ = DetachGridAsync(gridReference);
-    }
-
-    private async Task DetachGridAsync(DotNetObjectReference<GalleryWorkspace> reference)
-    {
-        try { await JS.InvokeVoidAsync("galleryGrid.detach"); }
-        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-        finally { reference.Dispose(); }
+        Session.Changed -= RefreshWorkspace;
     }
 }

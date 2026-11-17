@@ -13,26 +13,27 @@ public partial class Home
     private readonly GalleryActivity activity = new();
     private readonly CancellationTokenSource lifetime = new();
     private DotNetObjectReference<Home>? securityReference;
-    private GalleryWorkspace? workspace;
+    private WorkspaceSession? session;
     private int accessRevision;
-    private int autoLockMinutes = UiPreferences.DefaultAutoLockMinutes;
     private bool ready;
     private bool startWithCreate;
     private bool disposed;
     private string recoveryPhrase = "";
 
-    protected override void OnInitialized()
+    protected override Task OnInitializedAsync()
     {
         activity.Completed += ActivityCompleted;
+        activity.Ingestion.ProgressChanged += ImportProgressChanged;
         ready = Gallery.IsUnlocked;
         Gallery.OnAutoLocked += HandleAutoLocked;
+        return StartWorkspaceAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
         securityReference = DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync("gallerySecurity.attach", securityReference, autoLockMinutes);
+        await JS.InvokeVoidAsync("gallerySecurity.attach", securityReference, session?.Preferences.AutoLockMinutes ?? UiPreferences.DefaultAutoLockMinutes);
     }
 
     private void ClearFeedback() => activity.Error = activity.Message = "";
@@ -41,7 +42,11 @@ public partial class Home
 
     private async Task RunAsync(string status, Func<Task> action, bool allowDuringImport = false)
     {
-        try { await activity.RunAsync(status, action, Logger, allowDuringImport); }
+        try
+        {
+            await activity.RunAsync(status, action, Logger, allowDuringImport);
+            await StartWorkspaceAsync();
+        }
         finally { if (disposed) Gallery.LockVault(); }
     }
 
@@ -68,7 +73,7 @@ public partial class Home
                     throw new InvalidOperationException("No gallery is selected. Choose Switch gallery to open or create one.");
                 if (input.UseRecovery) await Gallery.UnlockWithRecoveryPhraseAsync(input.Credential);
                 else await Gallery.UnlockWithPassphraseAsync(input.Credential);
-                await EnterWorkspaceAsync();
+                EnterWorkspace();
             }
             catch
             {
@@ -77,21 +82,39 @@ public partial class Home
             }
         }, allowDuringImport: true);
 
-    private Task FinishSetupAsync() => RunAsync("Opening gallery...", EnterWorkspaceAsync);
-
-    private async Task EnterWorkspaceAsync()
+    private Task FinishSetupAsync()
     {
-        var revision = accessRevision;
-        var preferences = await Gallery.LoadPreferencesAsync();
-        if (revision != accessRevision || disposed || !Gallery.IsUnlocked) return;
-        autoLockMinutes = preferences.AutoLockMinutes;
-        Gallery.ConfigureAutoLock(autoLockMinutes);
-        try { await JS.InvokeVoidAsync("gallerySecurity.configureAutoLock", autoLockMinutes); }
-        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-        if (revision != accessRevision || disposed || !Gallery.IsUnlocked) return;
+        EnterWorkspace();
+        return StartWorkspaceAsync();
+    }
+
+    private void EnterWorkspace()
+    {
+        if (disposed || !Gallery.IsUnlocked) return;
         recoveryPhrase = "";
         startWithCreate = false;
         ready = true;
+    }
+
+    private Task StartWorkspaceAsync()
+    {
+        if (disposed || !ready || !Gallery.IsUnlocked || recoveryPhrase.Length > 0 || session is not null)
+            return Task.CompletedTask;
+
+        session = new(Gallery, activity, OrganizationHistory, JS, Logger, action => InvokeAsync(action),
+            FlushSavedFeedback, lifetime.Token);
+        return session.InitializeAsync(() =>
+        {
+            Lock();
+            return Task.CompletedTask;
+        });
+    }
+
+    private void FlushSavedFeedback()
+    {
+        if (activity.Message.Length == 0) return;
+        Toasts.Show(activity.Message, "", ShadCn.Blazor.Components.SonnerToastVariant.Default, 4000);
+        activity.Message = "";
     }
 
     private void ActivityCompleted()
@@ -99,9 +122,10 @@ public partial class Home
         if (!disposed) _ = InvokeAsync(StateHasChanged);
     }
 
-    private void RenderImportProgress() { if (!disposed) StateHasChanged(); }
-    private Task ReloadAfterImportAsync() => !disposed && Gallery.IsUnlocked && workspace is not null
-        ? workspace.ReloadAsync() : Task.CompletedTask;
+    private void ImportProgressChanged()
+    {
+        if (session is null || !session.IsInitialized) ActivityCompleted();
+    }
 
     private void HandleAutoLocked() { if (!disposed) _ = TriggerAutoLock(); }
 
@@ -128,7 +152,8 @@ public partial class Home
     private void Lock()
     {
         accessRevision++;
-        workspace = null;
+        session?.Dispose();
+        session = null;
         ready = startWithCreate = false;
         recoveryPhrase = "";
         ClearFeedback();
@@ -144,6 +169,7 @@ public partial class Home
         disposed = true;
         Gallery.OnAutoLocked -= HandleAutoLocked;
         activity.Completed -= ActivityCompleted;
+        activity.Ingestion.ProgressChanged -= ImportProgressChanged;
         lifetime.Cancel();
         lifetime.Dispose();
         Lock();

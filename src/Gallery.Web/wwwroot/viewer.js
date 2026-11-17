@@ -27,7 +27,7 @@ document.addEventListener("focusin", event => {
 
 window.galleryGrid = {
     keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "`", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
-    attach: function (reference, doc) {
+    attach: function (reference, doc, owner) {
         const grid = window.galleryGrid;
         grid.detach();
         doc = doc ?? document;
@@ -75,7 +75,8 @@ window.galleryGrid = {
         doc.addEventListener("mouseover", onHover, true);
         doc.addEventListener("mouseout", onLeave, true);
         doc.addEventListener("keydown", onKey, true);
-        grid.detach = () => {
+        grid.detach = (requestOwner) => {
+            if (requestOwner !== undefined && requestOwner !== owner) return;
             doc.removeEventListener("mouseover", onHover, true);
             doc.removeEventListener("mouseout", onLeave, true);
             doc.removeEventListener("keydown", onKey, true);

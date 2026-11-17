@@ -1,9 +1,11 @@
 @using Gallery.Core.Exceptions
+@using Gallery.Web.Components.Workspace
 @inject GalleryService Gallery
 @inject OrganizationHistory OrganizationHistory
 @inject ISonnerService Toasts
 @inject ILogger<LibraryWorkbench> Logger
 @implements IDisposable
+@implements ILibraryAnalysisActions
 
 <Microsoft.AspNetCore.Components.Sections.SectionContent SectionName="gallery-workbench">
 <div class="toolbox-workbench space-y-4" hidden="@(!Visible)">
@@ -144,7 +146,7 @@
     [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
     [Parameter] public EventCallback Changed { get; set; }
     [Parameter] public EventCallback ClearSelection { get; set; }
-    [Parameter] public EventCallback<LibraryJobStatus> JobChanged { get; set; }
+    [Parameter] public LibraryAnalysis? Analysis { get; set; }
     [Parameter] public EventCallback<IReadOnlyList<OrganizationSuggestion>> SuggestionsChanged { get; set; }
     [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
     private bool showDestination;
@@ -182,12 +184,16 @@
     }
 
     // Saved views are an unexposed feature: the UI is hidden, but views stay loaded and encrypted for a future surface.
-    protected override Task OnInitializedAsync() => RunAsync("Loading saved drafts...", async () =>
+    protected override Task OnInitializedAsync()
     {
-        views = await Gallery.LoadViewsAsync();
-        await EnsureCheckpointAsync();
-        await RestoreDraftsAsync();
-    });
+        Analysis?.Attach(this);
+        return RunAsync("Loading saved drafts...", async () =>
+        {
+            views = await Gallery.LoadViewsAsync();
+            await EnsureCheckpointAsync();
+            await RestoreDraftsAsync();
+        });
+    }
 
     private async Task RunAsync(string message, Func<Task> action, bool reportJob = false)
     {
@@ -213,9 +219,13 @@
         }
     }
 
-    private Task PublishJobAsync() => disposed ? Task.CompletedTask : JobChanged.InvokeAsync(
-        new LibraryJobStatus(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
-            suggestions.Count + tagSuggestions.Count, analyzing && !cancelRequested));
+    private Task PublishJobAsync()
+    {
+        if (!disposed)
+            Analysis?.SetStatus(new(working && reportingJob, jobWorkflow, working && reportingJob ? status : jobMessage,
+                suggestions.Count + tagSuggestions.Count, analyzing && !cancelRequested));
+        return Task.CompletedTask;
+    }
 
     public async Task StopAnalysisAsync()
     {
@@ -382,7 +392,7 @@
     });
 
     private void CloseComparison() { compareImages.Clear(); comparison.Clear(); }
-    public void Dispose() { disposed = true; cancelRequested = true; analysisLifetime.Cancel(); checkpoint = null; suggestions.Clear(); tagSuggestions.Clear(); CloseComparison(); }
+    public void Dispose() { Analysis?.Detach(this); disposed = true; cancelRequested = true; analysisLifetime.Cancel(); checkpoint = null; suggestions.Clear(); tagSuggestions.Clear(); CloseComparison(); }
 }
 
 @if (showDestination) { <CollectionDestinationDialog Images="@Images.Where(image => SelectedIds.Contains(image.Id)).ToArray()" Saved="DestinationSavedAsync" Cancel="DestinationCanceledAsync" /> }

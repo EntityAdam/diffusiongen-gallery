@@ -1,3 +1,5 @@
+@using Gallery.Web.Components.Workspace
+@implements IDisposable
 @inject GalleryService Gallery
 @inject ILogger<IngestionWorkspace> Logger
 
@@ -89,10 +91,18 @@
     [Parameter, EditorRequired] public IngestionSession Session { get; set; } = default!;
     [Parameter] public bool Busy { get; set; }
     [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
-    [Parameter] public EventCallback Changed { get; set; }
-    [Parameter] public EventCallback Reload { get; set; }
+    [CascadingParameter] public WorkspaceNavigationState? Navigation { get; set; }
     [Parameter] public CancellationToken Lifetime { get; set; }
     private bool SessionEnded => Lifetime.IsCancellationRequested;
+    protected override void OnInitialized() => Navigation?.AddDraftSource(GetDraft);
+    public void Dispose() => Navigation?.RemoveDraftSource(GetDraft);
+
+    private UnsavedChangesSource GetDraft() => new("settings", () => Session.SettingsDirty,
+        () => Commands.Activity.Busy, async () =>
+        {
+            await Commands.RunAsync("Saving ingestion settings...", () => Session.SaveOptionsAsync(Gallery));
+            return !Session.SettingsDirty && Commands.Activity.Error.Length == 0;
+        }, () => { Session.ApplyProfile(Session.SavedOptions); return Task.CompletedTask; });
     private Task SaveOptionsAsync() => Commands.RunAsync("Saving ingestion settings...", async () =>
     {
         await Session.SaveOptionsAsync(Gallery);
@@ -158,14 +168,14 @@
         IngestionTimingReport? completedTimingReport = null;
         Session.Progress = new ImportProgress(Session.Space.FileCount, 0, 0, 0, "Checking scanned files and disk space...");
         Session.IsRunning = true;
-        await Changed.InvokeAsync();
+        Session.ReportProgress();
         var lastProgressRender = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             try
             {
                 await Gallery.ImportFolderAsync(sourcePath, scope, sourceRetention: deletingSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
-                    reportProgress: update => InvokeAsync(async () =>
+                    reportProgress: update => InvokeAsync(() =>
                     {
                         if (SessionEnded) return;
                         var render = update.Total != Session.Progress?.Total || update.Completed == update.Total
@@ -173,7 +183,7 @@
                         Session.Progress = update;
                         if (render)
                         {
-                            await Changed.InvokeAsync();
+                            Session.ReportProgress();
                             lastProgressRender.Restart();
                         }
                     }), reportTimings: recordTimings ? report => completedTimingReport = report : null,
@@ -183,13 +193,13 @@
             catch (ImportFolderException exception)
             {
                 Session.Failures = exception.Failures.InnerExceptions.Select(failure => failure.Message).ToList();
-                if (Gallery.IsUnlocked) await Reload.InvokeAsync();
+                if (Gallery.IsUnlocked) await Session.NotifyCompletedAsync();
                 throw;
             }
             if (SessionEnded) return;
             Session.Progress = Session.Progress with { Status = "Refreshing library..." };
-            await Changed.InvokeAsync();
-            if (Gallery.IsUnlocked) await Reload.InvokeAsync();
+            Session.ReportProgress();
+            if (Gallery.IsUnlocked) await Session.NotifyCompletedAsync();
             if (SessionEnded) return;
             Session.Progress = Session.Progress with { Status = Session.Progress.Total == 0 ? "No supported media found." : "Ingestion complete." };
             Commands.Activity.Message = $"Imported {Session.Progress.Imported} media item(s). {Session.Failures.Count} file(s) reported errors."

@@ -3,28 +3,47 @@ using Gallery.Core.Services;
 
 namespace Gallery.Web.Components.Workspace;
 
-public sealed class MediaCurationCommands(GalleryService gallery, Func<Task> reload)
+public sealed class MediaCurationCommands(GalleryService gallery, WorkspaceCatalog catalog, WorkspaceCommands commands)
 {
-    public Task<ImageRecord> RateAsync(ImageRecord image, int value) =>
-        gallery.UpdateAsync(image.Id, current => gallery.SetCuration(current, current.Rating == value ? 0 : value, null));
-    public Task<ImageRecord> FavoriteAsync(ImageRecord image) =>
-        gallery.UpdateAsync(image.Id, current => current with { IsFavorite = !current.IsFavorite });
-    public Task<ImageRecord> MarkAsync(ImageRecord image) =>
-        gallery.UpdateAsync(image.Id, current => gallery.SetDeletionMark(current, !current.IsMarkedForDeletion));
-    public Task<IReadOnlyList<ImageRecord>> MarkManyAsync(IReadOnlyCollection<string> ids, bool value) =>
-        UpdateManyAsync(ids, current => gallery.SetDeletionMark(current, value));
+    internal Task ToggleRatingAsync(ImageRecord image, int value) =>
+        RunSingleAsync("Saving rating...", image.Id,
+            current => gallery.SetCuration(current, current.Rating == value ? 0 : value, null));
 
-    public async Task<IReadOnlyList<ImageRecord>> UpdateManyAsync(
-        IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update)
-    {
-        if (ids.Count == 0) return [];
-        try { return await gallery.UpdateManyAsync(ids, update); }
-        catch (AggregateException)
+    internal Task ToggleFavoriteAsync(ImageRecord image) =>
+        RunSingleAsync("Saving favorite...", image.Id, current => current with { IsFavorite = !current.IsFavorite });
+
+    internal Task ToggleMarkAsync(ImageRecord image) =>
+        RunSingleAsync("Saving deletion mark...", image.Id,
+            current => gallery.SetDeletionMark(current, !current.IsMarkedForDeletion));
+
+    internal Task CurateAsync(IReadOnlyCollection<string> ids, Func<ImageRecordEdit, ImageRecordEdit> update, string message) =>
+        RunBulkAsync("Saving...", ids, update, message);
+
+    internal Task RestoreAsync(IReadOnlyCollection<string> ids) =>
+        RunBulkAsync("Updating deletion marks...", ids, current => gallery.SetDeletionMark(current, false), "Deletion marks cleared");
+
+    private Task RunSingleAsync(string status, string id, Func<ImageRecordEdit, ImageRecordEdit> update) =>
+        commands.RunAsync(status, async () =>
         {
-            // Some edits may already be committed. Recover the displayed snapshot
-            // without replaying the edit against those records.
-            await reload();
-            throw;
-        }
-    }
+            var committed = await gallery.UpdateAsync(id, update);
+            await catalog.UpdateAsync([committed], reloadThumbnails: true);
+        });
+
+    private Task RunBulkAsync(string status, IReadOnlyCollection<string> ids,
+        Func<ImageRecordEdit, ImageRecordEdit> update, string message) =>
+        commands.RunAsync(status, async () =>
+        {
+            if (ids.Count == 0) return;
+            IReadOnlyList<ImageRecord> committed;
+            try { committed = await gallery.UpdateManyAsync(ids, update); }
+            catch (AggregateException)
+            {
+                // Recover any committed changes without replaying their edits.
+                await catalog.ReloadAsync();
+                throw;
+            }
+            if (committed.Count == 0 || !catalog.CanRead) return;
+            await catalog.UpdateAsync(committed, reloadThumbnails: false);
+            if (catalog.CanRead) commands.Activity.Message = message;
+        });
 }

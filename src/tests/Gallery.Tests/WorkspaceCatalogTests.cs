@@ -55,7 +55,7 @@ public sealed class WorkspaceCatalogTests
             catalog.Dispose();
             vault.Service.LockVault();
             await publish();
-            catalog.Update(records[0]);
+            await catalog.UpdateAsync(records[0]);
             Assert.Empty(catalog.Images);
             Assert.Empty(catalog.ImagesById);
             Assert.Empty(catalog.AllTags);
@@ -64,6 +64,39 @@ public sealed class WorkspaceCatalogTests
         }
         finally { release.TrySetResult(); }
         await loading.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task ReloadWaitsForEveryCatalogSubscriber()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        using var catalog = new WorkspaceCatalog(vault.Service, NullLogger.Instance, action => action());
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publications = new List<string>();
+        catalog.Changed += async () =>
+        {
+            started.TrySetResult();
+            await release.Task;
+            publications.Add("first");
+        };
+        catalog.Changed += () =>
+        {
+            publications.Add("second");
+            return Task.CompletedTask;
+        };
+
+        var reload = catalog.ReloadAsync();
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(reload.IsCompleted);
+        }
+        finally { release.TrySetResult(); }
+        await reload.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(["first", "second"], publications);
     }
 
     private static async Task<IReadOnlyList<ImageRecord>> SeedAsync(TestVault vault)

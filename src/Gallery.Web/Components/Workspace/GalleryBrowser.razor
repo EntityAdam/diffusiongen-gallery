@@ -20,14 +20,14 @@
             @if (State.Filtered.Count > 0)
             {
                 <GroupedImageGrid Images="State.PageImages" Density="@State.Density" Grouping="@State.Grouping" Busy="Activity.Busy" Context="image"
-                                  PromptGroups="State.Browsing.PromptGroupsByImageId" ModelGroups="State.Browsing.DiffusionModelGroupsByImageId" ShowPrompt="ShowPromptAsync">
+                                  PromptGroups="State.Browsing.PromptGroupsByImageId" ModelGroups="State.Browsing.DiffusionModelGroupsByImageId" ShowPrompt="Navigation.ShowPromptAsync">
                     @{ var isSelected = (State.TrashActive ? State.RemovalSelection : State.LibrarySelection).Contains(image.Id); }
                     <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@State.Thumbnails.Get(image.Id)" ThumbnailFailed="@State.Thumbnails.Failed(image.Id)"
                                       Busy="Activity.Busy" Selected="isSelected" ShowSelection="true"
-                                      Select="args => State.SelectCard(image.Id, args.ShiftKey)" Open="() => Open.InvokeAsync(image)"
-                                      Rate="value => Rate.InvokeAsync((image, value))" Favorite="() => Favorite.InvokeAsync(image)"
-                                      Mark="() => Mark.InvokeAsync(image)"
-                                      HasSuggestion="@State.Suggestions.ContainsKey(image.Id)" ReviewSuggestion="() => Fullscreen.InvokeAsync(image.Id)" />
+                                      Select="args => State.SelectCard(image.Id, args.ShiftKey)" Open="() => Presentation.OpenAsync(image)"
+                                      Rate="value => Curation.ToggleRatingAsync(image, value)" Favorite="() => Curation.ToggleFavoriteAsync(image)"
+                                      Mark="() => Curation.ToggleMarkAsync(image)"
+                                      HasSuggestion="@State.Suggestions.ContainsKey(image.Id)" ReviewSuggestion="() => OpenViewerAsync(image.Id)" />
                 </GroupedImageGrid>
                 <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
                     <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(State.Page == 0 || Activity.Busy)" OnClick="PreviousAsync"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
@@ -44,13 +44,13 @@
                 CatalogLoading="Catalog.IsPartial" Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="State.ToolboxX" Y="State.ToolboxY" Badge="State.ToolBadge">
     @if (State.ActiveTool == "trash")
     {
-        <TrashTool Busy="Activity.Busy" SelectedCount="State.RemovalSelection.Count" Results="RemovalResults"
-                   ClearSelection="State.ClearSelection" Delete="Delete" Restore="Restore" />
+        <TrashTool Busy="Activity.Busy" SelectedCount="State.RemovalSelection.Count" Results="Removal.Results"
+                   ClearSelection="State.ClearSelection" Delete="DeleteAsync" Restore="RestoreAsync" />
     }
 </GalleryToolbox>
 
-<LibraryWorkbench KnownTags="Catalog.AllTags" @ref="workbench" Visible="@(!Catalog.IsPartial && State.ActiveTool is "organize" or "intelligence")" Workflow="@State.ActiveTool" Images="Catalog.Images" SelectedIds="State.LibrarySelection"
-                  Filter="State.Filter" Changed="Reload" ClearSelection="State.ClearSelection" JobChanged="JobChanged"
+<LibraryWorkbench KnownTags="Catalog.AllTags" Analysis="Analysis" Visible="@(!Catalog.IsPartial && State.ActiveTool is "organize" or "intelligence")" Workflow="@State.ActiveTool" Images="Catalog.Images" SelectedIds="State.LibrarySelection"
+                  Filter="State.Filter" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection"
                   SuggestionsChanged="SuggestionsChangedAsync" />
 
 @if (State.ActiveTool is "organize" or "intelligence")
@@ -97,7 +97,7 @@
                         <Label For="review-goal">Goal:</Label>
                         <input id="review-goal" type="number" min="@(State.ReviewPoolCount > 0 ? 1 : 0)" max="@State.ReviewPoolCount" step="1"
                                class="review-goal-input" disabled="@(Activity.Busy || State.ReviewPoolCount == 0)" @bind="State.ReviewGoal" />
-                        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(Activity.Busy || State.ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
+                        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(Activity.Busy || State.ReviewPoolCount == 0)" OnClick="StartReviewAsync">Start Review</Button>
                     </div>
                     <p class="text-muted-foreground text-sm">@State.ReviewPoolCount of the filtered media items await review.</p>
                 </div>
@@ -117,14 +117,14 @@
             <GalleryViewOptions Density="@State.Density" DensityChanged="SetDensityAsync" @bind-Grouping="State.Grouping"
                                 @bind-Grouping:after="FilterChangedAsync" Sort="@State.Filter.Sort" SortChanged="SetSort"
                                 Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" HasImages="State.PageImages.Any()"
-                                Fullscreen="() => Fullscreen.InvokeAsync(null)" ResetPosition="RequestToolboxResetAsync" />
+                                Fullscreen="() => OpenViewerAsync(null)" ResetPosition="ResetToolboxPositionAsync" />
         </div>
     </aside>
 }
 
 @if (State.ActiveTool == "filters" && Active && !OverlayOpen)
 {
-    <FilterDrawer @ref="filterDrawer" Filter="State.Filter" KnownTags="Catalog.AllTags" Images="Catalog.Images" ResultCount="State.Filtered.Count"
+    <FilterDrawer Filter="State.Filter" KnownTags="Catalog.AllTags" Images="Catalog.Images" ResultCount="State.Filtered.Count"
                   QuickFilters="State.QuickFilters" Saved="value => State.QuickFilters = value" Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial"
                   ResetVersion="State.FilterInputRevision" Close='() => SetActiveToolAsync("")' Reset="ResetFilters"
                   Changed="ApplyFilterPanelAsync" />

@@ -16,40 +16,48 @@ public sealed class WorkspaceWorkflowTests
         await vault.InitializeAsync();
         var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         await vault.Service.UpdateAsync(image.Id, edit => edit with { UserDescription = "current notes" });
+        var activity = new GalleryActivity();
+        using var catalog = new WorkspaceCatalog(vault.Service, NullLogger.Instance, action => action());
         var reloads = 0;
-        IReadOnlyList<ImageRecord> recovered = [];
-        var curation = new MediaCurationCommands(vault.Service, async () =>
-        {
-            reloads++;
-            recovered = await vault.Service.ListAsync();
-        });
+        catalog.Changed += () => { reloads++; return Task.CompletedTask; };
+        var curation = new MediaCurationCommands(vault.Service, catalog, CreateCommands(activity));
         var edits = 0;
-        var error = await Assert.ThrowsAsync<AggregateException>(() => curation.UpdateManyAsync([image.Id, "missing", image.Id], edit =>
+
+        await curation.CurateAsync([image.Id, "missing", image.Id], edit =>
         {
             edits++;
             return edit with { IsFavorite = !edit.IsFavorite };
-        }));
-        Assert.Single(error.InnerExceptions);
+        }, "Saved");
+
+        Assert.NotEmpty(activity.Error);
+        Assert.Empty(activity.Message);
         Assert.Equal(1, reloads);
         Assert.Equal(1, edits);
-        var committed = Assert.Single(recovered);
+        var committed = Assert.Single(catalog.Images);
         Assert.True(committed.IsFavorite);
         Assert.Equal("current notes", committed.UserDescription);
     }
 
     [Fact]
-    public async Task CurationTogglesUsePersistedValuesAndReturnTheCommittedRecord()
+    public async Task CurationTogglesUsePersistedValuesAndPublishTheCommittedRecord()
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var stale = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         await vault.Service.UpdateAsync(stale.Id, edit => edit with { Rating = 3, IsFavorite = true, IsMarkedForDeletion = true, UserDescription = "keep" });
-        var curation = new MediaCurationCommands(vault.Service, () => throw new InvalidOperationException("Unexpected reload"));
-        var rated = await curation.RateAsync(stale, 3);
+        var activity = new GalleryActivity();
+        using var catalog = new WorkspaceCatalog(vault.Service, NullLogger.Instance, action => action());
+        await catalog.ReloadAsync();
+        var curation = new MediaCurationCommands(vault.Service, catalog, CreateCommands(activity));
+
+        await curation.ToggleRatingAsync(stale, 3);
+        var rated = catalog.ImagesById[stale.Id];
         Assert.Equal(0, rated.Rating);
         Assert.True(rated.IsFavorite);
-        Assert.False((await curation.FavoriteAsync(stale)).IsFavorite);
-        var unmarked = await curation.MarkAsync(stale);
+        await curation.ToggleFavoriteAsync(stale);
+        Assert.False(catalog.ImagesById[stale.Id].IsFavorite);
+        await curation.ToggleMarkAsync(stale);
+        var unmarked = catalog.ImagesById[stale.Id];
         Assert.False(unmarked.IsMarkedForDeletion);
         Assert.Equal("keep", unmarked.UserDescription);
         Assert.Equal(unmarked, Assert.Single(await vault.Service.ListAsync()));
@@ -154,9 +162,64 @@ public sealed class WorkspaceWorkflowTests
         Assert.Empty(html.Trim());
     }
 
-    private WorkspaceCommands CreateCommands(GalleryActivity activity, Action? ensureNoJob = null) => new(activity,
-        EventCallback.Factory.Create<(string Status, Func<Task> Action)>(this,
-            operation => activity.RunAsync(operation.Status, operation.Action, NullLogger.Instance)), ensureNoJob ?? (() => { }));
+    [Fact]
+    public async Task ImportCompletionRefreshesTheSessionThatIsCurrentlyOpen()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var activity = new GalleryActivity();
+        var history = new OrganizationHistory(vault.Service);
+        using var retired = new WorkspaceSession(vault.Service, activity, history, null!,
+            NullLogger.Instance, action => action(), () => { });
+        retired.Dispose();
+        using var current = new WorkspaceSession(vault.Service, activity, history, null!,
+            NullLogger.Instance, action => action(), () => { });
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+
+        await activity.Ingestion.NotifyCompletedAsync();
+        await current.Browser.PauseAsync();
+        await vault.Service.WaitForDriveOperationsAsync();
+
+        Assert.Empty(retired.Catalog.Images);
+        Assert.Equal(image.Id, Assert.Single(current.Catalog.Images).Id);
+    }
+
+    [Fact]
+    public async Task DisposingTheSessionDuringRefreshRevokesTheCatalogAndStopsFurtherNotifications()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        using var session = new WorkspaceSession(vault.Service, new(), new(vault.Service), null!,
+            NullLogger.Instance, action => action(), () => { });
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var notifiedAfterDisposal = false;
+        session.Catalog.Changed += async () =>
+        {
+            started.TrySetResult();
+            await release.Task;
+        };
+        session.Catalog.Changed += () =>
+        {
+            notifiedAfterDisposal = true;
+            return Task.CompletedTask;
+        };
+
+        var reload = session.Catalog.ReloadAsync();
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            session.Dispose();
+        }
+        finally { release.TrySetResult(); }
+        await reload.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(session.Catalog.CanRead);
+        Assert.False(notifiedAfterDisposal);
+    }
+
+    private static WorkspaceCommands CreateCommands(GalleryActivity activity, Action? ensureNoJob = null) => new(activity,
+        (status, action) => activity.RunAsync(status, action, NullLogger.Instance), ensureNoJob ?? (() => { }));
 
     private sealed class DelayedMediaJs : IJSRuntime
     {

@@ -5,6 +5,16 @@ namespace Gallery.Web.Components;
 
 public sealed class IngestionSession
 {
+    internal event Action? ProgressChanged;
+    internal event Func<Task>? Completed;
+
+    internal void ReportProgress() => ProgressChanged?.Invoke();
+    internal async Task NotifyCompletedAsync()
+    {
+        if (Completed is not { } handlers) return;
+        foreach (Func<Task> handler in handlers.GetInvocationList()) await handler();
+    }
+
     public string SourcePath { get; set; } = "";
     public bool Recursive { get; private set; } = true;
     public bool DeleteSources { get; set; }
