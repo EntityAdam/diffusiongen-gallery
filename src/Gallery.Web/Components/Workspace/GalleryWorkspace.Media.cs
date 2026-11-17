@@ -1,36 +1,30 @@
 using Gallery.Core.Models;
-using Gallery.Core.Services;
 using Microsoft.JSInterop;
 
 namespace Gallery.Web.Components.Workspace;
 
 public partial class GalleryWorkspace
 {
-    private ThumbnailCache? thumbnailCache;
-    private ThumbnailCache Thumbnails => thumbnailCache ??= new(Gallery, Logger, RefreshWorkspace);
-    private Task LoadThumbnailsAsync() => Thumbnails.ReloadAsync(PageImages);
-    private Task LoadMissingThumbnailsAsync() => Thumbnails.LoadMissingAsync(PageImages);
-
     private Task RateImageAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
         ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current =>
             Gallery.SetCuration(current, current.Rating == value ? 0 : value, null)));
-        await LoadThumbnailsAsync();
+        await Browser.LoadThumbnailsAsync();
     });
 
     private Task FavoriteAsync(ImageRecord image) => RunAsync("Saving favorite...", async () =>
     {
         ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current => current with { IsFavorite = !current.IsFavorite }));
-        await LoadThumbnailsAsync();
+        await Browser.LoadThumbnailsAsync();
     });
 
     private Task MarkAsync(ImageRecord image) => RunAsync("Saving deletion mark...", async () =>
     {
         ViewerImageChanged(await Gallery.UpdateAsync(image.Id, current => Gallery.SetDeletionMark(current, !current.IsMarkedForDeletion)));
-        await LoadThumbnailsAsync();
+        await Browser.LoadThumbnailsAsync();
     });
 
-    private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(removalSelection.ToArray());
+    private Task PrepareBulkRemovalAsync() => PrepareRemovalAsync(Browser.RemovalSelection.ToArray());
     private Task PrepareRemovalAsync(IEnumerable<string> ids) => RunAsync("Checking originals...", async () =>
     {
         EnsureNoLibraryJob();
@@ -95,17 +89,17 @@ public partial class GalleryWorkspace
 
     private async Task ShowPromptAsync(string prompt)
     {
-        if (catalogPartial) return;
+        if (Catalog.IsPartial) return;
         CloseDetail();
-        if (!ShowsGallery) await SwitchWorkflowAsync("gallery");
-        filter = filter with { Prompt = prompt };
+        if (workflow != "gallery") await SwitchWorkflowAsync("gallery");
+        Browser.Filter = Browser.Filter with { Prompt = prompt };
         await FilterChangedAsync();
     }
 
     private void OpenViewer(string? initialId = null)
     {
         reviewMode = false;
-        viewerImages = (detailViewerImages ?? PageImages).Select(image => image with { }).ToList();
+        viewerImages = (detailViewerImages ?? Browser.PageImages).Select(image => image with { }).ToList();
         if (initialId is not null && !viewerImages.Any(image => image.Id == initialId) && selected is not null)
             viewerImages.Add(selected with { });
         viewerInitialId = initialId ?? viewerImages.FirstOrDefault()?.Id ?? "";
@@ -115,9 +109,9 @@ public partial class GalleryWorkspace
 
     private void StartReview()
     {
-        var pool = ReviewPool.ToArray();
-        if (reviewRandomOrder) Random.Shared.Shuffle(pool);
-        viewerImages = pool.Take(ReviewGoal).Select(image => image with { }).ToList();
+        var pool = Browser.ReviewPool.ToArray();
+        if (Browser.ReviewRandomOrder) Random.Shared.Shuffle(pool);
+        viewerImages = pool.Take(Browser.ReviewGoal).Select(image => image with { }).ToList();
         viewerInitialId = viewerImages.FirstOrDefault()?.Id ?? "";
         viewerInitialPreview = "";
         reviewMode = true;
@@ -135,12 +129,11 @@ public partial class GalleryWorkspace
     private Task AnalyzeAsync() => RunAsync("Analyzing with your local vision model...", async () =>
     {
         EnsureNoLibraryJob();
-        if (selected is null || workbench is null) return;
-        await workbench.AnalyzeDetailAsync(selected);
+        if (selected is null || galleryBrowser is null) return;
+        await galleryBrowser.AnalyzeDetailAsync(selected);
         if (Gallery.IsUnlocked) Activity.Message = "Review available suggestions in the AI analysis drawer. Unfinished analysis can be resumed there.";
     });
 
-    private readonly HashSet<string> removalSelection = [];
     private List<RemovalItem> removalPlan = [];
     private List<RemovalResult> removalResults = [];
 

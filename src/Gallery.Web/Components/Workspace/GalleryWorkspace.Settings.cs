@@ -1,19 +1,15 @@
-using Gallery.Core.Models;
-using Gallery.Core.Services;
-
 namespace Gallery.Web.Components.Workspace;
 
 public partial class GalleryWorkspace
 {
-    private LlmEndpointSettings? llmEndpointSettings;
+    private SettingsWorkspace? settingsWorkspace;
     private Func<Task>? pendingSettingsAction;
     private bool SettingsDirty => workflow == "ingest" && ingestion.SettingsDirty
-        || workflow == "settings" && (settingsTab == "endpoints" && llmEndpointSettings?.HasUnsavedChanges == true
-            || settingsTab == "backups" && backup.HasChanges);
+        || workflow == "settings" && settingsWorkspace?.HasUnsavedChanges == true;
 
     private Task RequestSettingsActionAsync(Func<Task> action)
     {
-        if (Activity.Busy || llmEndpointSettings?.IsBusy == true) return Task.CompletedTask;
+        if (Activity.Busy || settingsWorkspace?.IsBusy == true) return Task.CompletedTask;
         if (!SettingsDirty) return action();
         Activity.Error = "";
         pendingSettingsAction = action;
@@ -22,32 +18,23 @@ public partial class GalleryWorkspace
 
     private void KeepEditingSettings()
     {
-        if (!Activity.Busy && llmEndpointSettings?.IsBusy != true) pendingSettingsAction = null;
+        if (!Activity.Busy && settingsWorkspace?.IsBusy != true) pendingSettingsAction = null;
     }
 
     private async Task DiscardSettingsAndContinueAsync()
     {
-        if (Activity.Busy || llmEndpointSettings?.IsBusy == true || pendingSettingsAction is not { } action) return;
+        if (Activity.Busy || settingsWorkspace?.IsBusy == true || pendingSettingsAction is not { } action) return;
         if (workflow == "ingest") ingestion.ApplyProfile(ingestion.SavedOptions);
-        else if (settingsTab == "endpoints") llmEndpointSettings?.DiscardDraft();
-        else if (settingsTab == "backups") backup.Discard();
+        else settingsWorkspace?.Discard();
         pendingSettingsAction = null;
         await action();
     }
 
     private async Task SaveSettingsAndContinueAsync()
     {
-        if (Activity.Busy || llmEndpointSettings?.IsBusy == true || pendingSettingsAction is not { } action) return;
+        if (Activity.Busy || settingsWorkspace?.IsBusy == true || pendingSettingsAction is not { } action) return;
         if (workflow == "ingest") await RunAsync("Saving ingestion settings...", () => ingestion.SaveOptionsAsync(Gallery));
-        else if (settingsTab == "backups") await RunAsync("Saving backup destination...", () => backup.SaveAsync(Gallery));
-        else if (settingsTab == "endpoints" && llmEndpointSettings is not null)
-        {
-            if (!await llmEndpointSettings.SaveDraftAsync())
-            {
-                Activity.Error = llmEndpointSettings.ErrorMessage;
-                return;
-            }
-        }
+        else if (settingsWorkspace is not null && !await settingsWorkspace.SaveAsync()) return;
         if (pendingSettingsAction != action || SettingsDirty || Activity.Error.Length > 0) return;
         pendingSettingsAction = null;
         if (Activity.Message.Length > 0)
@@ -58,8 +45,6 @@ public partial class GalleryWorkspace
         await action();
     }
 
-    private BackupDraft backup = new();
     private string settingsTab = "overview";
-    private StorageOverview? storageOverview;
 
 }

@@ -22,14 +22,14 @@
 }
 
 <CascadingValue Value="commands" IsFixed="true">
-    <GalleryWorkspaceLayout @ref="layout" Workflow="@workflow" ActiveTool="@activeTool" ItemDisabled="SidebarItemDisabled"
+    <GalleryWorkspaceLayout @ref="layout" Workflow="@workflow" ActiveTool="@Browser.ActiveTool" ItemDisabled="SidebarItemDisabled"
                             Navigate="NavigateSidebarAsync" Location="collectionLocation" LocationChanged="NavigateCollectionsAsync"
-                            Catalog="collectionCatalog" Images="images" CatalogPartial="catalogPartial" Busy="WorkspaceBusy" JobRunning="libraryJob.IsRunning"
+                            Catalog="Catalog.Collections" Images="Catalog.Images" CatalogPartial="Catalog.IsPartial" Busy="WorkspaceBusy" JobRunning="libraryJob.IsRunning"
                             Settings='() => SwitchWorkflowAsync("settings")' Panic="PanicAsync">
         @if (OrganizationHistory.Current is not null)
         {
             <div class="mb-4 flex flex-wrap items-center gap-2" aria-label="Organization actions">
-                <Button Variant="ButtonVariant.Outline" Disabled="@(WorkspaceBusy || libraryJob.IsRunning || catalogPartial)" OnClick="UndoOrganizationAsync">Undo organization change</Button>
+                <Button Variant="ButtonVariant.Outline" Disabled="@(WorkspaceBusy || libraryJob.IsRunning || Catalog.IsPartial)" OnClick="UndoOrganizationAsync">Undo organization change</Button>
             </div>
         }
         @if (workflow is not ("gallery" or "collections" or "unorganized"))
@@ -44,202 +44,50 @@
             <IngestionWorkspace Session="ingestion" Busy="Activity.Busy"
                                 Changed="ImportChanged" Reload="ImportCompleted" Lifetime="Lifetime" />
         }
-        @if (workflow == "settings")
-        {
-            <Tabs Value="@settingsTab" ValueChanged="SwitchSettingsTabAsync" Class="mb-4">
-                <TabsList Class="h-auto max-w-full flex-wrap justify-start gap-1" aria-label="Settings sections">
-                    @foreach (var tab in SettingsTabs)
-                    {
-                        <TabsTrigger Value="@tab.Id" disabled="@Activity.Busy">@tab.Name</TabsTrigger>
-                    }
-                </TabsList>
-            </Tabs>
-        }
-        @if (workflow == "settings" && settingsTab == "overview")
-        {
-            <GalleryStorageOverview @bind-Overview="storageOverview" Busy="Activity.Busy" CatalogPartial="catalogPartial"
-                                   HasScan="@(duplicates.Scan is not null)" Groups="duplicates.Groups"
-                                   FindDuplicates='() => SwitchWorkflowAsync("duplicates")' />
-        }
-        @if (workflow == "settings" && settingsTab == "gallery")
-        {
-            <GalleryManagement Busy="Activity.Busy" JobRunning="libraryJob.IsRunning" Locked="Locked" Purged="Purged" />
-        }
+        <SettingsWorkspace @ref="settingsWorkspace" Active='@(workflow == "settings")' Tab="@settingsTab"
+                           TabChanged="SwitchSettingsTabAsync" Activity="Activity" Catalog="Catalog" Duplicates="duplicates"
+                           JobRunning="libraryJob.IsRunning" Locked="Locked" Purged="Purged" Panic="Panic"
+                           FindDuplicates='() => SwitchWorkflowAsync("duplicates")' Reload="ReloadAsync"
+                           AutoLockMinutes="autoLockMinutes" UpdateTimer="UpdateAutoLockMinutesAsync" />
         @if (workflow == "duplicates")
         {
-            <DuplicateFinder @ref="duplicateFinder" Catalog="duplicates" Lookup="ImageById" Busy="Activity.Busy" Reload="ReloadAsync"
-                             OpenTrash="OpenTrashAsync" />
-        }
-        @if (workflow == "settings" && settingsTab == "endpoints")
-        {
-            <LlmEndpointSettings @ref="llmEndpointSettings" KnownTags="AllTags" SavedSettings="settings" Saved="value => settings = value" />
+            <DuplicateFinder @ref="duplicateFinder" Catalog="duplicates" Lookup="ImageById" Busy="Activity.Busy" Reload="ReloadAsync" OpenTrash="OpenTrashAsync" />
         }
         @if (workflow == "tags")
         {
-            <TagManagement Changed="TagsManagedAsync" View="ViewTagAsync" ViewDisabled="@(WorkspaceBusy || catalogPartial)" />
-        }
-        @if (workflow == "settings" && settingsTab == "tags")
-        {
-            <TagCsvSettings Changed="ReloadAsync" />
-        }
-        @if (workflow == "settings" && settingsTab == "backups")
-        {
-            <BackupWorkspace Draft="backup" Busy="Activity.Busy" />
-        }
-        @if (workflow == "settings" && settingsTab == "security")
-        {
-            <SecuritySettings AutoLockMinutes="autoLockMinutes" Busy="Activity.Busy" UpdateTimer="UpdateAutoLockMinutesAsync"
-                              Panic="PanicAsync" />
+            <TagManagement Changed="TagsManagedAsync" View="ViewTagAsync" ViewDisabled="@(WorkspaceBusy || Catalog.IsPartial)" />
         }
 
         @if (workflow is "collections" or "unorganized")
         {
-            @if (catalogPartial) { <div class="collection-empty" role="status"><p>Loading the full collection library…</p>@if (catalogLoadError.Length > 0) { <p role="alert">@catalogLoadError</p><Button OnClick="RetryCatalogLoadAsync">Retry</Button> }</div> }
+            @if (Catalog.IsPartial) { <div class="collection-empty" role="status"><p>Loading the full collection library…</p>@if (Catalog.LoadError.Length > 0) { <p role="alert">@Catalog.LoadError</p><Button OnClick="RetryCatalogLoadAsync">Retry</Button> }</div> }
             else {
-                <CollectionsWorkspace Disabled="@Activity.Busy" @ref="collectionsWorkspace" Catalog="collectionCatalog" Images="images" KnownTags="AllTags" Location="collectionLocation" LocationChanged="CollectionLocationChangedAsync" Reload="ReloadCollectionsAsync" ImageChanged="ViewerImageChanged" BusyChanged="value => collectionWorking = value" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
+                <CollectionsWorkspace Disabled="@Activity.Busy" @ref="collectionsWorkspace" Catalog="Catalog.Collections" Images="Catalog.Images" KnownTags="Catalog.AllTags" Location="collectionLocation" LocationChanged="CollectionLocationChangedAsync" Reload="ReloadCollectionsAsync" ImageChanged="ViewerImageChanged" BusyChanged="value => collectionWorking = value" Open="OpenCollectionDetailsAsync" BackToGallery='() => SwitchWorkflowAsync("gallery")' /> }
         }
-        @if (workflow == "gallery")
-        {
-        <div class="gallery-layout grid min-w-0 grid-cols-1" data-has-selection="@((librarySelection.Count > 0 || removalSelection.Count > 0) ? "true" : "false")">
-            <section aria-label="@(TrashActive ? "Trash" : "Gallery")">
-                @if (catalogPartial)
-                {
-                    <div class="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground" role="status" data-testid="catalog-loading">
-                        @if (catalogLoading) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
-                        <span>Showing the initial page. Full-library search, filters and counts are @(catalogLoading ? "loading in the background" : "not ready yet").</span>
-                        @if (catalogLoadError.Length > 0)
-                        {
-                            <span>@catalogLoadError</span>
-                            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" OnClick="RetryCatalogLoadAsync">Retry loading library</Button>
-                        }
-                    </div>
-                }
-                @if (Filtered.Count > 0)
-                {
-                    <GroupedImageGrid Images="PageImages" Density="@density" Grouping="@grouping" Busy="Activity.Busy" Context="image"
-                                      PromptGroups="promptGroupOf" ModelGroups="diffusionModelGroupOf" ShowPrompt="ShowPromptAsync">
-                        @{ var isSelected = (TrashActive ? removalSelection : librarySelection).Contains(image.Id); }
-                        <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@Thumbnails.Get(image.Id)" ThumbnailFailed="@Thumbnails.Failed(image.Id)"
-                                          Busy="Activity.Busy" Selected="isSelected" ShowSelection="true"
-                                          Select="args => SelectCard(image.Id, args.ShiftKey)" Open="() => OpenAsync(image)"
-                                          Rate="value => RateImageAsync(image, value)" Favorite="() => FavoriteAsync(image)"
-                                          Mark="() => MarkAsync(image)"
-                                          HasSuggestion="@aiSuggestions.ContainsKey(image.Id)" ReviewSuggestion="() => OpenViewer(image.Id)" />
-                    </GroupedImageGrid>
-                    <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(page == 0 || Activity.Busy)" OnClick="PreviousAsync"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
-                        <span>@if (catalogPartial) { <text>Initial page · library loading</text> } else { <text>Page @(page + 1) of @PageCount</text> }</span>
-                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(catalogPartial || page + 1 >= PageCount || Activity.Busy)" OnClick="NextAsync">Next <ArrowRightIcon aria-hidden="true" /></Button>
-                    </div>
-                }
-            </section>
-        </div>
-        }
+        <Microsoft.AspNetCore.Components.Sections.SectionOutlet SectionName="gallery-browser" />
     </GalleryWorkspaceLayout>
 
-    <GalleryToolbox @ref="toolbox" Visible="@(toolboxVisible && workflow == "gallery" && selected is null && removalPlan.Count == 0)" ActiveTool="@activeTool" ActiveToolChanged="SetActiveToolAsync"
-                    CatalogLoading="catalogPartial" Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="toolboxX" Y="toolboxY" Badge="ToolBadge">
-        @if (activeTool == "trash")
-        {
-            <TrashTool Busy="Activity.Busy" SelectedCount="removalSelection.Count" Results="removalResults"
-                       ClearSelection="ClearSelection" Delete="PrepareBulkRemovalAsync" Restore="() => MarkRemovalSelectionAsync(false)" />
-        }
-    </GalleryToolbox>
-
-    <LibraryWorkbench KnownTags="AllTags" @ref="workbench" Visible="@(!catalogPartial && activeTool is "organize" or "intelligence")" Workflow="@activeTool" Images="images" SelectedIds="librarySelection"
-                      Filter="filter" Changed="ReloadAsync" ClearSelection="ClearSelection" JobChanged="LibraryJobChanged"
-                      SuggestionsChanged="SuggestionsChanged" />
-
-    @if (activeTool is "organize" or "intelligence")
-    {
-        var drawerTitle = activeTool == "organize" ? "Organize" : "AI analysis";
-        <aside class="gallery-filter-drawer @(activeTool == "organize" ? "gallery-organize-drawer" : "gallery-analysis-drawer")" aria-labelledby="gallery-workbench-drawer-title"
-               hidden="@(workflow != "gallery" || selected is not null || removalPlan.Count > 0)">
-            <div class="gallery-filter-drawer-header">
-                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="@($"Close {drawerTitle}")"><XIcon aria-hidden="true" /></Button>
-                <h2 id="gallery-workbench-drawer-title">@drawerTitle</h2>
-            </div>
-            <div class="gallery-analysis-drawer-body">
-                @if (catalogPartial)
-                {
-                    <p class="text-muted-foreground" role="status">@drawerTitle will be available when the full library finishes loading.</p>
-                }
-                <Microsoft.AspNetCore.Components.Sections.SectionOutlet SectionName="gallery-workbench" />
-            </div>
-        </aside>
-    }
-
-    @if (activeTool == "review" && workflow == "gallery" && selected is null && removalPlan.Count == 0)
-    {
-        <aside class="gallery-filter-drawer gallery-review-drawer" aria-labelledby="gallery-review-drawer-title">
-            <div class="gallery-filter-drawer-header">
-                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="Close guided review"><XIcon aria-hidden="true" /></Button>
-                <h2 id="gallery-review-drawer-title">Guided review</h2>
-            </div>
-            <div class="gallery-review-drawer-body">
-                @if (catalogPartial)
-                {
-                    <p class="text-muted-foreground" role="status">Guided review will be available when the full library finishes loading.</p>
-                }
-                else
-                {
-                    <div class="review-intro space-y-4">
-                        <p class="text-muted-foreground text-sm">Review media one item at a time. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
-                        <div class="flex items-center gap-3">
-                            <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(reviewRandomOrder ? "true" : "false")"
-                                    aria-labelledby="review-random-order-label" disabled="@Activity.Busy" @onclick="() => reviewRandomOrder = !reviewRandomOrder"><span></span></button>
-                            <Label id="review-random-order-label" For="review-random-order">Random order</Label>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-3">
-                            <Label For="review-goal">Goal:</Label>
-                            <input id="review-goal" type="number" min="@(ReviewPoolCount > 0 ? 1 : 0)" max="@ReviewPoolCount" step="1"
-                                   class="review-goal-input" disabled="@(Activity.Busy || ReviewPoolCount == 0)" @bind="ReviewGoal" />
-                            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(Activity.Busy || ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
-                        </div>
-                        <p class="text-muted-foreground text-sm">@ReviewPoolCount of the filtered media items await review.</p>
-                    </div>
-                }
-            </div>
-        </aside>
-    }
-
-    @if (activeTool == "views" && workflow == "gallery" && selected is null && removalPlan.Count == 0)
-    {
-        <aside class="gallery-filter-drawer gallery-view-drawer" aria-labelledby="gallery-view-drawer-title">
-            <div class="gallery-filter-drawer-header">
-                <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="Close change view"><XIcon aria-hidden="true" /></Button>
-                <h2 id="gallery-view-drawer-title">Change view</h2>
-            </div>
-            <div class="gallery-view-drawer-body">
-                <GalleryViewOptions Density="@density" DensityChanged="SetDensityAsync" @bind-Grouping="grouping"
-                                    @bind-Grouping:after="FilterChangedAsync" Sort="@filter.Sort" SortChanged="SetSort"
-                                    Busy="Activity.Busy" CatalogPartial="catalogPartial" HasImages="PageImages.Any()"
-                                    Fullscreen="() => OpenViewer()" ResetPosition="ResetToolboxPositionAsync" />
-            </div>
-        </aside>
-    }
-
-    @if (activeTool == "filters" && workflow == "gallery" && selected is null && removalPlan.Count == 0)
-    {
-        <FilterDrawer @ref="filterDrawer" Filter="filter" KnownTags="AllTags" Images="images" ResultCount="Filtered.Count"
-                      QuickFilters="quickFilters" Saved="value => quickFilters = value" Busy="Activity.Busy" CatalogPartial="catalogPartial"
-                      ResetVersion="filterInputRevision" Close='() => SetActiveToolAsync("")' Reset="ResetFilters"
-                      Changed="ApplyFilterPanelAsync" />
-    }
+    <GalleryBrowser @ref="galleryBrowser" State="Browser" Catalog="Catalog" Activity="Activity"
+                    Active='@(workflow == "gallery")' OverlayOpen="@(selected is not null || removalPlan.Count > 0)"
+                    Open="OpenAsync" Rate="RateFromBrowserAsync" Favorite="FavoriteAsync" Mark="MarkAsync" Curate="CurateFromBrowserAsync"
+                    ShowPrompt="ShowPromptAsync" Fullscreen="OpenViewer" StartReview="StartReview"
+                    SetActiveTool="SetActiveToolAsync" ToggleToolbox="ToggleToolboxAsync" ResetToolboxPosition="ResetToolboxPositionAsync"
+                    Reload="ReloadAsync" JobChanged="LibraryJobChanged" Refreshed="RefreshWorkspace" PreferencesChanged="SaveToolboxStateAsync"
+                    Delete="PrepareBulkRemovalAsync" Restore="() => MarkRemovalSelectionAsync(false)" RemovalResults="removalResults" />
 
     @if (selected is not null)
     {
         <MediaDetailDialog @key="selected.Id" @ref="detailDialog" Image="selected" Preview="@preview" VideoUrl="@videoUrl"
-                           Busy="Activity.Busy" CatalogPartial="catalogPartial" Progress="@Activity.Progress" Error="@Activity.Error"
+                           Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" Progress="@Activity.Progress" Error="@Activity.Error"
                            Close="CloseDetail" Fullscreen="() => OpenViewer(selected.Id)" Rate="value => RateImageAsync(selected, value)"
                            Favorite="() => FavoriteAsync(selected)" Mark="() => MarkAsync(selected)" Analyze="AnalyzeAsync"
                            ShowPrompt="() => ShowPromptAsync(selected.Prompt)" Remove="() => PrepareRemovalAsync([selected.Id])"
-                           Suggestion="@aiSuggestions.GetValueOrDefault(selected.Id)" Approve="ApproveSuggestionAsync" Dismiss="DismissSuggestionAsync"
+                           Suggestion="@Browser.Suggestions.GetValueOrDefault(selected.Id)" Approve="ApproveSuggestionAsync" Dismiss="DismissSuggestionAsync"
                            Changed="ViewerImageChanged" DraftChanged="RefreshWorkspace" />
     }
     @if (pendingSettingsAction is not null)
     {
-        <UnsavedChangesDialog Subject="settings" Busy="@(Activity.Busy || llmEndpointSettings?.IsBusy == true)" Error="@Activity.Error"
+        <UnsavedChangesDialog Subject="settings" Busy="@(Activity.Busy || settingsWorkspace?.IsBusy == true)" Error="@Activity.Error"
                      Keep="KeepEditingSettings" Discard="DiscardSettingsAndContinueAsync" Save="SaveSettingsAndContinueAsync" />
     }
     @if (removalPlan.Count > 0)
@@ -250,7 +98,7 @@
 
     @if (Gallery.IsUnlocked && viewerImages.Count > 0)
     {
-        <FullscreenViewer KnownTags="AllTags" Images="viewerImages" InitialId="@viewerInitialId" InitialPreview="@viewerInitialPreview" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
-                          Suggestions="aiSuggestions" ApproveSuggestion="ApproveSuggestionAsync" DismissSuggestion="DismissSuggestionAsync" />
+        <FullscreenViewer KnownTags="Catalog.AllTags" Images="viewerImages" InitialId="@viewerInitialId" InitialPreview="@viewerInitialPreview" ReviewMode="reviewMode" OnClose="CloseViewerAsync" OnImageChanged="ViewerImageChanged"
+                          Suggestions="Browser.Suggestions" ApproveSuggestion="ApproveSuggestionAsync" DismissSuggestion="DismissSuggestionAsync" />
     }
 </CascadingValue>

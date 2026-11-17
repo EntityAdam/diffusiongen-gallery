@@ -14,9 +14,9 @@ namespace Gallery.Tests;
 public sealed class UiSaveBehaviorTests
 {
     private const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-    private static void Set(object target, string field, object value) => target.GetType().GetField(field, Flags)!.SetValue(target, value);
-    private static T Get<T>(object target, string field) => (T)target.GetType().GetField(field, Flags)!.GetValue(target)!;
-    private static object? Call(object target, string method, params object[] args) => target.GetType().GetMethod(method, Flags)!.Invoke(target, args);
+    private static void Set(object target, string field, object value) => ComponentTestAccess.Set(target, field, value);
+    private static T Get<T>(object target, string field) => ComponentTestAccess.Get<T>(target, field);
+    private static object? Call(object target, string method, params object[] args) => ComponentTestAccess.Call(target, method, args);
     private static Task Invoke(object target, string method, params object[] args) => (Task)Call(target, method, args)!;
 
     [Fact]
@@ -145,12 +145,12 @@ public sealed class UiSaveBehaviorTests
             await Invoke(home, "AnalyzeAsync");
         });
         Assert.Empty(home.Activity.Error);
-        Assert.NotNull(Get<LibraryWorkbench?>(home, "workbench"));
+        Assert.NotNull(Get<LibraryWorkbench?>(home, "galleryBrowser.workbench"));
         var unchanged = Assert.Single(await vault.Service.ListAsync());
         Assert.Equal("old analysis", unchanged.Description);
         Assert.Equal("existing", unchanged.Tags);
         Assert.Equal("my notes", unchanged.UserDescription);
-        Assert.Single(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "aiSuggestions"));
+        Assert.Single(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "Browser.Suggestions"));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => Invoke(detail, "ApproveDetailSuggestionAsync"));
         Assert.Equal("old analysis", Assert.Single(await vault.Service.ListAsync()).Description);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
@@ -163,7 +163,7 @@ public sealed class UiSaveBehaviorTests
         Assert.Equal("existing, suggested", approved.Tags);
         Assert.Equal("my notes", approved.UserDescription);
         Assert.Equal("vision", approved.AnalysisModel);
-        Assert.Empty(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "aiSuggestions"));
+        Assert.Empty(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "Browser.Suggestions"));
         Assert.Equal("new analysis", Get<string>(detail, "editDescription"));
     }
 
@@ -212,12 +212,12 @@ public sealed class UiSaveBehaviorTests
             Assert.Equal(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
             Assert.False(home.Activity.Ingestion.SettingsDirty);
             await Invoke(home, "SwitchSettingsTabAsync", "backups");
-            Get<BackupDraft>(home, "backup").LocalDirectory = vault.Root + "-backups";
-            Assert.True(Get<BackupDraft>(home, "backup").HasChanges);
-            Assert.False(Get<BackupDraft>(home, "backup").Ready);
-            await Get<BackupDraft>(home, "backup").SaveAsync(vault.Service);
-            Assert.False(Get<BackupDraft>(home, "backup").HasChanges);
-            Assert.True(Get<BackupDraft>(home, "backup").Ready);
+            Get<BackupDraft>(home, "settingsWorkspace.backup").LocalDirectory = vault.Root + "-backups";
+            Assert.True(Get<BackupDraft>(home, "settingsWorkspace.backup").HasChanges);
+            Assert.False(Get<BackupDraft>(home, "settingsWorkspace.backup").Ready);
+            await Get<BackupDraft>(home, "settingsWorkspace.backup").SaveAsync(vault.Service);
+            Assert.False(Get<BackupDraft>(home, "settingsWorkspace.backup").HasChanges);
+            Assert.True(Get<BackupDraft>(home, "settingsWorkspace.backup").Ready);
         });
     }
 
@@ -240,7 +240,7 @@ public sealed class UiSaveBehaviorTests
             await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
             Call(home, "StateHasChanged");
         });
-        var component = Get<LlmEndpointSettings>(home, "llmEndpointSettings");
+        var component = Get<LlmEndpointSettings>(home, "settingsWorkspace.llmEndpointSettings");
         var draft = Get<object>(component, "draft");
         draft.GetType().GetProperty("Model")!.SetValue(draft, "edited");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
@@ -272,7 +272,7 @@ public sealed class UiSaveBehaviorTests
             await Invoke(home, "SwitchSettingsTabAsync", "endpoints");
             Call(home, "StateHasChanged");
         });
-        var component = Get<LlmEndpointSettings>(home, "llmEndpointSettings");
+        var component = Get<LlmEndpointSettings>(home, "settingsWorkspace.llmEndpointSettings");
         var draft = Get<object>(component, "draft");
         draft.GetType().GetProperty("Endpoint")!.SetValue(draft, "invalid-url");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
@@ -313,7 +313,7 @@ public sealed class UiSaveBehaviorTests
             {
                 await Invoke(home, "SwitchWorkflowAsync", "settings");
                 await Invoke(home, "SwitchSettingsTabAsync", "backups");
-                Get<BackupDraft>(home, "backup").LocalDirectory = vault.Root + "-backups";
+                Get<BackupDraft>(home, "settingsWorkspace.backup").LocalDirectory = vault.Root + "-backups";
             }
             await Invoke(home, "SwitchWorkflowAsync", "gallery");
             Assert.NotNull(Get<Func<Task>?>(home, "pendingSettingsAction"));
