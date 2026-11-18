@@ -6,13 +6,10 @@ namespace Gallery.Core.Services;
 
 public sealed partial class GalleryService
 {
-    private const string StorageOverviewId = "storage-overview";
-    private const string StorageOverviewPurpose = "storage-overview:v1";
-
     public async Task<StorageOverview?> CachedStorageOverviewAsync()
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var overview = await galleryStore.ReadSettingsAsync<StorageOverview>(StorageOverviewId, StorageOverviewPurpose, keyLease.Bytes);
+        var overview = await galleryStore.ReadSettingsAsync<StorageOverview>(StorageOverview.SettingId, StorageOverview.SettingPurpose, keyLease.Bytes);
         return overview is null ? null : overview with
         {
             IsStale = overview.CatalogRevision != await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes)
@@ -23,14 +20,14 @@ public sealed partial class GalleryService
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var revision = await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes);
-        var records = await ListWithKeyAsync(keyLease.Bytes);
+        var records = await galleryStore.ReadRecordsAsync(keyLease.Bytes);
         var indexedLengths = await galleryStore.ReadMediaIndexAsync(keyLease.Bytes);
         var indexPending = await mediaStorageIndex.IsPendingAsync(keyLease.Bytes);
         var (overview, measured) = await Task.Run(() =>
             StorageOverviewCalculator.Measure(vaultStore.Root, records, indexedLengths, keyLease.Bytes));
         await galleryStore.IndexFilesAsync(measured, keyLease.Bytes);
         var storageOverview = overview with { IsIndexPending = indexPending, CatalogRevision = revision };
-        await galleryStore.SaveSettingsAsync(storageOverview, StorageOverviewId, StorageOverviewPurpose, keyLease.Bytes);
+        await galleryStore.SaveSettingsAsync(storageOverview, StorageOverview.SettingId, StorageOverview.SettingPurpose, keyLease.Bytes);
         return storageOverview with { IsStale = revision != await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes) };
     }
 

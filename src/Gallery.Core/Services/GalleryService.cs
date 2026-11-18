@@ -1,10 +1,7 @@
-using System.Security.Cryptography;
-using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
 using Gallery.Core.Services.Gateways;
 using Gallery.Core.Services.Ports;
-using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Queries;
 using Gallery.Core.Services.Sessions;
@@ -34,6 +31,10 @@ public sealed partial class GalleryService
     private readonly DuplicateScanner duplicateScanner;
     private readonly GalleryDriveQueue driveQueue;
     private readonly MediaStorageIndex mediaStorageIndex;
+    private readonly TagCatalogManager tagCatalogManager;
+    private readonly GalleryCatalogLoader catalogLoader;
+    private readonly StoredMediaMover storedMediaMover;
+    private readonly VaultLocationCoordinator vaultLocations;
 
     internal GalleryService(IGalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools? videoTools = null,
         VisionManager? visionManager = null, IGalleryStoreFactory? storeFactory = null, HttpClient? httpClient = null)
@@ -55,6 +56,10 @@ public sealed partial class GalleryService
         driveQueue = new GalleryDriveQueue(galleryLifetime, vaultSession);
         mediaStorageIndex = new MediaStorageIndex(galleryLifetime, vaultSession, driveQueue);
         removalManager = new RemovalManager(galleryLifetime, vaultSession, driveQueue.Start);
+        tagCatalogManager = new TagCatalogManager(galleryLifetime, vaultSession);
+        catalogLoader = new GalleryCatalogLoader(galleryLifetime, vaultSession, mediaStorageIndex, driveQueue);
+        storedMediaMover = new StoredMediaMover(galleryLifetime, vaultSession, driveQueue);
+        vaultLocations = new VaultLocationCoordinator(galleryLifetime, vaultSession, driveQueue);
     }
 
     public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter,
@@ -131,7 +136,7 @@ public sealed partial class GalleryService
         await galleryStore.Gate.WaitAsync();
         try
         {
-            var image = await FindAsync(id, key.Bytes);
+            var image = await galleryStore.ReadRecordAsync(id, key.Bytes);
             var restored = ReviewDecision.Restore(image, state);
             await galleryStore.UpdateAsync(restored, key.Bytes);
             return restored;
@@ -224,92 +229,6 @@ public sealed partial class GalleryService
     public static string FormatBytes(long bytes) => GalleryDisplayFormatter.FormatBytes(bytes);
     public static string FormatModelFilename(string model) => GalleryDisplayFormatter.FormatModelFilename(model);
 
-    /// <summary>Counts catalog entries without reading or decoding media records.</summary>
-    public async Task<long> CountRecordsAsync(CancellationToken cancellationToken = default)
-    {
-        var generation = vaultSession.AcquireUnlockedSession();
-        using var key = generation.Borrow();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, generation.RevocationToken);
-        var count = await galleryStore.CountRecordsAsync(key.Bytes, linked.Token);
-        linked.Token.ThrowIfCancellationRequested();
-        return count;
-    }
-
-    public async Task<List<ImageRecord>> ListAsync()
-    {
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        return await ListWithKeyAsync(key.Bytes);
-    }
-
-    public async Task<List<ImageRecord>> LoadAsync()
-    {
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        return await LoadGalleryWithKeyAsync(key.Bytes);
-    }
-
-    private async Task<List<ImageRecord>> LoadGalleryWithKeyAsync(byte[] key)
-    {
-        using var activity = VaultOpenTelemetry.Source.StartActivity("gallery.load");
-        var started = VaultOpenTelemetry.Start(activity);
-        List<ImageRecord> records;
-        try
-        {
-            await galleryStore.Gate.WaitAsync();
-            VaultOpenTelemetry.Record(activity, "gallery.load.gate_wait_ms", started);
-            try
-            {
-                records = await ListWithKeyAsync(key);
-                var backfillStarted = VaultOpenTelemetry.Start(activity);
-                await BackfillFingerprintsAsync(key);
-                VaultOpenTelemetry.Record(activity, "gallery.load.backfill_fingerprint_ms", backfillStarted);
-                backfillStarted = VaultOpenTelemetry.Start(activity);
-                await BackfillGenerationAsync(records, key);
-                VaultOpenTelemetry.Record(activity, "gallery.load.backfill_generation_ms", backfillStarted);
-            }
-            finally { galleryStore.Gate.Release(); }
-            var scheduleStarted = VaultOpenTelemetry.Start(activity);
-            await mediaStorageIndex.ScheduleAsync(records, key);
-            VaultOpenTelemetry.Record(activity, "gallery.load.schedule_media_index_ms", scheduleStarted);
-            driveQueue.Start();
-            return records;
-        }
-        finally { VaultOpenTelemetry.Record(activity, "gallery.load.elapsed_ms", started); }
-    }
-    /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
-    private async Task BackfillGenerationAsync(List<ImageRecord> records, byte[] key, CancellationToken cancellationToken = default)
-    {
-        var staleRecordIndices = records.Select((record, index) => (record, index))
-            .Where(item => item.record.MetadataVersion < ComfyMetadata.Version).ToList();
-        if (System.Diagnostics.Activity.Current is { OperationName: "gallery.load" } activity)
-            activity.SetTag("gallery.load.backfill_generation_count", staleRecordIndices.Count);
-        foreach (var staleRecordIndex in staleRecordIndices)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            ImageRecord record;
-            int index;
-            (record, index) = staleRecordIndex;
-            try
-            {
-                var refreshedImageRecord = record with
-                {
-                    Generation = ComfyMetadata.Extract(record.Metadata),
-                    MetadataVersion = ComfyMetadata.Version
-                };
-                // The browse opener rebuilds once after the batch; rewriting its index per legacy row is wasteful.
-                await galleryStore.UpdateAsync(refreshedImageRecord, key, preserveBrowseIndex: false);
-                records[index] = refreshedImageRecord;
-            }
-            catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or StoredMetadataFormatException)
-            {
-                throw new InvalidOperationException($"Could not backfill generation metadata for media item '{record.Id}'.", exception);
-            }
-        }
-    }
-
-    private Task<List<ImageRecord>> ListWithKeyAsync(byte[] key) => galleryStore.ReadRecordsAsync(key);
-
-    private Task BackfillFingerprintsAsync(byte[] key) => galleryStore.BackfillFingerprintsAsync(key);
-
     public async Task<ImageRecord> UpdateAsync(string id, Func<ImageRecordEdit, ImageRecordEdit> update)
     {
         ArgumentNullException.ThrowIfNull(update);
@@ -333,15 +252,16 @@ public sealed partial class GalleryService
 
     private async Task<ImageRecord> UpdateRecordAsync(string imageId, Func<ImageRecordEdit, ImageRecordEdit> update, byte[] key)
     {
-        var record = await FindAsync(imageId, key);
+        var store = galleryStore;
+        var record = await store.ReadRecordAsync(imageId, key);
         var updated = ApplyEdit(record, update);
         // Placement is changed only by atomic hierarchy operations, never by legacy edit callbacks.
         if (!updated.Collections.SequenceEqual(record.Collections)
-            && (record.SetId is not null || await galleryStore.ReadSettingsAsync<CollectionCatalog>(
+            && (record.SetId is not null || await store.ReadSettingsAsync<CollectionCatalog>(
                 CollectionCatalog.SettingId, CollectionCatalog.SettingPurpose, key) is not null))
             throw new InvalidOperationException("Choose a destination set to change organization.");
-        if (record.Tags == updated.Tags) await galleryStore.UpdateAsync(updated, key);
-        else await SaveEditedTagsAsync(record, updated, key);
+        if (record.Tags == updated.Tags) await store.UpdateAsync(updated, key);
+        else await TagCatalogManager.SaveEditedTagsAsync(store, record, updated, key);
         return updated;
     }
 
@@ -352,61 +272,4 @@ public sealed partial class GalleryService
         ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
         Action<RemovalResult>? reportRemoval = null) =>
         removalManager.RemoveAsync(removalItems, existingAction, missingAction, restoreFolder, reportRemoval);
-
-    public async Task MoveAsync(string id, string folder, string name)
-    {
-        StoredImageMoveValidator.ValidateName(name);
-        var destination = StoredImageMover.NormalizeDestination(folder, name);
-        StoredImageMoveValidator.ValidateDestination(destination);
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        await MoveUnderGateAsync(id, destination, key.Bytes);
-        driveQueue.Start();
-    }
-
-    private async Task MoveUnderGateAsync(string id, StoredImageMoveDestination destination, byte[] key)
-    {
-        await galleryStore.Gate.WaitAsync();
-        try
-        {
-            var record = await FindAsync(id, key);
-            var target = StoredImageMover.TargetPath(record, destination);
-            StoredImageMoveValidator.ValidateDifferentPath(record.StoredPath, target);
-            await MoveStoredImageAsync(record, target, destination.Name, key);
-        }
-        finally { galleryStore.Gate.Release(); }
-    }
-
-    // The old copy is deleted by the drive queue after the catalog commits. Moving an image back onto a path
-    // still queued for deletion cancels that delete and keeps the file instead of copying it again.
-    private async Task MoveStoredImageAsync(ImageRecord record, string target, string newName, byte[] key)
-    {
-        var deleteOldCopy = DriveOperationProcessor.Create(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key);
-        var queuedDelete = await galleryStore.FindPendingDriveOperationAsync(
-            DriveOperationKind.DeleteFile, DriveOperationProcessor.PathFingerprint(key, target), key);
-        if (queuedDelete is not null)
-        {
-            if (queuedDelete.ImageId == record.Id && File.Exists(target))
-            {
-                await StoredMediaProcessor.VerifyCiphertextAsync(target, record.Id, key);
-                await galleryStore.UpdateImageAndEnqueueAsync(record with { StoredPath = target, Name = newName }, key,
-                    deleteOldCopy, queuedDelete.Sequence);
-                return;
-            }
-            if (await GalleryDriveQueue.CanDeleteQueuedFileAsync(galleryStore, queuedDelete.ImageId, target, key))
-            {
-                await GalleryDriveQueue.DeleteQueuedFileAsync(galleryStore, queuedDelete, target, key);
-                await galleryStore.RemoveDriveOperationAsync(queuedDelete.Sequence, key);
-            }
-        }
-
-        var movedRecord = StoredImageMover.CopyToDestination(record, target, newName);
-        try { await galleryStore.UpdateImageAndEnqueueAsync(movedRecord, key, deleteOldCopy); }
-        catch
-        {
-            StoredImageMover.RollBackCopiedDestination(target);
-            throw;
-        }
-    }
-
-    private Task<ImageRecord> FindAsync(string id, byte[] key) => galleryStore.ReadRecordAsync(id, key);
 }

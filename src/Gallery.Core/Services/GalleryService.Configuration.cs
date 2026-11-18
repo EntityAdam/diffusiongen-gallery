@@ -1,8 +1,5 @@
-using Gallery.Core.Services.Sessions.Locations;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.DataManagers;
-using System.Security.Cryptography;
 
 namespace Gallery.Core.Services;
 
@@ -21,77 +18,7 @@ public sealed partial class GalleryService
     public bool CatalogIsOnNetworkDrive => CatalogDirectoryRules.IsNetworkDirectory(VaultRoot);
 
     /// <summary>Relocates only the encrypted catalog and header; all encrypted media stays at its existing paths.</summary>
-    public async Task RelocateCatalogAsync(string directory)
-    {
-        var destination = NormalizeVaultDirectory(directory);
-        RequireLocalCatalogDirectory(destination);
-        await lifecycleGate.WaitAsync();
-        byte[]? key = null;
-        VaultCheckout? destinationCheckout = null;
-        string? staging = null;
-        var published = false;
-        var lockRequestsAtStart = 0L;
-        try
-        {
-            EnsureCheckout();
-            RejectOverlappingDirectories(destination, VaultRoot);
-            RequireEmptyDestination(destination);
-            destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
-            RequireEmptyDestination(destination);
-            lockRequestsAtStart = ReadExplicitLockRequests();
-            key = vaultSession.Key;
-            await driveQueue.StopAsync();
-            await vaultSession.LockAndDrainAsync();
-            var mediaDirectory = await MediaDirectoryWithKeyAsync(key);
-            var sourceRoot = VaultRoot;
-            staging = Path.Combine(destination, ".catalog-stage-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(staging);
-            await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
-            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName), key);
-            var stagedStore = galleryLifetime.StoreFactory.Create(staging);
-            await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
-                "media-storage", "media-storage:v1", key);
-            await stagedStore.DeleteSettingsAsync(key, StorageOverviewId);
-            var records = await stagedStore.ReadRecordsAsync(key);
-            var sourceRecords = await galleryStore.ReadRecordsAsync(key);
-            if (!CatalogRecordsMatch(records, sourceRecords))
-                throw new IOException("The copied catalog did not match the original; relocation was stopped.");
-            EnsureActive();
-            await stagedStore.PrepareForPublicationAsync(key);
-            PublishStagedVault(staging, destination);
-            published = true;
-            var sourceCheckout = galleryLifetime.PublishLocation(
-                galleryLifetime.StoreFactory.Create(destination), new VaultStore(destination), destinationCheckout);
-            destinationCheckout = null;
-            try
-            {
-                history?.Save(destination);
-                foreach (var name in new[]
-                    { CatalogFileName + "-wal", CatalogFileName + "-shm", CatalogFileName, VaultHeaderFileName })
-                    File.Delete(Path.Combine(sourceRoot, name));
-            }
-            finally { sourceCheckout?.Dispose(); }
-        }
-        catch (Exception exception)
-        {
-            if (published)
-                throw new IOException($"The local catalog is intact at '{destination}', but old catalog cleanup or history persistence failed. Media files were not moved.", exception);
-            RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
-            throw;
-        }
-        finally
-        {
-            if (key is not null) CryptographicOperations.ZeroMemory(key);
-            destinationCheckout?.Dispose();
-            try { if (staging is not null && Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
-            finally { lifecycleGate.Release(); }
-        }
-    }
-
-    private static bool CatalogRecordsMatch(List<ImageRecord> copied, List<ImageRecord> source) =>
-        copied.Count == source.Count && copied.OrderBy(record => record.Id).Zip(source.OrderBy(record => record.Id))
-            .All(pair => (pair.First with { Collections = [] }) == (pair.Second with { Collections = [] })
-                && pair.First.Collections.SequenceEqual(pair.Second.Collections));
+    public Task RelocateCatalogAsync(string directory) => vaultLocations.RelocateCatalogAsync(directory);
 
     public async Task<IngestionOptions> LoadIngestionOptionsAsync() =>
         await ReadEncryptedSettingAsync<IngestionOptions>("ingestion-options", "ingestion-options:v1") ?? new();
@@ -103,12 +30,12 @@ public sealed partial class GalleryService
     }
 
     public async Task<MediaStorageOptions> LoadMediaStorageOptionsAsync() =>
-        await ReadEncryptedSettingAsync<MediaStorageOptions>("media-storage", "media-storage:v1") ?? new();
+        await ReadEncryptedSettingAsync<MediaStorageOptions>(MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose) ?? new();
 
     public async Task SaveMediaStorageOptionsAsync(MediaStorageOptions options)
     {
         options = NormalizeMediaStorageOptions(options);
-        await WriteEncryptedSettingAsync(options, "media-storage", "media-storage:v1");
+        await WriteEncryptedSettingAsync(options, MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose);
     }
 
     internal static MediaStorageOptions NormalizeMediaStorageOptions(MediaStorageOptions options)
@@ -116,7 +43,7 @@ public sealed partial class GalleryService
         var directory = options.MediaDirectory.Trim();
         if (directory.Length > 0)
         {
-            directory = NormalizeVaultDirectory(directory);
+            directory = CatalogDirectoryRules.NormalizeVaultDirectory(directory);
             if (!Directory.Exists(directory))
                 throw new InvalidOperationException($"Media directory '{options.MediaDirectory}' does not exist; choose an existing directory for encrypted media.");
         }
@@ -125,15 +52,8 @@ public sealed partial class GalleryService
 
     private async Task<string> MediaDirectoryWithKeyAsync(byte[] key)
     {
-        var options = await galleryStore.ReadSettingsAsync<MediaStorageOptions>("media-storage", "media-storage:v1", key);
+        var options = await galleryStore.ReadSettingsAsync<MediaStorageOptions>(MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose, key);
         return options is { MediaDirectory.Length: > 0 } ? options.MediaDirectory : VaultRoot;
-    }
-
-    internal static void RequireLocalCatalogDirectory(string directory)
-    {
-        if (CatalogDirectoryRules.IsNetworkDirectory(directory))
-            throw new InvalidOperationException(
-                $"Catalog directory '{directory}' is on a network drive. Keep gallery.db on the host's local drive. Choose a local catalog directory; encrypted media may use a NAS/SMB directory.");
     }
 
     private async Task<T?> ReadEncryptedSettingAsync<T>(string id, string purpose) where T : class
