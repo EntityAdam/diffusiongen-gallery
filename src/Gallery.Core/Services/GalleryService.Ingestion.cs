@@ -30,8 +30,8 @@ public sealed partial class GalleryService
         Action<IngestionTimingReport>? reportTimings = null, IngestionOptions? options = null,
         IngestionScan? scan = null, bool includeImages = true, bool includeVideos = true)
     {
-        ValidateOperationChoice(searchScope);
-        ValidateOperationChoice(sourceRetention);
+        OperationChoiceValidator.Validate(searchScope);
+        OperationChoiceValidator.Validate(sourceRetention);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var store = galleryStore;
         await using var catalogOperation = await store.OpenOperationAsync(key.Bytes);
@@ -53,7 +53,7 @@ public sealed partial class GalleryService
 
     public async Task<IngestionScan> ScanFolderAsync(string folder, FolderSearchScope searchScope)
     {
-        ValidateOperationChoice(searchScope);
+        OperationChoiceValidator.Validate(searchScope);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var catalogRoot = VaultRoot;
         var mediaRoot = await MediaDirectoryWithKeyAsync(key.Bytes);

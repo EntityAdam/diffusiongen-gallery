@@ -9,6 +9,14 @@ internal static class StoredMediaProcessor
     internal const string EncryptedPngExtension = ".dpng";
     internal const string EncryptedMp4Extension = ".dmp4";
 
+    public static string RelativePath(ImageRecord record)
+    {
+        if (record.Id.Length < 4 || record.Id.Any(character => !char.IsAsciiHexDigit(character)))
+            throw new InvalidOperationException("The gallery contains an invalid media identifier.");
+        return Path.Combine("images", record.Id[..2], record.Id[2..4],
+            record.Id + (record.IsVideo ? EncryptedMp4Extension : EncryptedPngExtension));
+    }
+
     public static Task<byte[]> ReadAsync(ImageRecord record, byte[] key) =>
         ReadAsync(record.StoredPath, record.Id, key);
 

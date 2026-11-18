@@ -1,12 +1,93 @@
-using Gallery.Core.Models;
-using Gallery.Core.Services.Processors;
 using System.Collections.Immutable;
 using System.Text;
+using Gallery.Core.Models;
+using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services.Gateways;
+using Gallery.Core.Services.Ports;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Core.Services;
 
-public sealed partial class GalleryService
+internal sealed class GalleryVisionWorkflow(GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager)
 {
+    private const string VisionSettingsId = "vision-settings";
+    private const string VisionCheckpointId = "vision-checkpoint";
+    private const string VisionCheckpointPurpose = "vision-checkpoint:v1";
+
+    private IGalleryStore galleryStore => galleryLifetime.Current.GalleryStore;
+
+    public Task<IReadOnlyList<string>> GetVisionModelsAsync(VisionSettings settings) =>
+        RequiredVisionManager().GetModelsAsync(settings);
+
+    public async Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData, CancellationToken cancellationToken = default)
+    {
+        var manager = RequiredVisionManager();
+        IReadOnlyList<string> names;
+        using (var key = vaultSession.AcquireUnlockedSession().Borrow())
+            names = await TagCatalogStore.LoadNamesAsync(galleryStore, key.Bytes);
+        cancellationToken.ThrowIfCancellationRequested();
+        var result = await manager.AnalyzeImageAsync(settings, imageData, names, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return (result.Description, FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags));
+    }
+    public Task<string> SuggestSetAsync(VisionSettings settings, string collection, IReadOnlyList<MediaSet> sets,
+        IReadOnlyList<ImageRecord> images) =>
+        RequiredVisionManager().SuggestSetAsync(settings.ForLane(settings.GetLanes()[0]), collection, sets, images);
+
+    public async Task<VisionSettings> LoadSettingsAsync()
+    {
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        return await galleryStore.ReadSettingsAsync<VisionSettings>(VisionSettingsId, VisionSettingsId, key.Bytes) ?? new();
+    }
+
+    public async Task SaveSettingsAsync(VisionSettings settings)
+    {
+        if (settings.Lanes.IsDefaultOrEmpty) VisionService.Validate(settings);
+        else
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var lane in settings.Lanes)
+            {
+                if (string.IsNullOrWhiteSpace(lane.Name) || !names.Add(lane.Name.Trim()))
+                    throw new InvalidOperationException("Each vision endpoint needs a unique name.");
+                if (lane.MaxConcurrentRequests < 1)
+                    throw new InvalidOperationException($"The concurrent request limit for '{lane.Name}' must be at least 1.");
+                VisionService.Validate(settings.ForLane(lane));
+            }
+            settings = settings.ForLane(settings.Lanes[0]);
+        }
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        await galleryStore.SaveSettingsAsync(settings, VisionSettingsId, VisionSettingsId, key.Bytes);
+    }
+
+    public async Task<VisionCheckpointSession> OpenVisionCheckpointAsync()
+    {
+        var generation = vaultSession.AcquireUnlockedSession();
+        var store = galleryStore;
+        VisionCheckpoint state;
+        // Serialize reads with writes across unlock generations. A save already in flight at
+        // lock time must finish before a newly unlocked UI reads its checkpoint.
+        await store.Gate.WaitAsync(generation.RevocationToken);
+        try
+        {
+            using var key = generation.Borrow();
+            state = await store.ReadSettingsAsync<VisionCheckpoint>(VisionCheckpointId, VisionCheckpointPurpose, key.Bytes) ?? new();
+        }
+        finally { store.Gate.Release(); }
+        generation.RevocationToken.ThrowIfCancellationRequested();
+        return new(state, generation.RevocationToken, async checkpoint =>
+        {
+            await store.Gate.WaitAsync(generation.RevocationToken);
+            try
+            {
+                using var key = generation.Borrow();
+                await store.SaveSettingsAsync(checkpoint, VisionCheckpointId, VisionCheckpointPurpose, key.Bytes);
+            }
+            finally { store.Gate.Release(); }
+        });
+    }
+
     public async Task<VisionAnalysisResult> AnalyzeForDraftAsync(string id, VisionSettings settings, CancellationToken token = default)
     {
         var generation = vaultSession.AcquireUnlockedSession();
@@ -16,17 +97,10 @@ public sealed partial class GalleryService
         var source = await store.ReadRecordAsync(id, key.Bytes);
         await store.Gate.WaitAsync(cancellation.Token);
         IReadOnlyList<string> names;
-        try { names = (await ReadTagCatalogWithKeyAsync(key.Bytes, store: store)).Names; }
+        try { names = (await TagCatalogStore.ReadAsync(store, key.Bytes)).Names; }
         finally { store.Gate.Release(); }
         cancellation.Token.ThrowIfCancellationRequested();
-        string preview;
-        if (source.IsVideo)
-        {
-            using var thumbnail = await store.ReadThumbnailAsync(id, key.Bytes);
-            preview = PngDataUrlPrefix + Convert.ToBase64String(thumbnail.Content.Span);
-        }
-        else preview = await GalleryImageRenderer.CreatePreviewAsync(source,
-            await StoredMediaProcessor.ReadAsync(source, key.Bytes), ImageResolution.Fit);
+        var preview = await GalleryMediaReader.ReadPreviewAsync(store, source, key.Bytes, ImageResolution.Fit);
         cancellation.Token.ThrowIfCancellationRequested();
         var result = await RequiredVisionManager().AnalyzeResultAsync(settings, preview, names, cancellation.Token);
         cancellation.Token.ThrowIfCancellationRequested();
@@ -63,7 +137,7 @@ public sealed partial class GalleryService
         try
         {
             var record = await store.ReadRecordAsync(id, key.Bytes);
-            var catalog = await ReadTagCatalogWithKeyAsync(key.Bytes, store: store);
+            var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes);
             if (analysis is not null && !tagsOnly && (record.ContentSha256 != analysis.SourceContentHash
                 || record.Description != analysis.SourceDescription || (record.VisionFacts?.RunId ?? "") != analysis.PreviousRunId))
                 throw new InvalidOperationException("This analysis is stale. The image, vision notes or accepted analysis changed. Analyze again before approval.");
@@ -71,11 +145,11 @@ public sealed partial class GalleryService
             var updated = record with
             {
                 Description = tagsOnly || string.IsNullOrWhiteSpace(description) ? record.Description : description,
-                Tags = MergeTags(record.Tags, eligible),
+                Tags = LibraryRules.MergeTags(record.Tags, eligible),
                 AnalysisModel = tagsOnly ? record.AnalysisModel : model,
                 VisionFacts = !tagsOnly && analysis is not null ? analysis.Facts : record.VisionFacts
             };
-            var nextCatalog = new TagCatalog(NormalizeTagNames(catalog.Names.Concat(TagsOf(updated))));
+            var nextCatalog = new TagCatalog(TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(TagCatalogStore.TagsOf(updated))));
             generation.RevocationToken.ThrowIfCancellationRequested();
             if (analysis is not null && !tagsOnly) await store.CommitVisionAnalysisAsync(updated, nextCatalog, analysis, key.Bytes);
             else await store.CommitTagCatalogAsync([updated], nextCatalog, null, key.Bytes);
@@ -105,4 +179,7 @@ public sealed partial class GalleryService
         var analysis = await ReadVisionAnalysisAsync(id) ?? throw new InvalidOperationException("No accepted structured analysis is available.");
         return new($"{id}.analysis.json", "application/json", Encoding.UTF8.GetBytes(analysis.Json));
     }
+
+    private VisionManager RequiredVisionManager() => visionManager
+        ?? throw new InvalidOperationException("The vision manager is not configured.");
 }

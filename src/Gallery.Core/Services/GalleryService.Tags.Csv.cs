@@ -1,3 +1,4 @@
+using Gallery.Core.Services.DataManagers;
 using System.Security.Cryptography;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
@@ -34,9 +35,9 @@ public sealed partial class GalleryService
         try
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
-            var catalog = await ReadTagCatalogWithKeyAsync(key.Bytes, records, store);
-            var names = NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagsOf)));
-            var next = NormalizeTagNames(names.Concat(imported));
+            var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
+            var names = TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagCatalogStore.TagsOf)));
+            var next = TagCatalogStore.NormalizeTagNames(names.Concat(imported));
             var added = next.Length - names.Length;
             generation.RevocationToken.ThrowIfCancellationRequested();
             if (!next.SequenceEqual(catalog.Names)) await store.CommitTagCatalogAsync([], new(next), null, key.Bytes);
@@ -54,8 +55,8 @@ public sealed partial class GalleryService
         try
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
-            var catalog = await ReadTagCatalogWithKeyAsync(key.Bytes, records, store);
-            var names = NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagsOf)));
+            var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
+            var names = TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagCatalogStore.TagsOf)));
             generation.RevocationToken.ThrowIfCancellationRequested();
             var csv = TagCsvProcessor.Write(names);
             try { return new("tags.csv", "text/csv;charset=utf-8", csv); }

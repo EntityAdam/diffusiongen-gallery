@@ -5,6 +5,7 @@ using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
 using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Processors.Hashing;
 
 namespace Gallery.Core.Services;
 
@@ -145,11 +146,11 @@ public sealed partial class GalleryService
             foreach (var record in records)
             {
                 ValidateMediaPath(record);
-                var relative = MediaRelativePath(record);
+                var relative = StoredMediaProcessor.RelativePath(record);
                 var target = Path.Combine(staging, relative);
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 File.Copy(record.StoredPath, target, overwrite: false);
-                if (await HashFileAsync(record.StoredPath) != await HashFileAsync(target))
+                if (await FileSha256.ComputeAsync(record.StoredPath) != await FileSha256.ComputeAsync(target))
                     throw new IOException($"Media verification failed for '{record.Name}'. The source gallery was not removed.");
                 await stagedStore.UpdateAsync(record with { StoredPath = Path.Combine(destination, relative) }, key);
             }
@@ -282,14 +283,6 @@ public sealed partial class GalleryService
             throw new InvalidOperationException($"Destination '{directory}' is not empty; choose a new or empty destination folder. Existing files will not be overwritten.");
     }
 
-    private static string MediaRelativePath(ImageRecord record)
-    {
-        if (record.Id.Length < 4 || record.Id.Any(character => !char.IsAsciiHexDigit(character)))
-            throw new InvalidOperationException("The gallery contains an invalid media identifier.");
-        return Path.Combine("images", record.Id[..2], record.Id[2..4],
-            record.Id + (record.IsVideo ? ".dmp4" : ".dpng"));
-    }
-
     private static void ValidateMediaPath(ImageRecord record)
     {
         var expected = record.IsVideo ? ".dmp4" : ".dpng";
@@ -357,9 +350,9 @@ public sealed partial class GalleryService
     {
         await store.DeleteSettingsAsync(key, StorageOverviewId, MediaIndexId, "media-storage");
         await store.ClearDriveStateAsync(key);
-        var settings = await store.ReadSettingsAsync<StoredBackupSettings>(BackupSettingsId, BackupSettingsPurpose, key);
+        var settings = await store.ReadSettingsAsync<StoredBackupSettings>(StoredBackupSettings.SettingId, StoredBackupSettings.SettingPurpose, key);
         if (settings is not null)
             await store.SaveSettingsAsync(settings with { LastBackupName = null, LastBackupType = null },
-                BackupSettingsId, BackupSettingsPurpose, key);
+                StoredBackupSettings.SettingId, StoredBackupSettings.SettingPurpose, key);
     }
 }

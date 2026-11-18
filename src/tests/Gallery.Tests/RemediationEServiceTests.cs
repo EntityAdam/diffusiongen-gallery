@@ -154,9 +154,9 @@ public sealed class RemediationEServiceTests
         using var stored = CreateArchive("gallery.db", new byte[64 * 1024], CompressionLevel.NoCompression);
 
         using (var archive = new ZipArchive(compressed, ZipArchiveMode.Read))
-            Assert.Throws<InvalidDataException>(() => GalleryService.RequireEntriesWithinArchive(archive, compressed.Length));
+            Assert.Throws<InvalidDataException>(() => BackupArchive.RequireEntriesWithinArchive(archive, compressed.Length));
         using (var archive = new ZipArchive(stored, ZipArchiveMode.Read))
-            GalleryService.RequireEntriesWithinArchive(archive, stored.Length);
+            BackupArchive.RequireEntriesWithinArchive(archive, stored.Length);
     }
 
     [Fact]
