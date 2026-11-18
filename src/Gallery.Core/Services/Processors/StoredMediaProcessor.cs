@@ -6,6 +6,9 @@ namespace Gallery.Core.Services.Processors;
 
 internal static class StoredMediaProcessor
 {
+    internal const string EncryptedPngExtension = ".dpng";
+    internal const string EncryptedMp4Extension = ".dmp4";
+
     public static Task<byte[]> ReadAsync(ImageRecord record, byte[] key) =>
         ReadAsync(record.StoredPath, record.Id, key);
 

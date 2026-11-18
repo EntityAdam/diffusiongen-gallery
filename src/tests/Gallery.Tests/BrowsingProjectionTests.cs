@@ -1,3 +1,4 @@
+using Gallery.Core.Services.Processors;
 using Gallery.Web.Components.Workspace;
 // Class tests pin projection identity, enumeration and private component transitions that HTTP cannot expose.
 using System.Collections;
@@ -139,7 +140,7 @@ public sealed class BrowsingProjectionTests
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), FolderSearchScope.Descendants,
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
             [new IngestionScanFile(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + ".png", 100, DateTime.UtcNow, false)]);
-        var ingestionSpaceEstimate = GalleryService.CalculateIngestionSpace(1, 100,
+        var ingestionSpaceEstimate = IngestionSourceScanner.CalculateIngestionSpace(1, 100,
             long.MaxValue, long.MaxValue, true) with { MediaAvailableBytes = mediaAvailableBytes, FileCount = fileCount };
         if (hasScan) session.Scan = ingestionScan;
         session.Space = ingestionSpaceEstimate;
@@ -160,7 +161,7 @@ public sealed class BrowsingProjectionTests
     {
         // Arrange
         var session = new IngestionSession();
-        var ingestionSpaceEstimate = GalleryService.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
+        var ingestionSpaceEstimate = IngestionSourceScanner.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
         session.Space = ingestionSpaceEstimate;
         session.DeleteSources = initiallyDeletesSources;
         var expectedScenario = ExpectedScenario.CreateFrom("Source deletion subtracts selected source bytes from the estimated storage change.", new
@@ -190,7 +191,7 @@ public sealed class BrowsingProjectionTests
         session.Scan = new IngestionScan(
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), FolderSearchScope.Descendants,
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), []);
-        session.Space = GalleryService.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
+        session.Space = IngestionSourceScanner.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
         var expectedScenario = ExpectedScenario.CreateFrom("Changing recursion invalidates the scan and estimate and disables ingestion.", new
         {
             Recursive = false, HasScan = false, HasSpaceEstimate = false, CanIngest = false
