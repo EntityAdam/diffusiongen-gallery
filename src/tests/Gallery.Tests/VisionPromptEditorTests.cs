@@ -26,7 +26,7 @@ public sealed class VisionPromptEditorTests
         var saved = new VisionSettings { Model = "vision", SystemPrompt = "Previously saved image instructions." };
         await vault.Service.SaveSettingsAsync(saved);
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddSingleton(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
         await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
         VisionSettings? savedCallback = null;
         ParameterView Parameters(VisionSettings settings) => ParameterView.FromDictionary(new Dictionary<string, object?>
@@ -97,7 +97,7 @@ public sealed class VisionPromptEditorTests
         await vault.InitializeAsync();
         var settings = new VisionSettings { Model = "vision", SetSuggestionSystemPrompt = "Keep set instructions" };
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddSingleton(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
         await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
         await renderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -135,7 +135,7 @@ public sealed class VisionPromptEditorTests
         var original = new VisionSettings { Model = "vision", StructuredAnalysis = initiallyStructured, SystemPrompt = "Original custom prompt" };
         await vault.Service.SaveSettingsAsync(original);
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddSingleton(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
         await using (var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>()))
         {
             await renderer.Dispatcher.InvokeAsync(async () =>
@@ -196,7 +196,7 @@ public sealed class VisionPromptEditorTests
         await vault.InitializeAsync();
         var primary = new VisionEndpointLane { Name = "Primary", Model = "first", AutoAccept = true };
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddSingleton(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
         await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
         await renderer.Dispatcher.InvokeAsync(async () =>
         {

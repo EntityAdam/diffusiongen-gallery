@@ -4,7 +4,7 @@ using Gallery.Core.Services;
 namespace Gallery.Web.Components;
 
 // One pending organization change per browser circuit, independent of the active screen.
-public sealed class OrganizationHistory(GalleryService gallery)
+public sealed class OrganizationHistory(IGalleryCollections gallery)
 {
     public CollectionUndo? Current { get; private set; }
     public bool IsBusy { get; private set; }

@@ -1,8 +1,8 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Services.Processors;
+namespace Gallery.Core.Services;
 
-internal static class GalleryDisplayFormatter
+public static class GalleryDisplay
 {
     private const string ModelExtension = ".safetensors";
 

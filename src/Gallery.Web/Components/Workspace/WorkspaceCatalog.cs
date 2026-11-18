@@ -5,7 +5,8 @@ namespace Gallery.Web.Components.Workspace;
 
 // One instance belongs to one unlocked workspace. Background publications use
 // its renderer dispatcher, and generations prevent old loads surviving a reload/lock.
-public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Func<Func<Task>, Task> dispatch) : IDisposable
+public sealed class WorkspaceCatalog(IGalleryVault vault, IGalleryCatalog catalog, IGalleryCollections galleryCollections,
+    IGalleryTags galleryTags, ILogger logger, Func<Func<Task>, Task> dispatch) : IDisposable
 {
     public IReadOnlyList<ImageRecord> Images { get; private set; } = [];
     public IReadOnlyDictionary<string, ImageRecord> ImagesById { get; private set; } = new Dictionary<string, ImageRecord>();
@@ -26,7 +27,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
 
     private static IEnumerable<string> SplitTags(string tags) =>
         tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    internal bool CanRead => !disposed && gallery.IsUnlocked;
+    internal bool CanRead => !disposed && vault.IsUnlocked;
     private bool IsCurrent(long revision) => CanRead && revision == generation;
     private async Task NotifyAsync(long revision)
     {
@@ -43,7 +44,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
         if (!CanRead) return;
         CancelLoad();
         var revision = generation;
-        var initial = await gallery.LoadInitialPageAsync(pageSize, trash);
+        var initial = await catalog.LoadInitialPageAsync(pageSize, trash);
         if (!IsCurrent(revision)) return;
         await PublishAsync(initial.Records, revision, !initial.IsComplete || !initial.IsCurrent);
         if (IsCurrent(revision) && IsPartial) StartLoad();
@@ -56,10 +57,10 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
         var revision = generation;
         List<ImageRecord> records;
         var partial = IsPartial;
-        if (partial) records = await gallery.ReloadRecordsAsync(Images.Select(image => image.Id));
+        if (partial) records = await catalog.ReloadRecordsAsync(Images.Select(image => image.Id));
         else
         {
-            var snapshot = await gallery.LoadCatalogAsync();
+            var snapshot = await catalog.LoadCatalogAsync();
             if (!IsCurrent(revision)) return;
             records = snapshot.Records;
             partial = !snapshot.IsCurrent;
@@ -71,8 +72,8 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
 
     private async Task PublishAsync(IReadOnlyList<ImageRecord> records, long revision, bool partial)
     {
-        var collections = await gallery.LoadCollectionCatalogAsync();
-        var tags = await gallery.LoadTagNamesAsync();
+        var collections = await galleryCollections.LoadCollectionCatalogAsync();
+        var tags = await galleryTags.LoadTagNamesAsync();
         if (!IsCurrent(revision)) return;
         Images = records;
         ImagesById = records.ToDictionary(image => image.Id);
@@ -137,7 +138,7 @@ public sealed class WorkspaceCatalog(GalleryService gallery, ILogger logger, Fun
             await previous;
             // Prioritize the initial render and thumbnail requests.
             await Task.Delay(250, source.Token);
-            var snapshot = await gallery.LoadCatalogAsync(source.Token);
+            var snapshot = await catalog.LoadCatalogAsync(source.Token);
             if (!IsCurrent(revision) || source.IsCancellationRequested) return;
             await dispatch(async () =>
             {

@@ -1,5 +1,6 @@
 @implements IDisposable
-@inject GalleryService Gallery
+@inject IGalleryVault GalleryVault
+@inject WorkspaceGalleryServices WorkspaceServices
 @inject ILogger<Home> Logger
 @inject IJSRuntime JS
 @inject OrganizationHistory OrganizationHistory
@@ -8,7 +9,7 @@
 
 <PageTitle>DiffusionGen Gallery</PageTitle>
 
-@if (!Gallery.IsUnlocked || !ready)
+@if (!GalleryVault.IsUnlocked || !ready)
 {
     <WorkspaceFeedback Activity="activity" />
     <GalleryAccess @key="accessRevision" Busy="activity.Busy" Error="@activity.Error" Message="@activity.Message"

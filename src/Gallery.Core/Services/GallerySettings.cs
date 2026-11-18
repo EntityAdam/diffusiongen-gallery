@@ -6,7 +6,7 @@ using GalleryLocation = Gallery.Core.Services.Sessions.GalleryLocation;
 
 namespace Gallery.Core.Services;
 
-internal sealed class GallerySettings(GalleryLifetime galleryLifetime, VaultSession vaultSession)
+internal sealed class GallerySettings(GalleryLifetime galleryLifetime, VaultSession vaultSession) : IGallerySettings
 {
     private const string PreferencesId = "ui-preferences";
     private const string PreferencesPurpose = "ui-preferences:v1";

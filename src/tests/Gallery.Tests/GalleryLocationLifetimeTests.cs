@@ -88,7 +88,7 @@ public sealed class GalleryLocationLifetimeTests
     [Fact]
     public void Manager_StoresOnlyStableCollaboratorReferencesAcrossLocationChanges()
     {
-        var mutableFields = typeof(GalleryService).GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+        var mutableFields = typeof(GalleryScope).GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
             .Where(field => !field.IsInitOnly && !typeof(Delegate).IsAssignableFrom(field.FieldType))
             .Select(field => field.Name).ToArray();
 

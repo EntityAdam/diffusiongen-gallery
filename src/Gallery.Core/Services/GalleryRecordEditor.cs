@@ -8,9 +8,9 @@ using Gallery.Core.Services.Validators;
 
 namespace Gallery.Core.Services;
 
-internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, VaultSession vaultSession)
+internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, VaultSession vaultSession) : IGalleryRecordEditor
 {
-    public static ImageRecordEdit ApplyReviewDecision(ImageRecordEdit image, ReviewAction action, int rating = 0)
+    public ImageRecordEdit ApplyReviewDecision(ImageRecordEdit image, ReviewAction action, int rating = 0)
     {
         ArgumentNullException.ThrowIfNull(image);
         if (!Enum.IsDefined(action))
@@ -21,13 +21,13 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
         return ReviewDecision.Apply(image, action, rating);
     }
 
-    public static ReviewState CaptureReviewState(ImageRecord image)
+    public ReviewState CaptureReviewState(ImageRecord image)
     {
         ArgumentNullException.ThrowIfNull(image);
         return ReviewDecision.Capture(image);
     }
 
-    public static ReviewState CaptureReviewState(ImageRecordEdit image)
+    public ReviewState CaptureReviewState(ImageRecordEdit image)
     {
         ArgumentNullException.ThrowIfNull(image);
         return ReviewDecision.Capture(image);
@@ -50,20 +50,20 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
         finally { store.Gate.Release(); }
     }
 
-    public static ImageRecordEdit SetCuration(ImageRecordEdit image, int? rating, bool? reviewed)
+    public ImageRecordEdit SetCuration(ImageRecordEdit image, int? rating, bool? reviewed)
     {
         ArgumentNullException.ThrowIfNull(image);
         ImageRecordEditValidator.ValidateRating(rating);
         return LibraryRules.SetCuration(image, rating, reviewed);
     }
 
-    public static ImageRecordEdit SetDeletionMark(ImageRecordEdit image, bool markedForDeletion)
+    public ImageRecordEdit SetDeletionMark(ImageRecordEdit image, bool markedForDeletion)
     {
         ArgumentNullException.ThrowIfNull(image);
         return LibraryRules.SetDeletionMark(image, markedForDeletion);
     }
 
-    public static ImageRecordEdit SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection)
+    public ImageRecordEdit SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection)
     {
         ArgumentNullException.ThrowIfNull(image);
         ImageRecordEditValidator.ValidateRating(rating);
@@ -72,14 +72,14 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
         return LibraryRules.SetOrganization(image, rating, reviewed, collection);
     }
 
-    public static ImageRecordEdit AddCollection(ImageRecordEdit image, string collection)
+    public ImageRecordEdit AddCollection(ImageRecordEdit image, string collection)
     {
         ArgumentNullException.ThrowIfNull(image);
         ValidateCollectionName(collection);
         return LibraryRules.AddCollection(image, collection);
     }
 
-    public static ImageRecordEdit RemoveCollection(ImageRecordEdit image, string collection)
+    public ImageRecordEdit RemoveCollection(ImageRecordEdit image, string collection)
     {
         ArgumentNullException.ThrowIfNull(image);
         ValidateCollectionName(collection);
@@ -93,7 +93,7 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
             throw new InvalidOperationException($"Collection name '{collection}' is invalid; collection names must have 1 to 80 characters.");
     }
 
-    public static ImageRecord ApplyEdit(ImageRecord image, Func<ImageRecordEdit, ImageRecordEdit> update)
+    public ImageRecord ApplyEdit(ImageRecord image, Func<ImageRecordEdit, ImageRecordEdit> update)
     {
         ArgumentNullException.ThrowIfNull(image);
         ArgumentNullException.ThrowIfNull(update);
@@ -125,7 +125,7 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
         finally { store.Gate.Release(); }
     }
 
-    private static async Task<ImageRecord> UpdateRecordAsync(IGalleryStore store, string imageId, Func<ImageRecordEdit, ImageRecordEdit> update, byte[] key)
+    private async Task<ImageRecord> UpdateRecordAsync(IGalleryStore store, string imageId, Func<ImageRecordEdit, ImageRecordEdit> update, byte[] key)
     {
         var record = await store.ReadRecordAsync(imageId, key);
         var updated = ApplyEdit(record, update);
@@ -186,4 +186,8 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
         var summary = string.Join(", ", failures.Select(exception => exception.Message));
         throw new AggregateException($"Failed to update {failures.Count} gallery record(s): {summary}", failures);
     }
+
+    public string MergeTags(string existing, string additions) => LibraryRules.MergeTags(existing, additions);
+
+    public string RemoveTag(string existing, string tag) => LibraryRules.RemoveTag(existing, tag);
 }

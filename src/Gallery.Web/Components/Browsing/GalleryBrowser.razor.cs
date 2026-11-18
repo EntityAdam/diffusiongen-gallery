@@ -8,7 +8,7 @@ namespace Gallery.Web.Components.Browsing;
 
 public partial class GalleryBrowser
 {
-    [Inject] private GalleryService Gallery { get; set; } = default!;
+    [Inject] private IGalleryRecordEditor Gallery { get; set; } = default!;
     [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
     [Parameter, EditorRequired] public GalleryBrowserState State { get; set; } = default!;
     [Parameter, EditorRequired] public WorkspaceCatalog Catalog { get; set; } = default!;

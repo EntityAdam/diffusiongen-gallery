@@ -4,7 +4,7 @@ using Gallery.Web.Components.Workspace;
 
 namespace Gallery.Web.Components.Media;
 
-public sealed class MediaCurationCommands(GalleryService gallery, WorkspaceCatalog catalog, WorkspaceCommands commands)
+public sealed class MediaCurationCommands(IGalleryRecordEditor gallery, WorkspaceCatalog catalog, WorkspaceCommands commands)
 {
     internal Task ToggleRatingAsync(ImageRecord image, int value) =>
         RunSingleAsync("Saving rating...", image.Id,

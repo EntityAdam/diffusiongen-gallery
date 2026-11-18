@@ -14,7 +14,7 @@
             <dt>Original filename</dt><dd>@Image.OriginalName</dd>
             <dt>Dimensions</dt><dd>@Image.Width &times; @Image.Height</dd>
             <dt>Size</dt><dd>@((Image.OriginalBytes / 1024d / 1024d).ToString("F2")) MiB</dd>
-            @if (Image.IsVideo) { <dt>Video duration</dt><dd>@GalleryService.FormatDuration(Image)</dd> }
+            @if (Image.IsVideo) { <dt>Video duration</dt><dd>@GalleryDisplay.FormatDuration(Image)</dd> }
             <dt>Created</dt><dd>@(Image.SourceCreatedAt?.ToLocalTime().ToString("g") ?? "Unknown (not captured)")</dd>
             <dt>Imported</dt><dd>@Image.ImportedAt.ToLocalTime().ToString("g")</dd>
         </dl>
@@ -98,5 +98,5 @@
     private string section = "file";
     private string OriginalSourcePath => Image.SourcePath.Length > 0 ? Image.SourcePath
         : Image.SourceFolder.Length > 0 ? Path.Combine(Image.SourceFolder, Image.OriginalName) : "Unknown";
-    private static string ModelFilename(string model) => GalleryService.FormatModelFilename(model);
+    private static string ModelFilename(string model) => GalleryDisplay.FormatModelFilename(model);
 }

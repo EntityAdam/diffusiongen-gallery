@@ -7,20 +7,25 @@ namespace Gallery.Web.Components.Browsing;
 // Browsing state survives workflow switches, but never an unlocked session.
 public sealed class GalleryBrowserState : IDisposable
 {
-    private readonly GalleryService gallery;
+    private readonly IGalleryVault vault;
+    private readonly IGalleryCatalog galleryCatalog;
+    private readonly IGallerySettings settings;
     private readonly WorkspaceCatalog catalog;
     private readonly WorkspacePreferences preferences;
     private CollectionCatalog previousCollections = CollectionCatalog.Empty;
     private readonly ILogger logger;
     private bool disposed;
     internal ThumbnailCache Thumbnails { get; }
-    public GalleryBrowserState(GalleryService gallery, WorkspaceCatalog catalog, ILogger logger, Action changed, WorkspacePreferences preferences)
+    public GalleryBrowserState(IGalleryVault vault, IGalleryCatalog galleryCatalog, IGallerySettings settings, IGalleryMedia media,
+        WorkspaceCatalog catalog, ILogger logger, Action changed, WorkspacePreferences preferences)
     {
-        this.gallery = gallery;
+        this.vault = vault;
+        this.galleryCatalog = galleryCatalog;
+        this.settings = settings;
         this.catalog = catalog;
         this.preferences = preferences;
         this.logger = logger;
-        Thumbnails = new(gallery, logger, changed);
+        Thumbnails = new(vault, media, logger, changed);
     }
 
     public GalleryFilter Filter { get; set; } = new();
@@ -66,7 +71,7 @@ public sealed class GalleryBrowserState : IDisposable
             {
                 var previousReviewProjection = grouping == "prompt" && Filter.Review == "pending"
                     && projectedFilter == Filter && projectedGrouping == grouping ? browsingProjection : null;
-                browsingProjection = GalleryBrowsingProjector.Create(gallery, catalog.Images, Filter, grouping,
+                browsingProjection = GalleryBrowsingProjector.Create(galleryCatalog, catalog.Images, Filter, grouping,
                     Suggestions.Keys.ToHashSet(), previousReviewProjection);
                 browsingSource = catalog.Images;
                 projectedFilter = Filter;
@@ -85,8 +90,8 @@ public sealed class GalleryBrowserState : IDisposable
         BrowsingFilter = TrashActive ? new() : null;
         FilterInputRevision++;
         Filter = TrashActive ? new() { Deletion = "marked" } : new();
-        var views = await gallery.LoadViewsAsync();
-        if (!disposed && gallery.IsUnlocked) QuickFilters = views.OrderBy(view => view.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        var views = await settings.LoadViewsAsync();
+        if (!disposed && vault.IsUnlocked) QuickFilters = views.OrderBy(view => view.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     public void ClearSelection()
@@ -217,7 +222,7 @@ public sealed class GalleryBrowserState : IDisposable
     }
     public async Task SaveToolboxStateAsync()
     {
-        if (disposed || !gallery.IsUnlocked) return;
+        if (disposed || !vault.IsUnlocked) return;
         try { await SavePreferencesAsync(); }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
         {

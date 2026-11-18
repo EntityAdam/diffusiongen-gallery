@@ -6,14 +6,14 @@ using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Core.Services;
 
-internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue)
+internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue) : IGalleryStorage
 {
     internal const string SettingId = "media-index";
     private const string SettingPurpose = "media-index:v1";
 
     private sealed record MediaIndexMarker(DateTimeOffset ScheduledAt);
 
-    internal async Task RebuildAsync()
+    public async Task RebuildStorageIndexAsync()
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var store = galleryLifetime.Current.GalleryStore;

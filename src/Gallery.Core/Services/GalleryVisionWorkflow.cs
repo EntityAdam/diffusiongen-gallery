@@ -10,7 +10,7 @@ using Gallery.Core.Services.Sessions;
 namespace Gallery.Core.Services;
 
 internal sealed class GalleryVisionWorkflow(
-    GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager, CollectionOrganizer collectionOrganizer)
+    GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager, CollectionOrganizer collectionOrganizer) : IGalleryVision
 {
     private const string VisionSettingsId = "vision-settings";
     private const string VisionCheckpointId = "vision-checkpoint";

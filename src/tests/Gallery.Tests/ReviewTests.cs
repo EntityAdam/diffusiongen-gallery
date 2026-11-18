@@ -69,7 +69,7 @@ public sealed class ReviewTests
 
         // Act
         var approvedImageRecord = await LibraryWorkbench.PersistApprovedSuggestionAsync(
-            fixture.Service, organizationSuggestion);
+            fixture.Service.Scope.Vision, organizationSuggestion);
         var storedImageRecord = Assert.Single(await fixture.Service.ListAsync());
 
         // Assert
@@ -117,8 +117,8 @@ public sealed class ReviewTests
         var workbench = new LibraryWorkbench();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = typeof(LibraryWorkbench);
-        type.GetProperty("Gallery", flags)!.SetValue(workbench, gallery);
-        type.GetProperty("OrganizationHistory", flags)!.SetValue(workbench, new OrganizationHistory(gallery));
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(workbench, gallery);
+        type.GetProperty("OrganizationHistory", flags)!.SetValue(workbench, new OrganizationHistory(gallery.Scope.Collections));
         type.GetProperty("Toasts", flags)!.SetValue(workbench, toasts);
         type.GetProperty("Logger", flags)!.SetValue(workbench, NullLogger<LibraryWorkbench>.Instance);
         return workbench;
@@ -206,7 +206,7 @@ public sealed class ReviewTests
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
         type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord> { stale });
-        type.GetProperty("Gallery", flags)!.SetValue(viewer, fixture.Service);
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Service);
         type.GetProperty("Logger", flags)!.SetValue(viewer,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.Media.FullscreenViewer>.Instance);
         var cache = (Dictionary<string, (string Url, long Bytes)>)type.GetField("fitCache", flags)!.GetValue(viewer)!;

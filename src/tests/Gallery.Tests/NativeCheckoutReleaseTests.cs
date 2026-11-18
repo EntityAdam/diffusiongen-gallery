@@ -129,8 +129,8 @@ public sealed class NativeCheckoutReleaseTests
     }
 
     private static GalleryLifetime Lifetime(GalleryService service) =>
-        (GalleryLifetime)typeof(GalleryService).GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
+        (GalleryLifetime)typeof(GalleryScope).GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service.Scope)!;
 
     private static VaultAccess Access(GalleryService service) =>
-        (VaultAccess)typeof(GalleryService).GetField("vaultAccess", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
+        (VaultAccess)typeof(GalleryScope).GetField("vaultAccess", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service.Scope)!;
 }

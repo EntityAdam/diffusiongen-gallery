@@ -15,7 +15,7 @@
         @if (Thumbnail is not null)
         { <img src="@Thumbnail" alt="@Image.Name" loading="lazy" draggable="false" /> }
         else { <div class="grid h-full place-items-center text-xs text-muted-foreground" aria-busy="@(ThumbnailFailed ? "false" : "true")">@(ThumbnailFailed ? "Preview unavailable" : "Loading preview...")</div> }
-        @if (Image.IsVideo) { <span class="pointer-events-none absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/80 px-2 py-1 text-xs text-white" aria-label="@($"Video, {GalleryService.FormatDuration(Image)}")"><PlayIcon Size="12" aria-hidden="true" /> @GalleryService.FormatDuration(Image)</span> }
+        @if (Image.IsVideo) { <span class="pointer-events-none absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-black/80 px-2 py-1 text-xs text-white" aria-label="@($"Video, {GalleryDisplay.FormatDuration(Image)}")"><PlayIcon Size="12" aria-hidden="true" /> @GalleryDisplay.FormatDuration(Image)</span> }
     </button>
     <div class="card-info p-4">
         <div class="card-heading flex min-w-0 items-center justify-between gap-2">
@@ -42,7 +42,7 @@
         @if (Image.Generation is { } generation)
         {
             <div class="card-generation mt-2 space-y-1 text-xs text-muted-foreground">
-                @if (generation.Model.Length > 0) { <p class="mb-0! truncate" title="@generation.Model">Model: @GalleryService.FormatModelFilename(generation.Model)</p> }
+                @if (generation.Model.Length > 0) { <p class="mb-0! truncate" title="@generation.Model">Model: @GalleryDisplay.FormatModelFilename(generation.Model)</p> }
                 @if (generation.Prompt.Length > 0) { <p class="mb-0! line-clamp-2 break-words" title="@generation.Prompt">@generation.Prompt</p> }
             </div>
         }

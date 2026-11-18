@@ -5,7 +5,7 @@ namespace Gallery.Web.Components;
 internal static class TagSelection
 {
     // Apply only the delta, preserving mixed assignments during a bulk edit.
-    internal static string Apply(GalleryService gallery, string tags, string originalSelection, string selected)
+    internal static string Apply(IGalleryRecordEditor gallery, string tags, string originalSelection, string selected)
     {
         var desired = Split(selected);
         var original = Split(originalSelection);

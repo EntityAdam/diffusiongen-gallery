@@ -4,7 +4,7 @@ using Microsoft.JSInterop;
 
 namespace Gallery.Web.Components.Workspace;
 
-public sealed class WorkspacePreferences(GalleryService gallery, IJSRuntime js, CancellationToken lifetime)
+public sealed class WorkspacePreferences(IGalleryVault vault, IGallerySettings settings, IJSRuntime js, CancellationToken lifetime)
 {
     private readonly SemaphoreSlim saves = new(1, 1);
     private UiPreferences current = new();
@@ -13,7 +13,7 @@ public sealed class WorkspacePreferences(GalleryService gallery, IJSRuntime js, 
 
     internal async Task<UiPreferences> LoadAsync()
     {
-        current = await gallery.LoadPreferencesAsync();
+        current = await settings.LoadPreferencesAsync();
         return current;
     }
 
@@ -33,13 +33,13 @@ public sealed class WorkspacePreferences(GalleryService gallery, IJSRuntime js, 
             {
                 throw new InvalidOperationException("Auto-lock timer could not be saved. The previous timer is still active.", exception);
             }
-            if (!lifetime.IsCancellationRequested && gallery.IsUnlocked) await ApplyAutoLockAsync();
+            if (!lifetime.IsCancellationRequested && vault.IsUnlocked) await ApplyAutoLockAsync();
         });
     }
 
     internal async Task ApplyAutoLockAsync()
     {
-        gallery.ConfigureAutoLock(AutoLockMinutes);
+        vault.ConfigureAutoLock(AutoLockMinutes);
         try { await js.InvokeVoidAsync("gallerySecurity.configureAutoLock", AutoLockMinutes); }
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
     }
@@ -51,7 +51,7 @@ public sealed class WorkspacePreferences(GalleryService gallery, IJSRuntime js, 
         {
             lifetime.ThrowIfCancellationRequested();
             var next = update(current);
-            await gallery.SavePreferencesAsync(next);
+            await settings.SavePreferencesAsync(next);
             current = next;
         }
         finally { saves.Release(); }

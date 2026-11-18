@@ -55,7 +55,7 @@ internal static class SimulateCatalogCommand
         try
         {
             var store = new GalleryStoreFactory().Create(vault);
-            long count = await gallery.CountRecordsAsync(cancellationToken);
+            long count = await gallery.Catalog.CountRecordsAsync(cancellationToken);
             var writer = new ResultWriter(options.Workspace);
             var environment = writer.Environment with
             {
@@ -114,18 +114,18 @@ internal static class SimulateCatalogCommand
                 }
                 if (options.Flag("measure-open-at-targets"))
                 {
-                    await gallery.CloseVaultAsync();
+                    await gallery.Vault.CloseVaultAsync();
                     await MeasureOpenCommand.RunAsync(options.With(("label", target.ToString()),
                         ("runs", options.Get("open-runs", "3"))), cancellationToken);
-                    await gallery.OpenExistingVaultAsync(vault);
-                    await gallery.UnlockWithPassphraseAsync(await File.ReadAllTextAsync(StressVault.PassphrasePath(options.Workspace), cancellationToken));
+                    await gallery.Vault.OpenExistingVaultAsync(vault);
+                    await gallery.Vault.UnlockWithPassphraseAsync(await File.ReadAllTextAsync(StressVault.PassphrasePath(options.Workspace), cancellationToken));
                 }
             }
         }
         finally
         {
             CryptographicOperations.ZeroMemory(key);
-            await gallery.CloseVaultAsync();
+            await gallery.Vault.CloseVaultAsync();
         }
     }
 

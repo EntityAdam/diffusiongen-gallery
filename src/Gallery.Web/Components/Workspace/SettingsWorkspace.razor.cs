@@ -58,22 +58,22 @@ public partial class SettingsWorkspace
         {
             if (tab == "endpoints")
             {
-                var value = await Gallery.SettingsAsync();
+                var value = await GalleryVision.LoadSettingsAsync();
                 if (value.Lanes.IsDefaultOrEmpty)
                 {
-                    var checkpoint = await Gallery.OpenVisionCheckpointAsync();
+                    var checkpoint = await GalleryVision.OpenVisionCheckpointAsync();
                     value = value with { Lanes = value.GetLanes(checkpoint.State.AutoAcceptVisionAnalysis) };
                 }
                 if (!disposed) settings = value;
             }
             else if (tab == "backups" && backup.Saved is null)
             {
-                var value = await Gallery.LoadBackupOptionsAsync();
+                var value = await GalleryBackup.LoadBackupOptionsAsync();
                 if (!disposed) backup.Load(value);
             }
             else if (tab == "overview")
             {
-                var value = await Gallery.CachedStorageOverviewAsync();
+                var value = await GalleryStorage.CachedStorageOverviewAsync();
                 if (!disposed) storageOverview = value;
                 if (!disposed) await Duplicates.LoadSummaryAsync();
             }
@@ -90,7 +90,7 @@ public partial class SettingsWorkspace
     }
     public async Task<bool> SaveAsync()
     {
-        if (Tab == "backups") await Commands.RunAsync("Saving backup destination...", () => backup.SaveAsync(Gallery));
+        if (Tab == "backups") await Commands.RunAsync("Saving backup destination...", () => backup.SaveAsync(GalleryBackup));
         else if (Tab == "endpoints" && llmEndpointSettings is not null && !await llmEndpointSettings.SaveDraftAsync())
         {
             Activity.Error = llmEndpointSettings.ErrorMessage;

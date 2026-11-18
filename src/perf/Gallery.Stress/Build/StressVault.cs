@@ -11,7 +11,7 @@ namespace Gallery.Stress;
 public static class StressVault
 {
     public static string PassphrasePath(string workspace) => Path.Combine(workspace, "passphrase.txt");
-    public static GalleryService CreateService(string workspace, string vault, CatalogBackend backend = CatalogBackend.Sqlite) => GalleryService.Create(Safety.CanonicalPath(vault),
+    public static GalleryScope CreateScope(string workspace, string vault, CatalogBackend backend = CatalogBackend.Sqlite) => GalleryScope.Create(Safety.CanonicalPath(vault),
         new GalleryRuntimeOptions { StateDirectory = Path.Combine(workspace, "app-state"), CatalogBackend = backend }, new HttpClient());
 
     public static string BackendName(CatalogBackend backend) => backend.ToString().ToLowerInvariant();
@@ -27,15 +27,15 @@ public static class StressVault
 
     internal static async Task<long> CountExistingAsync(StressOptions options, string vault, CancellationToken token)
     {
-        using var service = CreateService(options.Workspace, vault);
-        await service.OpenExistingVaultAsync(vault);
-        await service.UnlockWithPassphraseAsync(await File.ReadAllTextAsync(
+        using var service = CreateScope(options.Workspace, vault);
+        await service.Vault.OpenExistingVaultAsync(vault);
+        await service.Vault.UnlockWithPassphraseAsync(await File.ReadAllTextAsync(
             options.Get("passphrase-file", PassphrasePath(options.Workspace)), token));
-        try { return await service.CountRecordsAsync(token); }
-        finally { await service.CloseVaultAsync(); }
+        try { return await service.Catalog.CountRecordsAsync(token); }
+        finally { await service.Vault.CloseVaultAsync(); }
     }
 
-    public static async Task<GalleryService> OpenOrCreateAsync(StressOptions options, string vault, CancellationToken token)
+    public static async Task<GalleryScope> OpenOrCreateAsync(StressOptions options, string vault, CancellationToken token)
     {
         vault = Safety.CanonicalPath(vault);
         Safety.ValidateOutputPath(options.Workspace);
@@ -50,19 +50,19 @@ public static class StressVault
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(passFile, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
         var passphrase = await File.ReadAllTextAsync(passFile, token);
-        var service = CreateService(options.Workspace, vault, backend);
+        var service = CreateScope(options.Workspace, vault, backend);
         try
         {
             if (File.Exists(Path.Combine(vault, "vault.json")))
             {
                 Safety.RequireStressVault(vault);
-                await service.OpenExistingVaultAsync(vault);
-                await service.UnlockWithPassphraseAsync(passphrase);
+                await service.Vault.OpenExistingVaultAsync(vault);
+                await service.Vault.UnlockWithPassphraseAsync(passphrase);
             }
             else
             {
-                await service.SelectNewVaultAsync(vault);
-                var recovery = await service.CreateVaultAsync(passphrase, passphrase, $"stress-{options.Int("seed", 42)}",
+                await service.Vault.SelectNewVaultAsync(vault);
+                var recovery = await service.Vault.CreateVaultAsync(passphrase, passphrase, $"stress-{options.Int("seed", 42)}",
                     new MediaStorageOptions { MediaDirectory = options.Get("media-directory", "") });
                 Safety.MarkStressVault(vault);
                 await File.WriteAllTextAsync(Path.Combine(options.Workspace, "recovery.txt"), recovery, token);
@@ -70,7 +70,7 @@ public static class StressVault
                 await File.WriteAllTextAsync(Path.Combine(vault, "stress-vault.json"), JsonSerializer.Serialize(new { simulated = false, catalogBackend = BackendName(backend) }), token);
             }
             await StressResources.RegisterAsync(options.Workspace, vault, "vault", token);
-            service.ConfigureAutoLock(0);
+            service.Vault.ConfigureAutoLock(0);
             return service;
         }
         catch { service.Dispose(); throw; }

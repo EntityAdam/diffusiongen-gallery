@@ -64,7 +64,10 @@ public sealed class DomainArchitectureTests
     public void EntryContracts_UseCanonicalCoreModelsWithoutExposingInteriorComponents()
     {
         var core = typeof(GalleryService).Assembly;
-        foreach (var method in typeof(GalleryService).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+        var contracts = typeof(GalleryScope).GetProperties()
+            .Select(property => property.PropertyType)
+            .Append(typeof(GalleryService));
+        foreach (var method in contracts.SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)))
         {
             AssertPublicContract(method.ReturnType, core);
             foreach (var parameter in method.GetParameters()) AssertPublicContract(parameter.ParameterType, core);

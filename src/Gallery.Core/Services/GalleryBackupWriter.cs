@@ -10,7 +10,7 @@ using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Core.Services;
 
-internal sealed class GalleryBackupWriter(GalleryLifetime galleryLifetime, VaultSession vaultSession, HttpClient? httpClient)
+internal sealed class GalleryBackupWriter(GalleryLifetime galleryLifetime, VaultSession vaultSession, HttpClient? httpClient) : IGalleryBackup
 {
     public async Task<BackupOptions> LoadBackupOptionsAsync()
     {

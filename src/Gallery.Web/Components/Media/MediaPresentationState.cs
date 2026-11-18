@@ -4,7 +4,7 @@ using Microsoft.JSInterop;
 
 namespace Gallery.Web.Components.Media;
 
-public sealed class MediaPresentationState(GalleryService gallery, IJSRuntime js, WorkspaceCommands commands) : IDisposable
+public sealed class MediaPresentationState(IGalleryVault vault, IGalleryMedia media, IJSRuntime js, WorkspaceCommands commands) : IDisposable
 {
     public ImageRecord? Selected { get; private set; }
     public string Preview { get; private set; } = "";
@@ -14,7 +14,7 @@ public sealed class MediaPresentationState(GalleryService gallery, IJSRuntime js
     public string ViewerInitialId { get; private set; } = "";
     public string ViewerInitialPreview { get; private set; } = "";
     public bool ReviewMode { get; private set; }
-    public bool CanPresent => !disposed && gallery.IsUnlocked;
+    public bool CanPresent => !disposed && vault.IsUnlocked;
     public bool IsOpen => Selected is not null || ViewerImages.Count > 0;
     public bool DetailsOpen => Selected is not null;
     private bool disposed;
@@ -25,16 +25,16 @@ public sealed class MediaPresentationState(GalleryService gallery, IJSRuntime js
         if (disposed) return Task.CompletedTask;
         return commands.RunAsync("Decrypting preview...", async () =>
         {
-            if (disposed || !gallery.IsUnlocked) return;
+            if (disposed || !vault.IsUnlocked) return;
             var revision = ++generation;
             await ReleaseVideoAsync();
-            var preview = await gallery.PreviewAsync(image.Id);
+            var preview = await media.PreviewAsync(image.Id);
             if (!IsCurrent(revision)) return;
             var url = "";
             if (image.IsVideo)
             {
                 commands.Activity.Progress = "Decrypting video...";
-                var (content, type) = await gallery.OpenMediaAsync(image.Id);
+                var (content, type) = await media.OpenMediaAsync(image.Id);
                 using var reference = new DotNetStreamReference(content);
                 if (!IsCurrent(revision)) return;
                 url = await js.InvokeAsync<string>("galleryMedia.createStreamUrl", reference, type);
@@ -47,7 +47,7 @@ public sealed class MediaPresentationState(GalleryService gallery, IJSRuntime js
         });
     }
 
-    private bool IsCurrent(long revision) => !disposed && revision == generation && gallery.IsUnlocked;
+    private bool IsCurrent(long revision) => !disposed && revision == generation && vault.IsUnlocked;
 
     public void Update(ImageRecord updated)
     {

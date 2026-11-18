@@ -1,11 +1,12 @@
-@inject GalleryService Gallery
+@inject IGalleryRestore GalleryRestore
+@inject IGalleryVault GalleryVault
 @inject IJSRuntime JS
 
-@{ var knownGalleries = Gallery.KnownGalleries; }
+@{ var knownGalleries = GalleryVault.KnownGalleries; }
 <section class="gallery-entry @(galleryScreen == "switch" ? "gallery-entry-actions" : "gallery-entry-welcome")" aria-label="Gallery access">
     <header class="gallery-entry-brand"><SparkleIcon Size="26" ClassName="brand-mark" aria-hidden="true" /> <span>DiffusionGen Gallery</span></header>
     <div class="gallery-entry-heading">
-        <h1>@(galleryScreen == "switch" ? galleryTab switch { "create" => "Create a private gallery", "open" => "Open a gallery", _ => "Restore a gallery" } : Gallery.VaultExists ? "Welcome back." : "Your private gallery.")</h1>
+        <h1>@(galleryScreen == "switch" ? galleryTab switch { "create" => "Create a private gallery", "open" => "Open a gallery", _ => "Restore a gallery" } : GalleryVault.VaultExists ? "Welcome back." : "Your private gallery.")</h1>
         <p>@(galleryScreen == "switch" ? "Encrypted media storage and backup." : "A safe space for your media.")</p>
     </div>
     @if (Error.Length > 0 && ShowFeedback)
@@ -152,14 +153,14 @@
     }
     else
     {
-        @if (Gallery.VaultExists)
+        @if (GalleryVault.VaultExists)
         {
             <Card Class="gallery-unlock-card">
                 <div class="gallery-switcher">
                     <AdvancedSelect Id="gallery-switcher" Label="Galleries" ItemLabel="gallery"
                                     Options="@knownGalleries.Select(location => location.Directory)"
                                     OptionLabels="@knownGalleries.ToDictionary(location => location.Directory, location => location.Name)"
-                                    Value="@Gallery.VaultRoot" ValueChanged="SelectKnownGalleryAsync"
+                                    Value="@GalleryVault.VaultRoot" ValueChanged="SelectKnownGalleryAsync"
                                     AllowCreate="false" AllowClear="false" Disabled="@Busy">
                         <LeadingIcon><FolderIcon Size="18" ClassName="text-primary" aria-hidden="true" /></LeadingIcon>
                     </AdvancedSelect>
@@ -231,7 +232,7 @@
     protected override void OnInitialized()
     {
         if (StartWithCreate) galleryScreen = "switch";
-        newGalleryDirectory = GalleryService.DefaultVaultDirectory();
+        newGalleryDirectory = GalleryPaths.DefaultVaultDirectory();
     }
 
     private Task RunAsync(string status, Func<Task> action) => RunOperation.InvokeAsync((status, action));
@@ -315,8 +316,8 @@
 
     private Task UseExistingGalleryAsync() => RunAsync("Selecting gallery...", async () =>
     {
-        await Gallery.OpenExistingVaultAsync(existingGalleryDirectory);
-        await Gallery.CloseVaultAsync();
+        await GalleryVault.OpenExistingVaultAsync(existingGalleryDirectory);
+        await GalleryVault.CloseVaultAsync();
         await ReturnToWelcome();
     });
 
@@ -329,13 +330,13 @@
     private Task CreateGalleryAsync() => RunAsync("Creating gallery...", async () =>
     {
         if (secret != confirm) throw new InvalidOperationException("Passphrases do not match.");
-        await Gallery.SelectNewVaultAsync(string.IsNullOrWhiteSpace(createGalleryDirectory) ? newGalleryDirectory : createGalleryDirectory);
-        var phrase = await Gallery.CreateVaultAsync(secret, confirm, newGalleryName,
+        await GalleryVault.SelectNewVaultAsync(string.IsNullOrWhiteSpace(createGalleryDirectory) ? newGalleryDirectory : createGalleryDirectory);
+        var phrase = await GalleryVault.CreateVaultAsync(secret, confirm, newGalleryName,
             new MediaStorageOptions { MediaDirectory = splitGalleryStorage ? newMediaDirectory : "" });
         secret = confirm = newMediaDirectory = newGalleryName = createGalleryDirectory = "";
         splitGalleryStorage = false;
         await Created.InvokeAsync(phrase);
-        newGalleryDirectory = GalleryService.DefaultVaultDirectory();
+        newGalleryDirectory = GalleryPaths.DefaultVaultDirectory();
     });
 
     private void ResetRestoreBackups()
@@ -349,8 +350,8 @@
     {
         ResetRestoreBackups();
         restoreArchives = restoreSourceType == "sas"
-            ? await Gallery.ListRestoreBackupsFromSasAsync(restoreSasUrl, restoreAzurePrefix)
-            : await Gallery.ListRestoreBackupsAsync("local", restoreSourceDirectory, "", "", "");
+            ? await GalleryRestore.ListRestoreBackupsFromSasAsync(restoreSasUrl, restoreAzurePrefix)
+            : await GalleryRestore.ListRestoreBackupsAsync("local", restoreSourceDirectory, "", "", "");
         restoreBackupsSearched = true;
     });
 
@@ -363,15 +364,15 @@
             var directory = string.IsNullOrWhiteSpace(restoreGalleryDirectory) ? newGalleryDirectory : restoreGalleryDirectory;
             var name = string.IsNullOrWhiteSpace(newGalleryName) ? null : newGalleryName.Trim();
             if (restoreSourceType == "sas")
-                await Gallery.RestoreGalleryFromSasAsync(restoreSasUrl, restoreArchive, directory,
+                await GalleryRestore.RestoreGalleryFromSasAsync(restoreSasUrl, restoreArchive, directory,
                     restoreCredential, restoreUseRecovery, name, restoreAzurePrefix);
             else
-                await Gallery.RestoreVaultAsync("local", restoreSourceDirectory, "", "", "",
+                await GalleryRestore.RestoreVaultAsync("local", restoreSourceDirectory, "", "", "",
                     restoreArchive, directory, restoreCredential, restoreUseRecovery, name);
             await Restored.InvokeAsync();
             galleryScreen = "welcome";
             restoreGalleryDirectory = newGalleryName = "";
-            newGalleryDirectory = GalleryService.DefaultVaultDirectory();
+            newGalleryDirectory = GalleryPaths.DefaultVaultDirectory();
             ResetRestoreBackups();
         }
         finally { restoreCredential = restoreSasUrl = ""; }
@@ -379,8 +380,8 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        var welcomeCredential = !Gallery.IsUnlocked && Gallery.VaultExists && galleryScreen == "welcome"
-            && (!Busy || ImportRunning) ? $"{Gallery.VaultRoot}:{useRecovery}" : null;
+        var welcomeCredential = !GalleryVault.IsUnlocked && GalleryVault.VaultExists && galleryScreen == "welcome"
+            && (!Busy || ImportRunning) ? $"{GalleryVault.VaultRoot}:{useRecovery}" : null;
         if (welcomeCredential != focusedWelcomeCredential)
         {
             focusedWelcomeCredential = welcomeCredential;

@@ -41,7 +41,7 @@ public sealed class IngestionSession
         ApplyProfile(options);
     }
 
-    public async Task SaveOptionsAsync(GalleryService gallery)
+    public async Task SaveOptionsAsync(IGallerySettings gallery)
     {
         var options = new IngestionOptions { Workers = Workers, CatalogBatchSize = BatchSize };
         await gallery.SaveIngestionOptionsAsync(options);

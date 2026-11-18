@@ -19,8 +19,8 @@ public sealed record ExportFile
     public string ContentType { get; init; }
     [JsonPropertyName("Content")]
     public ImmutableArray<byte> ContentBytes => ImmutableArray.CreateRange(contentBytes);
-    internal byte[] CopyContentBytes() => contentBytes.ToArray();
-    internal ReadOnlyMemory<byte> OwnedContent => contentBytes;
+    public byte[] CopyContentBytes() => contentBytes.ToArray();
+    public void ClearContent() => CryptographicOperations.ZeroMemory(contentBytes);
 }
 public sealed record RemovalFailure(string ImageId, string Message, [property: System.Text.Json.Serialization.JsonPropertyName("Cause")] Exception Exception);
 public sealed record RemovalResult(string Id, [property: System.Text.Json.Serialization.JsonPropertyName("Removed")] bool WasRemoved, string? RestoredPath, [property: System.Text.Json.Serialization.JsonPropertyName("Failure")] RemovalFailure? RemovalFailure)

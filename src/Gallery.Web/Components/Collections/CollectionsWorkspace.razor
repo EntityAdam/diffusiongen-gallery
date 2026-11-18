@@ -1,6 +1,9 @@
 @using Gallery.Web.Components.Media
 @implements IDisposable
-@inject GalleryService Gallery
+@inject IGalleryCatalog GalleryCatalog
+@inject IGalleryCollections GalleryCollections
+@inject IGalleryMedia GalleryMedia
+@inject IGalleryRecordEditor GalleryRecords
 @inject ISonnerService Toasts
 @inject OrganizationHistory OrganizationHistory
 <div aria-busy="@ControlsDisabled.ToString().ToLowerInvariant()" class="collections-workspace" data-has-selection="@(selection.Count > 0 ? "true" : "false")">
@@ -126,7 +129,7 @@
                 if (!ShowsMedia) projectedMedia = [];
                 else
                 {
-                    var filtered = Gallery.Filter(ScopedMedia, new GalleryFilter
+                    var filtered = GalleryCatalog.Filter(ScopedMedia, new GalleryFilter
                     { Search = query, MinRating = minRating,
                       IncludesFavoritesOnly = favoritesOnly, Deletion = includeTrash ? GalleryFilter.AnyValue : "active" });
                     projectedMedia = (sort == "name" ? filtered.OrderBy(image => image.Name)
@@ -177,7 +180,7 @@
         foreach (var image in PageMedia.ToArray())
         {
             if (thumbnails.ContainsKey(image.Id) || thumbnailFailures.Contains(image.Id)) continue;
-            try { var thumbnail = await Gallery.ThumbnailAsync(image.Id); if (disposed || generation != thumbnailGeneration) return; thumbnails[image.Id] = thumbnail; }
+            try { var thumbnail = await GalleryMedia.ThumbnailAsync(image.Id); if (disposed || generation != thumbnailGeneration) return; thumbnails[image.Id] = thumbnail; }
             catch (Exception) { if (disposed || generation != thumbnailGeneration) return; thumbnailFailures.Add(image.Id); }
         }
         var retained = PageMedia.Select(image => image.Id).ToHashSet();foreach (var id in thumbnails.Keys.Where(id => !retained.Contains(id)).ToArray()) thumbnails.Remove(id);
@@ -210,10 +213,10 @@
     private void CloseModal() { if (ControlsDisabled) return; modal = null; error = ""; }
     private async Task SubmitModalAsync() => await RunAsync(async () =>
     {
-        if (modal == "delete") await ApplyAsync(await Gallery.DeleteContainerAsync(modalId!, modalIsSet), $"Deleted {ModalName}. {AffectedMedia} media moved to Unorganized.");
-        else if (modal == "move") await ApplyAsync(await Gallery.MoveSetAsync(modalId!, Catalog.Collections.First(item => item.Name == name).Id), "Set moved.");
-        else if (modalId is not null) await ApplyAsync(modalIsSet ? await Gallery.RenameSetAsync(modalId, name) : await Gallery.RenameCollectionAsync(modalId, name), "Name updated.");
-        else { if (modalIsSet) await Gallery.CreateSetAsync(Collection!.Id, name); else await Gallery.CreateCollectionAsync(name);OrganizationHistory.Clear();notice = "Created. Add media whenever you are ready.";await RefreshParentAsync(); }
+        if (modal == "delete") await ApplyAsync(await GalleryCollections.DeleteContainerAsync(modalId!, modalIsSet), $"Deleted {ModalName}. {AffectedMedia} media moved to Unorganized.");
+        else if (modal == "move") await ApplyAsync(await GalleryCollections.MoveSetAsync(modalId!, Catalog.Collections.First(item => item.Name == name).Id), "Set moved.");
+        else if (modalId is not null) await ApplyAsync(modalIsSet ? await GalleryCollections.RenameSetAsync(modalId, name) : await GalleryCollections.RenameCollectionAsync(modalId, name), "Name updated.");
+        else { if (modalIsSet) await GalleryCollections.CreateSetAsync(Collection!.Id, name); else await GalleryCollections.CreateCollectionAsync(name);OrganizationHistory.Clear();notice = "Created. Add media whenever you are ready.";await RefreshParentAsync(); }
         modal = null;
         if (Location.SetId is not null && !Catalog.Sets.Any(item => item.Id == Location.SetId)) await LocationChanged.InvokeAsync(new(Location.CollectionId));
         if (Location.CollectionId is not null && !Catalog.Collections.Any(item => item.Id == Location.CollectionId)) await LocationChanged.InvokeAsync(new());
@@ -242,9 +245,9 @@
     }
     private async Task ApplyAsync(CollectionMutation result, string message) { Catalog = result.Catalog;OrganizationHistory.Record(result.Undo);notice = message;await RefreshParentAsync(); }
     private Task RefreshAsync() => RunAsync(async () => { thumbnailFailures.Clear(); await RefreshParentAsync(); });
-    private Task RemoveFromSetAsync() => RunAsync(async () => { await ApplyAsync(await Gallery.MoveMediaToSetAsync(SelectedMedia.Select(image => image.Id), null), "Media moved to Unorganized.");selection.Clear(); });
-    private Task ReorderSet(string id, int offset) => RunAsync(async () => await ApplyAsync(await Gallery.ReorderSetAsync(id, offset), "Set order updated."));
-    private Task ReorderMedia(string id, int offset) => RunAsync(async () => await ApplyAsync(await Gallery.ReorderMediaAsync(Set!.Id, id, offset), "Media sequence updated."));
+    private Task RemoveFromSetAsync() => RunAsync(async () => { await ApplyAsync(await GalleryCollections.MoveMediaToSetAsync(SelectedMedia.Select(image => image.Id), null), "Media moved to Unorganized.");selection.Clear(); });
+    private Task ReorderSet(string id, int offset) => RunAsync(async () => await ApplyAsync(await GalleryCollections.ReorderSetAsync(id, offset), "Set order updated."));
+    private Task ReorderMedia(string id, int offset) => RunAsync(async () => await ApplyAsync(await GalleryCollections.ReorderMediaAsync(Set!.Id, id, offset), "Media sequence updated."));
     private Task DropSetAsync(string targetId) => RunAsync(async () =>
     {
         if (draggedSet is null || draggedSet == targetId || sort != "sequence" || query.Length > 0) return;
@@ -252,7 +255,7 @@
         var sourceIndex = siblings.FindIndex(item => item.Id == draggedSet);
         var targetIndex = siblings.FindIndex(item => item.Id == targetId);
         if (sourceIndex < 0 || targetIndex < 0) return;
-        await ApplyAsync(await Gallery.ReorderSetAsync(draggedSet, targetIndex - sourceIndex), "Set order updated.");
+        await ApplyAsync(await GalleryCollections.ReorderSetAsync(draggedSet, targetIndex - sourceIndex), "Set order updated.");
         draggedSet = null;
     });
     private async Task BeginChooseMedia() { if (ControlsDisabled) return; choosingMedia = true;sort = "newest";await ResetPageAsync(); }
@@ -263,10 +266,10 @@
         var target = result.Catalog.Sets.FirstOrDefault(item => item.Id == targetId);
         var path = target is null ? "Unorganized" : $"{result.Catalog.Collections.First(item => item.Id == target.CollectionId).Name} / {target.Name}";
         await ApplyAsync(result, $"{result.Undo.AfterMedia.Length} media moved to {path}.");selection.Clear();choosingMedia = false; }
-    private Task RateAsync(ImageRecord image, int rating) => CurateAsync(image, GalleryKeyboardCuration.Rating(Gallery, image.Rating == rating ? 0 : rating), "Rating saved.");
-    private Task FavoriteAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(Gallery, "f", image)!, image.IsFavorite ? "Removed from favorites." : "Added to favorites.");
-    private Task MarkAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(Gallery, "d", image)!, image.IsMarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.");
-    private Task SaveTagsAsync(string tags) => RunAsync(async () => { await Gallery.UpdateManyAsync(quickTagIds, edit => edit with { Tags = TagSelection.Apply(Gallery, edit.Tags, CommonTags, tags) });quickTags = false;await RefreshParentAsync();notice = $"Tags saved for {quickTagIds.Length} media item(s)."; });
+    private Task RateAsync(ImageRecord image, int rating) => CurateAsync(image, GalleryKeyboardCuration.Rating(GalleryRecords, image.Rating == rating ? 0 : rating), "Rating saved.");
+    private Task FavoriteAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(GalleryRecords, "f", image)!, image.IsFavorite ? "Removed from favorites." : "Added to favorites.");
+    private Task MarkAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(GalleryRecords, "d", image)!, image.IsMarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.");
+    private Task SaveTagsAsync(string tags) => RunAsync(async () => { await GalleryRecords.UpdateManyAsync(quickTagIds, edit => edit with { Tags = TagSelection.Apply(GalleryRecords, edit.Tags, CommonTags, tags) });quickTags = false;await RefreshParentAsync();notice = $"Tags saved for {quickTagIds.Length} media item(s)."; });
     private Task OpenMediaAsync(ImageRecord image) => ControlsDisabled ? Task.CompletedTask : Open.InvokeAsync((PageMedia.ToArray(), image.Id));
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
     {
@@ -275,12 +278,12 @@
         var image = Media.FirstOrDefault(item => item.Id == id);
         if (image is null) return;
         if (key == "x") { Select(id, shift); return; }
-        if (GalleryKeyboardCuration.ForKey(Gallery, key, image) is { } update)
+        if (GalleryKeyboardCuration.ForKey(GalleryRecords, key, image) is { } update)
             await CurateAsync(image, update, GalleryKeyboardCuration.Message(key, image));
     }
     private Task CurateAsync(ImageRecord image, Func<ImageRecordEdit, ImageRecordEdit> update, string message) => RunAsync(async () =>
     {
-        var updated = await Gallery.UpdateAsync(image.Id, update);
+        var updated = await GalleryRecords.UpdateAsync(image.Id, update);
         Images = Images.Select(item => item.Id == updated.Id ? updated : item).ToArray();
         await ImageChanged.InvokeAsync(updated);
         selection.IntersectWith(Media.Select(item => item.Id));

@@ -1,6 +1,8 @@
 @using Gallery.Web.Components.Workspace
 @implements IDisposable
-@inject GalleryService Gallery
+@inject IGalleryIngestion GalleryIngestion
+@inject IGallerySettings GallerySettings
+@inject IGalleryVault GalleryVault
 @inject ILogger<IngestionWorkspace> Logger
 
 <Card Class="mb-6 p-5 md:p-6">
@@ -14,7 +16,7 @@
         <h3 id="third-party-heading">3rd party</h3>
         <p class="text-muted-foreground">3rd Party tools are required for certain features and are not bundled with the application. You will need to install them separately.</p>
         <h4>Video encoding</h4>
-        <div class="flex items-center gap-2"><strong>FFMPEG</strong><Badge Class="@(Gallery.VideoToolsAvailable ? "ingest-tool-available" : "ingest-tool-unavailable")">@(Gallery.VideoToolsAvailable ? "available" : "not available")</Badge></div>
+        <div class="flex items-center gap-2"><strong>FFMPEG</strong><Badge Class="@(GalleryIngestion.VideoToolsAvailable ? "ingest-tool-available" : "ingest-tool-unavailable")">@(GalleryIngestion.VideoToolsAvailable ? "available" : "not available")</Badge></div>
     </section>
     <h3 class="mt-6">Ingest</h3>
         <form @onsubmit="ScanImportFolderAsync" @onsubmit:preventDefault>
@@ -30,8 +32,8 @@
             <h4 id="ingestion-scan-heading">Scan results</h4>
             <p>@Session.Scan.ImageCount images &middot; @Session.Scan.VideoCount videos &middot; Source file size total: @FormatIngestionBytes(Session.Scan.SourceBytes)</p>
             <div class="flex items-center gap-3"><button id="include-images" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.IncludeImages ? "true" : "false")" aria-labelledby="include-images-label" disabled="@Busy" @onclick="ToggleIncludeImagesAsync"><span></span></button><Label id="include-images-label" For="include-images">Include Images</Label></div>
-            <div class="flex items-center gap-3"><button id="include-videos" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.IncludeVideos ? "true" : "false")" aria-labelledby="include-videos-label" disabled="@(Busy || !Gallery.VideoToolsAvailable)" @onclick="ToggleIncludeVideosAsync"><span></span></button><Label id="include-videos-label" For="include-videos">Include Videos</Label></div>
-            @if (!Gallery.VideoToolsAvailable && Session.Scan.VideoCount > 0)
+            <div class="flex items-center gap-3"><button id="include-videos" type="button" role="switch" class="review-random-toggle" aria-checked="@(Session.IncludeVideos ? "true" : "false")" aria-labelledby="include-videos-label" disabled="@(Busy || !GalleryIngestion.VideoToolsAvailable)" @onclick="ToggleIncludeVideosAsync"><span></span></button><Label id="include-videos-label" For="include-videos">Include Videos</Label></div>
+            @if (!GalleryIngestion.VideoToolsAvailable && Session.Scan.VideoCount > 0)
             {
                 <p class="text-muted-foreground">Install ffmpeg and ffprobe to include videos.</p>
             }
@@ -100,12 +102,12 @@
     private UnsavedChangesSource GetDraft() => new("settings", () => Session.SettingsDirty,
         () => Commands.Activity.Busy, async () =>
         {
-            await Commands.RunAsync("Saving ingestion settings...", () => Session.SaveOptionsAsync(Gallery));
+            await Commands.RunAsync("Saving ingestion settings...", () => Session.SaveOptionsAsync(GallerySettings));
             return !Session.SettingsDirty && Commands.Activity.Error.Length == 0;
         }, () => { Session.ApplyProfile(Session.SavedOptions); return Task.CompletedTask; });
     private Task SaveOptionsAsync() => Commands.RunAsync("Saving ingestion settings...", async () =>
     {
-        await Session.SaveOptionsAsync(Gallery);
+        await Session.SaveOptionsAsync(GallerySettings);
         Commands.Activity.Message = "Performance settings saved for this gallery.";
     });
 
@@ -115,13 +117,13 @@
         Session.Progress = null;
         Session.Failures = [];
         Session.TimingReport = null;
-        var scan = await Gallery.ScanFolderAsync(Session.SourcePath,
+        var scan = await GalleryIngestion.ScanFolderAsync(Session.SourcePath,
             Session.Recursive ? FolderSearchScope.Descendants : FolderSearchScope.SelectedFolder);
-        if (SessionEnded || !Gallery.IsUnlocked) return;
+        if (SessionEnded || !GalleryVault.IsUnlocked) return;
         Session.IncludeImages = true;
-        Session.IncludeVideos = Gallery.VideoToolsAvailable;
-        var space = await Gallery.EstimateIngestionSpaceAsync(scan, Session.IncludeImages, Session.IncludeVideos);
-        if (SessionEnded || !Gallery.IsUnlocked) return;
+        Session.IncludeVideos = GalleryIngestion.VideoToolsAvailable;
+        var space = await GalleryIngestion.EstimateIngestionSpaceAsync(scan, Session.IncludeImages, Session.IncludeVideos);
+        if (SessionEnded || !GalleryVault.IsUnlocked) return;
         Session.Scan = scan;
         Session.Space = space;
     });
@@ -142,13 +144,13 @@
     {
         Session.Space = null;
         if (Session.Scan is not { } scan) throw new InvalidOperationException("Scan the source folder first.");
-        var space = await Gallery.EstimateIngestionSpaceAsync(scan, Session.IncludeImages, Session.IncludeVideos);
-        if (Gallery.IsUnlocked && ReferenceEquals(scan, Session.Scan)) Session.Space = space;
+        var space = await GalleryIngestion.EstimateIngestionSpaceAsync(scan, Session.IncludeImages, Session.IncludeVideos);
+        if (GalleryVault.IsUnlocked && ReferenceEquals(scan, Session.Scan)) Session.Space = space;
     }
 
     private static string FormatIngestionBytes(long bytes) => bytes < 1024L * 1024
         ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{bytes / (1024d * 1024):0.######} MB")
-        : GalleryService.FormatBytes(bytes);
+        : GalleryDisplay.FormatBytes(bytes);
 
     private Task ImportFolderAsync() => Commands.RunLibraryChangeAsync("Ingesting scanned media...", async () =>
     {
@@ -174,7 +176,7 @@
         {
             try
             {
-                await Gallery.ImportFolderAsync(sourcePath, scope, sourceRetention: deletingSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
+                await GalleryIngestion.ImportFolderAsync(sourcePath, scope, sourceRetention: deletingSources ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
                     reportProgress: update => InvokeAsync(() =>
                     {
                         if (SessionEnded) return;
@@ -193,13 +195,13 @@
             catch (ImportFolderException exception)
             {
                 Session.Failures = exception.Failures.InnerExceptions.Select(failure => failure.Message).ToList();
-                if (Gallery.IsUnlocked) await Session.NotifyCompletedAsync();
+                if (GalleryVault.IsUnlocked) await Session.NotifyCompletedAsync();
                 throw;
             }
             if (SessionEnded) return;
             Session.Progress = Session.Progress with { Status = "Refreshing library..." };
             Session.ReportProgress();
-            if (Gallery.IsUnlocked) await Session.NotifyCompletedAsync();
+            if (GalleryVault.IsUnlocked) await Session.NotifyCompletedAsync();
             if (SessionEnded) return;
             Session.Progress = Session.Progress with { Status = Session.Progress.Total == 0 ? "No supported media found." : "Ingestion complete." };
             Commands.Activity.Message = $"Imported {Session.Progress.Imported} media item(s). {Session.Failures.Count} file(s) reported errors."

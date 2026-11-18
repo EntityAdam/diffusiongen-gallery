@@ -1,5 +1,7 @@
 @implements IAsyncDisposable
-@inject GalleryService Gallery
+@inject IGalleryCatalog GalleryCatalog
+@inject IGalleryCollections GalleryCollections
+@inject IGalleryVision GalleryVision
 @inject IJSRuntime JS
 <dialog @ref="element" class="collection-dialog viewer-quick-edit" aria-labelledby="destination-title" @oncancel="CancelAsync" @oncancel:preventDefault>
     <form @onsubmit="MoveAsync" @onsubmit:preventDefault>
@@ -59,7 +61,7 @@
     private async Task LoadAsync()
     {
         loading = true; error = "";
-        try { catalog = await Gallery.LoadCollectionCatalogAsync();allMedia = await Gallery.ListAsync(); }
+        try { catalog = await GalleryCollections.LoadCollectionCatalogAsync();allMedia = await GalleryCatalog.ListAsync(); }
         catch (Exception exception) { error = exception.Message; }
         finally { loading = false; }
     }
@@ -81,12 +83,12 @@
     {
         suggestedSet = null;suggestionNotice = "";
         if (Collection is null) return;
-        suggestedSet = await Gallery.SuggestDestinationSetAsync(Collection.Id, Images.Select(image => image.Id));
+        suggestedSet = await GalleryVision.SuggestDestinationSetAsync(Collection.Id, Images.Select(image => image.Id));
         if (suggestedSet is null) suggestionNotice = "No existing set was a suitable match. Choose a destination yourself.";
     });
     private void UseSuggestion() { if (suggestedSet is not null) setName = suggestedSet.Name;suggestedSet = null; }
     private Task MoveAsync() => string.IsNullOrWhiteSpace(collectionName) || string.IsNullOrWhiteSpace(setName) || Images.Count == 0 ? Task.CompletedTask : RunAsync(async () =>
-    { var result = await Gallery.MoveMediaToDestinationAsync(Images.Select(image => image.Id), collectionName, setName, Collection?.Id, Set?.Id); await Saved.InvokeAsync(result); });
+    { var result = await GalleryCollections.MoveMediaToDestinationAsync(Images.Select(image => image.Id), collectionName, setName, Collection?.Id, Set?.Id); await Saved.InvokeAsync(result); });
     private async Task RunAsync(Func<Task> action)
     { if (working) return; working = true; error = ""; try { await action(); } catch (Exception exception) { error = exception.Message; } finally { working = false; } }
     private Task CancelAsync() => working ? Task.CompletedTask : Cancel.InvokeAsync();

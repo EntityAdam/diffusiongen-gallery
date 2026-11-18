@@ -12,7 +12,7 @@ using SixLabors.ImageSharp.Processing;
 
 namespace Gallery.Core.Services;
 
-internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultSession vaultSession)
+internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultSession vaultSession) : IGalleryMedia
 {
     private const string PngDataUrlPrefix = "data:image/png;base64,";
 
