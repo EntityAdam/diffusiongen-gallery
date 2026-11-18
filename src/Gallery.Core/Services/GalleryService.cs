@@ -92,7 +92,6 @@ public sealed partial class GalleryService
         galleryLifetime = new GalleryLifetime(galleryStore, vaultStore, storeFactory);
         this.vaultSession = vaultSession;
         vaultManager = new VaultManager(galleryLifetime, vaultSession);
-        removalManager = new RemovalManager(this);
         importMediaPreparer = new ImportMediaPreparer(videoTools);
         this.visionManager = visionManager;
         this.vaultSession.AutoLocked += () =>
@@ -101,6 +100,7 @@ public sealed partial class GalleryService
             OnAutoLocked?.Invoke();
         };
         driveOperationPlayer = CreateDriveOperationPlayer();
+        removalManager = new RemovalManager(galleryLifetime, vaultSession, driveOperationPlayer.Start);
     }
 
     public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter,
@@ -442,6 +442,14 @@ public sealed partial class GalleryService
         else await SaveEditedTagsAsync(record, updated, key);
         return updated;
     }
+
+    public Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids) =>
+        removalManager.PrepareRemovalAsync(ids);
+
+    public Task RemoveAsync(IReadOnlyList<RemovalItem> removalItems,
+        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
+        Action<RemovalResult>? reportRemoval = null) =>
+        removalManager.RemoveAsync(removalItems, existingAction, missingAction, restoreFolder, reportRemoval);
 
     public async Task MoveAsync(string id, string folder, string name)
     {

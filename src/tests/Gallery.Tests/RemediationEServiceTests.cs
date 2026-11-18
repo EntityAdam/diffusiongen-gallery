@@ -1,9 +1,10 @@
 using System.IO.Compression;
-using System.Reflection;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Core.Services.DataManagers;
 using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Tests;
 
@@ -132,22 +133,18 @@ public sealed class RemediationEServiceTests
         faultedPlayer.Start();
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (faultedPlayer.Status.State != DriveQueueState.Faulted && DateTime.UtcNow < deadline) await Task.Delay(1);
-        var playerField = typeof(GalleryService).GetField("driveOperationPlayer", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        var originalPlayer = playerField.GetValue(fixture.Service);
-        playerField.SetValue(fixture.Service, faultedPlayer);
+        var lifetime = new GalleryLifetime(fixture.Store, new VaultStore(fixture.Root));
+        var removalManager = new RemovalManager(lifetime, fixture.Session, faultedPlayer.Start);
         var observed = new List<RemovalResult>();
-        try
-        {
-            var thrown = await Assert.ThrowsAsync<IOException>(() => fixture.Service.RemoveAsync(
-                plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", observed.Add));
 
-            Assert.Same(queueFailure, thrown);
-            Assert.Equal([first.Id, second.Id], observed.Select(receipt => receipt.Id));
-            Assert.All(observed, receipt => Assert.True(receipt.WasRemoved));
-            Assert.Empty(await fixture.Service.ListAsync());
-            await Assert.ThrowsAsync<IOException>(faultedPlayer.WhenIdleAsync);
-        }
-        finally { playerField.SetValue(fixture.Service, originalPlayer); }
+        var thrown = await Assert.ThrowsAsync<IOException>(() => removalManager.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", observed.Add));
+
+        Assert.Same(queueFailure, thrown);
+        Assert.Equal([first.Id, second.Id], observed.Select(receipt => receipt.Id));
+        Assert.All(observed, receipt => Assert.True(receipt.WasRemoved));
+        Assert.Empty(await fixture.Service.ListAsync());
+        await Assert.ThrowsAsync<IOException>(faultedPlayer.WhenIdleAsync);
     }
 
     [Fact]
