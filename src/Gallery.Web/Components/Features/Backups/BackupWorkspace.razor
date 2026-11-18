@@ -1,0 +1,49 @@
+@using Gallery.Web.Components.Workspace
+@inject IGalleryBackup GalleryBackup
+
+<Card Class="mb-6 p-5 md:p-6 space-y-4" aria-labelledby="backup-settings-title">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 id="backup-settings-title">Gallery backups</h3></div>
+    <p class="text-muted-foreground">Backups contain the gallery header, a consistent database snapshot, and encrypted media. Incremental backups include a fresh database snapshot and only changed media; keep the full backup and every later incremental archive in the chain.</p>
+    <BackupLocation @bind-Type="Draft.DestinationType" @bind-LocalDirectory="Draft.LocalDirectory"
+        @bind-Container="Draft.Container" @bind-Prefix="Draft.Prefix"
+        @bind-ConnectionString="Draft.ConnectionString" HasSavedCredentials="@(Draft.Saved?.HasAzureCredentials == true)" Disabled="@Busy" />
+    <p class="text-muted-foreground" role="status">@(Draft.HasChanges ? "Unsaved changes. Save destination to apply them." : "Destination settings are saved. Changes require Save destination.")</p>
+    <div class="flex flex-wrap items-center gap-2">
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="SaveBackupOptionsAsync">Save destination</Button>
+        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || !Draft.Ready)" OnClick="CreateFullBackupAsync">Create full backup</Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || !Draft.Ready || Draft.Saved?.LastBackupName is null)" OnClick="CreateIncrementalBackupAsync">Create incremental backup</Button>
+    </div>
+    @if (Draft.Saved?.LastBackupName is { } lastBackup)
+    {
+        <p class="text-muted-foreground">Last successful @Draft.Saved.LastBackupType backup: <code>@lastBackup</code></p>
+    }
+    <p class="text-muted-foreground">A full backup starts a new chain. Incremental backups require the previous archive to remain in the same destination. No backup is deleted automatically.</p>
+</Card>
+
+@code {
+    [Parameter, EditorRequired] public BackupDraft Draft { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    private Task SaveBackupOptionsAsync() => Commands.RunAsync("Saving backup destination...", async () =>
+    {
+        await Draft.SaveAsync(GalleryBackup);
+        Commands.Activity.Message = "Backup destination saved in the encrypted gallery.";
+    });
+
+    private Task CreateFullBackupAsync() => Commands.RunAsync("Creating full backup...", async () =>
+    {
+        var result = await GalleryBackup.CreateFullBackupAsync();
+        Draft.Load(await GalleryBackup.LoadBackupOptionsAsync());
+        Commands.Activity.Message = $"Full backup created: {result.MediaFilesCopied:N0} encrypted media file(s), {GalleryDisplay.FormatBytes(result.BytesWritten)}.";
+    });
+
+    private Task CreateIncrementalBackupAsync() => Commands.RunAsync("Creating incremental backup...", async () =>
+    {
+        var result = await GalleryBackup.CreateIncrementalBackupAsync();
+        Draft.Load(await GalleryBackup.LoadBackupOptionsAsync());
+        Commands.Activity.Message = result.WasSkipped
+            ? $"No changes since the last backup ({result.BackupName}); no incremental backup was created."
+            : $"Incremental backup created: {result.MediaFilesCopied:N0} changed media file(s) of {result.TotalMediaFiles:N0}, {GalleryDisplay.FormatBytes(result.BytesWritten)}.";
+    });
+
+}

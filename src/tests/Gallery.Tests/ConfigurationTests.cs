@@ -1,9 +1,8 @@
 // Class tests pin raw configuration snapshots and source precedence that cannot be observed through HTTP.
 using System.Security.Cryptography;
-using Gallery.Core.Services;
 using Gallery.Web.Composition;
 using Microsoft.Extensions.Configuration;
-using ConfigurationProvider = Gallery.Core.Services.ConfigurationProviders.ConfigurationProvider;
+using ConfigurationProvider = Gallery.Core.Composition.Configuration.ConfigurationProvider;
 
 namespace Gallery.Tests;
 

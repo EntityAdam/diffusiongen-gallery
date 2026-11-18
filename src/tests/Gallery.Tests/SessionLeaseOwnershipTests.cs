@@ -1,6 +1,5 @@
 using Gallery.Core.Exceptions;
-using Gallery.Core.Services.Sessions;
-using Gallery.Core.Services.Sessions.Generations;
+using Gallery.Core.Features.Vaults.Session;
 
 namespace Gallery.Tests;
 

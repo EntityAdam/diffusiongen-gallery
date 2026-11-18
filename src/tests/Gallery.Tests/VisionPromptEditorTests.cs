@@ -1,10 +1,10 @@
 using System.Net;
 using System.Text.Json;
+using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Gallery.Web.Components;
-using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Features.Vision;
 using Microsoft.AspNetCore.Components.RenderTree;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ShadCn.Blazor.Components;

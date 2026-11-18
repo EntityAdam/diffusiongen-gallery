@@ -1,11 +1,9 @@
-using System.Collections.Immutable;
 using System.Net;
-using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Models;
-using Gallery.Core.Services.Gateways;
-using Gallery.Core.Services.Processors;
+using Gallery.Core.Features.Ingestion.Metadata;
+using Gallery.Core.Features.Ingestion.Video;
 using Microsoft.Extensions.Configuration;
 
 namespace Gallery.Tests;
@@ -84,7 +82,7 @@ public sealed class FocusedProductionRemediationTests
             ["Gallery:FFmpegPath"] = "  \"" + firstPath + "\"  ",
             ["PATH"] = string.Join(Path.PathSeparator, " ", "  \"" + firstPath + "\"  ", secondPath)
         }).Build();
-        var configurationProvider = new Gallery.Core.Services.ConfigurationProviders.ConfigurationProvider(configuration);
+        var configurationProvider = new Gallery.Core.Composition.Configuration.ConfigurationProvider(configuration);
 
         // Act
         var videoToolsOptions = configurationProvider.GetVideoToolsOptions();

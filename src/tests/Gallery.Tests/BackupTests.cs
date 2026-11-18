@@ -1,9 +1,8 @@
-using Gallery.Core.Services.Processors.Codecs;
 using System.IO.Compression;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using Gallery.Core.Services.Processors;
+using System.Text;
+using Gallery.Core.Features.Vaults.Security;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;

@@ -2,8 +2,6 @@ using System.Collections.Immutable;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Web.Components.Workspace;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Gallery.Web.Composition;
 
@@ -18,7 +16,7 @@ public static class GalleryServiceRegistration
         RegisterVisionHttpClient(services);
         RegisterGalleryScope(services, vaultRoot, galleryRuntimeOptions);
         RegisterCapabilities(services);
-        services.AddScoped<Gallery.Web.Components.OrganizationHistory>();
+        services.AddScoped<Gallery.Web.Components.Features.Collections.OrganizationHistory>();
     }
 
     internal static GalleryRuntimeOptions CaptureGalleryRuntimeOptions(IConfiguration configuration)

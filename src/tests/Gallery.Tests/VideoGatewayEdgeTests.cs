@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Gallery.Core.Services.Gateways;
+using Gallery.Core.Features.Ingestion.Video;
 using SixLabors.ImageSharp;
 
 namespace Gallery.Tests;

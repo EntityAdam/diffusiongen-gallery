@@ -1,17 +1,23 @@
-using Gallery.Web.Components.Workspace;
+using System.Collections.Immutable;
 using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using System.Collections.Immutable;
-using Gallery.Web.Components;
 using Gallery.Core.Models;
-using Microsoft.AspNetCore.Components;
-using Microsoft.AspNetCore.Components.Web;
-using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Gallery.Web.Components.Features.Backups;
+using Gallery.Web.Components.Features.Browsing;
+using Gallery.Web.Components.Features.Duplicates;
+using Gallery.Web.Components.Features.Media;
+using Gallery.Web.Components.Features.Storage;
+using Gallery.Web.Components.Features.Tags;
+using Gallery.Web.Components.Features.Vaults;
+using Gallery.Web.Components.Features.Vision;
+using Gallery.Web.Components.Shared;
+using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Microsoft.AspNetCore.Components.Web;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Logging.Abstractions;
-using Gallery.Web.Components.Browsing;
-using Gallery.Web.Components.Media;
 
 namespace Gallery.Tests;
 

@@ -1,8 +1,8 @@
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Web.Components;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Vision;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShadCn.Blazor.Components;
@@ -130,7 +130,7 @@ public sealed class ReviewTests
     [InlineData(false, 1, 0)]
     public async Task Viewer_CelebratesOnceOnlyForAnEntirelyReviewedSession(bool hasSkipped, int reviewed, int expectedBursts)
     {
-        var viewer = new Gallery.Web.Components.Media.FullscreenViewer();
+        var viewer = new Gallery.Web.Components.Features.Media.FullscreenViewer();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
         type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
@@ -168,7 +168,7 @@ public sealed class ReviewTests
     [Fact]
     public async Task Viewer_ProgressCountsSkippedImagesAndOnlyCompletesWhenTheGoalIsReached()
     {
-        var viewer = new Gallery.Web.Components.Media.FullscreenViewer();
+        var viewer = new Gallery.Web.Components.Features.Media.FullscreenViewer();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
         type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
@@ -202,13 +202,13 @@ public sealed class ReviewTests
         var stale = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "stale-review.png", "folder");
         await fixture.Service.UpdateAsync(stale.Id, edit => edit with { IsFavorite = true, Rating = 3 });
         await fixture.Service.UpdateAsync(stale.Id, edit => edit with { IsReviewed = false, Description = "latest" });
-        var viewer = new Gallery.Web.Components.Media.FullscreenViewer();
+        var viewer = new Gallery.Web.Components.Features.Media.FullscreenViewer();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
         type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord> { stale });
         GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Service);
         type.GetProperty("Logger", flags)!.SetValue(viewer,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.Media.FullscreenViewer>.Instance);
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.Features.Media.FullscreenViewer>.Instance);
         var cache = (Dictionary<string, (string Url, long Bytes)>)type.GetField("fitCache", flags)!.GetValue(viewer)!;
         cache[stale.Id] = ("cached-url", 0);
         Task Invoke(string method, params object[] args) => (Task)type.GetMethod(method, flags)!.Invoke(viewer, args)!;

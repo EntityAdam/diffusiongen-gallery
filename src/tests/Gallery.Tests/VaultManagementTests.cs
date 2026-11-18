@@ -1,16 +1,14 @@
-using Gallery.Core.Services.Sessions.Locations;
 using System.Collections.Immutable;
-using System.Text.Json;
-using Microsoft.Data.Sqlite;
-using Gallery.Web.Composition;
 using System.IO.Compression;
-using System.Security.Cryptography;
-using System.Net;
 using System.Net.Sockets;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text;
+using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Sessions;
+using Gallery.Web.Composition;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Gallery.Tests;

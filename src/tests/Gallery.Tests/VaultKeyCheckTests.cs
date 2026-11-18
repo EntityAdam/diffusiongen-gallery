@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
-using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Features.Vaults;
 
 namespace Gallery.Tests;
 

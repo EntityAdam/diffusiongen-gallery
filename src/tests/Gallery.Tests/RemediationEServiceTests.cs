@@ -1,10 +1,12 @@
 using System.IO.Compression;
+using Gallery.Core.Features.Backups;
+using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Media.Removal;
+using Gallery.Core.Features.Storage.DriveOperations;
+using Gallery.Core.Features.Storage;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Ports.Models;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Tests;
 

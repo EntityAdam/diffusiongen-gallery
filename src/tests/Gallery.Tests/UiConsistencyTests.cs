@@ -1,19 +1,23 @@
-using Gallery.Web.Components.Workspace;
 using System.Net;
 using System.Reflection;
-using System.Text;
-using Microsoft.AspNetCore.Components.Forms;
-using Microsoft.JSInterop;
 using System.Text.RegularExpressions;
+using System.Text;
 using Gallery.Core.Models;
-using Gallery.Web.Components;
+using Gallery.Web.Components.Features.Browsing;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Media;
+using Gallery.Web.Components.Features.Settings;
+using Gallery.Web.Components.Features.Tags;
+using Gallery.Web.Components.Features.Vision;
 using Gallery.Web.Components.Pages;
-using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Shared;
+using Gallery.Web.Components.Workspace;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
-using Gallery.Web.Components.Browsing;
-using Gallery.Web.Components.Collections;
-using Gallery.Web.Components.Media;
+using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
 
 namespace Gallery.Tests;
 

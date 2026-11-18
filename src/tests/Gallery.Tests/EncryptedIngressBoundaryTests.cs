@@ -1,8 +1,9 @@
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using Gallery.Core.Features.Backups;
+using Gallery.Core.Features.Media;
+using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Models;
-using Gallery.Core.Services.Ports.Models;
-using Gallery.Core.Services.Processors;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;

@@ -1,11 +1,12 @@
 using System.Net;
-using System.Text;
 using System.Text.Json;
+using System.Text;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Processors;
+using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 
@@ -239,7 +240,7 @@ public sealed class StructuredVisionTests
             this.backend = backend;
             Service = GalleryService.Create(VaultPath, new GalleryRuntimeOptions { CatalogBackend = backend, StateDirectory = Path.Combine(Root, "state") }, new HttpClient(Handler));
         }
-        public IGalleryStore Store(string root) => backend == CatalogBackend.Sqlite ? new GalleryStore(Path.Combine(root, "gallery.db")) : new Gallery.Core.Services.DataManagers.Turso.TursoGalleryStore(Path.Combine(root, "gallery.db"));
+        public IGalleryStore Store(string root) => backend == CatalogBackend.Sqlite ? new GalleryStore(Path.Combine(root, "gallery.db")) : new Gallery.Core.Infrastructure.Persistence.Turso.TursoGalleryStore(Path.Combine(root, "gallery.db"));
         public Task<string> InitializeAsync() => Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         public Task<ImageRecord> ImportAsync() => Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "scene.png", "test");
         public void Dispose()

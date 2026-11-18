@@ -1,12 +1,14 @@
 using System.Net;
 using System.Reflection;
-using System.Text;
 using System.Text.Json;
+using System.Text;
+using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Web.Components;
-using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Vision;
 using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.AspNetCore.Components;
 
 namespace Gallery.Tests;
 

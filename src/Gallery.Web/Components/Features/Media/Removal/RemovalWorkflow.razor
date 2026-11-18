@@ -1,0 +1,13 @@
+@using Gallery.Web.Components.Workspace
+@if (State.IsOpen)
+{
+    <RemovalDialog Items="State.Plan" Busy="Activity.Busy" Error="@Activity.Error" Progress="@Activity.Progress"
+                   Cancel="CancelAsync" Confirm="State.ExecuteAsync" />
+}
+
+@code {
+    [Parameter, EditorRequired] public RemovalWorkflowState State { get; set; } = default!;
+    [Parameter, EditorRequired] public GalleryActivity Activity { get; set; } = default!;
+    [Parameter] public EventCallback Changed { get; set; }
+    private async Task CancelAsync() { State.Cancel(); await Changed.InvokeAsync(); }
+}

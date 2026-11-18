@@ -1,9 +1,7 @@
-using Gallery.Core.Services;
-using Gallery.Core.Services.Ports.Models;
-using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Ports;
 using System.Security.Cryptography;
+using Gallery.Core.Infrastructure.Persistence;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 

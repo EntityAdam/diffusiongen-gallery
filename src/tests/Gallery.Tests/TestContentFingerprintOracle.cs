@@ -1,10 +1,6 @@
-using Gallery.Core.Services.Processors.Codecs;
-using Gallery.Core.Services.DataManagers.Validators;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.DataManagers;
 using System.Security.Cryptography;
-using Gallery.Core.Services;
-using Microsoft.Data.Sqlite;
+using Gallery.Core.Features.Vaults.Security;
+using Gallery.Core.Infrastructure.Persistence;
 
 
 namespace Gallery.Tests;

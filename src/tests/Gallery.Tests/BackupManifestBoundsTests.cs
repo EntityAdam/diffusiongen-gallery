@@ -1,5 +1,5 @@
 using System.IO.Compression;
-using Gallery.Core.Services;
+using Gallery.Core.Features.Backups;
 
 namespace Gallery.Tests;
 

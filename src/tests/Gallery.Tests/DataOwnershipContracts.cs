@@ -1,6 +1,7 @@
 using System.Reflection;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Ports.Models;
+using Gallery.Core.Features.Storage.DriveOperations;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence;
 
 namespace Gallery.Tests;
 

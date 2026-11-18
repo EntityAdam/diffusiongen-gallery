@@ -1,11 +1,11 @@
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Gateways;
-using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Tests;
 

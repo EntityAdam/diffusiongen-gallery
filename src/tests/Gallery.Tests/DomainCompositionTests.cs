@@ -6,9 +6,9 @@ using Gallery.Web.Composition;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Services.Validators;
 using Microsoft.Extensions.DependencyInjection;
-using ConfigurationProvider = Gallery.Core.Services.ConfigurationProviders.ConfigurationProvider;
+using Gallery.Core.Features.Settings;
+using ConfigurationProvider = Gallery.Core.Composition.Configuration.ConfigurationProvider;
 
 namespace Gallery.Tests;
 

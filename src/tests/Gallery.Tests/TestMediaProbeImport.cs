@@ -1,17 +1,5 @@
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.Gateways;
-using System.Diagnostics;
-using System.IO.Compression;
 using System.Text.Json.Nodes;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Services.Queries;
-using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Microsoft.Extensions.Configuration;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.Formats.Png.Chunks;
-using SixLabors.ImageSharp.PixelFormats;
 using static Gallery.Tests.MediaAndComfyTests;
 
 namespace Gallery.Tests;

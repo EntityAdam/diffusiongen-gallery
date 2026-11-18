@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
+using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Services;
-using Gallery.Core.Services.Processors.Codecs;
 
 namespace Gallery.Tests;
 

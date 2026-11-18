@@ -1,14 +1,19 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Xml.Linq;
+using Gallery.Core.Features.Browsing;
+using Gallery.Core.Features.Curation;
+using Gallery.Core.Features.Duplicates;
+using Gallery.Core.Features.Ingestion.Metadata;
+using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Media.Removal;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Features.Vision.Endpoints;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
 using Gallery.Core.Models;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.Queries;
 using Gallery.Core.Services;
-using Gallery.Core.Services.Gateways;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Processors.Hashing;
-using Gallery.Core.Services.Sessions;
 using Gallery.Web.Components;
 
 namespace Gallery.Tests;
@@ -92,10 +97,10 @@ public sealed class DomainArchitectureTests
         foreach (var argument in type.GenericTypeArguments) AssertPublicContract(argument, core);
         if (type.Assembly != core) return;
         Assert.True(type.IsPublic || type.IsNestedPublic, $"Public entry exposes internal {type.FullName}.");
-        Assert.DoesNotContain(".DataManagers", type.Namespace ?? "");
-        Assert.DoesNotContain(".Processors", type.Namespace ?? "");
-        Assert.DoesNotContain(".Sessions", type.Namespace ?? "");
-        Assert.DoesNotContain(".Gateways", type.Namespace ?? "");
+        Assert.DoesNotContain(".Infrastructure", type.Namespace ?? "");
+        Assert.DoesNotContain(".Features", type.Namespace ?? "");
+        Assert.DoesNotContain(".Composition", type.Namespace ?? "");
+        Assert.DoesNotContain(".Shared", type.Namespace ?? "");
     }
 
     private static string SourceRoot([CallerFilePath] string path = "") =>

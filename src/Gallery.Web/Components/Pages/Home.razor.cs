@@ -1,7 +1,8 @@
 using Gallery.Core.Models;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
-using Gallery.Web.Components.Workspace;
 
 namespace Gallery.Web.Components.Pages;
 

@@ -1,6 +1,6 @@
+using Gallery.Core.Features.Ingestion.Metadata;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Services.Processors;
 
 namespace Gallery.Tests;
 

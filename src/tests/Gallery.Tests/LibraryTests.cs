@@ -1,11 +1,9 @@
-using Gallery.Web.Composition;
-using Microsoft.Extensions.DependencyInjection;
-using Gallery.Core.Services.DataManagers;
 using System.Text;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Services.Queries;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Composition;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Gallery.Tests;
 

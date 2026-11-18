@@ -1,13 +1,15 @@
-using Gallery.Web.Components.Workspace;
 using System.Net;
 using System.Reflection;
+using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Gallery.Web.Components;
-using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Features.Backups;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Media;
+using Gallery.Web.Components.Features.Settings;
+using Gallery.Web.Components.Features.Vision;
 using Microsoft.AspNetCore.Components.Rendering;
-using Gallery.Web.Components.Collections;
-using Gallery.Web.Components.Media;
+using Microsoft.AspNetCore.Components;
 
 namespace Gallery.Tests;
 

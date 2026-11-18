@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Gallery.Core.Features.Vaults;
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Stress;
 using Gallery.Stress.Cli;
 using Gallery.Stress.Core;
+using Gallery.Stress;
 
 namespace Gallery.Tests;
 

@@ -1,7 +1,6 @@
-using Gallery.Core.Services.Gateways;
 using System.Net;
+using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 

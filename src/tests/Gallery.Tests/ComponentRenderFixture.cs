@@ -1,13 +1,13 @@
-using Microsoft.AspNetCore.Components;
-using Microsoft.AspNetCore.Components.Web;
-using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Gallery.Core.Services;
 using Gallery.Web.Components.Pages;
 using Gallery.Web.Components.Workspace;
+using Microsoft.AspNetCore.Components.Web.HtmlRendering;
+using Microsoft.AspNetCore.Components.Web;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using ShadCn.Blazor.Components;
-using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 
@@ -41,7 +41,7 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         serviceCollection.AddSingleton<IComponentActivator>(provider => provider.GetRequiredService<ComponentActivator>());
         serviceCollection.AddShadCnBlazorComponents();
         serviceCollection.AddSingleton<IJSRuntime>(jsRuntime ?? new NoOpJsRuntime());
-        serviceCollection.AddScoped<Gallery.Web.Components.OrganizationHistory>();
+        serviceCollection.AddScoped<Gallery.Web.Components.Features.Collections.OrganizationHistory>();
         if (galleryService is not null) serviceCollection.AddGalleryCapabilities(galleryService);
         ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
         try

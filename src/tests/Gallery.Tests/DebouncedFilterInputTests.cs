@@ -1,4 +1,4 @@
-using Gallery.Web.Components;
+using Gallery.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
 
 namespace Gallery.Tests;
