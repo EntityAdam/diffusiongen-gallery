@@ -97,6 +97,7 @@ public sealed record VisionEndpointLane
     public string Model { get; init; } = "";
     public string ApiKey { get; init; } = "";
     public int RequestTimeoutSeconds { get; init; } = VisionSettings.DefaultRequestTimeoutSeconds;
+    public int MaxConcurrentRequests { get; init; } = 1;
     public bool Enabled { get; init; } = true;
     public bool AutoAccept { get; init; }
 }

@@ -30,6 +30,9 @@
                 <div class="llm-field"><Label For="request-timeout">Request timeout (seconds)</Label>
                     <input id="request-timeout" type="number" min="@VisionSettings.MinRequestTimeoutSeconds" max="@VisionSettings.MaxRequestTimeoutSeconds"
                            @bind:get="Lane.RequestTimeoutSeconds" @bind:set="SetLaneTimeout" required disabled="@working" class="@GenerationInputClass" /></div>
+                <div class="llm-field"><Label For="lane-concurrency">Concurrent vision requests</Label>
+                    <input id="lane-concurrency" type="number" min="1" max="@int.MaxValue" step="1"
+                           @bind:get="Lane.MaxConcurrentRequests" @bind:set="SetLaneConcurrency" required disabled="@working" class="@GenerationInputClass" /></div>
                 <div class="llm-field"><Label For="endpoint-url">Endpoint URL</Label>
                     <Input id="endpoint-url" Type="url" @bind-Value:get="Lane.Endpoint" @bind-Value:set="SetLaneEndpoint" Placeholder="http://127.0.0.1:1234/v1/" Disabled="@working" required /></div>
                 <div class="llm-field"><Label For="api-key">API key <span class="text-muted-foreground">(optional)</span></Label>
@@ -247,6 +250,7 @@
     private void SetLaneModel(string value) => Lane = Lane with { Model = value };
     private void SetLaneApiKey(string value) => Lane = Lane with { ApiKey = value };
     private void SetLaneTimeout(int value) => Lane = Lane with { RequestTimeoutSeconds = value };
+    private void SetLaneConcurrency(int value) => Lane = Lane with { MaxConcurrentRequests = value };
     private void SetLaneEnabled(bool value) => Lane = Lane with { Enabled = value };
     private void SetLaneAutoAccept(bool value) => Lane = Lane with { AutoAccept = value };
     private void SetLaneEndpoint(string value)

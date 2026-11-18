@@ -163,11 +163,12 @@ public partial class LibraryWorkbench
         var token = cancellation.Token;
         var settings = await Gallery.SettingsAsync();
         token.ThrowIfCancellationRequested();
-        var availableLanes = new Queue<VisionEndpointLane>(settings.GetLanes(runCheckpoint.State.AutoAcceptVisionAnalysis)
+        var availableLanes = new LinkedList<VisionEndpointLane>(settings.GetLanes(runCheckpoint.State.AutoAcceptVisionAnalysis)
             .Where(lane => lane.Enabled));
         if (availableLanes.Count == 0)
             throw new InvalidOperationException("Enable a vision endpoint in LLM settings before starting analysis.");
 
+        var activeRequests = availableLanes.ToDictionary(lane => lane, _ => 0);
         var records = (catalog ?? await Gallery.ListAsync()).ToDictionary(image => image.Id);
         var pending = new LinkedList<VisionQueueItem>(items);
         var inFlight = new Dictionary<Task<VisionAnalysisResult>, (VisionEndpointLane Lane, VisionQueueItem Item, ImageRecord Image)>();
@@ -181,7 +182,7 @@ public partial class LibraryWorkbench
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                while (!cancelRequested && availableLanes.Count > 0)
+                while (!cancelRequested && availableLanes.First is { } available)
                 {
                     // A saved queue can contain both full and tag-only work for one image.
                     // Wait for its current result to be checkpointed before starting the other mode.
@@ -205,7 +206,10 @@ public partial class LibraryWorkbench
 
                     token.ThrowIfCancellationRequested();
                     if (cancelRequested) break;
-                    var lane = availableLanes.Dequeue();
+                    var lane = available.Value;
+                    availableLanes.RemoveFirst();
+                    if (++activeRequests[lane] < lane.MaxConcurrentRequests)
+                        availableLanes.AddLast(lane);
                     var request = Gallery.AnalyzeForDraftAsync(image.Id, settings.ForLane(lane), token);
                     inFlight.Add(request, (lane, item, image));
                     activeIds.Add(item.Id);
@@ -223,6 +227,12 @@ public partial class LibraryWorkbench
                 var (finishedLane, finishedItem, finishedImage) = inFlight[finished];
                 inFlight.Remove(finished);
                 activeIds.Remove(finishedItem.Id);
+                if (activeRequests.TryGetValue(finishedLane, out var activeCount))
+                {
+                    activeRequests[finishedLane] = activeCount - 1;
+                    if (activeCount == finishedLane.MaxConcurrentRequests)
+                        availableLanes.AddLast(finishedLane);
+                }
                 VisionAnalysisResult result;
                 try
                 {
@@ -234,12 +244,15 @@ public partial class LibraryWorkbench
                     Logger.LogError(exception, "Vision endpoint {EndpointName} failed for {ImageId}", finishedLane.Name, finishedImage.Id);
                     if (IsVisionEndpointUnavailable(exception))
                     {
-                        laneFailures.Add($"{finishedLane.Name} is unavailable for this run. {exception.Message}");
+                        if (activeRequests.Remove(finishedLane))
+                        {
+                            availableLanes.Remove(finishedLane);
+                            laneFailures.Add($"{finishedLane.Name} is unavailable for this run. {exception.Message}");
+                        }
                         pending.AddFirst(finishedItem);
                     }
                     else
                     {
-                        availableLanes.Enqueue(finishedLane);
                         failures.Add($"{finishedImage.Name} ({finishedLane.Name}): {exception.Message}");
                         if (useSavedQueue)
                             await runCheckpoint.UpdateAsync(state => state with
@@ -271,7 +284,6 @@ public partial class LibraryWorkbench
                 }
                 await RestoreDraftsAsync();
                 completed++;
-                availableLanes.Enqueue(finishedLane);
             }
         }
         finally
@@ -287,7 +299,7 @@ public partial class LibraryWorkbench
                 await Changed.InvokeAsync();
         }
 
-        var outcome = cancelRequested ? "Stopped" : availableLanes.Count == 0 ? "No vision endpoints remain available" : "Analysis finished";
+        var outcome = cancelRequested ? "Stopped" : activeRequests.Count == 0 ? "No vision endpoints remain available" : "Analysis finished";
         notice = $"{outcome}. {completed} of {items.Length} processed, {accepted} auto-accepted, {failures.Count} failed.";
         error = string.Join(" / ", laneFailures.Concat(failures));
     }

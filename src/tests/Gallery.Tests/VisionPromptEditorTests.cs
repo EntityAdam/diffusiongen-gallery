@@ -211,6 +211,8 @@ public sealed class VisionPromptEditorTests
             await ChangeAsync("model-select", "second");
             await ChangeAsync("api-key", "second-key");
             await ChangeAsync("request-timeout", "45");
+            Assert.Equal("1", renderer.FindElement("input", "lane-concurrency").Value);
+            await ChangeAsync("lane-concurrency", "3");
             await ToggleCheckboxAsync(renderer, "lane-enabled", false);
             await ChangeAsync("vision-lane", "0");
             Assert.Equal(primary.Model, renderer.FindElement("input", "model-select").Value);
@@ -223,7 +225,7 @@ public sealed class VisionPromptEditorTests
         Assert.Equal(new VisionEndpointLane
         {
             Name = "Endpoint 2", Endpoint = "http://127.0.0.1:1235/v1/", Model = "second", ApiKey = "second-key",
-            RequestTimeoutSeconds = 45, Enabled = false
+            RequestTimeoutSeconds = 45, MaxConcurrentRequests = 3, Enabled = false
         }, saved.Lanes[1]);
         Assert.Equal(primary.Model, saved.Model);
 

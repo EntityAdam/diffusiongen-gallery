@@ -410,7 +410,8 @@ keep, A apply, S skip, O original size, P fit, Escape close.
 Under **Settings > LLM endpoints**, configure one or more OpenAI-compatible
 endpoints. Each has a name, optional bearer API key, vision model, and timeout
 (10–3600 seconds, default 180). Each enabled endpoint takes the next available
-image from a shared queue and handles one request at a time. Vision prompts,
+images from a shared queue up to its **Concurrent vision requests** limit,
+which defaults to 1. Vision prompts,
 output format, and tag policy are shared. The first endpoint also handles
 text-only set suggestions.
 
