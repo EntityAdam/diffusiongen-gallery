@@ -349,7 +349,7 @@ public sealed partial class GalleryService
 
         private List<IndexedFile> CreateDirectoryIndex(IEnumerable<FileSystemInfo> directoryEntries) =>
             directoryEntries.OfType<FileInfo>()
-                .Where(file => file.Extension is EncryptedPngExtension or EncryptedMp4Extension)
+                .Where(file => file.Extension is StoredMediaProcessor.EncryptedPngExtension or StoredMediaProcessor.EncryptedMp4Extension)
                 .Select(file => new IndexedFile(VaultCrypto.PathFingerprint(Key, file.FullName), file.Length))
                 .ToList();
 

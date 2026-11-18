@@ -1,10 +1,11 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
 namespace Gallery.Core.Services.Processors;
 
-/// <summary>A Windows source opened with delete access, denying writers and renames until the exact handle is deleted.</summary>
+/// <summary>Opens import sources and supports deleting the verified source by handle or by path.</summary>
 internal sealed class ImportSource : IAsyncDisposable
 {
     public FileStream Stream { get; }
@@ -49,6 +50,50 @@ internal sealed class ImportSource : IAsyncDisposable
         if (!SetFileInformationByHandle(Stream.SafeFileHandle, 4, ref disposition, sizeof(byte)))
             throw new IOException("The verified source could not be marked for deletion.",
                 new Win32Exception(Marshal.GetLastWin32Error()));
+    }
+
+    public static async Task DeleteVerifiedPathAsync(string sourcePath, string expectedSha256)
+    {
+        var claimedPath = sourcePath + ".gallery-delete-" + Guid.NewGuid().ToString("N");
+        File.Move(sourcePath, claimedPath);
+        string actualSha256;
+        try
+        {
+            await using var claimed = new FileStream(claimedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+            actualSha256 = Convert.ToHexString(await SHA256.HashDataAsync(claimed));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            RestoreClaimedSource(claimedPath, sourcePath, exception);
+            throw;
+        }
+
+        if (!actualSha256.Equals(expectedSha256, StringComparison.Ordinal))
+        {
+            RestoreClaimedSource(claimedPath, sourcePath);
+            throw new InvalidOperationException("Source changed since import; it was not deleted.");
+        }
+
+        try { File.Delete(claimedPath); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            RestoreClaimedSource(claimedPath, sourcePath, exception);
+            throw new InvalidOperationException("Encrypted import succeeded, but source deletion failed.", exception);
+        }
+    }
+
+    private static void RestoreClaimedSource(string claimedPath, string sourcePath, Exception? cause = null)
+    {
+        try
+        {
+            File.Move(claimedPath, sourcePath);
+        }
+        catch (IOException exception)
+        {
+            throw new InvalidOperationException(
+                $"The source could not be restored to '{sourcePath}' and is preserved at '{claimedPath}'.",
+                cause is null ? exception : new AggregateException(cause, exception));
+        }
     }
 
     public ValueTask DisposeAsync() => Stream.DisposeAsync();

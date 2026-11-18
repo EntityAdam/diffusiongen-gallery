@@ -67,9 +67,9 @@ public sealed class RemediationEServiceTests
         var mount = Path.Combine(root, "mnt", "media");
         string[] mounts = [root, mount];
 
-        Assert.Equal(root, GalleryService.SelectIngestionMount(Path.Combine(root, "mnt", "media-old", "inbox"), mounts));
-        Assert.Equal(mount, GalleryService.SelectIngestionMount(Path.Combine(mount, "inbox"), mounts));
-        Assert.Equal(mount, GalleryService.SelectIngestionMount(mount, mounts));
+        Assert.Equal(root, IngestionSourceScanner.SelectIngestionMount(Path.Combine(root, "mnt", "media-old", "inbox"), mounts));
+        Assert.Equal(mount, IngestionSourceScanner.SelectIngestionMount(Path.Combine(mount, "inbox"), mounts));
+        Assert.Equal(mount, IngestionSourceScanner.SelectIngestionMount(mount, mounts));
     }
 
     [Theory]

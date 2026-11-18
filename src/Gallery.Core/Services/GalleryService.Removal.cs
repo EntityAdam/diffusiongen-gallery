@@ -177,7 +177,7 @@ public sealed partial class GalleryService
             {
                 if (string.Equals(original, imageRecord.StoredPath, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Original and gallery file paths must differ.");
-                await DeleteVerifiedSourceAsync(original, imageRecord.Sha256);
+                await ImportSource.DeleteVerifiedPathAsync(original, imageRecord.Sha256);
                 originalDeleted = true;
             }
             else if (ShouldRestoreMissingOriginal(removalItem, missingAction))

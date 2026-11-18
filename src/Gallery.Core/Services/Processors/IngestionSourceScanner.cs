@@ -4,19 +4,21 @@ using System.Runtime.InteropServices;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors.Codecs;
 
-namespace Gallery.Core.Services;
+namespace Gallery.Core.Services.Processors;
 
-public sealed partial class GalleryService
+internal static class IngestionSourceScanner
 {
-    public async Task<IngestionScan> ScanFolderAsync(string folder, FolderSearchScope searchScope)
+    internal const string Mp4Extension = ".mp4";
+    public static readonly string[] Extensions = [".png", ".jpg", ".jpeg", ".webp", Mp4Extension];
+
+    public static bool IsVideoName(string name) =>
+        string.Equals(Path.GetExtension(name), Mp4Extension, StringComparison.OrdinalIgnoreCase);
+
+    public static async Task<IngestionScan> ScanAsync(string folder, FolderSearchScope searchScope, string catalogRoot, string mediaRoot)
     {
-        ValidateOperationChoice(searchScope);
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var catalogRoot = VaultRoot;
-        var mediaRoot = await MediaDirectoryWithKeyAsync(key.Bytes);
         folder = Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Choose an existing local folder.");
-        var files = await Task.Run(() => DiscoverImagePaths(folder, searchScope).Select(path =>
+        var files = await Task.Run(() => DiscoverMediaPaths(folder, searchScope).Select(path =>
         {
             var info = new FileInfo(path);
             return new IngestionScanFile(path, info.Length, info.LastWriteTimeUtc, IsVideoName(path));
@@ -24,25 +26,27 @@ public sealed partial class GalleryService
         return new IngestionScan(folder, searchScope, catalogRoot, mediaRoot, files);
     }
 
-    public async Task<IngestionSpaceEstimate> EstimateIngestionSpaceAsync(
-        IngestionScan scan, bool includeImages, bool includeVideos)
+    public static string[] DiscoverMediaPaths(string folder, FolderSearchScope searchScope)
     {
-        ArgumentNullException.ThrowIfNull(scan);
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var mediaRoot = await MediaDirectoryWithKeyAsync(key.Bytes);
-        ValidateIngestionScan(scan, scan.Folder, scan.SearchScope, mediaRoot);
-        var files = scan.SelectFiles(includeImages, includeVideos);
-        return await Task.Run(() => MeasureIngestionSpace(scan, files));
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = searchScope == FolderSearchScope.Descendants,
+            IgnoreInaccessible = false,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+        return Directory.EnumerateFiles(folder, "*", options)
+            .Where(path => Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            .ToArray();
     }
 
-    private void ValidateIngestionScan(IngestionScan scan, string folder, FolderSearchScope scope, string mediaRoot)
+    public static void ValidateScan(IngestionScan scan, string folder, FolderSearchScope scope, string catalogRoot, string mediaRoot)
     {
         if (scan.Folder != folder || scan.SearchScope != scope
-            || scan.CatalogRoot != VaultRoot || scan.MediaRoot != mediaRoot)
+            || scan.CatalogRoot != catalogRoot || scan.MediaRoot != mediaRoot)
             throw new InvalidOperationException("The source or gallery location changed. Scan the folder again before ingesting.");
     }
 
-    private static IngestionSpaceEstimate MeasureIngestionSpace(
+    public static IngestionSpaceEstimate MeasureSpace(
         IngestionScan scan, ImmutableArray<IngestionScanFile> files)
     {
         var mediaDrive = ReadIngestionDiskSpace(scan.MediaRoot);
@@ -107,7 +111,7 @@ public sealed partial class GalleryService
     private static extern bool GetDiskFreeSpaceEx(string directory, out ulong freeBytesAvailable,
         out ulong totalBytes, out ulong totalFreeBytes);
 
-    private static void ValidateScannedFiles(ImmutableArray<IngestionScanFile> files)
+    public static void ValidateScannedFiles(ImmutableArray<IngestionScanFile> files)
     {
         foreach (var file in files)
         {

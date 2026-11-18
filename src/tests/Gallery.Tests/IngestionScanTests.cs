@@ -1,3 +1,4 @@
+using Gallery.Core.Services.Processors;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Core.Services.Processors.Codecs;
@@ -177,12 +178,12 @@ public sealed class IngestionScanTests
     [InlineData(false)]
     public void SpaceEstimate_RequiresEnoughSpaceAtExactBoundary(bool sameDrive)
     {
-        var estimate = GalleryService.CalculateIngestionSpace(2, 10_000, long.MaxValue, long.MaxValue, sameDrive);
-        var enough = GalleryService.CalculateIngestionSpace(2, 10_000,
+        var estimate = IngestionSourceScanner.CalculateIngestionSpace(2, 10_000, long.MaxValue, long.MaxValue, sameDrive);
+        var enough = IngestionSourceScanner.CalculateIngestionSpace(2, 10_000,
             estimate.MediaRequiredBytes, estimate.CatalogRequiredBytes, sameDrive);
-        var mediaShort = GalleryService.CalculateIngestionSpace(2, 10_000,
+        var mediaShort = IngestionSourceScanner.CalculateIngestionSpace(2, 10_000,
             estimate.MediaRequiredBytes - 1, estimate.CatalogRequiredBytes, sameDrive);
-        var catalogShort = GalleryService.CalculateIngestionSpace(2, 10_000,
+        var catalogShort = IngestionSourceScanner.CalculateIngestionSpace(2, 10_000,
             estimate.MediaRequiredBytes, estimate.CatalogRequiredBytes - 1, sameDrive);
 
         Assert.True(enough.HasEnoughSpace);
@@ -196,7 +197,7 @@ public sealed class IngestionScanTests
     {
         const long sourceBytes = 3_460_301;
         const int files = 4;
-        var estimate = GalleryService.CalculateIngestionSpace(files, sourceBytes,
+        var estimate = IngestionSourceScanner.CalculateIngestionSpace(files, sourceBytes,
             long.MaxValue, long.MaxValue, true);
         const long expectedOverhead = files * (132L * 1024 + 72);
 
@@ -206,7 +207,7 @@ public sealed class IngestionScanTests
         Assert.InRange(expectedOverhead / (1024d * 1024), 0.51, 0.52);
         Assert.True(estimate.RequiredBytes > estimate.EstimatedBytes);
 
-        var onlyEstimateFits = GalleryService.CalculateIngestionSpace(files, sourceBytes,
+        var onlyEstimateFits = IngestionSourceScanner.CalculateIngestionSpace(files, sourceBytes,
             estimate.EstimatedBytes, estimate.EstimatedBytes, true);
         Assert.False(onlyEstimateFits.HasEnoughSpace);
         Assert.Equal(estimate.EstimatedBytes, onlyEstimateFits.EstimatedBytes);
