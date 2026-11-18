@@ -40,15 +40,37 @@ internal static class GalleryBrowsingProjector
 
     public static GalleryBrowsingProjection Create(GalleryService galleryService,
         IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter, string grouping,
-        IReadOnlySet<string>? awaitingApprovalIds = null)
+        IReadOnlySet<string>? awaitingApprovalIds = null, GalleryBrowsingProjection? previousReviewProjection = null)
     {
         var filteredImages = galleryService.Filter(sourceImages, galleryFilter, awaitingApprovalIds);
-        var promptGroups = grouping == PromptGrouping ? galleryService.GroupByPrompt(filteredImages) : [];
+        var promptGroups = grouping == PromptGrouping
+            ? GroupByPrompt(galleryService, filteredImages, previousReviewProjection) : [];
         var diffusionModelGroups = grouping == ModelGrouping ? galleryService.GroupByDiffusionModel(filteredImages) : [];
         var images = SelectImages(grouping, filteredImages, promptGroups, diffusionModelGroups);
         var promptGroupsByImageId = IndexPromptGroupsByImageId(promptGroups);
         var diffusionModelGroupsByImageId = IndexDiffusionModelGroupsByImageId(diffusionModelGroups);
         return new(images, promptGroupsByImageId, diffusionModelGroupsByImageId);
+    }
+
+    private static List<PromptGroup> GroupByPrompt(GalleryService galleryService, IReadOnlyList<ImageRecord> filteredImages,
+        GalleryBrowsingProjection? previousReviewProjection)
+    {
+        if (previousReviewProjection is null) return galleryService.GroupByPrompt(filteredImages);
+
+        // Preserve the order of visible shared prompts while their pending items are reviewed or removed.
+        var previousSharedPrompts = previousReviewProjection.Images
+            .Select(image => previousReviewProjection.PromptGroupsByImageId[image.Id])
+            .Where(group => group.Kind == PromptGroup.Shared)
+            .DistinctBy(group => group.Prompt, StringComparer.Ordinal)
+            .Select(group => group.Prompt)
+            .ToArray();
+        var previousPrompts = previousSharedPrompts.ToHashSet(StringComparer.Ordinal);
+        var imagesByPrompt = filteredImages.ToLookup(image => image.Prompt, StringComparer.Ordinal);
+        var groups = previousSharedPrompts.Where(imagesByPrompt.Contains)
+            .Select(prompt => new PromptGroup(PromptGroup.Shared, prompt, imagesByPrompt[prompt].ToImmutableArray()))
+            .ToList();
+        groups.AddRange(galleryService.GroupByPrompt(filteredImages.Where(image => !previousPrompts.Contains(image.Prompt))));
+        return groups;
     }
 
     private static ImmutableArray<ImageRecord> SelectImages(string grouping, IReadOnlyList<ImageRecord> filteredImages,

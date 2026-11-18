@@ -6,12 +6,12 @@
         {
             var continued = firstOnPage && group.Images[0].Id != image.Id;
             previousGroup = group;
-            <div class="col-span-full rounded-md border-l-2 border-primary bg-primary/5 px-4 py-3" @key="@("group-" + image.Id)">
+            <div class="col-span-full rounded-md border-l-2 border-primary bg-primary/5 px-4 py-3" @key="@( (group.Kind, group.Prompt) )">
                 @if (group.Kind == PromptGroup.Shared)
                 {
                     var sample = group.Images[0].Generation;
                     <div class="flex flex-wrap items-center gap-3 text-sm">
-                        <strong>@group.Images.Length share this prompt@(continued ? " (continued)" : "")</strong>
+                        <strong>@(group.Images.Length == 1 ? "1 item with this prompt" : $"{group.Images.Length} share this prompt")@(continued ? " (continued)" : "")</strong>
                         @if (sample is not null) { <span class="text-muted-foreground">@GenerationSummary(sample)</span> }
                         <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@Busy" OnClick="() => ShowPrompt.InvokeAsync(group.Prompt)">Show only these</Button>
                     </div>
