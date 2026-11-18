@@ -64,7 +64,10 @@ public sealed class GalleryBrowserState : IDisposable
             var grouping = catalog.IsPartial ? "none" : Grouping;
             if (!ReferenceEquals(browsingSource, catalog.Images) || projectedFilter != Filter || projectedGrouping != grouping)
             {
-                browsingProjection = GalleryBrowsingProjector.Create(gallery, catalog.Images, Filter, grouping, Suggestions.Keys.ToHashSet());
+                var previousReviewProjection = grouping == "prompt" && Filter.Review == "pending"
+                    && projectedFilter == Filter && projectedGrouping == grouping ? browsingProjection : null;
+                browsingProjection = GalleryBrowsingProjector.Create(gallery, catalog.Images, Filter, grouping,
+                    Suggestions.Keys.ToHashSet(), previousReviewProjection);
                 browsingSource = catalog.Images;
                 projectedFilter = Filter;
                 projectedGrouping = grouping;

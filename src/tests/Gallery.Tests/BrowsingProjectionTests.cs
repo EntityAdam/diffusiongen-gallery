@@ -496,6 +496,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         await home.Catalog.UpdateAsync(updatedImageRecord);
+        await home.Browser.PauseAsync();
 
         // Assert - gather the updated projection
         var actualImageRecords = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered");
@@ -553,6 +554,48 @@ public sealed class BrowsingProjectionTests
             ImageCount = GetProperty<IReadOnlyList<ImageRecord>>(home, "Browser.Filtered").Count,
             GroupCount = GetProperty<IReadOnlyDictionary<string, PromptGroup>>(home, "Browser.Browsing.PromptGroupsByImageId").Count
         });
+    }
+
+    [Theory]
+    [InlineData("review")]
+    [InlineData("trash")]
+    [InlineData("delete")]
+    public async Task HomeProjection_WhenPendingPromptGroupShrinks_ThenKeepsItsPlaceAndLastItem(string action)
+    {
+        using var testVault = new TestVault();
+        await testVault.InitializeAsync();
+        var images = CreateImages(5);
+        for (var index = 0; index < images.Count; index++)
+            images[index] = images[index] with { Generation = new() { Prompt = index < 3 ? "First prompt" : "Second prompt" } };
+        using var home = CreateSession(testVault, images);
+        home.Browser.Grouping = "prompt";
+        home.Browser.Filter = new GalleryFilter { Review = "pending", Sort = "name" };
+        Assert.Equal(images.Select(image => image.Id), home.Browser.Filtered.Select(image => image.Id));
+
+        if (action == "delete")
+        {
+            var survivors = images.Skip(2).ToArray();
+            SetField(home, "Catalog.Images", survivors);
+            SetField(home, "Catalog.ImagesById", survivors.ToDictionary(image => image.Id));
+            await home.Browser.CatalogChangedAsync();
+        }
+        else
+        {
+            await home.Catalog.UpdateAsync(images.Take(2).Select(image => image with
+            {
+                IsReviewed = action == "review", IsMarkedForDeletion = action == "trash"
+            }).ToArray(), reloadThumbnails: false);
+        }
+        await home.Browser.PauseAsync();
+
+        Assert.Equal(images.Skip(2).Select(image => image.Id), home.Browser.Filtered.Select(image => image.Id));
+        var group = home.Browser.Browsing.PromptGroupsByImageId[images[2].Id];
+        Assert.Equal("First prompt", group.Prompt);
+        Assert.Equal(images[2].Id, Assert.Single(group.Images).Id);
+
+        home.Browser.Filter = home.Browser.Filter with { Sort = "oldest" };
+        Assert.Equal(images.Skip(3).Append(images[2]).Select(image => image.Id), home.Browser.Filtered.Select(image => image.Id));
+        Assert.Equal(PromptGroup.Unique, home.Browser.Browsing.PromptGroupsByImageId[images[2].Id].Kind);
     }
 
     [Fact]
