@@ -12,7 +12,7 @@ using SixLabors.ImageSharp;
 namespace Gallery.Core.Features.Ingestion;
 
 /// <summary>Runs ingestion against the catalog selected by the caller's vault lease.</summary>
-internal sealed class GalleryIngestion(IGalleryStore galleryStore, ImportMediaPreparer mediaPreparer)
+internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPreparer mediaPreparer)
 {
     public static void ValidateImportName(string name) =>
         ImportRequestValidator.ValidateName(name, IngestionSourceScanner.Extensions);

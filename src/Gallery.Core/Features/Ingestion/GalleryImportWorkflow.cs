@@ -16,15 +16,15 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
 
     public async Task<ImageRecord> ImportAsync(Stream input, string name, string sourceFolder, string sourcePath = "")
     {
-        GalleryIngestion.ValidateImportName(name);
+        MediaImporter.ValidateImportName(name);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var location = galleryLifetime.Current;
         var store = location.GalleryStore;
         await using var catalogOperation = await store.OpenOperationAsync(key.Bytes);
-        var ingestion = new GalleryIngestion(store, importMediaPreparer);
-        await ingestion.PrepareFingerprintIndexAsync(key.Bytes);
+        var importer = new MediaImporter(store, importMediaPreparer);
+        await importer.PrepareFingerprintIndexAsync(key.Bytes);
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
-        return await ingestion.ImportAsync(input, name, sourceFolder, sourcePath, key.Bytes, mediaRoot);
+        return await importer.ImportAsync(input, name, sourceFolder, sourcePath, key.Bytes, mediaRoot);
     }
 
     public async Task ImportFolderAsync(string folder, FolderSearchScope searchScope, Action<string>? progress = null,
@@ -42,16 +42,16 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
             ?? new IngestionOptions();
         IngestionOptionsValidator.Validate(options);
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
-        var ingestion = new GalleryIngestion(store, importMediaPreparer);
-        await ingestion.ImportFolderAsync(folder, searchScope, progress, sourceRetention, reportProgress, reportTimings,
+        var importer = new MediaImporter(store, importMediaPreparer);
+        await importer.ImportFolderAsync(folder, searchScope, progress, sourceRetention, reportProgress, reportTimings,
             options, scan, includeImages, includeVideos, location.VaultStore.Root, mediaRoot, key.Bytes);
     }
 
     public async Task VerifyImportedAsync(string id)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var ingestion = new GalleryIngestion(galleryLifetime.Current.GalleryStore, importMediaPreparer);
-        await ingestion.VerifyImportedAsync(id, key.Bytes);
+        var importer = new MediaImporter(galleryLifetime.Current.GalleryStore, importMediaPreparer);
+        await importer.VerifyImportedAsync(id, key.Bytes);
     }
 
     public async Task<IngestionScan> ScanFolderAsync(string folder, FolderSearchScope searchScope)
