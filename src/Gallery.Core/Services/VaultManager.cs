@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Core.Services;
@@ -28,7 +29,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         try
         {
             var vaultRoot = galleryLifetime.Current.VaultStore.Root;
-            GalleryService.RequireLocalCatalogDirectory(vaultRoot);
+            CatalogDirectoryRules.RequireLocalCatalogDirectory(vaultRoot);
             EnsureCheckout();
             RecoverInterruptedCreation(vaultRoot);
             EnsureVaultDoesNotExist(vaultRoot);
@@ -115,7 +116,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         var stagedStore = galleryLifetime.StoreFactory.Create(staging);
         await stagedStore.InitializeAsync(createdKey);
         if (storageOptions is not null)
-            await stagedStore.SaveSettingsAsync(storageOptions, "media-storage", "media-storage:v1", createdKey);
+            await stagedStore.SaveSettingsAsync(storageOptions, MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose, createdKey);
         await stagedStore.PrepareForPublicationAsync(createdKey);
     }
 

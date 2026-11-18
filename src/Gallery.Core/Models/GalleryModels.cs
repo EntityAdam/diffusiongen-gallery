@@ -54,6 +54,9 @@ public sealed record StorageOverview(
     int MissingImageFiles,
     DateTimeOffset UpdatedAt)
 {
+    internal const string SettingId = "storage-overview";
+    internal const string SettingPurpose = "storage-overview:v1";
+
     public int TotalFileCount => ImageFileCount + VaultFileCount;
     public long TotalBytes => ImageBytes + VaultFileBytes;
     /// <summary>True while the background file index is still being built; unindexed files were measured directly.</summary>

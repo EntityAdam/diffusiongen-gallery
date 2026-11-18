@@ -14,6 +14,7 @@ public sealed partial class GalleryService
     public Task<ExportFile> ExportAsync(string id) => mediaReader.ExportAsync(id);
     public Task<ExportFile> ExportZipAsync(IEnumerable<string> ids) => mediaReader.ExportZipAsync(ids);
     public Task<ExportFile?> WorkflowAsync(string id) => mediaReader.WorkflowAsync(id);
+    public Task MoveAsync(string id, string folder, string name) => storedMediaMover.MoveAsync(id, folder, name);
 
     public const long MaxExportZipBytes = ExportComposer.MaxZipBytes;
     public static byte[] CopyExportContent(ExportFile file) => file.CopyContentBytes();
