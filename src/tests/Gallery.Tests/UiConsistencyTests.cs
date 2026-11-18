@@ -52,14 +52,13 @@ public sealed class UiConsistencyTests
         var endpoints = ComponentTestAccess.Get<LlmEndpointSettings>(settings, "llmEndpointSettings");
         Assert.Equal("saved-model", endpoints.SavedSettings.Model);
         Assert.False(settings.HasUnsavedChanges);
-        var draft = ComponentTestAccess.Get<object>(endpoints, "draft");
-        ComponentTestAccess.Set(draft, "Model", "unsaved-model");
+        ComponentTestAccess.Call(endpoints, "SetLaneModel", "unsaved-model");
 
         await Invoke(fixture, workspace, "Catalog.ReloadAsync");
 
         Assert.True(settings.HasUnsavedChanges);
         Assert.Same(endpoints, ComponentTestAccess.Get<LlmEndpointSettings>(settings, "llmEndpointSettings"));
-        Assert.Equal("unsaved-model", ComponentTestAccess.Get<string>(draft, "Model"));
+        Assert.Equal("unsaved-model", ComponentTestAccess.Get<VisionEndpointLane>(endpoints, "Lane").Model);
         Assert.Equal("saved-model", (await vault.Service.SettingsAsync()).Model);
     }
 
@@ -174,7 +173,6 @@ public sealed class UiConsistencyTests
         Assert.Equal("intelligence", Field<string>(home, "Browser.ActiveTool"));
         var analysisHtml = await Html(fixture, root);
         Assert.Contains("gallery-analysis-drawer", analysisHtml);
-        Assert.Contains("auto-accept-vision", analysisHtml);
         Assert.Contains("Start analyzing unanalyzed media", analysisHtml);
         Assert.DoesNotContain("data-tool=\"intelligence\"", analysisHtml);
         Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));

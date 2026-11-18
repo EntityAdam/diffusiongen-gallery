@@ -1206,7 +1206,20 @@ public sealed partial class GalleryService
 
     public async Task SaveSettingsAsync(VisionSettings settings)
     {
-        VisionService.Validate(settings);
+        if (settings.Lanes.IsDefaultOrEmpty) VisionService.Validate(settings);
+        else
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var lane in settings.Lanes)
+            {
+                if (string.IsNullOrWhiteSpace(lane.Name) || !names.Add(lane.Name.Trim()))
+                    throw new InvalidOperationException("Each vision endpoint needs a unique name.");
+                if (lane.MaxConcurrentRequests < 1)
+                    throw new InvalidOperationException($"The concurrent request limit for '{lane.Name}' must be at least 1.");
+                VisionService.Validate(settings.ForLane(lane));
+            }
+            settings = settings.ForLane(settings.Lanes[0]);
+        }
         await WriteEncryptedSettingAsync(settings, VisionSettingsId, VisionSettingsId);
     }
 

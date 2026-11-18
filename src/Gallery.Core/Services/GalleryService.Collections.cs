@@ -16,7 +16,7 @@ public sealed partial class GalleryService
         if (images.All(image => string.IsNullOrWhiteSpace(image.Description) && string.IsNullOrWhiteSpace(image.Tags)))
             throw new InvalidOperationException("Analyze or tag the selected media first so the model has content to use.");
         var settings = await SettingsAsync();
-        var suggestedId = await RequiredVisionManager().SuggestSetAsync(settings, collection.Name, sets, images);
+        var suggestedId = await RequiredVisionManager().SuggestSetAsync(settings.ForLane(settings.GetLanes()[0]), collection.Name, sets, images);
         return sets.FirstOrDefault(set => set.Id == suggestedId);
     }
 

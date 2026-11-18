@@ -407,10 +407,17 @@ keep, A apply, S skip, O original size, P fit, Escape close.
 
 ## AI analysis
 
-Under **Settings > LLM endpoints**, configure an OpenAI-compatible endpoint,
-optional bearer API key, loaded vision-capable model, and timeout (10-3600 seconds,
-default 180). **Fetch models** checks the connection without saving settings; model
-discovery does not verify vision capability. Save the settings before analysis.
+Under **Settings > LLM endpoints**, configure one or more OpenAI-compatible
+endpoints. Each has a name, optional bearer API key, vision model, and timeout
+(10–3600 seconds, default 180). Each enabled endpoint takes the next available
+images from a shared queue up to its **Concurrent vision requests** limit,
+which defaults to 1. Vision prompts,
+output format, and tag policy are shared. The first endpoint also handles
+text-only set suggestions.
+
+**Fetch models** checks the selected connection without saving settings. Use a
+sample image to verify vision support and the chosen output format. Save the
+settings before analysis.
 **Model generation settings** exposes response token limits for vision analysis
 (default 800) and text-only set destination requests (500), plus vision temperature (0.2) and text temperature (0.1). Token limits must
 be positive whole numbers; temperatures must be between 0 and 2. Existing saved
@@ -448,19 +455,22 @@ In the drawer:
   current page. Failed or stale suggestions remain pending; other suggestions continue.
   **Discard all** removes pending vision suggestions without changing saved analysis,
   tag-only suggestions, or unfinished queue items.
-- **Auto-accept vision analysis** defaults off and saves automatically per gallery.
-  When enabled, future full vision results use the same approval rules as manual
-  acceptance. Existing drafts and tag-only suggestions still require a decision.
-  Results are checkpointed before acceptance, so failed acceptance retains a draft.
+- Set **Auto-accept new vision results** independently for each endpoint in
+  **LLM endpoints**. New endpoints default off. The first endpoint inherits the
+  prior gallery preference when upgrading. Full results are saved as drafts
+  before automatic acceptance, so a failed acceptance retains a draft.
+  Existing drafts and tag-only suggestions still require a decision.
 - Completed suggestions are checkpointed in the encrypted catalog after each result.
-  Locking cancels the current request and clears the UI; completed drafts survive
+  Locking cancels all active requests and clears the UI; completed drafts survive
   lock/unlock, page reloads, and application restarts.
 - Explicitly selected media use a saved queue. **Resume selected media** retries
   unfinished and failed selection items with the current LLM settings.
   **Discard selected queue** keeps completed drafts. Whole-library runs simply
   use **Play** again; completed results are skipped and failures remain eligible.
-- **Stop** finishes the current request before stopping; the configured timeout
-  still applies. Per-item failures are reported.
+- **Stop** waits for active requests to finish and starts no further images.
+  Request timeouts still apply. An unreachable endpoint or one that rejects
+  authorization stops taking work for that run. Healthy endpoints can pick
+  up its image. Per-item failures are reported.
 
 Analysis runs only when requested and does not change rating, review state,
 deletion marks, or media files. Auto-accept saves successful vision notes, tags,

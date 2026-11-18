@@ -59,6 +59,11 @@ public partial class SettingsWorkspace
             if (tab == "endpoints")
             {
                 var value = await Gallery.SettingsAsync();
+                if (value.Lanes.IsDefaultOrEmpty)
+                {
+                    var checkpoint = await Gallery.OpenVisionCheckpointAsync();
+                    value = value with { Lanes = value.GetLanes(checkpoint.State.AutoAcceptVisionAnalysis) };
+                }
                 if (!disposed) settings = value;
             }
             else if (tab == "backups" && backup.Saved is null)

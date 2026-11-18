@@ -179,8 +179,7 @@ public sealed class UiSaveBehaviorTests
             })));
         var dirty = typeof(LlmEndpointSettings).GetProperty("HasUnsavedChanges", Flags)!;
         Assert.False((bool)dirty.GetValue(component)!);
-        var draft = Get<object>(component, "draft");
-        draft.GetType().GetProperty("Model")!.SetValue(draft, "changed");
+        Call(component, "SetLaneModel", "changed");
         Assert.True((bool)dirty.GetValue(component)!);
         Assert.Equal("original", (await vault.Service.SettingsAsync()).Model);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => Invoke(component, "SaveAsync"));
@@ -225,6 +224,8 @@ public sealed class UiSaveBehaviorTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "original" });
+        var checkpoint = await vault.Service.OpenVisionCheckpointAsync();
+        await checkpoint.UpdateAsync(state => state with { AutoAcceptVisionAnalysis = true });
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
@@ -234,8 +235,7 @@ public sealed class UiSaveBehaviorTests
             Call(home, "StateHasChanged");
         });
         var component = fixture.LatestComponent<LlmEndpointSettings>();
-        var draft = Get<object>(component, "draft");
-        draft.GetType().GetProperty("Model")!.SetValue(draft, "edited");
+        Call(component, "SetLaneModel", "edited");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await Invoke(home, "Navigation.SwitchSettingsTabAsync", "overview");
@@ -245,7 +245,9 @@ public sealed class UiSaveBehaviorTests
             Call(home, "StateHasChanged");
         });
         Assert.Equal(leaves ? "overview" : "endpoints", Get<string>(home, "Navigation.SettingsTab"));
-        Assert.Equal(saves ? "edited" : "original", (await vault.Service.SettingsAsync()).Model);
+        var settings = await vault.Service.SettingsAsync();
+        Assert.Equal(saves ? "edited" : "original", settings.Model);
+        if (saves) Assert.True(Assert.Single(settings.Lanes).AutoAccept);
         Assert.False(Get<bool>(home, "Session.Guard.IsPending"));
         Assert.Equal(!leaves, component.HasUnsavedChanges);
     }
@@ -265,8 +267,7 @@ public sealed class UiSaveBehaviorTests
             Call(home, "StateHasChanged");
         });
         var component = fixture.LatestComponent<LlmEndpointSettings>();
-        var draft = Get<object>(component, "draft");
-        draft.GetType().GetProperty("Endpoint")!.SetValue(draft, "invalid-url");
+        Call(component, "SetLaneEndpoint", "invalid-url");
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await Invoke(home, "Navigation.SwitchWorkflowAsync", "gallery");
@@ -276,7 +277,7 @@ public sealed class UiSaveBehaviorTests
         Assert.Equal("endpoints", Get<string>(home, "Navigation.SettingsTab"));
         Assert.True(Get<bool>(home, "Session.Guard.IsPending"));
         Assert.True(component.HasUnsavedChanges);
-        Assert.Equal("invalid-url", draft.GetType().GetProperty("Endpoint")!.GetValue(draft));
+        Assert.Equal("invalid-url", Get<VisionEndpointLane>(component, "Lane").Endpoint);
         Assert.Equal("original", (await vault.Service.SettingsAsync()).Model);
     }
 

@@ -72,7 +72,9 @@ public sealed class VisionPromptEditorTests
         Assert.Equal(8192, reloaded.TextMaxTokens);
         Assert.Equal(0.6, reloaded.AnalysisTemperature);
         Assert.Equal(0.4, reloaded.TextTemperature);
-        Assert.Equal(reloaded, savedCallback);
+        Assert.NotNull(savedCallback);
+        Assert.Equal(reloaded.Lanes.AsEnumerable(), savedCallback.Lanes.AsEnumerable());
+        Assert.Equal(reloaded with { Lanes = [] }, savedCallback with { Lanes = [] });
         await vault.Service.AnalyzeImageAsync(reloaded, "data:image/png;base64,example");
         Assert.NotNull(handler.Body);
         using var request = JsonDocument.Parse(handler.Body);
@@ -185,6 +187,54 @@ public sealed class VisionPromptEditorTests
         }
         static ParameterView Parameters(VisionSettings settings) => ParameterView.FromDictionary(new Dictionary<string, object?>
         { [nameof(LlmEndpointSettings.SavedSettings)] = settings });
+    }
+
+    [Fact]
+    public async Task Adding_endpoint_keeps_primary_connection_and_saves_independent_approval_preferences()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var primary = new VisionEndpointLane { Name = "Primary", Model = "first", AutoAccept = true };
+        using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
+            .AddSingleton(vault.Service).BuildServiceProvider();
+        await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var id = renderer.AddRoot();
+            await renderer.RenderAsync(id, ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(LlmEndpointSettings.SavedSettings)] = new VisionSettings { Lanes = [primary] }
+            }));
+            var add = renderer.FindElement("button", "add-vision-endpoint");
+            await renderer.DispatchEventAsync(add.Event("onclick"), null, new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+            await ChangeAsync("endpoint-url", "http://127.0.0.1:1235/v1/");
+            await ChangeAsync("model-select", "second");
+            await ChangeAsync("api-key", "second-key");
+            await ChangeAsync("request-timeout", "45");
+            Assert.Equal("1", renderer.FindElement("input", "lane-concurrency").Value);
+            await ChangeAsync("lane-concurrency", "3");
+            await ToggleCheckboxAsync(renderer, "lane-enabled", false);
+            await ChangeAsync("vision-lane", "0");
+            Assert.Equal(primary.Model, renderer.FindElement("input", "model-select").Value);
+            Assert.True(renderer.Editor!.HasUnsavedChanges);
+            Assert.True(await renderer.Editor.SaveDraftAsync());
+        });
+
+        var saved = await vault.Service.SettingsAsync();
+        Assert.Equal(primary, saved.Lanes[0]);
+        Assert.Equal(new VisionEndpointLane
+        {
+            Name = "Endpoint 2", Endpoint = "http://127.0.0.1:1235/v1/", Model = "second", ApiKey = "second-key",
+            RequestTimeoutSeconds = 45, MaxConcurrentRequests = 3, Enabled = false
+        }, saved.Lanes[1]);
+        Assert.Equal(primary.Model, saved.Model);
+
+        Task ChangeAsync(string id, string value)
+        {
+            var input = renderer.FindElement(null, id);
+            return renderer.DispatchEventAsync(input.Event("onchange"), new EventFieldInfo { ComponentId = input.ComponentId, FieldValue = value },
+                new ChangeEventArgs { Value = value });
+        }
     }
 
     private static async Task ToggleCheckboxAsync(EditorRenderer renderer, string id, bool value)
