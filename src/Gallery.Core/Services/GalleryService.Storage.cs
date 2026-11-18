@@ -25,7 +25,7 @@ public sealed partial class GalleryService
         var revision = await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes);
         var records = await ListWithKeyAsync(keyLease.Bytes);
         var indexedLengths = await galleryStore.ReadMediaIndexAsync(keyLease.Bytes);
-        var indexPending = await IsMediaIndexPendingAsync(keyLease.Bytes);
+        var indexPending = await mediaStorageIndex.IsPendingAsync(keyLease.Bytes);
         var (overview, measured) = await Task.Run(() =>
             StorageOverviewCalculator.Measure(vaultStore.Root, records, indexedLengths, keyLease.Bytes));
         await galleryStore.IndexFilesAsync(measured, keyLease.Bytes);
@@ -45,7 +45,6 @@ public sealed partial class GalleryService
                 vaultMeasurement.FileCount, vaultMeasurement.Bytes, imageMeasurement.Missing, DateTimeOffset.UtcNow),
                 imageMeasurement.Measured);
         }
-
         private static (long DatabaseBytes, int FileCount, long Bytes) MeasureVaultFiles(string vaultRoot)
         {
             var databasePath = Path.Combine(vaultRoot, CatalogFileName);
@@ -54,7 +53,7 @@ public sealed partial class GalleryService
             var vaultFileCount = 0;
             foreach (var path in databaseFiles.Append(Path.Combine(vaultRoot, VaultHeaderFileName)))
             {
-                var length = FileLength(path);
+                var length = StorageFileSystem.FileLength(path);
                 if (length is null) continue;
                 vaultFileCount++;
                 vaultBytes += length.Value;
@@ -76,7 +75,7 @@ public sealed partial class GalleryService
                 var target = DriveOperationProcessor.PathFingerprint(key, path);
                 if (!indexedLengths.TryGetValue(Convert.ToHexString(target), out var length))
                 {
-                    var measuredLength = FileLength(path);
+                    var measuredLength = StorageFileSystem.FileLength(path);
                     if (measuredLength is null) { missing++; continue; }
                     length = measuredLength.Value;
                     measured.Add((DriveOperationProcessor.PathFingerprint(key, Path.GetDirectoryName(path)!), new IndexedFile(target, length)));
@@ -87,19 +86,5 @@ public sealed partial class GalleryService
             return (imageFileCount, imageBytes, missing, measured);
         }
 
-    }
-
-    private static long? FileLength(string path)
-    {
-        try
-        {
-            return new FileInfo(path).Length;
-        }
-        catch (FileNotFoundException) { return null; }
-        catch (DirectoryNotFoundException) { return null; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            throw new IOException($"Could not read file length for '{path}'.", exception);
-        }
     }
 }

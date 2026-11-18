@@ -12,6 +12,38 @@ public sealed class CollectionCatalogTests
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
+    public async Task CollectionCommandsUseTheSelectedVaultAfterSwitching(CatalogBackend backend)
+    {
+        using var source = new ServiceFixture(backend);
+        using var destination = new ServiceFixture(backend);
+        await source.InitializeAsync();
+        var sourceRoot = source.Service.VaultRoot;
+        var sourceCollection = await source.Service.CreateCollectionAsync("Source");
+        await destination.InitializeAsync();
+        var destinationCollection = await destination.Service.CreateCollectionAsync("Destination");
+        var destinationRoot = destination.Service.VaultRoot;
+        await destination.Service.CloseVaultAsync();
+
+        await source.Service.OpenExistingVaultAsync(destinationRoot);
+        await source.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        var catalog = await source.Service.LoadCollectionCatalogAsync();
+        Assert.Equal(destinationCollection.Id, Assert.Single(catalog.Collections).Id);
+        await source.Service.RenameCollectionAsync(destinationCollection.Id, "Renamed");
+
+        await source.Service.OpenExistingVaultAsync(sourceRoot);
+        await source.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        catalog = await source.Service.LoadCollectionCatalogAsync();
+        Assert.Equal(sourceCollection, Assert.Single(catalog.Collections));
+
+        await destination.Service.OpenExistingVaultAsync(destinationRoot);
+        await destination.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        catalog = await destination.Service.LoadCollectionCatalogAsync();
+        Assert.Equal("Renamed", Assert.Single(catalog.Collections).Name);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
     public async Task FailedDestinationMoveLeavesNoContainersAndExistingDestinationsAreReused(CatalogBackend backend)
     {
         using var fixture = new ServiceFixture(backend);

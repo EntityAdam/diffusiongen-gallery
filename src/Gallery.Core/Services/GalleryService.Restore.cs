@@ -17,7 +17,7 @@ public sealed partial class GalleryService
         CreateSasRestoreTarget(sasUrl, azurePrefix).ListAsync();
 
     private IBackupTarget CreateSasRestoreTarget(string sasUrl, string azurePrefix) =>
-        new BackupTargetAzure(sasUrl, NormalizeAzurePrefix(azurePrefix), ownedHttpClient);
+        new BackupTargetAzure(sasUrl, BackupTargetAzure.NormalizePrefix(azurePrefix), ownedHttpClient);
 
     private IBackupTarget CreateRestoreTarget(
         string sourceType, string localDirectory, string azureContainer, string azurePrefix, string connectionString)
@@ -31,7 +31,7 @@ public sealed partial class GalleryService
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(azureContainer);
             ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-            return new BackupTargetAzure(connectionString.Trim(), azureContainer.Trim(), NormalizeAzurePrefix(azurePrefix), ownedHttpClient);
+            return new BackupTargetAzure(connectionString.Trim(), azureContainer.Trim(), BackupTargetAzure.NormalizePrefix(azurePrefix), ownedHttpClient);
         }
         throw new InvalidOperationException("Choose a local/SMB folder or Azure Blob Storage.");
     }
@@ -80,7 +80,7 @@ public sealed partial class GalleryService
                 galleryLifetime.StoreFactory, target, latestBackupName, staging, destination, credential, useRecovery);
             await ClearLocationSettingsAsync(store, key);
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
-            await StopDriveOperationPlayerAsync();
+            await driveQueue.StopAsync();
             await vaultSession.LockAndDrainAsync();
             EnsureActive();
             await store.PrepareForPublicationAsync(key);

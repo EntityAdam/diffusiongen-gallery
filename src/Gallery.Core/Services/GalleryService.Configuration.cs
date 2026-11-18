@@ -1,5 +1,6 @@
 using Gallery.Core.Services.Sessions.Locations;
 using Gallery.Core.Models;
+using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.DataManagers;
 using System.Security.Cryptography;
 
@@ -7,7 +8,17 @@ namespace Gallery.Core.Services;
 
 public sealed partial class GalleryService
 {
-    public bool CatalogIsOnNetworkDrive => Processors.CatalogDirectoryRules.IsNetworkDirectory(VaultRoot);
+    private const string PreferencesId = "ui-preferences";
+    private const string PreferencesPurpose = "ui-preferences:v1";
+
+    public async Task<UiPreferences> LoadPreferencesAsync() =>
+        PreferencesNormalizer.Normalize(
+            await ReadEncryptedSettingAsync<UiPreferences>(PreferencesId, PreferencesPurpose) ?? new());
+
+    public Task SavePreferencesAsync(UiPreferences preferences) =>
+        WriteEncryptedSettingAsync(PreferencesNormalizer.Normalize(preferences), PreferencesId, PreferencesPurpose);
+
+    public bool CatalogIsOnNetworkDrive => CatalogDirectoryRules.IsNetworkDirectory(VaultRoot);
 
     /// <summary>Relocates only the encrypted catalog and header; all encrypted media stays at its existing paths.</summary>
     public async Task RelocateCatalogAsync(string directory)
@@ -29,7 +40,7 @@ public sealed partial class GalleryService
             RequireEmptyDestination(destination);
             lockRequestsAtStart = ReadExplicitLockRequests();
             key = vaultSession.Key;
-            await StopDriveOperationPlayerAsync();
+            await driveQueue.StopAsync();
             await vaultSession.LockAndDrainAsync();
             var mediaDirectory = await MediaDirectoryWithKeyAsync(key);
             var sourceRoot = VaultRoot;
@@ -120,8 +131,20 @@ public sealed partial class GalleryService
 
     internal static void RequireLocalCatalogDirectory(string directory)
     {
-        if (Processors.CatalogDirectoryRules.IsNetworkDirectory(directory))
+        if (CatalogDirectoryRules.IsNetworkDirectory(directory))
             throw new InvalidOperationException(
                 $"Catalog directory '{directory}' is on a network drive. Keep gallery.db on the host's local drive. Choose a local catalog directory; encrypted media may use a NAS/SMB directory.");
+    }
+
+    private async Task<T?> ReadEncryptedSettingAsync<T>(string id, string purpose) where T : class
+    {
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        return await galleryStore.ReadSettingsAsync<T>(id, purpose, keyLease.Bytes);
+    }
+
+    private async Task WriteEncryptedSettingAsync<T>(T value, string id, string purpose)
+    {
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        await galleryStore.SaveSettingsAsync(value, id, purpose, keyLease.Bytes);
     }
 }

@@ -89,8 +89,8 @@ public sealed partial class GalleryService
         }
         finally { galleryStore.Gate.Release(); }
         token.ThrowIfCancellationRequested();
-        await ScheduleMediaIndexAsync(snapshot.Records, key);
-        driveOperationPlayer.Start();
+        await mediaStorageIndex.ScheduleAsync(snapshot.Records, key);
+        driveQueue.Start();
         token.ThrowIfCancellationRequested();
         return snapshot;
     }

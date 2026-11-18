@@ -60,7 +60,7 @@ public sealed partial class GalleryService : IDisposable
 
     private GalleryService(
         IGalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools videoTools, HttpClient httpClient, IGalleryStoreFactory storeFactory)
-        : this(galleryStore, vaultStore, vaultSession, videoTools, new VisionManager(httpClient), storeFactory)
+        : this(galleryStore, vaultStore, vaultSession, videoTools, new VisionManager(httpClient), storeFactory, httpClient)
     {
         ownedHttpClient = httpClient;
     }
@@ -167,7 +167,7 @@ public sealed partial class GalleryService : IDisposable
     public void Dispose()
     {
         if (!galleryLifetime.TryBeginDisposal()) return;
-        driveOperationPlayer.Dispose();
+        driveQueue.Dispose();
         vaultSession.Dispose();
         _ = ReleaseCheckoutAfterOperationsAsync();
         ownedHttpClient?.Dispose();

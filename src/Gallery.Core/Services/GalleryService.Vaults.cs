@@ -3,7 +3,6 @@ using Gallery.Core.Services.Sessions.Locations;
 using System.Security.Cryptography;
 using Gallery.Core.Models;
 using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Processors.Hashing;
 
@@ -62,14 +61,14 @@ public sealed partial class GalleryService
         try
         {
             EnsureActive();
-            if (PathEquals(root, VaultRoot) && checkout is not null)
+            if (StorageFileSystem.PathEquals(root, VaultRoot) && checkout is not null)
             {
                 if (!existing)
                 {
                     VaultManager.RecoverInterruptedCreation(root);
                     RequireEmptyDestination(root);
                 }
-                await StopDriveOperationPlayerAsync();
+                await driveQueue.StopAsync();
                 await vaultSession.LockAndDrainAsync();
                 if (existing) history?.Save(root);
                 return;
@@ -85,7 +84,7 @@ public sealed partial class GalleryService
                     VaultManager.RecoverInterruptedCreation(root);
                     RequireEmptyDestination(root);
                 }
-                await StopDriveOperationPlayerAsync();
+                await driveQueue.StopAsync();
                 await vaultSession.LockAndDrainAsync();
                 EnsureActive();
                 galleryLifetime.PublishLocation(galleryLifetime.StoreFactory.Create(root), store, nextCheckout)?.Dispose();
@@ -102,7 +101,7 @@ public sealed partial class GalleryService
         await lifecycleGate.WaitAsync();
         try
         {
-            try { await StopDriveOperationPlayerAsync(); }
+            try { await driveQueue.StopAsync(); }
             finally
             {
                 await vaultSession.LockAndDrainAsync();
@@ -133,10 +132,10 @@ public sealed partial class GalleryService
             RequireEmptyDestination(destination);
             lockRequestsAtStart = ReadExplicitLockRequests();
             key = vaultSession.Key;
-            await StopDriveOperationPlayerAsync();
+            await driveQueue.StopAsync();
             await vaultSession.LockAndDrainAsync();
             var sourceRoot = VaultRoot;
-            await ReconcileOutstandingDeletesAsync(key);
+            await GalleryDriveQueue.ReconcileOutstandingDeletesAsync(galleryStore, key);
             var records = await galleryStore.ReadRecordsAsync(key);
             staging = Path.Combine(destination, ".vault-stage-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(staging);
@@ -196,9 +195,9 @@ public sealed partial class GalleryService
                 throw new InvalidOperationException("Type PURGE to confirm permanent destruction of this gallery.");
             EnsureCheckout();
             key = vaultSession.Key;
-            await StopDriveOperationPlayerAsync();
+            await driveQueue.StopAsync();
             await vaultSession.LockAndDrainAsync();
-            await ReconcileOutstandingDeletesAsync(key);
+            await GalleryDriveQueue.ReconcileOutstandingDeletesAsync(galleryStore, key);
             var records = await galleryStore.ReadRecordsAsync(key);
             foreach (var record in records) ValidateMediaPath(record);
             DeleteVaultData(VaultRoot, records);
@@ -210,55 +209,11 @@ public sealed partial class GalleryService
         }
     }
 
-    private async Task ReconcileOutstandingDeletesAsync(byte[] key)
-    {
-        await galleryStore.Gate.WaitAsync();
-        try
-        {
-            var ownedPaths = (await galleryStore.ReadRecordsAsync(key))
-                .Select(record => Path.GetFullPath(record.StoredPath))
-                .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-            foreach (var operation in await galleryStore.ReadOutstandingDeletesAsync(key))
-            {
-                var payload = DriveOperationProcessor.Read(operation, key);
-                var path = Path.GetFullPath(payload.Path);
-                if (!DriveOperationProcessor.PathFingerprint(key, path).AsSpan().SequenceEqual(operation.Target.AsSpan()))
-                    throw new InvalidOperationException("Queued deletion path does not match its authenticated target.");
-                if (!ownedPaths.Contains(path))
-                    await DeleteObsoleteCiphertextAsync(galleryStore, operation, path, key);
-                await galleryStore.CompleteDriveOperationsAsync(
-                    [new DriveOperationResult(operation.Sequence, operation.Revision, DriveOperationOutcome.Done)], key);
-            }
-        }
-        finally { galleryStore.Gate.Release(); }
-    }
-
-    private static async Task DeleteObsoleteCiphertextAsync(
-        IGalleryStore store, DriveOperation operation, string path, byte[] key)
-    {
-        if (Directory.Exists(path)) throw new IOException("Queued ciphertext deletion points to a directory.");
-        if (File.Exists(path))
-        {
-            if (operation.ImageId is null || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
-                throw new InvalidOperationException("Queued ciphertext ownership cannot be verified.");
-            await VerifyCiphertextAsync(path, operation.ImageId, key);
-            try { File.Delete(path); }
-            catch (DirectoryNotFoundException) { }
-        }
-        await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path), key);
-    }
-
-    private static async Task VerifyCiphertextAsync(string path, string imageId, byte[] key)
-    {
-        var plain = await StoredMediaProcessor.ReadAsync(path, imageId, key);
-        CryptographicOperations.ZeroMemory(plain);
-    }
-
     private static string NormalizeVaultDirectory(string directory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory.Trim()));
-        if (PathEquals(root, Path.GetPathRoot(root)!))
+        if (StorageFileSystem.PathEquals(root, Path.GetPathRoot(root)!))
             throw new InvalidOperationException("A filesystem or share root cannot be a gallery. Select a dedicated folder.");
         for (var current = new DirectoryInfo(root); current is not null; current = current.Parent)
             if (current.Exists && current.Attributes.HasFlag(FileAttributes.ReparsePoint))
@@ -266,13 +221,9 @@ public sealed partial class GalleryService
         return root;
     }
 
-    private static bool PathEquals(string left, string right) =>
-        string.Equals(Path.TrimEndingDirectorySeparator(left), Path.TrimEndingDirectorySeparator(right),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-
     private static void RejectOverlappingDirectories(string destination, string source)
     {
-        if (IsPathWithin(destination, source) || IsPathWithin(source, destination))
+        if (StorageFileSystem.IsPathWithin(destination, source) || StorageFileSystem.IsPathWithin(source, destination))
             throw new InvalidOperationException($"Destination '{destination}' overlaps the current gallery folder '{source}'; choose a separate destination.");
     }
 
@@ -301,7 +252,8 @@ public sealed partial class GalleryService
         {
             var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
             foreach (var path in Directory.EnumerateFiles(imagesDirectory, "*", options))
-                if (Path.GetExtension(path) is ".dpng" or ".dmp4" || path.Contains(RemovalStagingMarker, StringComparison.Ordinal))
+                if (Path.GetExtension(path) is ".dpng" or ".dmp4"
+                    || path.Contains(GalleryDriveQueue.RemovalStagingMarker, StringComparison.Ordinal))
                     media.Add(path);
         }
         foreach (var path in media) File.Delete(path);
@@ -348,7 +300,7 @@ public sealed partial class GalleryService
     // Queued drive work and the file index describe paths at the old location, so they never travel with a copy.
     private static async Task ClearLocationSettingsAsync(IGalleryStore store, byte[] key)
     {
-        await store.DeleteSettingsAsync(key, StorageOverviewId, MediaIndexId, "media-storage");
+        await store.DeleteSettingsAsync(key, StorageOverviewId, MediaStorageIndex.SettingId, "media-storage");
         await store.ClearDriveStateAsync(key);
         var settings = await store.ReadSettingsAsync<StoredBackupSettings>(StoredBackupSettings.SettingId, StoredBackupSettings.SettingPurpose, key);
         if (settings is not null)

@@ -23,7 +23,7 @@ internal static class DriveOperationProcessor
         return UnprotectPayload(driveOperation.Payload.AsSpan(), key, PayloadPurpose(driveOperation.Kind, driveOperation.Target.AsSpan()));
     }
 
-    private static string PayloadPurpose(string kind, ReadOnlySpan<byte> target) =>
+    internal static string PayloadPurpose(string kind, ReadOnlySpan<byte> target) =>
         $"drive-operation:{kind}:{Convert.ToHexString(target)}";
 
     private static byte[] ProtectPayload(DriveOperationPayload driveOperationPayload, byte[] key, string purpose)
