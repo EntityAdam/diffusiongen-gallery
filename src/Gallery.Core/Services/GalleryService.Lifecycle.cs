@@ -1,5 +1,4 @@
 using Gallery.Core.Services.Ports;
-using System.Security.Cryptography;
 using Gallery.Core.Services.Gateways;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.DataManagers;
@@ -32,8 +31,8 @@ public sealed partial class GalleryService : IDisposable
     }
 
     public bool IsUnlocked => vaultSession.IsUnlocked;
-    public bool VaultExists => vaultStore.Exists;
-    public string VaultRoot => vaultStore.Root;
+    public bool VaultExists => galleryLifetime.Current.VaultStore.Exists;
+    public string VaultRoot => galleryLifetime.Current.VaultStore.Root;
 
     /// <summary>Creates an owned gallery scope; the returned service disposes the supplied HTTP client.</summary>
     public static GalleryService Create(string vaultRoot, GalleryRuntimeOptions galleryRuntimeOptions, HttpClient ownedHttpClient)
@@ -83,59 +82,17 @@ public sealed partial class GalleryService : IDisposable
      MediaStorageOptions? storageOptions = null) =>
      vaultManager.CreateVaultAsync(passphrase, confirmation, name, storageOptions);
 
-    public async Task UnlockWithPassphraseAsync(string passphrase)
-    {
-        using var activity = VaultOpenTelemetry.Source.StartActivity("vault.unlock");
-        activity?.SetTag("vault.unlock.method", "passphrase");
-        var started = VaultOpenTelemetry.Start(activity);
-        await lifecycleGate.WaitAsync();
-        VaultOpenTelemetry.Record(activity, "vault.unlock.gate_wait_ms", started);
-        try
-        {
-            EnsureCheckout();
-            var key = await vaultStore.UnlockWithPassphraseAsync(passphrase);
-            try { vaultSession.Unlock(key); }
-            finally { CryptographicOperations.ZeroMemory(key); }
-            var historyStarted = VaultOpenTelemetry.Start(activity);
-            history?.Save(VaultRoot);
-            VaultOpenTelemetry.Record(activity, "vault.unlock.history_save_ms", historyStarted);
-        }
-        finally
-        {
-            lifecycleGate.Release();
-            VaultOpenTelemetry.Record(activity, "vault.unlock.elapsed_ms", started);
-        }
-    }
-
-    public async Task UnlockWithRecoveryPhraseAsync(string recoveryPhrase)
-    {
-        using var activity = VaultOpenTelemetry.Source.StartActivity("vault.unlock");
-        activity?.SetTag("vault.unlock.method", "recovery");
-        var started = VaultOpenTelemetry.Start(activity);
-        var normalizedRecoveryPhrase = Gallery.Core.Services.Validators.RecoveryPhraseValidator.Normalize(recoveryPhrase);
-        await lifecycleGate.WaitAsync();
-        VaultOpenTelemetry.Record(activity, "vault.unlock.gate_wait_ms", started);
-        try
-        {
-            EnsureCheckout();
-            var key = await vaultStore.UnlockWithRecoveryPhraseAsync(normalizedRecoveryPhrase);
-            try { vaultSession.Unlock(key); }
-            finally { CryptographicOperations.ZeroMemory(key); }
-            var historyStarted = VaultOpenTelemetry.Start(activity);
-            history?.Save(VaultRoot);
-            VaultOpenTelemetry.Record(activity, "vault.unlock.history_save_ms", historyStarted);
-        }
-        finally
-        {
-            lifecycleGate.Release();
-            VaultOpenTelemetry.Record(activity, "vault.unlock.elapsed_ms", started);
-        }
-    }
+    public Task UnlockWithPassphraseAsync(string passphrase) => vaultAccess.UnlockWithPassphraseAsync(passphrase);
+    public Task UnlockWithRecoveryPhraseAsync(string recoveryPhrase) => vaultAccess.UnlockWithRecoveryPhraseAsync(recoveryPhrase);
 
     public Task ChangePassphraseAsync(string passphrase, string confirmation) =>
         vaultManager.ChangePassphraseAsync(passphrase, confirmation);
 
-    public event Action? OnAutoLocked;
+    public event Action? OnAutoLocked
+    {
+        add => vaultAccess.AutoLocked += value;
+        remove => vaultAccess.AutoLocked -= value;
+    }
 
     public void ConfigureAutoLock(int minutes) =>
         vaultSession.InactivityTimeout = minutes > 0 ? TimeSpan.FromMinutes(minutes) : null;
@@ -147,52 +104,14 @@ public sealed partial class GalleryService : IDisposable
 
     public void Panic() => LockVault();
 
-    public void LockVault()
-    {
-        vaultLocations.LockVault();
-        _ = ReleaseCheckoutAfterOperationsAsync();
-    }
+    public void LockVault() => vaultAccess.LockVault();
 
     public void Dispose()
     {
         if (!galleryLifetime.TryBeginDisposal()) return;
         driveQueue.Dispose();
         vaultSession.Dispose();
-        _ = ReleaseCheckoutAfterOperationsAsync();
+        _ = vaultAccess.ReleaseCheckoutAfterOperationsAsync();
         ownedHttpClient?.Dispose();
-    }
-
-    // Waits for leased work (ingestion, queued drive work) without holding the lifecycle gate, so the user can
-    // unlock again while that work continues. The checkout is kept if the gallery was unlocked meanwhile.
-    private async Task ReleaseCheckoutAfterOperationsAsync()
-    {
-        VaultCheckout? expectedCheckout;
-        await lifecycleGate.WaitAsync();
-        try { expectedCheckout = checkout; }
-        finally { lifecycleGate.Release(); }
-        if (expectedCheckout is null) return;
-        while (true)
-        {
-            await vaultSession.WhenDrainedAsync();
-            await lifecycleGate.WaitAsync();
-            Task? remainingDrainTask;
-            try { remainingDrainTask = TryReleaseCheckoutAfterOperationsAsync(expectedCheckout); }
-            finally { lifecycleGate.Release(); }
-            if (remainingDrainTask is null) return;
-            await remainingDrainTask;
-        }
-    }
-
-    // Caller owns lifecycleGate, which excludes public unlock and location replacement.
-    internal Task? TryReleaseCheckoutAfterOperationsAsync(VaultCheckout expectedCheckout)
-    {
-        if (!ReferenceEquals(checkout, expectedCheckout)) return null;
-        bool vaultIsUnlocked;
-        Task drainTask;
-        (vaultIsUnlocked, drainTask) = vaultSession.ReadCheckoutReleaseState();
-        if (vaultIsUnlocked) return null;
-        if (!drainTask.IsCompleted) return drainTask;
-        galleryLifetime.ReleaseCheckout();
-        return null;
     }
 }

@@ -2,6 +2,9 @@ namespace Gallery.Core.Models;
 
 public sealed record IngestionOptions
 {
+    internal const string SettingId = "ingestion-options";
+    internal const string SettingPurpose = "ingestion-options:v1";
+
     public int Workers { get; init; } = 4;
     public int CatalogBatchSize { get; init; } = 16;
 

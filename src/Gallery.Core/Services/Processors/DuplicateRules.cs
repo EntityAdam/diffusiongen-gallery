@@ -7,6 +7,9 @@ namespace Gallery.Core.Services.Processors;
 internal static class DuplicateRules
 {
 
+    private const string EmptyDuplicateCandidatesMessage =
+        "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
+
     public const int Threshold = 6;
     public static int HammingDistance(ulong firstHash, ulong secondHash) => BitOperations.PopCount(firstHash ^ secondHash);
 
@@ -95,7 +98,28 @@ internal static class DuplicateRules
         RecordsMatchExactly(candidateRecord, comparisonRecord)
         || (HammingDistance(candidateHash, comparisonHash) <= Threshold && SimilarShape(candidateRecord, comparisonRecord));
 
-    public static ImageRecord PickKeeper(IEnumerable<ImageRecord> imageRecords) =>
+    public static ImageRecord PickDuplicateKeeper(IEnumerable<ImageRecord> records)
+    {
+        var candidates = RequireDuplicateCandidates(records);
+        return PickKeeper(candidates);
+    }
+
+    public static HashSet<string> InitialDuplicateKeepers(IReadOnlyCollection<ImageRecord> duplicateImageRecords)
+    {
+        var candidates = RequireDuplicateCandidates(duplicateImageRecords);
+        return InitialKeepers(candidates);
+    }
+
+    private static List<ImageRecord> RequireDuplicateCandidates(IEnumerable<ImageRecord> candidates)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        var candidateRecords = candidates.ToList();
+        if (candidateRecords.Count == 0)
+            throw new InvalidOperationException(EmptyDuplicateCandidatesMessage);
+        return candidateRecords;
+    }
+
+    private static ImageRecord PickKeeper(IEnumerable<ImageRecord> imageRecords) =>
         FirstCandidate(RankKeeperCandidates(imageRecords));
 
     private static IOrderedEnumerable<ImageRecord> RankKeeperCandidates(IEnumerable<ImageRecord> imageRecords) =>

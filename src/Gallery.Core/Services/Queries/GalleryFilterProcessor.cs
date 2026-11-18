@@ -4,11 +4,13 @@ namespace Gallery.Core.Services.Queries;
 
 internal static class GalleryFilterProcessor
 {
-    public static IEnumerable<ImageRecord> Apply(GalleryFilter galleryFilter, IEnumerable<ImageRecord> images,
+    public static IEnumerable<ImageRecord> Apply(GalleryFilter filter, IEnumerable<ImageRecord> records,
         IReadOnlySet<string>? awaitingApprovalIds = null)
     {
-        var tags = galleryFilter.Tag.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        return OrderImages(images.Where(imageRecord => Matches(galleryFilter, imageRecord, awaitingApprovalIds, tags)), galleryFilter.Sort);
+        ArgumentNullException.ThrowIfNull(records);
+        ArgumentNullException.ThrowIfNull(filter);
+        var tags = filter.Tag.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return OrderImages(records.Where(imageRecord => Matches(filter, imageRecord, awaitingApprovalIds, tags)), filter.Sort);
     }
 
     private static bool Matches(GalleryFilter galleryFilter, ImageRecord imageRecord, IReadOnlySet<string>? awaitingApprovalIds, string[] tags) =>

@@ -8,25 +8,41 @@ using Gallery.Core.Services.Processors.Hashing;
 using Gallery.Core.Services.Sessions;
 using Gallery.Core.Services.Sessions.Locations;
 using Gallery.Core.Services.Validators;
+using GalleryLocation = Gallery.Core.Models.GalleryLocation;
 
 namespace Gallery.Core.Services;
 
-internal sealed class VaultLocationCoordinator(GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue)
+internal sealed class VaultLocationCoordinator(
+    GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue, VaultAccess vaultAccess)
 {
     private const string CatalogFileName = GalleryStoreFactory.CatalogFileName;
     private const string VaultHeaderFileName = VaultStore.HeaderFileName;
-
-    private long explicitLockRequests;
 
     private IGalleryStore galleryStore => galleryLifetime.Current.GalleryStore;
     private VaultStore vaultStore => galleryLifetime.Current.VaultStore;
     private string VaultRoot => vaultStore.Root;
     private VaultHistory? history => galleryLifetime.History;
 
-    public void LockVault()
+    public IReadOnlyList<GalleryLocation> KnownGalleries
     {
-        Interlocked.Increment(ref explicitLockRequests);
-        vaultSession.Lock();
+        get
+        {
+            var roots = (history?.ReadGalleries() ?? []).Prepend(VaultRoot)
+                .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            var galleries = new List<GalleryLocation>();
+            foreach (var root in roots)
+            {
+                try
+                {
+                    var store = new VaultStore(root);
+                    if (store.Exists && File.Exists(Path.Combine(root, CatalogFileName)))
+                        galleries.Add(new(root, store.Name));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                    or System.Text.Json.JsonException or InvalidOperationException or ArgumentException) { }
+            }
+            return galleries;
+        }
     }
 
     private void EnsureActive() => ObjectDisposedException.ThrowIf(galleryLifetime.IsDisposed, this);
@@ -35,13 +51,6 @@ internal sealed class VaultLocationCoordinator(GalleryLifetime galleryLifetime, 
     {
         await driveQueue.StopAsync();
         await vaultSession.LockAndDrainAsync();
-    }
-
-    // Restores a session revoked for a failed location change unless a later explicit lock superseded it.
-    private void RestoreUnlockedSessionAfterFailure(byte[]? key, long lockRequestsAtStart)
-    {
-        if (key is not null && !galleryLifetime.IsDisposed && Interlocked.Read(ref explicitLockRequests) == lockRequestsAtStart)
-            vaultSession.Unlock(key);
     }
 
     public Task OpenExistingVaultAsync(string directory) => SelectVaultAsync(directory, existing: true);
@@ -120,7 +129,7 @@ internal sealed class VaultLocationCoordinator(GalleryLifetime galleryLifetime, 
             RequireEmptyDestination(destination);
             destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
             RequireEmptyDestination(destination);
-            lockRequestsAtStart = Interlocked.Read(ref explicitLockRequests);
+            lockRequestsAtStart = vaultAccess.ExplicitLockRequests;
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
             var sourceRoot = VaultRoot;
@@ -160,7 +169,7 @@ internal sealed class VaultLocationCoordinator(GalleryLifetime galleryLifetime, 
             // Until publication, the original vault remains intact and can be unlocked again.
             if (published)
                 throw new IOException($"The gallery was moved to '{destination}', but old-location cleanup or history persistence failed. The verified destination is intact; inspect the original location before removing any remaining files.", exception);
-            RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
+            vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
         finally
@@ -213,12 +222,10 @@ internal sealed class VaultLocationCoordinator(GalleryLifetime galleryLifetime, 
             RequireEmptyDestination(destination);
             destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
             RequireEmptyDestination(destination);
-            lockRequestsAtStart = Interlocked.Read(ref explicitLockRequests);
+            lockRequestsAtStart = vaultAccess.ExplicitLockRequests;
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
-            var mediaOptions = await galleryStore.ReadSettingsAsync<MediaStorageOptions>(
-                MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose, key);
-            var mediaDirectory = mediaOptions is { MediaDirectory.Length: > 0 } ? mediaOptions.MediaDirectory : VaultRoot;
+            var mediaDirectory = await GallerySettings.ReadMediaDirectoryAsync(galleryLifetime.Current, key);
             var sourceRoot = VaultRoot;
             staging = Path.Combine(destination, ".catalog-stage-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(staging);
@@ -250,7 +257,7 @@ internal sealed class VaultLocationCoordinator(GalleryLifetime galleryLifetime, 
         {
             if (published)
                 throw new IOException($"The local catalog is intact at '{destination}', but old catalog cleanup or history persistence failed. Media files were not moved.", exception);
-            RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
+            vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
         finally

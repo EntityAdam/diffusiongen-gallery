@@ -23,7 +23,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         ValidatePassphrase(passphrase);
         var galleryName = NormalizeGalleryName(name ?? VaultStore.DefaultGalleryName);
         if (storageOptions is not null)
-            storageOptions = GalleryService.NormalizeMediaStorageOptions(storageOptions);
+            storageOptions = GallerySettings.NormalizeMediaStorageOptions(storageOptions);
 
         await galleryLifetime.Gate.WaitAsync();
         try
@@ -96,9 +96,9 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
             throw new InvalidOperationException("A gallery already exists. Unlock it instead.");
         foreach (var fileName in new[]
             {
-                GalleryService.CatalogFileName,
-                GalleryService.CatalogFileName + "-wal",
-                GalleryService.CatalogFileName + "-shm"
+                GalleryStoreFactory.CatalogFileName,
+                GalleryStoreFactory.CatalogFileName + "-wal",
+                GalleryStoreFactory.CatalogFileName + "-shm"
             })
         {
             var path = Path.Combine(vaultRoot, fileName);
@@ -125,12 +125,12 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
     private static void PublishCreatedVault(string staging, string vaultRoot)
     {
         PrepareCreationPublication(staging, vaultRoot);
-        var catalogPath = Path.Combine(vaultRoot, GalleryService.CatalogFileName);
+        var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
         try
         {
-            File.Move(Path.Combine(staging, GalleryService.CatalogFileName), catalogPath, overwrite: false);
-            File.Move(Path.Combine(staging, GalleryService.VaultHeaderFileName),
-                Path.Combine(vaultRoot, GalleryService.VaultHeaderFileName), overwrite: false);
+            File.Move(Path.Combine(staging, GalleryStoreFactory.CatalogFileName), catalogPath, overwrite: false);
+            File.Move(Path.Combine(staging, VaultStore.HeaderFileName),
+                Path.Combine(vaultRoot, VaultStore.HeaderFileName), overwrite: false);
         }
         catch
         {
@@ -143,8 +143,8 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
     private static void PrepareCreationPublication(string staging, string vaultRoot)
     {
         var publication = new CreationPublication(Path.GetFileName(staging),
-            FileHash(Path.Combine(staging, GalleryService.CatalogFileName)),
-            FileHash(Path.Combine(staging, GalleryService.VaultHeaderFileName)));
+            FileHash(Path.Combine(staging, GalleryStoreFactory.CatalogFileName)),
+            FileHash(Path.Combine(staging, VaultStore.HeaderFileName)));
         var stagedMarker = Path.Combine(staging, CreationMarkerFileName);
         using (var stream = new FileStream(stagedMarker, FileMode.CreateNew, FileAccess.Write,
             FileShare.None, 4096, FileOptions.WriteThrough))
@@ -175,8 +175,8 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         var staging = Path.Combine(vaultRoot, publication.StagingDirectory);
         if (Directory.Exists(staging) && File.GetAttributes(staging).HasFlag(FileAttributes.ReparsePoint))
             throw new IOException("The interrupted gallery staging directory cannot be a symbolic link.");
-        var catalogPath = Path.Combine(vaultRoot, GalleryService.CatalogFileName);
-        var headerPath = Path.Combine(vaultRoot, GalleryService.VaultHeaderFileName);
+        var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
+        var headerPath = Path.Combine(vaultRoot, VaultStore.HeaderFileName);
         if (File.Exists(headerPath))
         {
             if (FileHash(headerPath) != publication.HeaderSha256)
@@ -184,8 +184,8 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         }
         else if (File.Exists(catalogPath))
         {
-            var stagedCatalog = Path.Combine(staging, GalleryService.CatalogFileName);
-            var stagedHeader = Path.Combine(staging, GalleryService.VaultHeaderFileName);
+            var stagedCatalog = Path.Combine(staging, GalleryStoreFactory.CatalogFileName);
+            var stagedHeader = Path.Combine(staging, VaultStore.HeaderFileName);
             if (File.Exists(stagedCatalog) || !File.Exists(stagedHeader)
                 || FileHash(stagedHeader) != publication.HeaderSha256
                 || FileHash(catalogPath) != publication.CatalogSha256
