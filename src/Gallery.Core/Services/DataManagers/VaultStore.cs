@@ -23,6 +23,7 @@ internal sealed record VaultHeader(
 
 internal sealed class VaultStore
 {
+    internal const string HeaderFileName = "vault.json";
     public const string DefaultGalleryName = "unnamed-gallery";
     private const int VaultKeySizeBytes = 32;
     private const int SaltSizeBytes = 32;
@@ -36,7 +37,7 @@ internal sealed class VaultStore
 
     private readonly SemaphoreSlim semaphoreSlim = new(1);
     public string Root { get; }
-    private string HeaderPath => Path.Combine(Root, "vault.json");
+    private string HeaderPath => Path.Combine(Root, HeaderFileName);
     public bool Exists => File.Exists(HeaderPath);
     public CatalogBackend CatalogBackend => ReadCatalogBackend(File.ReadAllText(HeaderPath));
 

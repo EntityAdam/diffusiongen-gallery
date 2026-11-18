@@ -22,15 +22,15 @@ public sealed class BackupManifestBoundsTests
         {
             await File.WriteAllBytesAsync(sidecarPath, atLimit);
             Assert.Equal(MaximumManifestBytes,
-                (await GalleryService.ReadEncryptedManifestFileAsync(sidecarPath)).Length);
+                (await BackupArchive.ReadEncryptedManifestFileAsync(sidecarPath)).Length);
             await File.WriteAllBytesAsync(sidecarPath, oversized);
             await Assert.ThrowsAsync<InvalidOperationException>(
-                () => GalleryService.ReadEncryptedManifestFileAsync(sidecarPath));
+                () => BackupArchive.ReadEncryptedManifestFileAsync(sidecarPath));
 
             WriteArchive(archivePath, atLimit);
-            Assert.Equal(MaximumManifestBytes, GalleryService.ReadArchiveManifest(archivePath).Length);
+            Assert.Equal(MaximumManifestBytes, BackupArchive.ReadArchiveManifest(archivePath).Length);
             WriteArchive(oversizedArchivePath, oversized);
-            Assert.Throws<InvalidDataException>(() => GalleryService.ReadArchiveManifest(oversizedArchivePath));
+            Assert.Throws<InvalidDataException>(() => BackupArchive.ReadArchiveManifest(oversizedArchivePath));
         }
         finally
         {

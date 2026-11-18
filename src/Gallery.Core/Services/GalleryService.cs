@@ -1,27 +1,21 @@
-using Gallery.Core.Services.Ports;
-using Gallery.Core.Services.Ports.Models;
-using Gallery.Core.Services.Validators;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.Gateways;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Sessions;
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Services.Queries;
 using Gallery.Core.Models;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Processing;
+using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services.Gateways;
+using Gallery.Core.Services.Ports;
+using Gallery.Core.Services.Ports.Models;
+using Gallery.Core.Services.Processors;
+using Gallery.Core.Services.Queries;
+using Gallery.Core.Services.Sessions;
+using Gallery.Core.Services.Validators;
 
 namespace Gallery.Core.Services;
 
 public sealed partial class GalleryService
 {
-    private const string PngDataUrlPrefix = "data:image/png;base64,";
-    private const string VisionSettingsId = "vision-settings";
-    internal const string CatalogFileName = "gallery.db";
-    internal const string VaultHeaderFileName = "vault.json";
+    internal const string CatalogFileName = GalleryStoreFactory.CatalogFileName;
+    internal const string VaultHeaderFileName = VaultStore.HeaderFileName;
 
     private const string EmptyDuplicateCandidatesMessage =
         "Cannot choose a duplicate keeper by deletion status, rating, favorite status, dimensions, original size, and import time: candidate count was 0.";
@@ -29,62 +23,12 @@ public sealed partial class GalleryService
     private readonly GalleryLifetime galleryLifetime;
     private readonly VaultManager vaultManager;
     private readonly RemovalManager removalManager;
+    private readonly GalleryMediaReader mediaReader;
     private IGalleryStore galleryStore => galleryLifetime.Current.GalleryStore;
     private VaultStore vaultStore => galleryLifetime.Current.VaultStore;
     private readonly VaultSession vaultSession;
     private readonly ImportMediaPreparer importMediaPreparer;
-    private readonly VisionManager? visionManager;
-
-    private static class GalleryImageRenderer
-    {
-        public static async Task<string> CreatePreviewAsync(
-            ImageRecord record, byte[] plainImage, ImageResolution resolution)
-        {
-            try
-            {
-                using var image = Image.Load(plainImage);
-                if (resolution == ImageResolution.Fit)
-                    image.Mutate(context => context.Resize(new ResizeOptions
-                    {
-                        Size = new Size(1600, 1600), Mode = ResizeMode.Max
-                    }));
-                using var preview = new MemoryStream();
-                await image.SaveAsPngAsync(preview, new PngEncoder { SkipMetadata = true });
-                var dataUrl = PngDataUrlPrefix +
-                    Convert.ToBase64String(preview.GetBuffer(), 0, (int)preview.Length);
-                CryptographicOperations.ZeroMemory(preview.GetBuffer());
-                return dataUrl;
-            }
-            finally { CryptographicOperations.ZeroMemory(plainImage); }
-        }
-
-        public static async Task<string> CreateViewerImageAsync(
-            ImageRecord record, byte[] plainImage, ImageResolution resolution)
-        {
-            try
-            {
-                if (resolution == ImageResolution.Original)
-                    return ImageContentFormats.DataUrlPrefix(record.ContentType) + Convert.ToBase64String(plainImage);
-
-                using var image = Image.Load(plainImage);
-                image.Mutate(context => context.Resize(new ResizeOptions
-                {
-                    Size = new Size(1600, 1600), Mode = ResizeMode.Max
-                }).BackgroundColor(Color.Black));
-                using var preview = new MemoryStream();
-                try
-                {
-                    await image.SaveAsJpegAsync(preview, new JpegEncoder { Quality = 85, SkipMetadata = true });
-                    return "data:image/jpeg;base64," +
-                        Convert.ToBase64String(preview.GetBuffer(), 0, (int)preview.Length);
-                }
-                finally { CryptographicOperations.ZeroMemory(preview.GetBuffer()); }
-            }
-            finally { CryptographicOperations.ZeroMemory(plainImage); }
-        }
-
-
-    }
+    private readonly GalleryVisionWorkflow visionWorkflow;
 
     internal GalleryService(IGalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools? videoTools = null,
         VisionManager? visionManager = null, IGalleryStoreFactory? storeFactory = null)
@@ -92,8 +36,9 @@ public sealed partial class GalleryService
         galleryLifetime = new GalleryLifetime(galleryStore, vaultStore, storeFactory);
         this.vaultSession = vaultSession;
         vaultManager = new VaultManager(galleryLifetime, vaultSession);
+        mediaReader = new GalleryMediaReader(galleryLifetime, vaultSession);
         importMediaPreparer = new ImportMediaPreparer(videoTools);
-        this.visionManager = visionManager;
+        visionWorkflow = new GalleryVisionWorkflow(galleryLifetime, vaultSession, visionManager);
         this.vaultSession.AutoLocked += () =>
         {
             _ = ReleaseCheckoutAfterOperationsAsync();
@@ -237,13 +182,6 @@ public sealed partial class GalleryService
         return LibraryRules.ApplyEdit(image, edit);
     }
 
-    private static void ValidateOperationChoice<TChoice>(TChoice choice) where TChoice : struct, Enum
-    {
-        if (!Enum.IsDefined(choice))
-            throw new InvalidOperationException(
-                $"{typeof(TChoice).Name} value {Convert.ToInt32(choice)} is invalid. Choose {string.Join(", ", Enum.GetNames<TChoice>())}.");
-    }
-
     public string MergeTags(string existing, string additions) => LibraryRules.MergeTags(existing, additions);
 
     public string RemoveTag(string existing, string tag) => LibraryRules.RemoveTag(existing, tag);
@@ -267,19 +205,6 @@ public sealed partial class GalleryService
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         await galleryStore.DeleteViewAsync(name, key.Bytes);
     }
-    public Task<IReadOnlyList<string>> GetVisionModelsAsync(VisionSettings settings) =>
-        RequiredVisionManager().GetModelsAsync(settings);
-    public async Task<(string Description, string Tags)> AnalyzeImageAsync(VisionSettings settings, string imageData, CancellationToken cancellationToken = default)
-    {
-        var manager = RequiredVisionManager();
-        var names = await LoadTagNamesAsync();
-        cancellationToken.ThrowIfCancellationRequested();
-        var result = await manager.AnalyzeImageAsync(settings, imageData, names, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        return (result.Description, FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags));
-    }
-    private VisionManager RequiredVisionManager() => visionManager
-        ?? throw new InvalidOperationException("The vision manager is not configured.");
 
     public static string FormatDuration(ImageRecord image)
     {
@@ -375,38 +300,6 @@ public sealed partial class GalleryService
     private Task<List<ImageRecord>> ListWithKeyAsync(byte[] key) => galleryStore.ReadRecordsAsync(key);
 
     private Task BackfillFingerprintsAsync(byte[] key) => galleryStore.BackfillFingerprintsAsync(key);
-
-    public async Task<string> ThumbnailAsync(string id)
-    {
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        return await ThumbnailWithKeyAsync(id, key.Bytes);
-    }
-
-    private async Task<string> ThumbnailWithKeyAsync(string id, byte[] key)
-    {
-        using var thumbnail = await galleryStore.ReadThumbnailAsync(id, key);
-        return PngDataUrlPrefix + Convert.ToBase64String(thumbnail.Content.Span);
-    }
-
-    public async Task<string> PreviewAsync(string id, ImageResolution resolution = ImageResolution.Fit)
-    {
-        ValidateOperationChoice(resolution);
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var record = await FindAsync(id, key.Bytes);
-        if (record.IsVideo) return await ThumbnailWithKeyAsync(id, key.Bytes);
-        return await GalleryImageRenderer.CreatePreviewAsync(record,
-            await StoredMediaProcessor.ReadAsync(record, key.Bytes), resolution);
-    }
-
-    public async Task<string> ViewerImageAsync(string id, ImageResolution resolution)
-    {
-        ValidateOperationChoice(resolution);
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var record = await FindAsync(id, key.Bytes);
-        if (record.IsVideo) return await ThumbnailWithKeyAsync(id, key.Bytes);
-        return await GalleryImageRenderer.CreateViewerImageAsync(record,
-            await StoredMediaProcessor.ReadAsync(record, key.Bytes), resolution);
-    }
 
     public async Task<ImageRecord> UpdateAsync(string id, Func<ImageRecordEdit, ImageRecordEdit> update)
     {
@@ -504,28 +397,6 @@ public sealed partial class GalleryService
             StoredImageMover.RollBackCopiedDestination(target);
             throw;
         }
-    }
-
-    public async Task<VisionSettings> SettingsAsync() =>
-        await ReadEncryptedSettingAsync<VisionSettings>(VisionSettingsId, VisionSettingsId) ?? new();
-
-    public async Task SaveSettingsAsync(VisionSettings settings)
-    {
-        if (settings.Lanes.IsDefaultOrEmpty) VisionService.Validate(settings);
-        else
-        {
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var lane in settings.Lanes)
-            {
-                if (string.IsNullOrWhiteSpace(lane.Name) || !names.Add(lane.Name.Trim()))
-                    throw new InvalidOperationException("Each vision endpoint needs a unique name.");
-                if (lane.MaxConcurrentRequests < 1)
-                    throw new InvalidOperationException($"The concurrent request limit for '{lane.Name}' must be at least 1.");
-                VisionService.Validate(settings.ForLane(lane));
-            }
-            settings = settings.ForLane(settings.Lanes[0]);
-        }
-        await WriteEncryptedSettingAsync(settings, VisionSettingsId, VisionSettingsId);
     }
 
     private Task<ImageRecord> FindAsync(string id, byte[] key) => galleryStore.ReadRecordAsync(id, key);

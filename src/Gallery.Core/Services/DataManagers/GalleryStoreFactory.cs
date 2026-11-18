@@ -7,6 +7,8 @@ namespace Gallery.Core.Services.DataManagers;
 /// <summary>Composition boundary: application services depend only on the catalog ports.</summary>
 internal sealed class GalleryStoreFactory(CatalogBackend newCatalogBackend = CatalogBackend.Sqlite) : IGalleryStoreFactory
 {
+    internal const string CatalogFileName = "gallery.db";
+
     public CatalogBackend NewCatalogBackend { get; } = Enum.IsDefined(newCatalogBackend)
         ? newCatalogBackend : throw new ArgumentOutOfRangeException(nameof(newCatalogBackend));
 
@@ -17,7 +19,7 @@ internal sealed class GalleryStoreFactory(CatalogBackend newCatalogBackend = Cat
     }
 
     public IGalleryStore Create(string vaultRoot, CatalogBackend backend) =>
-        CreateForDatabase(Path.Combine(vaultRoot, GalleryService.CatalogFileName), backend);
+        CreateForDatabase(Path.Combine(vaultRoot, CatalogFileName), backend);
 
     public IGalleryStore CreateForDatabase(string databasePath, CatalogBackend backend) => backend switch
     {
