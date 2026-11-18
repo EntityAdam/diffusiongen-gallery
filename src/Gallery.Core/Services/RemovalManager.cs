@@ -1,32 +1,80 @@
 using System.Collections.Immutable;
+using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
+using Gallery.Core.Models;
+using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Ports.Models;
 using Gallery.Core.Services.Processors;
-using System.Security.Cryptography;
-using System.Runtime.ExceptionServices;
-using Gallery.Core.Models;
+using Gallery.Core.Services.Sessions;
 using SixLabors.ImageSharp;
 
 namespace Gallery.Core.Services;
 
-public sealed partial class GalleryService
+internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSession vaultSession, Action startDriveQueue)
 {
     private const string OriginalDeletedMessage = "Original was deleted. ";
 
-    public Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids) =>
-        removalManager.PrepareRemovalAsync(ids);
+    public async Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        var store = galleryLifetime.Current.GalleryStore;
+        return await PrepareRemovalItemsAsync(store, ids, keyLease.Bytes);
+    }
 
-    private async Task<List<RemovalItem>> PrepareRemovalItemsAsync(IEnumerable<string> ids, byte[] key)
+    public async Task RemoveAsync(IReadOnlyList<RemovalItem> removalItems,
+        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
+        Action<RemovalResult>? reportRemoval)
+    {
+        ArgumentNullException.ThrowIfNull(removalItems);
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        ValidateRemovalActions(existingAction, missingAction);
+        ValidateRemovalSelection(removalItems);
+        var normalizedRestoreFolder = NormalizeRestoreFolder(removalItems, missingAction, restoreFolder);
+        var orderedRemovalItems = CaptureOrderedRemovalItems(removalItems);
+        var store = galleryLifetime.Current.GalleryStore;
+        await RemoveBatchAsync(store, orderedRemovalItems, keyLease.Bytes,
+            existingAction, missingAction, normalizedRestoreFolder, reportRemoval);
+    }
+
+    private static void ValidateRemovalActions(
+        ExistingOriginalAction existingAction, MissingOriginalAction missingAction)
+    {
+        if (!Enum.IsDefined(existingAction) || !Enum.IsDefined(missingAction))
+            throw new InvalidOperationException("Invalid removal action.");
+    }
+
+    private static void ValidateRemovalSelection(IReadOnlyCollection<RemovalItem> removalItems)
+    {
+        if (removalItems.Count == 0) throw new InvalidOperationException("Select marked media items to remove.");
+    }
+
+    private static string NormalizeRestoreFolder(
+        IReadOnlyCollection<RemovalItem> removalItems, MissingOriginalAction missingAction, string restoreFolder)
+    {
+        if (!removalItems.Any(removalItem => !removalItem.OriginalExists)
+            || missingAction != MissingOriginalAction.RestorePng) return restoreFolder;
+        var normalizedRestoreFolder = Path.GetFullPath(restoreFolder);
+        if (!Directory.Exists(normalizedRestoreFolder))
+            throw new DirectoryNotFoundException("Choose an existing restoration folder.");
+        return normalizedRestoreFolder;
+    }
+
+    private static RemovalItem[] CaptureOrderedRemovalItems(IReadOnlyList<RemovalItem> removalItems) =>
+        removalItems.DistinctBy(removalItem => removalItem.Id).ToArray();
+
+    private static async Task<List<RemovalItem>> PrepareRemovalItemsAsync(IGalleryStore store, IEnumerable<string> ids, byte[] key)
     {
         var removalItems = new List<RemovalItem>();
         foreach (var id in ids.Distinct(StringComparer.Ordinal))
-            removalItems.Add(await PrepareRemovalItemAsync(id, key));
+            removalItems.Add(await PrepareRemovalItemAsync(store, id, key));
         return removalItems;
     }
 
-    private async Task<RemovalItem> PrepareRemovalItemAsync(string id, byte[] key)
+    private static async Task<RemovalItem> PrepareRemovalItemAsync(IGalleryStore store, string id, byte[] key)
     {
-        var imageRecord = await FindAsync(id, key);
+        var imageRecord = await store.ReadRecordAsync(id, key);
         if (!RemovalRules.CanRemove(imageRecord))
             throw new ImageNotMarkedForDeletionException($"'{imageRecord.Name}' (media item '{imageRecord.Id}') must be marked for deletion first.",
                 GalleryLogEvent.PrepareRemoval, new ContextualData(ImmutableDictionary<string, object>.Empty
@@ -35,69 +83,14 @@ public sealed partial class GalleryService
         return new(id, imageRecord.Name, original, SourceExists(original));
     }
 
-    public Task RemoveAsync(IReadOnlyList<RemovalItem> removalItems,
-        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-        Action<RemovalResult>? reportRemoval = null) =>
-        removalManager.RemoveAsync(removalItems, existingAction, missingAction, restoreFolder, reportRemoval);
-
-    private sealed class RemovalManager(GalleryService galleryService)
-    {
-        public async Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids)
-        {
-            ArgumentNullException.ThrowIfNull(ids);
-            using var keyLease = galleryService.vaultSession.AcquireUnlockedSession().Borrow();
-            return await galleryService.PrepareRemovalItemsAsync(ids, keyLease.Bytes);
-        }
-
-        public async Task RemoveAsync(IReadOnlyList<RemovalItem> removalItems,
-            ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-            Action<RemovalResult>? reportRemoval)
-        {
-            ArgumentNullException.ThrowIfNull(removalItems);
-            using var keyLease = galleryService.vaultSession.AcquireUnlockedSession().Borrow();
-            ValidateRemovalActions(existingAction, missingAction);
-            ValidateRemovalSelection(removalItems);
-            var normalizedRestoreFolder = NormalizeRestoreFolder(removalItems, missingAction, restoreFolder);
-            var orderedRemovalItems = CaptureOrderedRemovalItems(removalItems);
-            await galleryService.RemoveBatchAsync(orderedRemovalItems, keyLease.Bytes,
-                existingAction, missingAction, normalizedRestoreFolder, reportRemoval);
-        }
-
-        private static void ValidateRemovalActions(
-            ExistingOriginalAction existingAction, MissingOriginalAction missingAction)
-        {
-            if (!Enum.IsDefined(existingAction) || !Enum.IsDefined(missingAction))
-                throw new InvalidOperationException("Invalid removal action.");
-        }
-
-        private static void ValidateRemovalSelection(IReadOnlyCollection<RemovalItem> removalItems)
-        {
-            if (removalItems.Count == 0) throw new InvalidOperationException("Select marked media items to remove.");
-        }
-
-        private static string NormalizeRestoreFolder(
-            IReadOnlyCollection<RemovalItem> removalItems, MissingOriginalAction missingAction, string restoreFolder)
-        {
-            if (!removalItems.Any(removalItem => !removalItem.OriginalExists)
-                || missingAction != MissingOriginalAction.RestorePng) return restoreFolder;
-            var normalizedRestoreFolder = Path.GetFullPath(restoreFolder);
-            if (!Directory.Exists(normalizedRestoreFolder))
-                throw new DirectoryNotFoundException("Choose an existing restoration folder.");
-            return normalizedRestoreFolder;
-        }
-
-        private static RemovalItem[] CaptureOrderedRemovalItems(IReadOnlyList<RemovalItem> removalItems) =>
-            removalItems.DistinctBy(removalItem => removalItem.Id).ToArray();
-    }
-
-    private async Task RemoveBatchAsync(IReadOnlyList<RemovalItem> removalItems, byte[] key,
+    private async Task RemoveBatchAsync(IGalleryStore store, IReadOnlyList<RemovalItem> removalItems, byte[] key,
         ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
         Action<RemovalResult>? reportRemoval)
     {
         var failures = new List<Exception>();
         var receipts = new List<RemovalResult>(removalItems.Count);
         Exception? queueStartFailure = null;
-        await galleryStore.Gate.WaitAsync();
+        await store.Gate.WaitAsync();
         try
         {
             foreach (var removalItem in removalItems)
@@ -105,7 +98,7 @@ public sealed partial class GalleryService
                 string? restoredPath = null;
                 try
                 {
-                    await RemoveOneAsync(removalItem, key, existingAction, missingAction, restoreFolder,
+                    await RemoveOneAsync(store, removalItem, key, existingAction, missingAction, restoreFolder,
                         path => restoredPath = path);
                     receipts.Add(new(removalItem.Id, true, restoredPath, null));
                 }
@@ -120,9 +113,9 @@ public sealed partial class GalleryService
         }
         finally
         {
-            galleryStore.Gate.Release();
+            store.Gate.Release();
             // A prior unobserved queue fault must not hide receipts for removals that already committed.
-            try { driveOperationPlayer.Start(); }
+            try { startDriveQueue(); }
             catch (Exception exception) { queueStartFailure = exception; }
         }
         var observerFailures = DeliverRemovalReceipts(receipts, reportRemoval);
@@ -156,7 +149,7 @@ public sealed partial class GalleryService
             allFailures);
     }
 
-    private async Task RemoveOneAsync(RemovalItem removalItem, byte[] key,
+    private static async Task RemoveOneAsync(IGalleryStore store, RemovalItem removalItem, byte[] key,
         ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
         Action<string> reportRestoredPath)
     {
@@ -164,7 +157,7 @@ public sealed partial class GalleryService
         var originalDeleted = false;
         try
         {
-            var imageRecord = await FindAsync(removalItem.Id, key);
+            var imageRecord = await store.ReadRecordAsync(removalItem.Id, key);
             if (!RemovalRules.CanRemove(imageRecord))
                 throw new ImageNotMarkedForDeletionException($"Media item '{imageRecord.Id}' is no longer marked for deletion.",
                     GalleryLogEvent.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
@@ -189,7 +182,7 @@ public sealed partial class GalleryService
                 });
             }
 
-            await DeleteGalleryRecordAsync(imageRecord, key);
+            await DeleteGalleryRecordAsync(store, imageRecord, key);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or InvalidOperationException or GalleryException or CryptographicException or UnknownImageFormatException
@@ -268,9 +261,9 @@ public sealed partial class GalleryService
     }
 
     // The catalog row and the queued ciphertext delete commit together; the drive queue deletes the file.
-    private Task DeleteGalleryRecordAsync(ImageRecord imageRecord, byte[] key) =>
-        galleryStore.DeleteImageAndEnqueueAsync(imageRecord.Id,
-            CreateDriveOperation(DriveOperationKind.DeleteFile, imageRecord.StoredPath, imageRecord.Id, key), key);
+    private static Task DeleteGalleryRecordAsync(IGalleryStore store, ImageRecord imageRecord, byte[] key) =>
+        store.DeleteImageAndEnqueueAsync(imageRecord.Id,
+            DriveOperationProcessor.Create(DriveOperationKind.DeleteFile, imageRecord.StoredPath, imageRecord.Id, key), key);
 
     private static bool ShouldDeleteExistingOriginal(RemovalItem removalItem, ExistingOriginalAction existingAction) =>
         RemovalRules.ShouldDeleteOriginal(removalItem, existingAction);
