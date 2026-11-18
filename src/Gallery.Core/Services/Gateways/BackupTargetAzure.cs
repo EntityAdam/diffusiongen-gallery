@@ -20,6 +20,14 @@ internal sealed class BackupTargetAzure : IBackupTarget
         this.prefix = prefix;
     }
 
+    internal static string NormalizePrefix(string prefix)
+    {
+        prefix = prefix.Trim().Trim('/');
+        if (prefix.Split('/', StringSplitOptions.RemoveEmptyEntries).Any(part => part is "." or ".."))
+            throw new InvalidOperationException("Azure backup prefixes cannot contain '.' or '..' path segments.");
+        return prefix;
+    }
+
     public static void ValidateConnectionString(string connectionString) => _ = CreateClient(connectionString);
 
     private static BlobClientOptions CreateOptions(HttpClient? httpClient)

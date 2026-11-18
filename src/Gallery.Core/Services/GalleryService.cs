@@ -29,9 +29,14 @@ public sealed partial class GalleryService
     private readonly VaultSession vaultSession;
     private readonly ImportMediaPreparer importMediaPreparer;
     private readonly GalleryVisionWorkflow visionWorkflow;
+    private readonly CollectionOrganizer collectionOrganizer;
+    private readonly GalleryBackupWriter backupWriter;
+    private readonly DuplicateScanner duplicateScanner;
+    private readonly GalleryDriveQueue driveQueue;
+    private readonly MediaStorageIndex mediaStorageIndex;
 
     internal GalleryService(IGalleryStore galleryStore, VaultStore vaultStore, VaultSession vaultSession, VideoTools? videoTools = null,
-        VisionManager? visionManager = null, IGalleryStoreFactory? storeFactory = null)
+        VisionManager? visionManager = null, IGalleryStoreFactory? storeFactory = null, HttpClient? httpClient = null)
     {
         galleryLifetime = new GalleryLifetime(galleryStore, vaultStore, storeFactory);
         this.vaultSession = vaultSession;
@@ -44,8 +49,12 @@ public sealed partial class GalleryService
             _ = ReleaseCheckoutAfterOperationsAsync();
             OnAutoLocked?.Invoke();
         };
-        driveOperationPlayer = CreateDriveOperationPlayer();
-        removalManager = new RemovalManager(galleryLifetime, vaultSession, driveOperationPlayer.Start);
+        collectionOrganizer = new CollectionOrganizer(galleryLifetime, vaultSession);
+        backupWriter = new GalleryBackupWriter(galleryLifetime, vaultSession, httpClient);
+        duplicateScanner = new DuplicateScanner(galleryLifetime, vaultSession);
+        driveQueue = new GalleryDriveQueue(galleryLifetime, vaultSession);
+        mediaStorageIndex = new MediaStorageIndex(galleryLifetime, vaultSession, driveQueue);
+        removalManager = new RemovalManager(galleryLifetime, vaultSession, driveQueue.Start);
     }
 
     public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter,
@@ -259,9 +268,9 @@ public sealed partial class GalleryService
             }
             finally { galleryStore.Gate.Release(); }
             var scheduleStarted = VaultOpenTelemetry.Start(activity);
-            await ScheduleMediaIndexAsync(records, key);
+            await mediaStorageIndex.ScheduleAsync(records, key);
             VaultOpenTelemetry.Record(activity, "gallery.load.schedule_media_index_ms", scheduleStarted);
-            driveOperationPlayer.Start();
+            driveQueue.Start();
             return records;
         }
         finally { VaultOpenTelemetry.Record(activity, "gallery.load.elapsed_ms", started); }
@@ -351,7 +360,7 @@ public sealed partial class GalleryService
         StoredImageMoveValidator.ValidateDestination(destination);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         await MoveUnderGateAsync(id, destination, key.Bytes);
-        driveOperationPlayer.Start();
+        driveQueue.Start();
     }
 
     private async Task MoveUnderGateAsync(string id, StoredImageMoveDestination destination, byte[] key)
@@ -371,21 +380,21 @@ public sealed partial class GalleryService
     // still queued for deletion cancels that delete and keeps the file instead of copying it again.
     private async Task MoveStoredImageAsync(ImageRecord record, string target, string newName, byte[] key)
     {
-        var deleteOldCopy = CreateDriveOperation(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key);
+        var deleteOldCopy = DriveOperationProcessor.Create(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key);
         var queuedDelete = await galleryStore.FindPendingDriveOperationAsync(
             DriveOperationKind.DeleteFile, DriveOperationProcessor.PathFingerprint(key, target), key);
         if (queuedDelete is not null)
         {
             if (queuedDelete.ImageId == record.Id && File.Exists(target))
             {
-                await VerifyCiphertextAsync(target, record.Id, key);
+                await StoredMediaProcessor.VerifyCiphertextAsync(target, record.Id, key);
                 await galleryStore.UpdateImageAndEnqueueAsync(record with { StoredPath = target, Name = newName }, key,
                     deleteOldCopy, queuedDelete.Sequence);
                 return;
             }
-            if (await CanDeleteQueuedFileAsync(galleryStore, queuedDelete.ImageId, target, key))
+            if (await GalleryDriveQueue.CanDeleteQueuedFileAsync(galleryStore, queuedDelete.ImageId, target, key))
             {
-                await DeleteQueuedFileAsync(galleryStore, queuedDelete, target, key);
+                await GalleryDriveQueue.DeleteQueuedFileAsync(galleryStore, queuedDelete, target, key);
                 await galleryStore.RemoveDriveOperationAsync(queuedDelete.Sequence, key);
             }
         }

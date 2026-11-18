@@ -54,7 +54,7 @@ public sealed class RemediationEServiceTests
         var upper = Path.Combine(root, "external", "A");
         var lower = Path.Combine(root, "external", "a");
 
-        var directories = GalleryService.ExternalMediaDirectories(
+        var directories = MediaStorageIndex.ExternalMediaDirectories(
             [Path.Combine(upper, "1.blob"), Path.Combine(lower, "2.blob"), Path.Combine(imageRoot, "3.blob")],
             imageRoot).ToArray();
 

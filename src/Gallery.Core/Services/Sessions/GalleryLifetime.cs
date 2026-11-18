@@ -20,7 +20,6 @@ internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vau
     private GalleryLocation current = new(galleryStore, vaultStore, null);
     private int disposalStarted;
     private VaultHistory? history;
-    private long driveRetryDelayTicks = TimeSpan.FromSeconds(2).Ticks;
 
     internal IGalleryStoreFactory StoreFactory { get; } = storeFactory ?? new GalleryStoreFactory();
 
@@ -28,11 +27,6 @@ internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vau
     internal GalleryLocation Current => Volatile.Read(ref current);
     internal VaultHistory? History => Volatile.Read(ref history);
     internal bool IsDisposed => Volatile.Read(ref disposalStarted) != 0;
-    internal TimeSpan DriveRetryDelay
-    {
-        get => TimeSpan.FromTicks(Volatile.Read(ref driveRetryDelayTicks));
-        set => Volatile.Write(ref driveRetryDelayTicks, value.Ticks);
-    }
 
     internal void InitializeHistory(VaultHistory value)
     {

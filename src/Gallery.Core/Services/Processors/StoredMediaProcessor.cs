@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Gallery.Core.Services.Processors.Validators;
 using Gallery.Core.Services.Processors.Codecs;
 using Gallery.Core.Models;
@@ -31,4 +32,10 @@ internal static class StoredMediaProcessor
         ImageRecord record, ReadOnlySpan<byte> content, ReadOnlySpan<byte> thumbnail, byte[] key) =>
         (record, VaultCrypto.Encrypt(content, key, $"image:{record.Id}"),
             VaultCrypto.Encrypt(thumbnail, key, $"thumbnail:{record.Id}"));
+
+    internal static async Task VerifyCiphertextAsync(string path, string imageId, byte[] key)
+    {
+        var plain = await ReadAsync(path, imageId, key);
+        CryptographicOperations.ZeroMemory(plain);
+    }
 }
