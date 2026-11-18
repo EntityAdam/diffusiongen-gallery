@@ -693,9 +693,16 @@ composition boundary. Core's `ConfigurationProvider` and `SettingsSource`
 remain internal. `Gallery:StateDirectory` selects
 the last-opened-gallery history directory. Tool search paths retain their order:
 configured `PATH` (or process `PATH` when absent), followed by user and machine
-`PATH` on Windows. The snapshot keeps raw tool paths; `GalleryService.Create`
-normalizes them once when constructing each scope. Restart the host to apply
+`PATH` on Windows. The snapshot keeps raw tool paths. `GalleryScope.Create` normalizes them
+once when constructing each scope. Restart the host to apply
 runtime-setting changes.
+
+Web components inject feature contracts such as `IGalleryCatalog`, `IGalleryMedia`,
+and `IGalleryVault`. The host resolves each contract from the same scoped
+`GalleryScope`, which owns the vault session and checkout, the drive queue, and
+the HTTP client. The original `GalleryService` API delegates to those contracts
+for compatibility. Standalone tools can create and dispose a `GalleryScope`
+directly.
 
 Browsing projections require immutable media and index collections. Invalid
 saved-view names throw `InvalidSavedViewNameException` before vault access,

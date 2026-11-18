@@ -200,7 +200,7 @@ public sealed class UiSaveBehaviorTests
             home.Session.Activity.Ingestion.Workers = 2;
             Assert.True(home.Session.Activity.Ingestion.SettingsDirty);
             Assert.NotEqual(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
-            await home.Session.Activity.Ingestion.SaveOptionsAsync(vault.Service);
+            await home.Session.Activity.Ingestion.SaveOptionsAsync(vault.Service.Scope.Settings);
             Assert.Equal(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
             Assert.False(home.Session.Activity.Ingestion.SettingsDirty);
             await Invoke(home, "Navigation.SwitchWorkflowAsync", "settings");
@@ -209,7 +209,7 @@ public sealed class UiSaveBehaviorTests
             Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").LocalDirectory = vault.Root + "-backups";
             Assert.True(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").HasChanges);
             Assert.False(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").Ready);
-            await Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").SaveAsync(vault.Service);
+            await Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").SaveAsync(vault.Service.Scope.Backup);
             Assert.False(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").HasChanges);
             Assert.True(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").Ready);
         });

@@ -19,7 +19,7 @@ public partial class LibraryWorkbench
             if (ToSuggestion(draft) != suggestion)
                 throw new InvalidOperationException("This suggestion changed. Refresh it before accepting.");
             checkpoint.RevocationToken.ThrowIfCancellationRequested();
-            var approved = await PersistApprovedSuggestionAsync(Gallery, suggestion);
+            var approved = await PersistApprovedSuggestionAsync(GalleryVision, suggestion);
             // A replacement draft staged during approval must remain available for review.
             await checkpoint.UpdateAsync(state => state with { Drafts = [.. state.Drafts.Where(item => item != draft)] });
             return approved;
@@ -83,7 +83,7 @@ public partial class LibraryWorkbench
     private async Task EnsureCheckpointAsync()
     {
         analysisLifetime.Token.ThrowIfCancellationRequested();
-        checkpoint ??= await Gallery.OpenVisionCheckpointAsync();
+        checkpoint ??= await GalleryVision.OpenVisionCheckpointAsync();
         analysisLifetime.Token.ThrowIfCancellationRequested();
         checkpoint.RevocationToken.ThrowIfCancellationRequested();
     }
@@ -109,7 +109,7 @@ public partial class LibraryWorkbench
     {
         await EnsureCheckpointAsync();
         // A whole-library run is derived from current records, never a saved queue or UI selection.
-        var records = await Gallery.ListAsync();
+        var records = await GalleryCatalog.ListAsync();
         checkpoint!.RevocationToken.ThrowIfCancellationRequested();
         var items = records.Where(NeedsVisionAnalysis).OrderBy(image => image.ImportedAt).ThenBy(image => image.Id, StringComparer.Ordinal)
             .Select(image => new VisionQueueItem(image.Id)).ToArray();
@@ -161,7 +161,7 @@ public partial class LibraryWorkbench
         var runCheckpoint = checkpoint!;
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(analysisLifetime.Token, runCheckpoint.RevocationToken);
         var token = cancellation.Token;
-        var settings = await Gallery.SettingsAsync();
+        var settings = await GalleryVision.LoadSettingsAsync();
         token.ThrowIfCancellationRequested();
         var availableLanes = new LinkedList<VisionEndpointLane>(settings.GetLanes(runCheckpoint.State.AutoAcceptVisionAnalysis)
             .Where(lane => lane.Enabled));
@@ -169,7 +169,7 @@ public partial class LibraryWorkbench
             throw new InvalidOperationException("Enable a vision endpoint in LLM settings before starting analysis.");
 
         var activeRequests = availableLanes.ToDictionary(lane => lane, _ => 0);
-        var records = (catalog ?? await Gallery.ListAsync()).ToDictionary(image => image.Id);
+        var records = (catalog ?? await GalleryCatalog.ListAsync()).ToDictionary(image => image.Id);
         var pending = new LinkedList<VisionQueueItem>(items);
         var inFlight = new Dictionary<Task<VisionAnalysisResult>, (VisionEndpointLane Lane, VisionQueueItem Item, ImageRecord Image)>();
         var activeIds = new HashSet<string>(StringComparer.Ordinal);
@@ -196,7 +196,7 @@ public partial class LibraryWorkbench
                         continue;
                     var image = useSavedQueue
                         ? records.GetValueOrDefault(item.Id)
-                        : (await Gallery.ReloadRecordsAsync([item.Id], token)).SingleOrDefault();
+                        : (await GalleryCatalog.ReloadRecordsAsync([item.Id], token)).SingleOrDefault();
                     if (!useSavedQueue && (image is null || !NeedsVisionAnalysis(image))) continue;
                     if (image is null || image.IsMarkedForDeletion)
                     {
@@ -210,7 +210,7 @@ public partial class LibraryWorkbench
                     availableLanes.RemoveFirst();
                     if (++activeRequests[lane] < lane.MaxConcurrentRequests)
                         availableLanes.AddLast(lane);
-                    var request = Gallery.AnalyzeForDraftAsync(image.Id, settings.ForLane(lane), token);
+                    var request = GalleryVision.AnalyzeForDraftAsync(image.Id, settings.ForLane(lane), token);
                     inFlight.Add(request, (lane, item, image));
                     activeIds.Add(item.Id);
                 }

@@ -1,5 +1,6 @@
 @implements IAsyncDisposable
-@inject GalleryService Gallery
+@inject IGalleryDuplicates GalleryDuplicates
+@inject IGalleryMedia GalleryMedia
 @inject IJSRuntime JS
 @inject ILogger<DuplicateReviewer> Logger
 
@@ -7,7 +8,7 @@
     <header class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3 [&_strong]:break-all">
         <div>
             <strong>Duplicate group @(groupIndex + 1) / @Groups.Count</strong>
-            <span class="text-muted-foreground"> &middot; copy @(imageIndex + 1) / @members.Count &middot; @Current.Name &middot; @Current.Width &times; @Current.Height &middot; @GalleryService.FormatBytes(Current.OriginalBytes)</span>
+            <span class="text-muted-foreground"> &middot; copy @(imageIndex + 1) / @members.Count &middot; @Current.Name &middot; @Current.Width &times; @Current.Height &middot; @GalleryDisplay.FormatBytes(Current.OriginalBytes)</span>
         </div>
         <div class="flex flex-wrap items-center gap-2">
             <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(busy || imageIndex == 0)" OnClick="() => ShowImageAsync(imageIndex - 1)" title="Left arrow: previous copy"><ChevronLeftIcon aria-hidden="true" />Previous copy</Button>
@@ -48,7 +49,7 @@
                     @if (thumbs.TryGetValue(member.Id, out var thumbnail)) { <img src="@thumbnail" alt="" draggable="false" /> }
                     else { <span class="grid h-full place-items-center text-xs text-muted-foreground">Preview</span> }
                     <span class="truncate px-2 text-xs font-semibold">@member.Name</span>
-                    <span class="px-2 text-xs text-muted-foreground">@member.Width &times; @member.Height &middot; @GalleryService.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.IsFavorite ? " · Favorite" : "")</span>
+                    <span class="px-2 text-xs text-muted-foreground">@member.Width &times; @member.Height &middot; @GalleryDisplay.FormatBytes(member.OriginalBytes)@(member.Rating > 0 ? $" · {member.Rating}★" : "")@(member.IsFavorite ? " · Favorite" : "")</span>
                     @if (member.Id == recommendedId) { <span class="px-2 text-xs text-muted-foreground text-primary">Recommended</span> }
                 </button>
                 <Button Variant="@(kept ? ButtonVariant.Default : ButtonVariant.Outline)" Size="ButtonSize.Sm" Class="mx-2 my-2" Disabled="@busy" aria-pressed="@(kept ? "true" : "false")" aria-label="@($"Keep {member.Name}")" OnClick="() => ToggleKeep(member.Id)"><CheckIcon aria-hidden="true" />Keep</Button>
@@ -104,11 +105,11 @@
     private void PrepareGroup()
     {
         var records = Group.ImageIds.Select(Lookup).OfType<ImageRecord>().ToList();
-        recommendedId = Gallery.PickDuplicateKeeper(records).Id;
+        recommendedId = GalleryDuplicates.PickDuplicateKeeper(records).Id;
         members = records.OrderByDescending(record => record.Id == recommendedId).ToList();
         imageIndex = 0;
         imageData = "";
-        if (!keepByGroup.ContainsKey(groupIndex)) keepByGroup[groupIndex] = Gallery.InitialDuplicateKeepers(records);
+        if (!keepByGroup.ContainsKey(groupIndex)) keepByGroup[groupIndex] = GalleryDuplicates.InitialDuplicateKeepers(records);
     }
 
     private async Task LoadGroupAsync()
@@ -122,7 +123,7 @@
         {
             if (disposed || forGeneration != generation) return;
             if (thumbs.ContainsKey(member.Id)) continue;
-            var thumbnail = await Gallery.ThumbnailAsync(member.Id);
+            var thumbnail = await GalleryMedia.ThumbnailAsync(member.Id);
             if (disposed || forGeneration != generation) return;
             thumbs[member.Id] = thumbnail;
         }
@@ -139,7 +140,7 @@
         }
         finally { gate.Release(); }
 
-        var data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
+        var data = await GalleryMedia.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
         if (disposed || forGeneration != generation) return "";
 
         await gate.WaitAsync();
@@ -277,7 +278,7 @@
     {
         if (Keep.Count == 0) throw new InvalidOperationException("Keep at least one copy in the group.");
         var ids = members.Select(member => member.Id).ToList();
-        members = await Gallery.ApplyDuplicateDecisionAsync(ids, Keep);
+        members = await GalleryDuplicates.ApplyDuplicateDecisionAsync(ids, Keep);
         var marked = ids.Count - Keep.Count;
         appliedMarks += marked;
         applied.Add(groupIndex);

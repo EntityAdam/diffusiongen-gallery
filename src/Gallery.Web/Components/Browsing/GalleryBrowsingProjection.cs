@@ -30,15 +30,15 @@ internal static class GalleryBrowsingProjector
     private const string PromptGrouping = "prompt";
     private const string ModelGrouping = "model";
 
-    public static GalleryBrowsingProjection CreateGroupedByPrompt(GalleryService galleryService,
+    public static GalleryBrowsingProjection CreateGroupedByPrompt(IGalleryCatalog galleryService,
         IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter) =>
         Create(galleryService, sourceImages, galleryFilter, PromptGrouping);
 
-    public static GalleryBrowsingProjection CreateUngrouped(GalleryService galleryService,
+    public static GalleryBrowsingProjection CreateUngrouped(IGalleryCatalog galleryService,
         IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter) =>
         Create(galleryService, sourceImages, galleryFilter, "none");
 
-    public static GalleryBrowsingProjection Create(GalleryService galleryService,
+    public static GalleryBrowsingProjection Create(IGalleryCatalog galleryService,
         IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter, string grouping,
         IReadOnlySet<string>? awaitingApprovalIds = null, GalleryBrowsingProjection? previousReviewProjection = null)
     {
@@ -52,7 +52,7 @@ internal static class GalleryBrowsingProjector
         return new(images, promptGroupsByImageId, diffusionModelGroupsByImageId);
     }
 
-    private static List<PromptGroup> GroupByPrompt(GalleryService galleryService, IReadOnlyList<ImageRecord> filteredImages,
+    private static List<PromptGroup> GroupByPrompt(IGalleryCatalog galleryService, IReadOnlyList<ImageRecord> filteredImages,
         GalleryBrowsingProjection? previousReviewProjection)
     {
         if (previousReviewProjection is null) return galleryService.GroupByPrompt(filteredImages);

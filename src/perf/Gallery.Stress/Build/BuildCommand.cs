@@ -47,15 +47,15 @@ public static class BuildCommand
         progress.Start("Opening catalog and checking recovery state");
         using var service = await StressVault.OpenOrCreateAsync(
             options.Get("media-directory", "").Length == 0 ? options : options.With(("media-directory", media)), vault, token);
-        var actualMedia = (await service.LoadMediaStorageOptionsAsync()).MediaDirectory;
+        var actualMedia = (await service.Settings.LoadMediaStorageOptionsAsync()).MediaDirectory;
         if (Safety.CanonicalPath(string.IsNullOrWhiteSpace(actualMedia) ? vault : actualMedia) != media)
             throw new InvalidOperationException("Vault media configuration differs from the saved build configuration.");
-        var currentCount = await service.CountRecordsAsync(token);
+        var currentCount = await service.Catalog.CountRecordsAsync(token);
         if (currentCount < state.Files || currentCount > state.Files + state.Pending)
             throw new InvalidOperationException("Catalog count differs from its checkpoint; use an unmodified stress vault and its original workspace.");
         if (!File.Exists(statePath))
         {
-            if (await service.CountRecordsAsync(token) != 0)
+            if (await service.Catalog.CountRecordsAsync(token) != 0)
                 throw new InvalidOperationException("A new build must start with an empty stress vault and its own workspace.");
             if (!StagingFiles.CanInitialize(staging))
                 throw new InvalidOperationException("New staging directory must be empty.");
@@ -137,7 +137,7 @@ public static class BuildCommand
                     foreach (var record in existing.Values)
                     {
                         token.ThrowIfCancellationRequested();
-                        await service.VerifyImportedAsync(record.Id);
+                        await service.Ingestion.VerifyImportedAsync(record.Id);
                         if (File.Exists(record.SourcePath))
                             await DeleteMatchingSourceAsync(record.SourcePath, record.Sha256, token);
                         progress.Report(++verified);
@@ -155,7 +155,7 @@ public static class BuildCommand
                 }
                 progress.Start("Ingesting and verifying encrypted media", count - committedFiles);
                 if (Directory.EnumerateFiles(batch, "*.png", SearchOption.AllDirectories).Any())
-                    await service.ImportFolderAsync(batch, FolderSearchScope.Descendants,
+                    await service.Ingestion.ImportFolderAsync(batch, FolderSearchScope.Descendants,
                         sourceRetention: SourceRetention.DeleteAfterVerification, reportTimings: r => report = r,
                         reportProgress: status =>
                         {
@@ -166,7 +166,7 @@ public static class BuildCommand
                         options: new IngestionOptions { Workers = workers, CatalogBatchSize = catalogBatch }, includeVideos: false);
                 if (StagingFiles.HasRemainingSources(batch))
                     throw new InvalidOperationException("Batch still contains sources; checkpoint was not advanced.");
-                if (await service.CountRecordsAsync(token) != state.Files + count)
+                if (await service.Catalog.CountRecordsAsync(token) != state.Files + count)
                     throw new InvalidOperationException("Catalog count differs from the completed batch; checkpoint was not advanced.");
                 catalogMetrics = telemetry.Metrics();
             }
@@ -186,19 +186,19 @@ public static class BuildCommand
             Console.Error.WriteLine($"Committed batch {state.Batch}: {state.Files:N0} items.");
             if (state.Files == target) await MeasureTargetAsync(target);
         }
-        await service.CloseVaultAsync();
+        await service.Vault.CloseVaultAsync();
 
         async Task MeasureTargetAsync(long target)
         {
             if (!options.Flag("measure-open-at-targets") || (state.MeasuredTargets ?? []).Contains(target)) return;
             progress.Start("Measuring target open performance");
-            await service.CloseVaultAsync();
+            await service.Vault.CloseVaultAsync();
             await MeasureOpenCommand.RunAsync(options.With(("label", target.ToString()), ("runs", options.Get("open-runs", "3"))), token);
             state = state with { MeasuredTargets = [.. state.MeasuredTargets ?? [], target] };
             await StressVault.SaveAtomicAsync(statePath, state, CancellationToken.None);
-            await service.OpenExistingVaultAsync(vault);
-            await service.UnlockWithPassphraseAsync(await File.ReadAllTextAsync(StressVault.PassphrasePath(options.Workspace), token));
-            service.ConfigureAutoLock(0);
+            await service.Vault.OpenExistingVaultAsync(vault);
+            await service.Vault.UnlockWithPassphraseAsync(await File.ReadAllTextAsync(StressVault.PassphrasePath(options.Workspace), token));
+            service.Vault.ConfigureAutoLock(0);
         }
     }
 

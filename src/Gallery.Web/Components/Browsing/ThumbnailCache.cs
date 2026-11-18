@@ -3,7 +3,7 @@ using Gallery.Core.Services;
 
 namespace Gallery.Web.Components.Browsing;
 
-internal sealed class ThumbnailCache(GalleryService gallery, ILogger logger, Action changedCallback)
+internal sealed class ThumbnailCache(IGalleryVault vault, IGalleryMedia media, ILogger logger, Action changedCallback)
 {
     public string? Get(string id) => thumbnails.GetValueOrDefault(id);
     public bool Failed(string id) => thumbnailFailures.Contains(id);
@@ -70,7 +70,7 @@ internal sealed class ThumbnailCache(GalleryService gallery, ILogger logger, Act
 
     public void Resume(IEnumerable<ImageRecord> images)
     {
-        if (!gallery.IsUnlocked || thumbnailTask is { IsCompleted: false }) return;
+        if (!vault.IsUnlocked || thumbnailTask is { IsCompleted: false }) return;
         StartThumbnailLoad(images.Select(image => image.Id));
     }
 
@@ -81,10 +81,10 @@ internal sealed class ThumbnailCache(GalleryService gallery, ILogger logger, Act
         var changed = false;
         foreach (var id in ids)
         {
-            if (token.IsCancellationRequested || !gallery.IsUnlocked) break;
+            if (token.IsCancellationRequested || !vault.IsUnlocked) break;
             try
             {
-                var thumbnail = await gallery.ThumbnailAsync(id);
+                var thumbnail = await media.ThumbnailAsync(id);
                 if (token.IsCancellationRequested) break;
                 thumbnails[id] = thumbnail;
                 staleThumbnails.Remove(id);
@@ -92,7 +92,7 @@ internal sealed class ThumbnailCache(GalleryService gallery, ILogger logger, Act
             }
             catch (Exception exception)
             {
-                if (token.IsCancellationRequested || !gallery.IsUnlocked) break;
+                if (token.IsCancellationRequested || !vault.IsUnlocked) break;
                 logger.LogWarning(exception, "Thumbnail could not be loaded");
                 thumbnailFailures.Add(id);
                 staleThumbnails.Remove(id);

@@ -8,7 +8,7 @@ using Gallery.Core.Services.Validators;
 
 namespace Gallery.Core.Services;
 
-internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSession vaultSession)
+internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSession vaultSession) : IGalleryTags
 {
     private static string ValidateTagName(string name)
     {
@@ -83,7 +83,7 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
         finally { store.Gate.Release(); }
     }
 
-    public const long MaxTagCsvBytes = 10 * 1024 * 1024;
+    public const long MaxTagCsvBytes = IGalleryTags.MaxCsvBytes;
 
     public async Task<(int Added, int Skipped)> ImportTagsCsvAsync(Stream input)
     {

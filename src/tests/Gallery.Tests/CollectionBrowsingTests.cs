@@ -51,7 +51,7 @@ public sealed class CollectionBrowsingTests
         Parameter(workspace, nameof(CollectionsWorkspace.Catalog), Catalog);
         Parameter(workspace, nameof(CollectionsWorkspace.Images), source);
         Parameter(workspace, nameof(CollectionsWorkspace.Location), new CollectionLocation("a", "s1"));
-        typeof(CollectionsWorkspace).GetProperty("Gallery", Private)!.SetValue(workspace, vault.Service);
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(workspace, vault.Service);
         Set(workspace, "sort", "sequence");
         var initial = Media(workspace);
         Assert.Equal(new[] { "two", "one" }, initial.Select(image => image.Id));
@@ -127,7 +127,7 @@ public sealed class CollectionBrowsingTests
     [InlineData(true)]
     public void OpeningTheViewerHandsOffTheImagePreviewBeforeClosingDetails(bool isVideo)
     {
-        using var presentation = new MediaPresentationState(null!, null!, null!);
+        using var presentation = new MediaPresentationState(null!, null!, null!, null!);
         var image = new ImageRecord { Id = "image", MediaType = isVideo ? "video" : "image" };
         ComponentTestAccess.Set(presentation, "Selected", image);
         ComponentTestAccess.Set(presentation, "Preview", "detail-preview");

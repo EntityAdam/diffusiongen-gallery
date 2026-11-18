@@ -1,6 +1,7 @@
 @using Gallery.Web.Components.Workspace
 @implements IDisposable
-@inject GalleryService Gallery
+@inject IGalleryMedia GalleryMedia
+@inject IGalleryRecordEditor GalleryRecords
 @inject IJSRuntime JS
 
 <ModalDialog Class="image-detail-overlay" LabelledBy="detail-title" Busy="@Busy" Close="RequestCloseDetailAsync">
@@ -105,7 +106,7 @@
     private async Task SaveDetailNotesCoreAsync()
     {
         if (Image is null) return;
-        var updated = await Gallery.UpdateAsync(Image.Id, image => image with
+        var updated = await GalleryRecords.UpdateAsync(Image.Id, image => image with
         { Description = editDescription.Trim(), UserDescription = editUserDescription.Trim() });
         await Changed.InvokeAsync(updated);
         editDescription = updated.Description;
@@ -126,7 +127,7 @@
         ? Dismiss.InvokeAsync(suggestion) : Task.CompletedTask;
     private async Task DownloadAsync(ExportFile file)
     {
-        var contentBytes = GalleryService.CopyExportContent(file);
+        var contentBytes = file.CopyContentBytes();
         try { await DownloadAsync(new MemoryStream(contentBytes, writable: false), file.FileName, file.ContentType); }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(contentBytes); }
     }
@@ -139,9 +140,9 @@
 
     private Task ExportAsync(ImageRecord image) => Commands.RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing image copy...", async () =>
     {
-        var file = await Gallery.ExportAsync(image.Id);
+        var file = await GalleryMedia.ExportAsync(image.Id);
         try { await DownloadAsync(file); }
-        finally { GalleryService.ClearExportContent(file); }
+        finally { file.ClearContent(); }
         Commands.Activity.Message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the gallery.";
     });
 
@@ -149,10 +150,10 @@
 
     private Task ExportWorkflowAsync(ImageRecord image) => Commands.RunAsync("Exporting workflow...", async () =>
     {
-        var file = await Gallery.WorkflowAsync(image.Id)
+        var file = await GalleryMedia.WorkflowAsync(image.Id)
             ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
         try { await DownloadAsync(file); }
-        finally { GalleryService.ClearExportContent(file); }
+        finally { file.ClearContent(); }
         Commands.Activity.Message = $"Saved the ComfyUI workflow as {file.FileName}.";
     });
 

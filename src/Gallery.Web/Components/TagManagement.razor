@@ -1,4 +1,4 @@
-@inject GalleryService Gallery
+@inject IGalleryTags GalleryTags
 @inject ILogger<TagManagement> Logger
 @inject ISonnerService Toasts
 
@@ -57,13 +57,13 @@
     private string newTag = "", search = "", replacement = "", message = "", error = "";
     private string? editing;
     private bool working, deleting;
-    protected override Task OnInitializedAsync() => RunAsync(async () => entries = await Gallery.LoadTagCatalogAsync());
+    protected override Task OnInitializedAsync() => RunAsync(async () => entries = await GalleryTags.LoadTagCatalogAsync());
     private Task ViewAsync(string name) => working || ViewDisabled ? Task.CompletedTask : View.InvokeAsync(name);
     private void Edit(string name, bool delete) { editing = replacement = name; deleting = delete; error = message = ""; }
     private Task AddAsync() => RunAsync(async () =>
     {
         var name = newTag.Trim();
-        await Gallery.AddTagAsync(name);
+        await GalleryTags.AddTagAsync(name);
         await RefreshAsync(new(null, name));
         newTag = "";
         message = $"Tag '{name}' is available, including before it is assigned to any media.";
@@ -72,7 +72,7 @@
     {
         if (editing is null) return;
         var previous = editing;
-        await Gallery.RenameTagAsync(previous, replacement);
+        await GalleryTags.RenameTagAsync(previous, replacement);
         await RefreshAsync(new(previous, replacement.Trim()));
         message = "Tag renamed across the library. Existing target tags were merged.";
     });
@@ -80,14 +80,14 @@
     {
         if (editing is null) return;
         var previous = editing;
-        await Gallery.DeleteTagAsync(previous);
+        await GalleryTags.DeleteTagAsync(previous);
         await RefreshAsync(new(previous, null));
         message = "Tag definition and media assignments deleted.";
     });
     private async Task RefreshAsync(TagCatalogChange change)
     {
         editing = null;
-        entries = await Gallery.LoadTagCatalogAsync();
+        entries = await GalleryTags.LoadTagCatalogAsync();
         await Changed.InvokeAsync(change);
     }
     private async Task RunAsync(Func<Task> action)

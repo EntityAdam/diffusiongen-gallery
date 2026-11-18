@@ -24,8 +24,8 @@ public partial class Home
     {
         activity.Completed += ActivityCompleted;
         activity.Ingestion.ProgressChanged += ImportProgressChanged;
-        ready = Gallery.IsUnlocked;
-        Gallery.OnAutoLocked += HandleAutoLocked;
+        ready = GalleryVault.IsUnlocked;
+        GalleryVault.OnAutoLocked += HandleAutoLocked;
         return StartWorkspaceAsync();
     }
 
@@ -47,7 +47,7 @@ public partial class Home
             await activity.RunAsync(status, action, Logger, allowDuringImport);
             await StartWorkspaceAsync();
         }
-        finally { if (disposed) Gallery.LockVault(); }
+        finally { if (disposed) GalleryVault.LockVault(); }
     }
 
     private void GalleryCreated(string phrase)
@@ -69,10 +69,10 @@ public partial class Home
         {
             try
             {
-                if (!Gallery.VaultExists)
+                if (!GalleryVault.VaultExists)
                     throw new InvalidOperationException("No gallery is selected. Choose Switch gallery to open or create one.");
-                if (input.UseRecovery) await Gallery.UnlockWithRecoveryPhraseAsync(input.Credential);
-                else await Gallery.UnlockWithPassphraseAsync(input.Credential);
+                if (input.UseRecovery) await GalleryVault.UnlockWithRecoveryPhraseAsync(input.Credential);
+                else await GalleryVault.UnlockWithPassphraseAsync(input.Credential);
                 EnterWorkspace();
             }
             catch
@@ -90,7 +90,7 @@ public partial class Home
 
     private void EnterWorkspace()
     {
-        if (disposed || !Gallery.IsUnlocked) return;
+        if (disposed || !GalleryVault.IsUnlocked) return;
         recoveryPhrase = "";
         startWithCreate = false;
         ready = true;
@@ -98,10 +98,10 @@ public partial class Home
 
     private Task StartWorkspaceAsync()
     {
-        if (disposed || !ready || !Gallery.IsUnlocked || recoveryPhrase.Length > 0 || session is not null)
+        if (disposed || !ready || !GalleryVault.IsUnlocked || recoveryPhrase.Length > 0 || session is not null)
             return Task.CompletedTask;
 
-        session = new(Gallery, activity, OrganizationHistory, JS, Logger, action => InvokeAsync(action),
+        session = new(WorkspaceServices, activity, OrganizationHistory, JS, Logger, action => InvokeAsync(action),
             FlushSavedFeedback, lifetime.Token);
         return session.InitializeAsync(() =>
         {
@@ -132,7 +132,7 @@ public partial class Home
     [JSInvokable]
     public Task TriggerAutoLock() => InvokeAsync(() =>
     {
-        if (disposed || (!ready && !Gallery.IsUnlocked)) return;
+        if (disposed || (!ready && !GalleryVault.IsUnlocked)) return;
         Lock();
         activity.Message = "Gallery locked after inactivity. Its checkout was released.";
         StateHasChanged();
@@ -143,7 +143,7 @@ public partial class Home
 
     private void PanicAsync()
     {
-        Gallery.Panic();
+        GalleryVault.Panic();
         Lock();
         activity.Message = "Gallery locked and memory purged. Its checkout was released.";
         StateHasChanged();
@@ -161,13 +161,13 @@ public partial class Home
         OrganizationHistory.Clear();
         try { _ = JS.InvokeVoidAsync("gallerySecurity.purgeAllMedia"); }
         catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
-        Gallery.LockVault();
+        GalleryVault.LockVault();
     }
 
     public void Dispose()
     {
         disposed = true;
-        Gallery.OnAutoLocked -= HandleAutoLocked;
+        GalleryVault.OnAutoLocked -= HandleAutoLocked;
         activity.Completed -= ActivityCompleted;
         activity.Ingestion.ProgressChanged -= ImportProgressChanged;
         lifetime.Cancel();

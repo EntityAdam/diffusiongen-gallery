@@ -96,12 +96,18 @@ public sealed class DomainCompositionTests
     }
 
     [Fact]
-    public void DomainRegistration_WhenInspected_ThenExposesOnlyTheEntryManager()
+    public void DomainRegistration_WhenInspected_ThenExposesOnlyScopedCapabilityContractsAndTheScopeOwner()
     {
         // Arrange
         using var testVault = new TestVault();
         var serviceCollection = new ServiceCollection();
-        var expectedDomainTypes = new[] { typeof(GalleryService) };
+        Type[] expectedDomainTypes =
+        [
+            typeof(GalleryScope), typeof(GalleryService), typeof(IGalleryBackup), typeof(IGalleryCatalog), typeof(IGalleryCollections),
+            typeof(IGallerySettings), typeof(IGalleryDriveOperations), typeof(IGalleryDuplicates), typeof(IGalleryRecordEditor),
+            typeof(IGalleryIngestion), typeof(IGalleryVault), typeof(IGalleryMedia), typeof(IGalleryMediaMaintenance),
+            typeof(IGalleryRestore), typeof(IGalleryStorage), typeof(IGalleryTags), typeof(IGalleryVision)
+        ];
 
         // Act
         GalleryServiceRegistration.Register(serviceCollection, testVault.Configuration, testVault.Root);
@@ -109,10 +115,48 @@ public sealed class DomainCompositionTests
         // Assert - gather registrations without changing them
         var actualDomainTypes = serviceCollection
             .Where(serviceDescriptor => serviceDescriptor.ServiceType.Assembly == typeof(GalleryService).Assembly)
-            .Select(serviceDescriptor => serviceDescriptor.ServiceType);
+            .ToArray();
 
         // Assert
-        Assert.Equal(expectedDomainTypes, actualDomainTypes);
+        Assert.All(actualDomainTypes, descriptor => Assert.Equal(ServiceLifetime.Scoped, descriptor.Lifetime));
+        Assert.Equal(expectedDomainTypes, actualDomainTypes.Select(descriptor => descriptor.ServiceType));
+
+        using var provider = serviceCollection.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        using var first = provider.CreateScope();
+        using var second = provider.CreateScope();
+        foreach (var capability in expectedDomainTypes.Where(type => type.IsInterface))
+        {
+            var resolved = first.ServiceProvider.GetRequiredService(capability);
+            Assert.Same(resolved, first.ServiceProvider.GetRequiredService(capability));
+            Assert.NotSame(resolved, second.ServiceProvider.GetRequiredService(capability));
+            Assert.IsNotType<GalleryService>(resolved);
+        }
+    }
+
+    [Fact]
+    public async Task DomainCapabilities_WhenUsedTogether_ThenShareTheCurrentVaultSessionAndCatalog()
+    {
+        using var testVault = new TestVault();
+        var services = new ServiceCollection();
+        GalleryServiceRegistration.Register(services, testVault.Configuration, testVault.Root);
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        using var scope = provider.CreateScope();
+        var vault = scope.ServiceProvider.GetRequiredService<IGalleryVault>();
+        var ingestion = scope.ServiceProvider.GetRequiredService<IGalleryIngestion>();
+        var catalog = scope.ServiceProvider.GetRequiredService<IGalleryCatalog>();
+        var editor = scope.ServiceProvider.GetRequiredService<IGalleryRecordEditor>();
+
+        await vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        using var input = new MemoryStream(GalleryTests.MakePng());
+        var imported = await ingestion.ImportAsync(input, "shared.png", "source");
+        await editor.UpdateAsync(imported.Id, edit => editor.SetCuration(edit, 4, null));
+
+        var stored = Assert.Single(await catalog.ListAsync());
+        Assert.Equal(imported.Id, stored.Id);
+        Assert.Equal(4, stored.Rating);
+
+        vault.LockVault();
+        await Assert.ThrowsAsync<VaultLockedException>(() => catalog.ListAsync());
     }
 
     [Fact]
@@ -138,8 +182,8 @@ public sealed class DomainCompositionTests
         using var serviceProvider = serviceCollection.BuildServiceProvider();
         using var serviceScopeOwner = serviceProvider.CreateScope();
         using var serviceScopeWaiting = serviceProvider.CreateScope();
-        var galleryServiceOwner = serviceScopeOwner.ServiceProvider.GetRequiredService<GalleryService>();
-        var galleryServiceWaiting = serviceScopeWaiting.ServiceProvider.GetRequiredService<GalleryService>();
+        var galleryServiceOwner = serviceScopeOwner.ServiceProvider.GetRequiredService<IGalleryVault>();
+        var galleryServiceWaiting = serviceScopeWaiting.ServiceProvider.GetRequiredService<IGalleryVault>();
         await galleryServiceOwner.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         var expectedScenario = ExpectedScenario.CreateFrom("An existing checkout remains usable and excludes competing scopes.",
             new { OwnerIsUnlocked = true, WaitingIsUnlocked = false });
@@ -162,8 +206,8 @@ public sealed class DomainCompositionTests
         using var serviceProvider = serviceCollection.BuildServiceProvider();
         using var serviceScopeClosed = serviceProvider.CreateScope();
         using var serviceScopeNext = serviceProvider.CreateScope();
-        var galleryServiceClosed = serviceScopeClosed.ServiceProvider.GetRequiredService<GalleryService>();
-        var galleryServiceNext = serviceScopeNext.ServiceProvider.GetRequiredService<GalleryService>();
+        var galleryServiceClosed = serviceScopeClosed.ServiceProvider.GetRequiredService<IGalleryVault>();
+        var galleryServiceNext = serviceScopeNext.ServiceProvider.GetRequiredService<IGalleryVault>();
         await galleryServiceClosed.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         serviceScopeClosed.Dispose();
         var expectedScenario = ExpectedScenario.CreateFrom("Closing a scope locks it and releases its checkout for the next scope.",

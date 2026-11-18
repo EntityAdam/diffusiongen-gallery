@@ -38,11 +38,11 @@ public sealed class BrowsingProjectionTests
         var filter = new GalleryFilter { Analysis = GalleryFilter.AwaitingApproval, IncludesFavoritesOnly = true };
         var draftIds = new HashSet<string> { "new-draft", "reanalyzed", "not-favorite", "deleted", "missing" };
 
-        var projection = GalleryBrowsingProjector.Create(vault.Service, images, filter, grouping, draftIds);
+        var projection = GalleryBrowsingProjector.Create(vault.Service.Scope.Catalog, images, filter, grouping, draftIds);
 
         Assert.Equal(new[] { "new-draft", "reanalyzed" }, projection.Images.Select(image => image.Id).Order());
         Assert.Empty(vault.Service.Filter(images, filter));
-        Assert.Empty(GalleryBrowsingProjector.Create(vault.Service, images, filter, grouping, new HashSet<string>()).Images);
+        Assert.Empty(GalleryBrowsingProjector.Create(vault.Service.Scope.Catalog, images, filter, grouping, new HashSet<string>()).Images);
     }
 
     [Fact]
@@ -225,7 +225,7 @@ public sealed class BrowsingProjectionTests
         ]);
         var countingImagesIndependent = new CountingImages([new() { Id = imageIdIndependent, Rating = 5 }]);
         var actualGalleryBrowsingProjectionOriginal = GalleryBrowsingProjector.CreateGroupedByPrompt(
-            testVault.Service, countingImagesOriginal, new GalleryFilter());
+            testVault.Service.Scope.Catalog, countingImagesOriginal, new GalleryFilter());
         countingImagesOriginal[0] = countingImagesOriginal[0] with { Id = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) };
         var expectedScenario = ExpectedScenario.CreateFrom("Independent projections enumerate each source once and preserve immutable images and group identity.", new
         {
@@ -236,7 +236,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjectionIndependent = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Service, countingImagesIndependent, new GalleryFilter { MinRating = 3 });
+            testVault.Service.Scope.Catalog, countingImagesIndependent, new GalleryFilter { MinRating = 3 });
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -298,7 +298,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Service, imageRecords, new GalleryFilter { Sort = "rating" });
+            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -319,7 +319,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Service, imageRecords, new GalleryFilter { Sort = "rating", MinRating = 3 });
+            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating", MinRating = 3 });
 
         // Assert
         Assert.Equal(expectedImageIds, actualGalleryBrowsingProjection.Images.Select(imageRecord => imageRecord.Id));
@@ -340,7 +340,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateGroupedByPrompt(
-            testVault.Service, imageRecords, new GalleryFilter { Sort = "rating" });
+            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -372,7 +372,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Service, imageRecords, new GalleryFilter { Sort = "rating" }, "model");
+            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "model");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -398,7 +398,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Service, imageRecords, new GalleryFilter { MinRating = 5 }, grouping);
+            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { MinRating = 5 }, grouping);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -423,7 +423,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Service, imageRecords, new GalleryFilter { Sort = "rating" }, invalidGrouping);
+            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, invalidGrouping);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -832,7 +832,7 @@ public sealed class BrowsingProjectionTests
         services.AddShadCnBlazorComponents();
         using var provider = services.BuildServiceProvider();
         typeof(LibraryWorkbench).GetProperty("Toasts", InstanceMembers)!.SetValue(libraryWorkbench, provider.GetRequiredService<ISonnerService>());
-        typeof(LibraryWorkbench).GetProperty("Gallery", InstanceMembers)!.SetValue(libraryWorkbench, testVault.Service);
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(libraryWorkbench, testVault.Service);
         typeof(LibraryWorkbench).GetProperty("Logger", InstanceMembers)!
             .SetValue(libraryWorkbench, NullLogger<LibraryWorkbench>.Instance);
         string[] expectedMessagePhrases = ["Saved view name", "''", "1 to 80 characters"];
@@ -931,7 +931,7 @@ public sealed class BrowsingProjectionTests
 
     private static WorkspaceSession CreateSession(TestVault testVault, List<ImageRecord> imageRecords)
     {
-        var home = new WorkspaceSession(testVault.Service, new(), new(testVault.Service),
+        var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(testVault.Service), new(), new(testVault.Service.Scope.Collections),
             new NoOpJsRuntime(), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, action => action(), () => { });
         SetField(home, "Catalog.Images", imageRecords);
         SetField(home, "Catalog.ImagesById", imageRecords.ToDictionary(imageRecord => imageRecord.Id));

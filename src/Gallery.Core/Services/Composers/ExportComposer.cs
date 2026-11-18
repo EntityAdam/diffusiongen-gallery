@@ -51,16 +51,9 @@ internal static class ExportComposer
             finally
             {
                 CryptographicOperations.ZeroMemory(contentBytes);
-                ClearOwnedContent(file);
+                file.ClearContent();
             }
         }
-    }
-
-    public static void ClearOwnedContent(ExportFile file)
-    {
-        if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray(file.OwnedContent, out var content))
-            throw new InvalidOperationException("Export content must retain its owned array for secure cleanup.");
-        CryptographicOperations.ZeroMemory(content.AsSpan());
     }
 
     private static long RequireAvailableArchiveCapacity(long archiveBytes, int contentBytes, string entryName,

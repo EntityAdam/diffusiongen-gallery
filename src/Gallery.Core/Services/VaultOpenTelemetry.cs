@@ -3,12 +3,6 @@ using System.Diagnostics.Metrics;
 
 namespace Gallery.Core.Services;
 
-public sealed partial class GalleryService
-{
-    public const string VaultOpenActivitySourceName = VaultOpenTelemetry.SourceName;
-    public const string CatalogMeterName = CatalogMetrics.MeterName;
-}
-
 // Only numeric measurements and fixed operation names belong here. Never attach vault or media data.
 internal static class VaultOpenTelemetry
 {

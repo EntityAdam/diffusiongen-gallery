@@ -1,4 +1,4 @@
-@inject GalleryService Gallery
+@inject IGalleryVault GalleryVault
 
 <Card Class="mb-6 p-5 md:p-6 space-y-4">
     <h3>Gallery security</h3>
@@ -54,7 +54,7 @@
     {
         try
         {
-            await Gallery.ChangePassphraseAsync(newPassphrase, newConfirm);
+            await GalleryVault.ChangePassphraseAsync(newPassphrase, newConfirm);
             Commands.Activity.Message = "Passphrase updated. Your recovery words are unchanged.";
         }
         finally { newPassphrase = newConfirm = ""; }

@@ -42,7 +42,7 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         serviceCollection.AddShadCnBlazorComponents();
         serviceCollection.AddSingleton<IJSRuntime>(jsRuntime ?? new NoOpJsRuntime());
         serviceCollection.AddScoped<Gallery.Web.Components.OrganizationHistory>();
-        if (galleryService is not null) serviceCollection.AddSingleton(galleryService);
+        if (galleryService is not null) serviceCollection.AddGalleryCapabilities(galleryService);
         ServiceProvider serviceProvider = serviceCollection.BuildServiceProvider();
         try
         {

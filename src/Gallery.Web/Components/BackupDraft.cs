@@ -42,6 +42,6 @@ public sealed class BackupDraft
         ConnectionString = "";
     }
 
-    public async Task SaveAsync(GalleryService gallery) =>
+    public async Task SaveAsync(IGalleryBackup gallery) =>
         Load(await gallery.SaveBackupOptionsAsync(DestinationType, LocalDirectory, Container, Prefix, ConnectionString));
 }

@@ -9,7 +9,8 @@ namespace Gallery.Web.Components.Workspace;
 
 public sealed class WorkspaceSession : IDisposable
 {
-    private readonly GalleryService gallery;
+    private readonly IGalleryVault vault;
+    private readonly IGallerySettings settings;
     private readonly ILogger logger;
     private readonly OrganizationHistory history;
     private readonly CancellationToken ownerLifetime;
@@ -17,32 +18,33 @@ public sealed class WorkspaceSession : IDisposable
     private readonly Action dispatchChanged;
     private bool disposed;
 
-    public WorkspaceSession(GalleryService gallery, GalleryActivity activity, OrganizationHistory history,
+    internal WorkspaceSession(WorkspaceGalleryServices services, GalleryActivity activity, OrganizationHistory history,
         IJSRuntime js, ILogger logger, Func<Func<Task>, Task> dispatch, Action savedFeedback,
         CancellationToken ownerLifetime = default)
     {
-        this.gallery = gallery;
+        vault = services.Vault;
+        settings = services.Settings;
         this.logger = logger;
         this.history = history;
         this.ownerLifetime = ownerLifetime;
         Activity = activity;
-        Preferences = new(gallery, js, lifetime.Token);
-        Catalog = new(gallery, logger, dispatch);
+        Preferences = new(vault, settings, js, lifetime.Token);
+        Catalog = new(vault, services.Catalog, services.Collections, services.Tags, logger, dispatch);
         dispatchChanged = () =>
         {
             if (!disposed) _ = dispatch(NotifyChangedAsync);
         };
-        Browser = new(gallery, Catalog, logger, dispatchChanged, Preferences);
-        Analysis = new(gallery);
+        Browser = new(vault, services.Catalog, settings, services.Media, Catalog, logger, dispatchChanged, Preferences);
+        Analysis = new(vault);
         Commands = new(activity, (status, action) => RunAsync(status, action), Analysis.EnsureIdle);
-        Presentation = new(gallery, js, Commands);
-        Removal = new(gallery, Commands, logger, () =>
+        Presentation = new(vault, services.Media, js, Commands);
+        Removal = new(vault, services.MediaMaintenance, Commands, logger, () =>
         {
             Presentation.CloseDetail();
             return Catalog.ReloadAsync();
         });
-        Curation = new(gallery, Catalog, Commands);
-        Duplicates = new(gallery, Catalog);
+        Curation = new(services.Records, Catalog, Commands);
+        Duplicates = new(services.Duplicates, vault, services.Media, Catalog);
         Collections = new(Catalog);
         Guard = new(activity, () => IsBusy, savedFeedback);
         Navigation = new(Browser, Catalog, Duplicates, Collections, Analysis, Presentation, Commands, Guard, () => IsBusy);
@@ -91,16 +93,16 @@ public sealed class WorkspaceSession : IDisposable
             try
             {
                 var preferences = await Preferences.LoadAsync();
-                if (disposed || !gallery.IsUnlocked) return;
+                if (disposed || !vault.IsUnlocked) return;
                 await Preferences.ApplyAutoLockAsync();
-                if (disposed || !gallery.IsUnlocked) return;
+                if (disposed || !vault.IsUnlocked) return;
                 await Browser.InitializeAsync(preferences);
-                if (disposed || !gallery.IsUnlocked) return;
-                var ingestionOptions = await gallery.LoadIngestionOptionsAsync();
-                if (disposed || !gallery.IsUnlocked) return;
+                if (disposed || !vault.IsUnlocked) return;
+                var ingestionOptions = await settings.LoadIngestionOptionsAsync();
+                if (disposed || !vault.IsUnlocked) return;
                 Activity.Ingestion.LoadOptions(ingestionOptions);
                 await Catalog.OpenAsync(Browser.PageSize, Browser.TrashActive);
-                IsInitialized = !disposed && gallery.IsUnlocked;
+                IsInitialized = !disposed && vault.IsUnlocked;
             }
             catch
             {
@@ -125,8 +127,8 @@ public sealed class WorkspaceSession : IDisposable
                 }
                 finally
                 {
-                    if (ownerLifetime.IsCancellationRequested) gallery.LockVault();
-                    else if (!disposed && gallery.IsUnlocked) Browser.Resume();
+                    if (ownerLifetime.IsCancellationRequested) vault.LockVault();
+                    else if (!disposed && vault.IsUnlocked) Browser.Resume();
                 }
             }, logger, allowDuringImport);
         }

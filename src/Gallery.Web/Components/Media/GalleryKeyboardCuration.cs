@@ -5,9 +5,9 @@ namespace Gallery.Web.Components.Media;
 
 internal static class GalleryKeyboardCuration
 {
-    public static Func<ImageRecordEdit, ImageRecordEdit> Rating(GalleryService gallery, int value) => current => gallery.SetCuration(current, value, null);
+    public static Func<ImageRecordEdit, ImageRecordEdit> Rating(IGalleryRecordEditor gallery, int value) => current => gallery.SetCuration(current, value, null);
 
-    public static Func<ImageRecordEdit, ImageRecordEdit>? ForKey(GalleryService gallery, string key, ImageRecord image) => key switch
+    public static Func<ImageRecordEdit, ImageRecordEdit>? ForKey(IGalleryRecordEditor gallery, string key, ImageRecord image) => key switch
     {
         "0" or "1" or "2" or "3" or "4" or "5" => Rating(gallery, key[0] - '0'),
         "f" => current => current with { IsFavorite = !image.IsFavorite },

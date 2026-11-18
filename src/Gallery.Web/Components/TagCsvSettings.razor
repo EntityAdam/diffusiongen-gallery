@@ -1,4 +1,4 @@
-@inject GalleryService Gallery
+@inject IGalleryTags GalleryTags
 @inject IJSRuntime JS
 @inject ILogger<TagCsvSettings> Logger
 @inject ISonnerService Toasts
@@ -26,8 +26,8 @@
     private Task ImportCsvAsync() => RunAsync(async () =>
     {
         if (csvFile is null) return;
-        await using var input = csvFile.OpenReadStream(GalleryService.MaxTagCsvBytes);
-        var result = await Gallery.ImportTagsCsvAsync(input);
+        await using var input = csvFile.OpenReadStream(IGalleryTags.MaxCsvBytes);
+        var result = await GalleryTags.ImportTagsCsvAsync(input);
         csvFile = null;
         csvInputRevision++;
         await Changed.InvokeAsync();
@@ -35,8 +35,8 @@
     });
     private Task ExportCsvAsync() => RunAsync(async () =>
     {
-        var file = await Gallery.ExportTagsCsvAsync();
-        var bytes = GalleryService.CopyExportContent(file);
+        var file = await GalleryTags.ExportTagsCsvAsync();
+        var bytes = file.CopyContentBytes();
         try
         {
             using var stream = new MemoryStream(bytes, writable: false);
@@ -46,7 +46,7 @@
         finally
         {
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
-            GalleryService.ClearExportContent(file);
+            file.ClearContent();
         }
     });
     private async Task RunAsync(Func<Task> action)

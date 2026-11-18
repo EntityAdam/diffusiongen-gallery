@@ -1,6 +1,8 @@
 @using Gallery.Web.Components.Collections
 @implements IAsyncDisposable
-@inject GalleryService Gallery
+@inject IGalleryCatalog GalleryCatalog
+@inject IGalleryMedia GalleryMedia
+@inject IGalleryRecordEditor GalleryRecords
 @inject OrganizationHistory OrganizationHistory
 @inject IJSRuntime JS
 @inject ILogger<FullscreenViewer> Logger
@@ -184,12 +186,12 @@
             long bytes;
             if (isVideo)
             {
-                (media, mediaType) = await Gallery.OpenMediaAsync(id);
+                (media, mediaType) = await GalleryMedia.OpenMediaAsync(id);
                 bytes = media.Length;
             }
             else
             {
-                data = await Gallery.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
+                data = await GalleryMedia.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
                 bytes = data.Length * 3L / 4;
             }
             if (disposed) { media?.Dispose(); return ""; }
@@ -274,10 +276,10 @@
         if (reviewComplete) return;
         var id = Current.Id;
         ReviewState? previousState = null;
-        var updated = await Gallery.UpdateAsync(id, image =>
+        var updated = await GalleryRecords.UpdateAsync(id, image =>
         {
-            previousState = Gallery.CaptureReviewState(image);
-            return Gallery.ApplyReviewDecision(image, action, rating);
+            previousState = GalleryRecords.CaptureReviewState(image);
+            return GalleryRecords.ApplyReviewDecision(image, action, rating);
         });
         undo.Push((index, previousState ?? throw new InvalidOperationException("The review decision did not capture its previous state."),
             decisions.Contains(id), skipped.Contains(id)));
@@ -296,7 +298,7 @@
         if (!undo.TryPeek(out var previous)) return;
         var image = LatestSnapshot(Images[previous.Index]);
         var data = await LoadImageAsync(image.Id, originalSize);
-        latestImagesById[image.Id] = await Gallery.RestoreReviewStateAsync(image.Id, previous.State);
+        latestImagesById[image.Id] = await GalleryRecords.RestoreReviewStateAsync(image.Id, previous.State);
         undo.Pop();
         if (previous.Decided) decisions.Add(image.Id); else decisions.Remove(image.Id);
         if (previous.Skipped) skipped.Add(image.Id); else skipped.Remove(image.Id);
@@ -333,8 +335,8 @@
     private Task MarkAsync() => ReviewMode ? DecideAsync(ReviewAction.MarkDeletion) : RunAsync(async () =>
     {
         var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id,
-            image => Gallery.SetDeletionMark(image, !image.IsMarkedForDeletion));
+        latestImagesById[id] = await GalleryRecords.UpdateAsync(id,
+            image => GalleryRecords.SetDeletionMark(image, !image.IsMarkedForDeletion));
         await OnImageChanged.InvokeAsync(Current);
     });
 
@@ -347,7 +349,7 @@
     private Task FavoriteAsync() => ReviewMode ? DecideAsync(ReviewAction.Favorite) : RunAsync(async () =>
     {
         var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id, image => image with { IsFavorite = !image.IsFavorite });
+        latestImagesById[id] = await GalleryRecords.UpdateAsync(id, image => image with { IsFavorite = !image.IsFavorite });
         await OnImageChanged.InvokeAsync(Current);
     });
 
@@ -356,7 +358,7 @@
     private Task SaveRatingAsync(int rating, bool clearOnRepeat = false) => ReviewMode ? DecideAsync(ReviewAction.Rate, rating) : RunAsync(async () =>
     {
         var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id, image => Gallery.SetCuration(image, clearOnRepeat && image.Rating == rating ? 0 : rating, null));
+        latestImagesById[id] = await GalleryRecords.UpdateAsync(id, image => GalleryRecords.SetCuration(image, clearOnRepeat && image.Rating == rating ? 0 : rating, null));
         await OnImageChanged.InvokeAsync(Current);
     });
 
@@ -377,7 +379,7 @@
     private async Task CollectionMovedAsync(CollectionMutation result)
     {
         OrganizationHistory.Record(result.Undo);
-        var current = (await Gallery.ListAsync()).First(image => image.Id == Current.Id);
+        var current = (await GalleryCatalog.ListAsync()).First(image => image.Id == Current.Id);
         latestImagesById[current.Id] = current;
         await OnImageChanged.InvokeAsync(current);
         quickEdit = null;
@@ -386,7 +388,7 @@
     {
         if (OrganizationHistory.Current is null) return;
         await OrganizationHistory.UndoAsync();
-        var records = (await Gallery.ListAsync()).ToDictionary(image => image.Id);
+        var records = (await GalleryCatalog.ListAsync()).ToDictionary(image => image.Id);
         foreach (var image in Images)
         {
             if (!records.TryGetValue(image.Id, out var updated)) continue;
@@ -398,7 +400,7 @@
     {
         if (quickEdit != "tag") return;
         var id = Current.Id;
-        latestImagesById[id] = await Gallery.UpdateAsync(id, image => image with { Tags = TagSelection.Apply(Gallery, image.Tags, Current.Tags, value) });
+        latestImagesById[id] = await GalleryRecords.UpdateAsync(id, image => image with { Tags = TagSelection.Apply(GalleryRecords, image.Tags, Current.Tags, value) });
         await OnImageChanged.InvokeAsync(Current);
         quickEdit = null;
     });

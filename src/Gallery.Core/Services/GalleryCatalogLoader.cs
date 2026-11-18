@@ -6,11 +6,12 @@ using Gallery.Core.Models;
 using Gallery.Core.Services.Ports;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Sessions;
+using Gallery.Core.Services.Queries;
 
 namespace Gallery.Core.Services;
 
 internal sealed class GalleryCatalogLoader(
-    GalleryLifetime galleryLifetime, VaultSession vaultSession, MediaStorageIndex mediaStorageIndex, GalleryDriveQueue driveQueue)
+    GalleryLifetime galleryLifetime, VaultSession vaultSession, MediaStorageIndex mediaStorageIndex, GalleryDriveQueue driveQueue) : IGalleryCatalog
 {
     public async Task<GalleryCatalog> LoadInitialPageAsync(int pageSize = 49, bool markedOnly = false, CancellationToken cancellationToken = default)
     {
@@ -185,4 +186,13 @@ internal sealed class GalleryCatalogLoader(
             }
         }
     }
+
+    public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter,
+        IReadOnlySet<string>? awaitingApprovalIds = null) =>
+        GalleryFilterProcessor.Apply(filter, records, awaitingApprovalIds).ToList();
+
+    public List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> records) => PromptRules.GroupByPrompt(records);
+
+    public List<DiffusionModelGroup> GroupByDiffusionModel(IEnumerable<ImageRecord> records) =>
+        DiffusionModelRules.GroupByDiffusionModel(records);
 }

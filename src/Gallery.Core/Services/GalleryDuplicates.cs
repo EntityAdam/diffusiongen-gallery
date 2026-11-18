@@ -3,7 +3,7 @@ using Gallery.Core.Services.Processors;
 
 namespace Gallery.Core.Services;
 
-public sealed partial class GalleryService
+internal sealed class GalleryDuplicates(DuplicateScanner duplicateScanner, GalleryRecordEditor recordEditor) : IGalleryDuplicates
 {
     public Task<DuplicateScan?> CachedDuplicateScanAsync() => duplicateScanner.CachedDuplicateScanAsync();
 
@@ -16,6 +16,7 @@ public sealed partial class GalleryService
         DuplicateRules.InitialDuplicateKeepers(duplicateImageRecords);
 
     /// <summary>Unmarks the kept copies, marks the other copies for deletion, and returns the committed records.</summary>
+
     public Task<List<ImageRecord>> ApplyDuplicateDecisionAsync(IReadOnlyCollection<string> groupImageIds, IReadOnlySet<string> keep) =>
         recordEditor.ApplyDuplicateDecisionAsync(groupImageIds, keep);
 }

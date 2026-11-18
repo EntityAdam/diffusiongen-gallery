@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Core.Services.Processors;
 using Gallery.Stress.Cli;
 using Gallery.Stress.Core;
 using SixLabors.ImageSharp;
@@ -70,14 +71,14 @@ internal static class LargeImageSuiteCommand
                 var path = Path.Combine(staging, index.ToString("D6") + ".png");
                 var png = await SyntheticPngWriter.WriteAsync(path,
                     options.Int("seed", 42), index, distribution, cancellationToken: token);
-                for (var retry = 0; png.Bytes > GalleryService.MaxFileBytes && retry < 2; retry++)
+                for (var retry = 0; png.Bytes > ImportMediaPreparer.MaxFileBytes && retry < 2; retry++)
                 {
                     // The L5 tolerance must never cross the production 50 MiB import ceiling.
                     var adjusted = (long)(distribution.MaxBytes * (retry == 0 ? .96 : .92));
                     png = await SyntheticPngWriter.WriteAsync(path, options.Int("seed", 42), index,
                         new SizeDistribution(adjusted, adjusted, tier.Width, tier.Height), cancellationToken: token);
                 }
-                if (png.Bytes > GalleryService.MaxFileBytes || Math.Abs(png.Bytes - distribution.MaxBytes) > distribution.MaxBytes * .10)
+                if (png.Bytes > ImportMediaPreparer.MaxFileBytes || Math.Abs(png.Bytes - distribution.MaxBytes) > distribution.MaxBytes * .10)
                     throw new InvalidOperationException("Generated tier image exceeded its size tolerance or the production import ceiling.");
                 generatedBytes += png.Bytes;
             }
@@ -126,7 +127,7 @@ internal static class LargeImageSuiteCommand
         using var gallery = await StressVault.OpenOrCreateAsync(options, vault, token);
         var gc = GC.CollectionCount(2);
         IngestionTimingReport? report = null;
-        await gallery.ImportFolderAsync(staging, FolderSearchScope.Descendants,
+        await gallery.Ingestion.ImportFolderAsync(staging, FolderSearchScope.Descendants,
             sourceRetention: options.Get("delete-sources", "false") == "true" ? SourceRetention.DeleteAfterVerification : SourceRetention.Retain,
             reportTimings: value => report = value,
             options: new IngestionOptions { Workers = options.Int("workers", 4), CatalogBatchSize = options.Int("catalog-batch", 16) });
@@ -147,7 +148,7 @@ internal static class LargeImageSuiteCommand
                 gen2 = GC.CollectionCount(2) - gc
             }
         };
-        await gallery.CloseVaultAsync();
+        await gallery.Vault.CloseVaultAsync();
         Console.WriteLine(JsonSerializer.Serialize(row, ResultWriter.JsonOptions));
     }
 
@@ -163,7 +164,7 @@ internal static class LargeImageSuiteCommand
             if (purge != "failed") purge = current;
         }
         using var gallery = await StressVault.OpenOrCreateAsync(options, vault, token);
-        var records = (await gallery.LoadAsync()).OrderByDescending(record => record.ImportedAt)
+        var records = (await gallery.Catalog.LoadAsync()).OrderByDescending(record => record.ImportedAt)
             .Take(options.Int("viewer-samples", 20)).ToArray();
         if (records.Length == 0) throw new InvalidOperationException("Viewer measurement requires a nonempty stress vault.");
         var preview = new List<double>();
@@ -175,22 +176,22 @@ internal static class LargeImageSuiteCommand
             token.ThrowIfCancellationRequested();
             PurgeBeforeOperation();
             var start = Stopwatch.GetTimestamp();
-            _ = await gallery.PreviewAsync(record.Id, ImageResolution.Fit);
+            _ = await gallery.Media.PreviewAsync(record.Id, ImageResolution.Fit);
             preview.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
             PurgeBeforeOperation();
             start = Stopwatch.GetTimestamp();
-            _ = await gallery.ViewerImageAsync(record.Id, ImageResolution.Fit);
+            _ = await gallery.Media.ViewerImageAsync(record.Id, ImageResolution.Fit);
             fit.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
             PurgeBeforeOperation();
             start = Stopwatch.GetTimestamp();
-            _ = await gallery.ViewerImageAsync(record.Id, ImageResolution.Original);
+            _ = await gallery.Media.ViewerImageAsync(record.Id, ImageResolution.Original);
             original.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
             PurgeBeforeOperation();
             start = Stopwatch.GetTimestamp();
-            await gallery.VerifyImportedAsync(record.Id);
+            await gallery.Ingestion.VerifyImportedAsync(record.Id);
             verify.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
         }
-        await gallery.CloseVaultAsync();
+        await gallery.Vault.CloseVaultAsync();
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             catalogBackend = StressVault.BackendName(StressVault.ResolveBackend(options, vault)),
@@ -251,7 +252,7 @@ internal static class LargeImageSuiteCommand
                     using var image = new Image<Rgb24>(1, 1);
                     await image.SaveAsPngAsync(path, token);
                     await using var file = new FileStream(path, FileMode.Open, FileAccess.Write);
-                    file.SetLength(GalleryService.MaxFileBytes + 1);
+                    file.SetLength(ImportMediaPreparer.MaxFileBytes + 1);
                 }
                 else
                 {
@@ -262,16 +263,16 @@ internal static class LargeImageSuiteCommand
                 try
                 {
                     await using var input = File.OpenRead(path);
-                    _ = await gallery.ImportAsync(input, "synthetic-rejection.png", "stress");
+                    _ = await gallery.Ingestion.ImportAsync(input, "synthetic-rejection.png", "stress");
                 }
                 catch (Exception exception) when (exception is InvalidOperationException or IOException or ArgumentException) { rejected = true; }
-                if (!rejected || !File.Exists(path) || (await gallery.LoadAsync()).Count != 0
+                if (!rejected || !File.Exists(path) || (await gallery.Catalog.LoadAsync()).Count != 0
                     || Directory.Exists(Path.Combine(vault, "images")) && Directory.EnumerateFiles(Path.Combine(vault, "images"), "*", SearchOption.AllDirectories).Any())
                     throw new InvalidOperationException($"The {edge} rejection edge case did not preserve the expected invariants.");
             }
             await results.AppendAsync("large-image-rejections", new { env = results.Environment with { CatalogBackend = StressVault.BackendName(options.RequestedCatalogBackend ?? CatalogBackend.Sqlite) }, edge, samples = 5, rejected = true }, token);
         }
-        await gallery.CloseVaultAsync();
+        await gallery.Vault.CloseVaultAsync();
     }
 
     private static void RemoveEmptyDirectories(string directory)

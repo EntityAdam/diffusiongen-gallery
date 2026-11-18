@@ -8,7 +8,7 @@ using Gallery.Core.Services.Validators;
 
 namespace Gallery.Core.Services;
 
-internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, VaultSession vaultSession, VideoTools? videoTools)
+internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, VaultSession vaultSession, VideoTools? videoTools) : IGalleryIngestion
 {
     private readonly ImportMediaPreparer importMediaPreparer = new(videoTools);
 

@@ -80,13 +80,13 @@ public sealed class StressBackendTests
             await File.WriteAllTextAsync(Path.Combine(staging, "stress-staging.marker"), "Gallery.Stress");
             using (var service = await StressVault.OpenOrCreateAsync(options, vault, default))
             {
-                await service.PauseDriveOperationsAsync();
+                await service.DriveOperations.PauseDriveOperationsAsync();
                 await using (var input = File.OpenRead(sources[0]))
                 {
-                    var imported = await service.ImportAsync(input, "000000000000.png", batch, sources[0]);
-                    await service.VerifyImportedAsync(imported.Id);
+                    var imported = await service.Ingestion.ImportAsync(input, "000000000000.png", batch, sources[0]);
+                    await service.Ingestion.VerifyImportedAsync(imported.Id);
                 }
-                await service.CloseVaultAsync();
+                await service.Vault.CloseVaultAsync();
             }
             if (changedCommittedSource) await File.WriteAllTextAsync(sources[0], "changed; retain this source");
             else File.Delete(sources[0]);

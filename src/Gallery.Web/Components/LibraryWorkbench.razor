@@ -1,7 +1,12 @@
 @using Gallery.Core.Exceptions
 @using Gallery.Web.Components.Workspace
 @using Gallery.Web.Components.Collections
-@inject GalleryService Gallery
+@inject IGalleryCatalog GalleryCatalog
+@inject IGalleryCollections GalleryCollections
+@inject IGalleryMedia GalleryMedia
+@inject IGalleryRecordEditor GalleryRecords
+@inject IGallerySettings GallerySettings
+@inject IGalleryVision GalleryVision
 @inject OrganizationHistory OrganizationHistory
 @inject ISonnerService Toasts
 @inject ILogger<LibraryWorkbench> Logger
@@ -148,7 +153,7 @@
     private bool showDestination;
     private async Task DestinationSavedAsync(CollectionMutation result) { OrganizationHistory.Record(result.Undo);showDestination = false;notice = "Media moved to set.";await Changed.InvokeAsync(); }
     private async Task DestinationCanceledAsync() { showDestination = false;await Changed.InvokeAsync(); }
-    private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await Gallery.MoveMediaToSetAsync(SelectedIds, null);OrganizationHistory.Record(result.Undo);notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
+    private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await GalleryCollections.MoveMediaToSetAsync(SelectedIds, null);OrganizationHistory.Record(result.Undo);notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
     private string tags = "", viewName = "", error = "", notice = "", status = "";
     private int rating = -1;
     private string reviewStatus = "unchanged", jobWorkflow = "", jobMessage = "";
@@ -185,7 +190,7 @@
         Analysis?.Attach(this);
         return RunAsync("Loading saved drafts...", async () =>
         {
-            views = await Gallery.LoadViewsAsync();
+            views = await GallerySettings.LoadViewsAsync();
             await EnsureCheckpointAsync();
             await RestoreDraftsAsync();
         });
@@ -273,7 +278,7 @@
         var ids = SelectedIds.ToArray();
         foreach (var id in ids)
         {
-            try { await Gallery.UpdateAsync(id, change); }
+            try { await GalleryRecords.UpdateAsync(id, change); }
             catch (Exception exception)
             {
                 Logger.LogError(exception, "Bulk organization failed for {ImageId}", id);
@@ -292,7 +297,7 @@
             .Select(image => image.Id).ToArray();
         foreach (var id in ids)
         {
-            try { await Gallery.UpdateAsync(id, image => image with { Tags = Gallery.RemoveTag(image.Tags, tag) }); }
+            try { await GalleryRecords.UpdateAsync(id, image => image with { Tags = GalleryRecords.RemoveTag(image.Tags, tag) }); }
             catch (Exception exception)
             {
                 Logger.LogError(exception, "Tag removal failed for {ImageId}", id);
@@ -305,20 +310,20 @@
     });
 
     private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
-        Gallery.SetCuration(image, rating == -1 ? null : rating,
+        GalleryRecords.SetCuration(image, rating == -1 ? null : rating,
             reviewStatus == "unchanged" ? null : reviewStatus == "reviewed")));
 
     private Task SaveViewAsync() => RunAsync("Saving view...", async () =>
     {
-        await Gallery.SaveViewAsync(viewName, Filter);
-        views = await Gallery.LoadViewsAsync();
+        await GallerySettings.SaveViewAsync(viewName, Filter);
+        views = await GallerySettings.LoadViewsAsync();
         notice = "Saved view stored encrypted.";
     });
 
     private Task DeleteViewAsync(string name) => RunAsync("Deleting view...", async () =>
     {
-        await Gallery.DeleteViewAsync(name);
-        views = await Gallery.LoadViewsAsync();
+        await GallerySettings.DeleteViewAsync(name);
+        views = await GallerySettings.LoadViewsAsync();
     });
 
     private Task SuggestAsync() => AnalyzeSelectionAsync(suggestions);
@@ -333,13 +338,13 @@
     private Task ApplyTagsAsync() => RunAsync("Applying tags...", async () =>
     {
         if (string.IsNullOrWhiteSpace(tags) || tags.Length > 4000) throw new InvalidOperationException("Enter tags of up to 4000 characters.");
-        await ApplyBulkAsync(image => image with { Tags = Gallery.MergeTags(image.Tags, tags) });
+        await ApplyBulkAsync(image => image with { Tags = GalleryRecords.MergeTags(image.Tags, tags) });
     });
 
     private Task ApplyTagSuggestionAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved tags...", async () =>
     {
         await EnsureCheckpointAsync();
-        await Gallery.ApproveVisionAsync(suggestion.Id, suggestion.Description, suggestion.Tags, suggestion.Model, suggestion.Analysis,
+        await GalleryVision.ApproveVisionAsync(suggestion.Id, suggestion.Description, suggestion.Tags, suggestion.Model, suggestion.Analysis,
             tagsOnly: true, useExistingTags: suggestion.UseExistingTags, suggestNewTags: suggestion.SuggestNewTags);
         await checkpoint!.DismissAsync(suggestion.Id, tagsOnly: true);
         tagSuggestions.Remove(suggestion);
@@ -363,8 +368,8 @@
     }
 
     internal static Task<ImageRecord> PersistApprovedSuggestionAsync(
-        GalleryService galleryService, OrganizationSuggestion organizationSuggestion) =>
-        galleryService.ApproveVisionAsync(organizationSuggestion.Id, organizationSuggestion.Description, organizationSuggestion.Tags,
+        IGalleryVision vision, OrganizationSuggestion organizationSuggestion) =>
+        vision.ApproveVisionAsync(organizationSuggestion.Id, organizationSuggestion.Description, organizationSuggestion.Tags,
             organizationSuggestion.Model, organizationSuggestion.Analysis, useExistingTags: organizationSuggestion.UseExistingTags,
             suggestNewTags: organizationSuggestion.SuggestNewTags);
 
@@ -375,13 +380,13 @@
         comparison.Clear();
         var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
         if (selected.Count != 2) throw new InvalidOperationException("Select exactly two media items.");
-        foreach (var image in selected) comparison[image.Id] = await Gallery.ViewerImageAsync(image.Id, ImageResolution.Fit);
+        foreach (var image in selected) comparison[image.Id] = await GalleryMedia.ViewerImageAsync(image.Id, ImageResolution.Fit);
         compareImages = selected;
     });
 
     private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
-        var updated = await Gallery.UpdateAsync(image.Id, current => Gallery.SetOrganization(current, value, true, null));
+        var updated = await GalleryRecords.UpdateAsync(image.Id, current => GalleryRecords.SetOrganization(current, value, true, null));
         var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);
         if (comparisonIndex >= 0) compareImages[comparisonIndex] = updated;
         await Changed.InvokeAsync();

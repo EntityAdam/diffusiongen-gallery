@@ -5,7 +5,7 @@ namespace Gallery.Web.Components.Workspace;
 
 // The drawer owns the workbench UI. Other features use this session-scoped
 // interface to its analysis actions without reaching into the drawer.
-public sealed class LibraryAnalysis(GalleryService gallery)
+public sealed class LibraryAnalysis(IGalleryVault gallery)
 {
     private ILibraryAnalysisActions? actions;
     public LibraryJobStatus Status { get; private set; } = new(false, "", "", 0, false);

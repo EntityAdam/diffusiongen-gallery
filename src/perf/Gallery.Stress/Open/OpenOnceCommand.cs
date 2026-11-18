@@ -30,16 +30,16 @@ public static class OpenOnceCommand
         var pauseStart = GC.GetTotalPauseDuration();
         var total = Stopwatch.StartNew();
         var start = Stopwatch.GetTimestamp();
-        using var service = StressVault.CreateService(options.Workspace, vault);
+        using var service = StressVault.CreateScope(options.Workspace, vault);
         steps["create"] = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        await Step("open", () => service.OpenExistingVaultAsync(vault));
+        await Step("open", () => service.Vault.OpenExistingVaultAsync(vault));
         var passphraseSubmitted = Stopwatch.GetTimestamp();
-        await Step("unlock", () => service.UnlockWithPassphraseAsync(passphrase));
+        await Step("unlock", () => service.Vault.UnlockWithPassphraseAsync(passphrase));
         milestones["key_unlocked"] = Stopwatch.GetElapsedTime(passphraseSubmitted).TotalMilliseconds;
         // Drift guard: mirrors Home.razor UnlockAsync/ReloadAsync, including first visible thumbnails.
         // Blazor rendering and browser auto-lock interop are outside this process measurement.
         UiPreferences? preferences = null;
-        await Step("preferences", async () => { preferences = await service.LoadPreferencesAsync(); service.ConfigureAutoLock(preferences.AutoLockMinutes); });
+        await Step("preferences", async () => { preferences = await service.Settings.LoadPreferencesAsync(); service.Vault.ConfigureAutoLock(preferences.AutoLockMinutes); });
         var pageSize = requestedPageSize ?? (preferences!.GridDensity == "compact" ? 49 : 12);
         var markedOnly = preferences!.ToolboxTool == "trash";
         List<ImageRecord> records = [];
@@ -47,20 +47,20 @@ public static class OpenOnceCommand
         GalleryCatalog? initial = null;
         await Step("load", async () =>
         {
-            initial = await service.LoadInitialPageAsync(pageSize, markedOnly, token);
+            initial = await service.Catalog.LoadInitialPageAsync(pageSize, markedOnly, token);
             records = initial.Records;
         });
         if (initial!.IsComplete) milestones["catalog_loaded"] = Stopwatch.GetElapsedTime(passphraseSubmitted).TotalMilliseconds;
         string mediaDirectory = vault;
-        await Step("media_options", async () => { var media = await service.LoadMediaStorageOptionsAsync(); mediaDirectory = string.IsNullOrWhiteSpace(media.MediaDirectory) ? vault : media.MediaDirectory; });
-        await Step("ingestion_options", async () => { await service.LoadIngestionOptionsAsync(); });
+        await Step("media_options", async () => { var media = await service.Settings.LoadMediaStorageOptionsAsync(); mediaDirectory = string.IsNullOrWhiteSpace(media.MediaDirectory) ? vault : media.MediaDirectory; });
+        await Step("ingestion_options", async () => { await service.Settings.LoadIngestionOptionsAsync(); });
         await Step("dictionary", () => { byId = records.ToDictionary(r => r.Id); return Task.CompletedTask; });
-        await Step("vision_settings", async () => { await service.SettingsAsync(); });
-        await Step("storage_overview", async () => { await service.CachedStorageOverviewAsync(); });
+        await Step("vision_settings", async () => { await service.Vision.LoadSettingsAsync(); });
+        await Step("storage_overview", async () => { await service.Storage.CachedStorageOverviewAsync(); });
         ImageRecord[] firstPage = [];
         await Step("first_page_selection", () =>
         {
-            firstPage = service.Filter(records, markedOnly ? new GalleryFilter { Deletion = "marked" } : new GalleryFilter()).Take(pageSize).ToArray();
+            firstPage = service.Catalog.Filter(records, markedOnly ? new GalleryFilter { Deletion = "marked" } : new GalleryFilter()).Take(pageSize).ToArray();
             return Task.CompletedTask;
         });
         milestones["gallery_ready"] = Stopwatch.GetElapsedTime(passphraseSubmitted).TotalMilliseconds;
@@ -70,7 +70,7 @@ public static class OpenOnceCommand
             foreach (var record in firstPage)
             {
                 token.ThrowIfCancellationRequested();
-                await service.ThumbnailAsync(record.Id);
+                await service.Media.ThumbnailAsync(record.Id);
             }
         });
         milestones["thumbnails_ready"] = Stopwatch.GetElapsedTime(passphraseSubmitted).TotalMilliseconds;
@@ -78,11 +78,11 @@ public static class OpenOnceCommand
         steps["total_to_interactive"] = total.Elapsed.TotalMilliseconds;
         if (options.Flag("wait-for-catalog") && !initial.IsComplete)
         {
-            await Step("catalog_background", async () => { await service.LoadCatalogAsync(token); });
+            await Step("catalog_background", async () => { await service.Catalog.LoadCatalogAsync(token); });
             milestones["catalog_loaded"] = Stopwatch.GetElapsedTime(passphraseSubmitted).TotalMilliseconds;
         }
         if (options.Flag("wait-for-drive-idle"))
-            await Step("drive_idle", async () => await service.WaitForDriveOperationsAsync().WaitAsync(token));
+            await Step("drive_idle", async () => await service.DriveOperations.WaitForDriveOperationsAsync().WaitAsync(token));
         var ioEnd = ProcessMeasurements.ReadIo();
         var memory = GC.GetGCMemoryInfo();
         var pauseMs = (GC.GetTotalPauseDuration() - pauseStart).TotalMilliseconds;
@@ -111,7 +111,7 @@ public static class OpenOnceCommand
             thumbnailOrder = "newest", uiRenderingIncluded = false
         };
         GC.KeepAlive(byId);
-        await service.CloseVaultAsync();
+        await service.Vault.CloseVaultAsync();
         return result;
 
         async Task Step(string name, Func<Task> action)

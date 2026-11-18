@@ -1,4 +1,7 @@
-@inject GalleryService Gallery
+@inject IGalleryDuplicates GalleryDuplicates
+@inject IGalleryMedia GalleryMedia
+@inject IGalleryRecordEditor GalleryRecords
+@inject IGalleryVault GalleryVault
 @implements IDisposable
 
 <Card Class="mb-6 p-5 md:p-6 duplicates" aria-labelledby="duplicates-title">
@@ -13,7 +16,7 @@
         var groups = Catalog.Groups;
         var pendingMarks = groups.Sum(group => group.ImageIds.Count(id => id != KeeperOf(group).Id && !Lookup(id)!.IsMarkedForDeletion));
         <div class="my-4 flex flex-col gap-2">
-            <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.ImageIds.Length - 1)</strong> extra copies &middot; <strong>@GalleryService.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
+            <span><strong>@groups.Count</strong> group(s) &middot; <strong>@groups.Sum(group => group.ImageIds.Length - 1)</strong> extra copies &middot; <strong>@GalleryDisplay.FormatBytes(groups.Sum(group => group.ReclaimableBytes))</strong> reclaimable</span>
             <span class="text-muted-foreground">Scanned @Catalog.Scan.ScannedCount.ToString("N0") media items <time datetime="@Catalog.Scan.ScannedAt.ToString("O")">@Catalog.Scan.ScannedAt.ToLocalTime().ToString("g")</time></span>
             <div class="flex flex-wrap items-center gap-2">
                 <Button Variant="ButtonVariant.Default" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || groups.Count == 0)" OnClick="() => Review(0)">Review in full screen</Button>
@@ -28,7 +31,7 @@
             var groupMarks = group.ImageIds.Count(id => id != keeper.Id && !Lookup(id)!.IsMarkedForDeletion);
             <article class="mt-4 rounded-xl border border-border p-4 [&>header]:mb-3 [&>header]:flex [&>header]:flex-wrap [&>header]:items-center [&>header]:justify-between [&>header]:gap-3 [&>header]:text-sm" @key="group.ImageIds[0]">
                 <header>
-                    <span>@(group.IsExact ? "Exact copies" : $"Similar media (difference {group.MaxDistance}/64)") &middot; @GalleryService.FormatBytes(group.ReclaimableBytes) reclaimable</span>
+                    <span>@(group.IsExact ? "Exact copies" : $"Similar media (difference {group.MaxDistance}/64)") &middot; @GalleryDisplay.FormatBytes(group.ReclaimableBytes) reclaimable</span>
                     <div class="flex flex-wrap items-center gap-2">
                         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="() => Review(groupNumber)">Review &amp; choose keepers</Button>
                         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || groupMarks == 0)" OnClick="() => MarkAsync([group])">@(groupMarks == 0 ? "Extra copies marked" : $"Mark {groupMarks} other(s) for deletion")</Button>
@@ -43,7 +46,7 @@
                             else { <div class="grid h-full place-items-center text-xs text-muted-foreground">Preview</div> }
                             <figcaption>
                                 <strong title="@image.Name">@image.Name</strong>
-                                <span>@image.Width &times; @image.Height &middot; @GalleryService.FormatBytes(image.OriginalBytes)@(image.Rating > 0 ? $" · {image.Rating}★" : "")@(image.IsFavorite ? " · Favorite" : "")</span>
+                                <span>@image.Width &times; @image.Height &middot; @GalleryDisplay.FormatBytes(image.OriginalBytes)@(image.Rating > 0 ? $" · {image.Rating}★" : "")@(image.IsFavorite ? " · Favorite" : "")</span>
                                 @if (id == keeper.Id) { <Badge Variant="BadgeVariant.Secondary" Class="self-start">Keep</Badge> }
                                 else if (image.IsMarkedForDeletion) { <Badge Variant="BadgeVariant.Destructive" Class="self-start">Marked</Badge> }
                             </figcaption>
@@ -76,8 +79,8 @@
     public bool ReviewOpen => reviewGroups.Count > 0;
     private bool disposed;
     public void Dispose() => disposed = true;
-    private ImageRecord KeeperOf(DuplicateGroup group) => Gallery.PickDuplicateKeeper(group.ImageIds.Select(id => Lookup(id)!));
-    private Task ShowMore() => Commands.RunAsync("Loading previews...", () => Catalog.ShowMoreAsync(Gallery));
+    private ImageRecord KeeperOf(DuplicateGroup group) => GalleryDuplicates.PickDuplicateKeeper(group.ImageIds.Select(id => Lookup(id)!));
+    private Task ShowMore() => Commands.RunAsync("Loading previews...", () => Catalog.ShowMoreAsync(GalleryVault, GalleryMedia));
     private Task StartScan() => Commands.RunAsync("Scanning for duplicates...", async () =>
     {
         var reporter = new Progress<(int Completed, int Total)>(update =>
@@ -86,7 +89,7 @@
             Commands.Activity.Progress = $"Scanning for duplicates... {update.Completed:N0} / {update.Total:N0} media items fingerprinted";
             StateHasChanged();
         });
-        var scan = await Gallery.ScanDuplicatesAsync(reporter);
+        var scan = await GalleryDuplicates.ScanDuplicatesAsync(reporter);
         if (disposed) return;
         Catalog.ReplaceScan(scan);
         await Reload.InvokeAsync();
@@ -100,7 +103,7 @@
             var keeper = KeeperOf(group);
             return group.ImageIds.Where(id => id != keeper.Id);
         }).ToList();
-        try { await Gallery.UpdateManyAsync(ids, image => Gallery.SetDeletionMark(image, true)); }
+        try { await GalleryRecords.UpdateManyAsync(ids, image => GalleryRecords.SetDeletionMark(image, true)); }
         finally { await Reload.InvokeAsync(); }
         Commands.Activity.Message = $"Marked {ids.Count} extra cop{(ids.Count == 1 ? "y" : "ies")} for deletion. Review and remove them from Trash.";
     });

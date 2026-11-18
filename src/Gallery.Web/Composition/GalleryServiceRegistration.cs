@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Components.Workspace;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,7 +16,8 @@ public static class GalleryServiceRegistration
     {
         var galleryRuntimeOptions = CaptureGalleryRuntimeOptions(configuration);
         RegisterVisionHttpClient(services);
-        RegisterGalleryService(services, vaultRoot, galleryRuntimeOptions);
+        RegisterGalleryScope(services, vaultRoot, galleryRuntimeOptions);
+        RegisterCapabilities(services);
         services.AddScoped<Gallery.Web.Components.OrganizationHistory>();
     }
 
@@ -60,8 +62,29 @@ public static class GalleryServiceRegistration
                 UseProxy = false
             });
 
-    private static void RegisterGalleryService(IServiceCollection services, string vaultRoot,
+    private static void RegisterGalleryScope(IServiceCollection services, string vaultRoot,
         GalleryRuntimeOptions galleryRuntimeOptions) =>
-        services.AddScoped(serviceProvider => GalleryService.Create(vaultRoot, galleryRuntimeOptions,
+        services.AddScoped(serviceProvider => GalleryScope.Create(vaultRoot, galleryRuntimeOptions,
             serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient(VisionHttpClientName)));
+
+    internal static void RegisterCapabilities(IServiceCollection services)
+    {
+        services.AddScoped(provider => new GalleryService(provider.GetRequiredService<GalleryScope>()));
+        services.AddScoped<IGalleryBackup>(provider => provider.GetRequiredService<GalleryScope>().Backup);
+        services.AddScoped<IGalleryCatalog>(provider => provider.GetRequiredService<GalleryScope>().Catalog);
+        services.AddScoped<IGalleryCollections>(provider => provider.GetRequiredService<GalleryScope>().Collections);
+        services.AddScoped<IGallerySettings>(provider => provider.GetRequiredService<GalleryScope>().Settings);
+        services.AddScoped<IGalleryDriveOperations>(provider => provider.GetRequiredService<GalleryScope>().DriveOperations);
+        services.AddScoped<IGalleryDuplicates>(provider => provider.GetRequiredService<GalleryScope>().Duplicates);
+        services.AddScoped<IGalleryRecordEditor>(provider => provider.GetRequiredService<GalleryScope>().Records);
+        services.AddScoped<IGalleryIngestion>(provider => provider.GetRequiredService<GalleryScope>().Ingestion);
+        services.AddScoped<IGalleryVault>(provider => provider.GetRequiredService<GalleryScope>().Vault);
+        services.AddScoped<IGalleryMedia>(provider => provider.GetRequiredService<GalleryScope>().Media);
+        services.AddScoped<IGalleryMediaMaintenance>(provider => provider.GetRequiredService<GalleryScope>().MediaMaintenance);
+        services.AddScoped<IGalleryRestore>(provider => provider.GetRequiredService<GalleryScope>().Restore);
+        services.AddScoped<IGalleryStorage>(provider => provider.GetRequiredService<GalleryScope>().Storage);
+        services.AddScoped<IGalleryTags>(provider => provider.GetRequiredService<GalleryScope>().Tags);
+        services.AddScoped<IGalleryVision>(provider => provider.GetRequiredService<GalleryScope>().Vision);
+        services.AddScoped<WorkspaceGalleryServices>();
+    }
 }

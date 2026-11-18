@@ -17,7 +17,7 @@ public sealed class VaultOpenListener : IDisposable
     {
         activities = new ActivityListener
         {
-            ShouldListenTo = source => source.Name == GalleryService.VaultOpenActivitySourceName,
+            ShouldListenTo = source => source.Name == VaultOpenTelemetry.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStopped = activity =>
             {
@@ -28,7 +28,7 @@ public sealed class VaultOpenListener : IDisposable
         ActivitySource.AddActivityListener(activities);
         meter.InstrumentPublished = (instrument, listener) =>
         {
-            if (instrument.Meter.Name == GalleryService.CatalogMeterName) listener.EnableMeasurementEvents(instrument);
+            if (instrument.Meter.Name == CatalogMetrics.MeterName) listener.EnableMeasurementEvents(instrument);
         };
         meter.SetMeasurementEventCallback<long>((instrument, value, _, _) => Add(instrument.Name, value));
         meter.SetMeasurementEventCallback<double>((instrument, value, _, _) => Add(instrument.Name, value));

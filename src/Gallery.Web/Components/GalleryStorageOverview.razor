@@ -1,4 +1,4 @@
-@inject GalleryService Gallery
+@inject IGalleryStorage GalleryStorage
 
 <Card Class="mb-6 p-5 md:p-6 storage-overview" aria-labelledby="storage-overview-title" aria-busy="@(Refreshing ? "true" : "false")">
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -19,9 +19,9 @@
     else
     {
         <dl class="my-4 grid grid-cols-1 gap-3 lg:grid-cols-3 [&>div]:min-w-0 [&>div]:rounded-lg [&>div]:border [&>div]:border-border [&>div]:p-4 [&_dt]:text-xs [&_dt]:uppercase [&_dt]:text-muted-foreground [&_dd]:my-2 [&_dd]:text-2xl [&_dd]:text-primary [&_dd]:break-all [&_span]:text-xs">
-            <div><dt>Database size</dt><dd data-testid="database-size">@GalleryService.FormatBytes(Overview.DatabaseBytes)</dd><span class="text-muted-foreground">gallery.db with WAL files, including thumbnails</span></div>
+            <div><dt>Database size</dt><dd data-testid="database-size">@GalleryDisplay.FormatBytes(Overview.DatabaseBytes)</dd><span class="text-muted-foreground">gallery.db with WAL files, including thumbnails</span></div>
             <div><dt>Total file count</dt><dd data-testid="file-count">@Overview.TotalFileCount.ToString("N0")</dd><span class="text-muted-foreground">@Overview.ImageFileCount.ToString("N0") encrypted media files + @Overview.VaultFileCount gallery files</span></div>
-            <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryService.FormatBytes(Overview.TotalBytes)</dd><span class="text-muted-foreground">@GalleryService.FormatBytes(Overview.ImageBytes) of encrypted media</span></div>
+            <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryDisplay.FormatBytes(Overview.TotalBytes)</dd><span class="text-muted-foreground">@GalleryDisplay.FormatBytes(Overview.ImageBytes) of encrypted media</span></div>
         </dl>
         @if (Overview.MissingImageFiles > 0)
         {
@@ -39,7 +39,7 @@
     </p>
     <p class="text-muted-foreground flex flex-wrap items-center gap-2">
         @if (!HasScan) { <span>Duplicates have not been scanned yet.</span> }
-        else { <span>Last duplicate scan found @Groups.Sum(group => group.ImageIds.Length - 1).ToString("N0") likely duplicate(s), about @GalleryService.FormatBytes(Groups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
+        else { <span>Last duplicate scan found @Groups.Sum(group => group.ImageIds.Length - 1).ToString("N0") likely duplicate(s), about @GalleryDisplay.FormatBytes(Groups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
         <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@Busy" OnClick="FindDuplicates">Find duplicates <ArrowRightIcon aria-hidden="true" /></Button>
     </p>
 </Card>
@@ -57,8 +57,8 @@
     private bool Refreshing;
     private Task RebuildStorageIndexAsync() => Commands.RunAsync("Scheduling file index rebuild...", async () =>
     {
-        await Gallery.RebuildStorageIndexAsync();
-        await OverviewChanged.InvokeAsync(await Gallery.CachedStorageOverviewAsync());
+        await GalleryStorage.RebuildStorageIndexAsync();
+        await OverviewChanged.InvokeAsync(await GalleryStorage.CachedStorageOverviewAsync());
         Commands.Activity.Message = "The file index is being rebuilt in the background. Refresh the overview when it finishes.";
     });
 
@@ -72,7 +72,7 @@
             {
                 // SQLite reads/decryption can run synchronously before the service's first yield.
                 // Keep that work off the renderer so the busy state is visible throughout the refresh.
-                await OverviewChanged.InvokeAsync(await Task.Run(Gallery.RefreshStorageOverviewAsync));
+                await OverviewChanged.InvokeAsync(await Task.Run(GalleryStorage.RefreshStorageOverviewAsync));
                 Commands.Activity.Message = "Gallery overview refreshed.";
             });
         }

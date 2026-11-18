@@ -17,7 +17,7 @@ public sealed class WorkspaceCatalogTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var records = await SeedAsync(vault);
-        using var catalog = new WorkspaceCatalog(vault.Service, NullLogger.Instance, action => action());
+        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action => action());
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         catalog.Changed += () =>
         {
@@ -42,7 +42,7 @@ public sealed class WorkspaceCatalogTests
         var records = await SeedAsync(vault);
         var queued = new TaskCompletionSource<Func<Task>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var catalog = new WorkspaceCatalog(vault.Service, NullLogger.Instance, action =>
+        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action =>
         {
             queued.TrySetResult(action);
             return release.Task;
@@ -71,7 +71,7 @@ public sealed class WorkspaceCatalogTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        using var catalog = new WorkspaceCatalog(vault.Service, NullLogger.Instance, action => action());
+        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action => action());
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var publications = new List<string>();

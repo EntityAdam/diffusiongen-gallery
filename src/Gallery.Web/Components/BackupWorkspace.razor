@@ -1,4 +1,4 @@
-@inject GalleryService Gallery
+@inject IGalleryBackup GalleryBackup
 
 <Card Class="mb-6 p-5 md:p-6 space-y-4" aria-labelledby="backup-settings-title">
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h3 id="backup-settings-title">Gallery backups</h3></div>
@@ -25,24 +25,24 @@
     [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
     private Task SaveBackupOptionsAsync() => Commands.RunAsync("Saving backup destination...", async () =>
     {
-        await Draft.SaveAsync(Gallery);
+        await Draft.SaveAsync(GalleryBackup);
         Commands.Activity.Message = "Backup destination saved in the encrypted gallery.";
     });
 
     private Task CreateFullBackupAsync() => Commands.RunAsync("Creating full backup...", async () =>
     {
-        var result = await Gallery.CreateFullBackupAsync();
-        Draft.Load(await Gallery.LoadBackupOptionsAsync());
-        Commands.Activity.Message = $"Full backup created: {result.MediaFilesCopied:N0} encrypted media file(s), {GalleryService.FormatBytes(result.BytesWritten)}.";
+        var result = await GalleryBackup.CreateFullBackupAsync();
+        Draft.Load(await GalleryBackup.LoadBackupOptionsAsync());
+        Commands.Activity.Message = $"Full backup created: {result.MediaFilesCopied:N0} encrypted media file(s), {GalleryDisplay.FormatBytes(result.BytesWritten)}.";
     });
 
     private Task CreateIncrementalBackupAsync() => Commands.RunAsync("Creating incremental backup...", async () =>
     {
-        var result = await Gallery.CreateIncrementalBackupAsync();
-        Draft.Load(await Gallery.LoadBackupOptionsAsync());
+        var result = await GalleryBackup.CreateIncrementalBackupAsync();
+        Draft.Load(await GalleryBackup.LoadBackupOptionsAsync());
         Commands.Activity.Message = result.WasSkipped
             ? $"No changes since the last backup ({result.BackupName}); no incremental backup was created."
-            : $"Incremental backup created: {result.MediaFilesCopied:N0} changed media file(s) of {result.TotalMediaFiles:N0}, {GalleryService.FormatBytes(result.BytesWritten)}.";
+            : $"Incremental backup created: {result.MediaFilesCopied:N0} changed media file(s) of {result.TotalMediaFiles:N0}, {GalleryDisplay.FormatBytes(result.BytesWritten)}.";
     });
 
 }

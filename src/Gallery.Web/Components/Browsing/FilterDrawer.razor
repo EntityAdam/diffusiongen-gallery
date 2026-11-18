@@ -1,4 +1,5 @@
-@inject GalleryService Gallery
+@inject IGallerySettings GallerySettings
+@inject IGalleryVault GalleryVault
 
 <aside id="@GalleryToolbox.FilterDrawerId" class="gallery-filter-drawer" aria-labelledby="gallery-filter-drawer-title">
     <div class="gallery-filter-drawer-header">
@@ -73,9 +74,9 @@
         var name = quickFilterName.Trim();
         return Commands.RunAsync("Saving quick filter...", async () =>
         {
-            await Gallery.SaveViewAsync(name, snapshot);
-            var saved = await Gallery.LoadViewsAsync();
-            if (!Gallery.IsUnlocked) return;
+            await GallerySettings.SaveViewAsync(name, snapshot);
+            var saved = await GallerySettings.LoadViewsAsync();
+            if (!GalleryVault.IsUnlocked) return;
             await Saved.InvokeAsync(saved.OrderBy(view => view.Name, StringComparer.OrdinalIgnoreCase).ToArray());
             CloseQuickFilterDialog();
             Commands.Activity.Message = "Quick filter saved.";

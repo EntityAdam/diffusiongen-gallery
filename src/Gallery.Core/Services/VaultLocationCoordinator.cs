@@ -274,50 +274,7 @@ internal sealed class VaultLocationCoordinator(
             .All(pair => (pair.First with { Collections = [] }) == (pair.Second with { Collections = [] })
                 && pair.First.Collections.SequenceEqual(pair.Second.Collections));
 
-    public Task<IReadOnlyList<string>> ListRestoreBackupsAsync(
-        string sourceType, string localDirectory, string azureContainer, string azurePrefix, string connectionString, HttpClient? httpClient) =>
-        CreateRestoreTarget(sourceType, localDirectory, azureContainer, azurePrefix, connectionString, httpClient).ListAsync();
-
-    public Task<IReadOnlyList<string>> ListRestoreBackupsFromSasAsync(string sasUrl, string azurePrefix, HttpClient? httpClient) =>
-        CreateSasRestoreTarget(sasUrl, azurePrefix, httpClient).ListAsync();
-
-    private static IBackupTarget CreateSasRestoreTarget(string sasUrl, string azurePrefix, HttpClient? httpClient) =>
-        new BackupTargetAzure(sasUrl, BackupTargetAzure.NormalizePrefix(azurePrefix), httpClient);
-
-    private static IBackupTarget CreateRestoreTarget(
-        string sourceType, string localDirectory, string azureContainer, string azurePrefix, string connectionString, HttpClient? httpClient)
-    {
-        if (sourceType == "local")
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(localDirectory);
-            return new BackupTargetLocal(Path.GetFullPath(localDirectory.Trim()));
-        }
-        if (sourceType == "azure")
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(azureContainer);
-            ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-            return new BackupTargetAzure(connectionString.Trim(), azureContainer.Trim(), BackupTargetAzure.NormalizePrefix(azurePrefix), httpClient);
-        }
-        throw new InvalidOperationException("Choose a local/SMB folder or Azure Blob Storage.");
-    }
-
-    public async Task RestoreVaultAsync(
-        string sourceType, string localDirectory, string azureContainer, string azurePrefix,
-        string connectionString, string latestBackupName, string destinationDirectory,
-        string credential, bool useRecovery, string? name, HttpClient? httpClient)
-    {
-        var target = CreateRestoreTarget(sourceType, localDirectory, azureContainer, azurePrefix, connectionString, httpClient);
-        await RestoreVaultFromTargetAsync(target, latestBackupName, destinationDirectory, credential, useRecovery,
-            name, sourceType == "local" ? localDirectory : null);
-    }
-
-    public Task RestoreGalleryFromSasAsync(
-        string sasUrl, string latestBackupName, string destinationDirectory,
-        string credential, bool useRecovery, string? name, string azurePrefix, HttpClient? httpClient) =>
-        RestoreVaultFromTargetAsync(CreateSasRestoreTarget(sasUrl, azurePrefix, httpClient), latestBackupName, destinationDirectory,
-            credential, useRecovery, name, sourceDirectory: null);
-
-    private async Task RestoreVaultFromTargetAsync(
+    internal async Task RestoreVaultFromTargetAsync(
         IBackupTarget target, string latestBackupName, string destinationDirectory,
         string credential, bool useRecovery, string? name, string? sourceDirectory)
     {

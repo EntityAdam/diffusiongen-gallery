@@ -1,5 +1,7 @@
 @implements IDisposable
-@inject GalleryService Gallery
+@inject IGalleryBackup GalleryBackup
+@inject IGalleryStorage GalleryStorage
+@inject IGalleryVision GalleryVision
 
 @if (Active)
 {

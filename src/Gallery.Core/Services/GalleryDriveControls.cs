@@ -2,15 +2,8 @@ using Gallery.Core.Models;
 
 namespace Gallery.Core.Services;
 
-public sealed partial class GalleryService
+internal sealed class GalleryDriveControls(GalleryDriveQueue driveQueue) : IGalleryDriveOperations
 {
-    internal TimeSpan DriveRetryDelay
-    {
-        get => driveQueue.DriveRetryDelay;
-        set => driveQueue.DriveRetryDelay = value;
-    }
-
-    /// <summary>Raised from a background thread whenever queued drive work progresses.</summary>
     public event Action? DriveQueueChanged
     {
         add => driveQueue.Changed += value;
@@ -24,6 +17,7 @@ public sealed partial class GalleryService
     public void ResumeDriveOperations() => driveQueue.ResumeDriveOperations();
 
     /// <summary>Discards queued and failed drive work. Files those operations would have changed stay as they are.</summary>
+
     public Task CancelDriveOperationsAsync() => driveQueue.CancelDriveOperationsAsync();
 
     public Task RetryFailedDriveOperationsAsync() => driveQueue.RetryFailedDriveOperationsAsync();
@@ -33,5 +27,4 @@ public sealed partial class GalleryService
     public Task RefreshDriveQueueStatusAsync() => driveQueue.RefreshDriveQueueStatusAsync();
 
     /// <summary>Discards the cached file index and schedules a fresh background scan of the media folders.</summary>
-    public Task RebuildStorageIndexAsync() => mediaStorageIndex.RebuildAsync();
 }

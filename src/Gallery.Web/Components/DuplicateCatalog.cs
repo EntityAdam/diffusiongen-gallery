@@ -13,10 +13,10 @@ public sealed class DuplicateCatalog : IDisposable
     public IReadOnlyDictionary<string, string> Thumbnails => thumbnails;
     public int DisplayLimit { get; private set; } = 20;
 
-    internal async Task LoadScanAsync(GalleryService gallery)
+    internal async Task LoadScanAsync(IGalleryDuplicates duplicates)
     {
         if (disposed || Scan is not null) return;
-        var scan = await gallery.CachedDuplicateScanAsync();
+        var scan = await duplicates.CachedDuplicateScanAsync();
         if (!disposed) Scan ??= scan;
     }
 
@@ -36,21 +36,21 @@ public sealed class DuplicateCatalog : IDisposable
             .Where(group => group.ImageIds.Length > 1).ToList();
     }
 
-    public async Task ShowMoreAsync(GalleryService gallery)
+    public async Task ShowMoreAsync(IGalleryVault vault, IGalleryMedia media)
     {
         if (disposed) return;
         DisplayLimit += 20;
-        await LoadThumbnailsAsync(gallery);
+        await LoadThumbnailsAsync(vault, media);
     }
 
-    public async Task LoadThumbnailsAsync(GalleryService gallery)
+    public async Task LoadThumbnailsAsync(IGalleryVault vault, IGalleryMedia media)
     {
         foreach (var id in Groups.Take(DisplayLimit).SelectMany(group => group.ImageIds))
         {
-            if (disposed || !gallery.IsUnlocked) return;
+            if (disposed || !vault.IsUnlocked) return;
             if (thumbnails.ContainsKey(id)) continue;
-            var thumbnail = await gallery.ThumbnailAsync(id);
-            if (disposed || !gallery.IsUnlocked) return;
+            var thumbnail = await media.ThumbnailAsync(id);
+            if (disposed || !vault.IsUnlocked) return;
             thumbnails[id] = thumbnail;
         }
     }

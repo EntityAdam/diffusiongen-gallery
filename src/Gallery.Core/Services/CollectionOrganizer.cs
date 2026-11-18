@@ -5,7 +5,7 @@ using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Core.Services;
 
-internal sealed class CollectionOrganizer(GalleryLifetime galleryLifetime, VaultSession vaultSession)
+internal sealed class CollectionOrganizer(GalleryLifetime galleryLifetime, VaultSession vaultSession) : IGalleryCollections
 {
     public async Task<CollectionCatalog> LoadCollectionCatalogAsync()
     {

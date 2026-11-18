@@ -1,4 +1,4 @@
-@inject GalleryService Gallery
+@inject IGalleryVision GalleryVision
 @inject ILogger<LlmEndpointSettings> Logger
 @inject ISonnerService Toasts
 
@@ -263,7 +263,7 @@
     private Task FetchModelsAsync() => RunAsync(async () =>
     {
         models = [];
-        models = await Gallery.GetVisionModelsAsync(draft.ToSettings().ForLane(Lane));
+        models = await GalleryVision.GetVisionModelsAsync(draft.ToSettings().ForLane(Lane));
         if (models.Count == 0) message = "The endpoint is reachable, but it returned no models. Load a model or enter its ID manually.";
         else
         {
@@ -275,7 +275,7 @@
     private Task SaveAsync() => RunAsync(async () =>
     {
         var settings = draft.ToSettings();
-        await Gallery.SaveSettingsAsync(settings);
+        await GalleryVision.SaveSettingsAsync(settings);
         observedSettings = settings;
         baseline = settings;
         await Saved.InvokeAsync(settings);

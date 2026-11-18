@@ -298,7 +298,7 @@ public sealed class UiComponentTests
     public async Task Home_WhileImportRuns_ToolboxCannotLeaveIngestionProgress()
     {
         using var fixture = new TestVault();
-        using var home = new WorkspaceSession(fixture.Service, new(), new(fixture.Service), null!,
+        using var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(fixture.Service), new(), new(fixture.Service.Scope.Collections), null!,
             NullLogger.Instance, action => action(), () => { });
         ComponentTestAccess.Set(home.Navigation, "Section", "ingest");
         home.Browser.ToolboxVisible = false;
@@ -327,7 +327,7 @@ public sealed class UiComponentTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         fixture.Service.LockVault();
-        using var home = new WorkspaceSession(fixture.Service, new(), new(fixture.Service), null!,
+        using var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(fixture.Service), new(), new(fixture.Service.Scope.Collections), null!,
             NullLogger.Instance, action => action(), () => { });
 
         await home.Preferences.UpdateAutoLockAsync("30", home.Commands);
