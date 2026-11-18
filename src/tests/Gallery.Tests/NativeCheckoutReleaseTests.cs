@@ -19,9 +19,7 @@ public sealed class NativeCheckoutReleaseTests
         try
         {
             Assert.Null(lifetime.Current.Checkout);
-            cleanup = (Task)typeof(GalleryService)
-                .GetMethod("ReleaseCheckoutAfterOperationsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(fixture.Service, null)!;
+            cleanup = Access(fixture.Service).ReleaseCheckoutAfterOperationsAsync();
             Assert.False(cleanup.IsCompleted);
             lifetime.EnsureCheckout();
             Assert.Throws<IOException>(() => VaultCheckout.Acquire(fixture.Root));
@@ -41,6 +39,7 @@ public sealed class NativeCheckoutReleaseTests
         using var fixture = new TestVault();
         await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         var lifetime = Lifetime(fixture.Service);
+        var access = Access(fixture.Service);
         var expectedCheckout = lifetime.Current.Checkout!;
         var oldDrain = fixture.Session.WhenDrainedAsync();
         var key = fixture.Session.Key;
@@ -52,7 +51,7 @@ public sealed class NativeCheckoutReleaseTests
         await lifetime.Gate.WaitAsync();
         try
         {
-            var requiredDrain = fixture.Service.TryReleaseCheckoutAfterOperationsAsync(expectedCheckout);
+            var requiredDrain = access.TryReleaseCheckoutAfterOperationsAsync(expectedCheckout);
             Assert.True(oldDrain.IsCompletedSuccessfully);
             Assert.NotNull(requiredDrain);
             Assert.NotSame(oldDrain, requiredDrain);
@@ -61,7 +60,7 @@ public sealed class NativeCheckoutReleaseTests
 
             newerLease.Dispose();
             await requiredDrain.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Null(fixture.Service.TryReleaseCheckoutAfterOperationsAsync(expectedCheckout));
+            Assert.Null(access.TryReleaseCheckoutAfterOperationsAsync(expectedCheckout));
             using var releasedCheckout = VaultCheckout.Acquire(fixture.Root);
         }
         finally { lifetime.Gate.Release(); }
@@ -73,6 +72,7 @@ public sealed class NativeCheckoutReleaseTests
         using var fixture = new TestVault();
         await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         var lifetime = Lifetime(fixture.Service);
+        var access = Access(fixture.Service);
         var previousCheckout = lifetime.Current.Checkout!;
         var destination = fixture.Root + "-replacement";
         try
@@ -82,7 +82,7 @@ public sealed class NativeCheckoutReleaseTests
             try
             {
                 Assert.NotSame(previousCheckout, lifetime.Current.Checkout);
-                Assert.Null(fixture.Service.TryReleaseCheckoutAfterOperationsAsync(previousCheckout));
+                Assert.Null(access.TryReleaseCheckoutAfterOperationsAsync(previousCheckout));
                 Assert.Throws<IOException>(() => VaultCheckout.Acquire(destination));
             }
             finally { lifetime.Gate.Release(); }
@@ -130,4 +130,7 @@ public sealed class NativeCheckoutReleaseTests
 
     private static GalleryLifetime Lifetime(GalleryService service) =>
         (GalleryLifetime)typeof(GalleryService).GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
+
+    private static VaultAccess Access(GalleryService service) =>
+        (VaultAccess)typeof(GalleryService).GetField("vaultAccess", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
 }

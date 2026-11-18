@@ -9,7 +9,8 @@ using Gallery.Core.Services.Sessions;
 
 namespace Gallery.Core.Services;
 
-internal sealed class GalleryVisionWorkflow(GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager)
+internal sealed class GalleryVisionWorkflow(
+    GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager, CollectionOrganizer collectionOrganizer)
 {
     private const string VisionSettingsId = "vision-settings";
     private const string VisionCheckpointId = "vision-checkpoint";
@@ -31,9 +32,24 @@ internal sealed class GalleryVisionWorkflow(GalleryLifetime galleryLifetime, Vau
         cancellationToken.ThrowIfCancellationRequested();
         return (result.Description, FilterVisionTags(result.Tags, names, settings.UseExistingTags, settings.SuggestNewTags));
     }
-    public Task<string> SuggestSetAsync(VisionSettings settings, string collection, IReadOnlyList<MediaSet> sets,
-        IReadOnlyList<ImageRecord> images) =>
-        RequiredVisionManager().SuggestSetAsync(settings.ForLane(settings.GetLanes()[0]), collection, sets, images);
+
+    public async Task<MediaSet?> SuggestDestinationSetAsync(string collectionId, IEnumerable<string> mediaIds)
+    {
+        var catalog = await collectionOrganizer.LoadCollectionCatalogAsync();
+        var collection = CollectionOrganizer.RequireCollection(catalog, collectionId);
+        var sets = catalog.Sets.Where(set => set.CollectionId == collectionId).ToArray();
+        var ids = mediaIds.ToHashSet();
+        List<ImageRecord> records;
+        using (var key = vaultSession.AcquireUnlockedSession().Borrow())
+            records = await galleryStore.ReadRecordsAsync(key.Bytes);
+        var images = records.Where(image => ids.Contains(image.Id)).ToArray();
+        if (images.Length == 0 || sets.Length == 0) throw new InvalidOperationException("Choose media and a collection with existing sets first.");
+        if (images.All(image => string.IsNullOrWhiteSpace(image.Description) && string.IsNullOrWhiteSpace(image.Tags)))
+            throw new InvalidOperationException("Analyze or tag the selected media first so the model has content to use.");
+        var settings = await LoadSettingsAsync();
+        var suggestedId = await RequiredVisionManager().SuggestSetAsync(settings.ForLane(settings.GetLanes()[0]), collection.Name, sets, images);
+        return sets.FirstOrDefault(set => set.Id == suggestedId);
+    }
 
     public async Task<VisionSettings> LoadSettingsAsync()
     {

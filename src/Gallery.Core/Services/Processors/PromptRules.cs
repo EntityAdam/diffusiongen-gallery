@@ -6,11 +6,12 @@ namespace Gallery.Core.Services.Processors;
 internal static class PromptRules
 {
     /// <summary>Groups exactly matching prompts (shared groups first, largest first), then unique and missing prompts.</summary>
-    public static List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> orderedImages)
+    public static List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> records)
     {
+        ArgumentNullException.ThrowIfNull(records);
         List<(string Prompt, List<ImageRecord> Images)> promptGroups;
         List<ImageRecord> imagesWithoutPrompts;
-        (promptGroups, imagesWithoutPrompts) = CollectPromptGroups(orderedImages);
+        (promptGroups, imagesWithoutPrompts) = CollectPromptGroups(records);
         var sharedPromptGroups = OrderSharedPromptGroups(promptGroups);
         var orderedPromptGroups = new List<PromptGroup>(sharedPromptGroups);
         AppendUniquelyPromptedImages(orderedPromptGroups, promptGroups);

@@ -1,87 +1,9 @@
 using Gallery.Core.Models;
-using Gallery.Core.Services.Ports.Models;
-using Gallery.Core.Services.Processors;
 
 namespace Gallery.Core.Services;
 
 public sealed partial class GalleryService
 {
-    public async Task<StorageOverview?> CachedStorageOverviewAsync()
-    {
-        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var overview = await galleryStore.ReadSettingsAsync<StorageOverview>(StorageOverview.SettingId, StorageOverview.SettingPurpose, keyLease.Bytes);
-        return overview is null ? null : overview with
-        {
-            IsStale = overview.CatalogRevision != await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes)
-        };
-    }
-
-    public async Task<StorageOverview> RefreshStorageOverviewAsync()
-    {
-        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var revision = await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes);
-        var records = await galleryStore.ReadRecordsAsync(keyLease.Bytes);
-        var indexedLengths = await galleryStore.ReadMediaIndexAsync(keyLease.Bytes);
-        var indexPending = await mediaStorageIndex.IsPendingAsync(keyLease.Bytes);
-        var (overview, measured) = await Task.Run(() =>
-            StorageOverviewCalculator.Measure(vaultStore.Root, records, indexedLengths, keyLease.Bytes));
-        await galleryStore.IndexFilesAsync(measured, keyLease.Bytes);
-        var storageOverview = overview with { IsIndexPending = indexPending, CatalogRevision = revision };
-        await galleryStore.SaveSettingsAsync(storageOverview, StorageOverview.SettingId, StorageOverview.SettingPurpose, keyLease.Bytes);
-        return storageOverview with { IsStale = revision != await galleryStore.ReadStorageRevisionAsync(keyLease.Bytes) };
-    }
-
-    private static class StorageOverviewCalculator
-    {
-        public static (StorageOverview Overview, List<(byte[] Directory, IndexedFile File)> Measured) Measure(
-            string vaultRoot, IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
-        {
-            var vaultMeasurement = MeasureVaultFiles(vaultRoot);
-            var imageMeasurement = MeasureImageFiles(records, indexedLengths, key);
-            return (new(vaultMeasurement.DatabaseBytes, imageMeasurement.FileCount, imageMeasurement.Bytes,
-                vaultMeasurement.FileCount, vaultMeasurement.Bytes, imageMeasurement.Missing, DateTimeOffset.UtcNow),
-                imageMeasurement.Measured);
-        }
-        private static (long DatabaseBytes, int FileCount, long Bytes) MeasureVaultFiles(string vaultRoot)
-        {
-            var databasePath = Path.Combine(vaultRoot, CatalogFileName);
-            string[] databaseFiles = [databasePath, databasePath + "-wal", databasePath + "-shm"];
-            long databaseBytes = 0, vaultBytes = 0;
-            var vaultFileCount = 0;
-            foreach (var path in databaseFiles.Append(Path.Combine(vaultRoot, VaultHeaderFileName)))
-            {
-                var length = StorageFileSystem.FileLength(path);
-                if (length is null) continue;
-                vaultFileCount++;
-                vaultBytes += length.Value;
-                if (databaseFiles.Contains(path)) databaseBytes += length.Value;
-            }
-
-            return (databaseBytes, vaultFileCount, vaultBytes);
-        }
-
-        // Indexed files are counted from the database; only files the index has not seen are measured on disk.
-        private static (int FileCount, long Bytes, int Missing, List<(byte[] Directory, IndexedFile File)> Measured) MeasureImageFiles(
-            IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
-        {
-            long imageBytes = 0;
-            int imageFileCount = 0, missing = 0;
-            var measured = new List<(byte[] Directory, IndexedFile File)>();
-            foreach (var path in records.Select(record => record.StoredPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
-            {
-                var target = DriveOperationProcessor.PathFingerprint(key, path);
-                if (!indexedLengths.TryGetValue(Convert.ToHexString(target), out var length))
-                {
-                    var measuredLength = StorageFileSystem.FileLength(path);
-                    if (measuredLength is null) { missing++; continue; }
-                    length = measuredLength.Value;
-                    measured.Add((DriveOperationProcessor.PathFingerprint(key, Path.GetDirectoryName(path)!), new IndexedFile(target, length)));
-                }
-                imageFileCount++;
-                imageBytes += length;
-            }
-            return (imageFileCount, imageBytes, missing, measured);
-        }
-
-    }
+    public Task<StorageOverview?> CachedStorageOverviewAsync() => mediaStorageIndex.CachedStorageOverviewAsync();
+    public Task<StorageOverview> RefreshStorageOverviewAsync() => mediaStorageIndex.RefreshStorageOverviewAsync();
 }

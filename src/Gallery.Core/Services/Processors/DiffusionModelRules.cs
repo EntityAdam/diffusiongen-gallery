@@ -5,12 +5,13 @@ namespace Gallery.Core.Services.Processors;
 
 internal static class DiffusionModelRules
 {
-    public static List<DiffusionModelGroup> GroupByDiffusionModel(IEnumerable<ImageRecord> orderedImages)
+    public static List<DiffusionModelGroup> GroupByDiffusionModel(IEnumerable<ImageRecord> records)
     {
+        ArgumentNullException.ThrowIfNull(records);
         Dictionary<string, List<ImageRecord>> imagesByModel;
         List<string> orderedModels;
         List<ImageRecord> imagesWithoutModel;
-        (imagesByModel, orderedModels, imagesWithoutModel) = CollectModelBuckets(orderedImages);
+        (imagesByModel, orderedModels, imagesWithoutModel) = CollectModelBuckets(records);
         var diffusionModelGroups = OrderModelGroups(imagesByModel, orderedModels);
         if (imagesWithoutModel.Count > 0)
             diffusionModelGroups.Add(new("", imagesWithoutModel.ToImmutableArray()));

@@ -1,4 +1,5 @@
 using Gallery.Core.Models;
+using Gallery.Core.Services.Processors;
 using Gallery.Core.Services.Composers;
 
 namespace Gallery.Core.Services;
@@ -20,4 +21,8 @@ public sealed partial class GalleryService
     public static byte[] CopyExportContent(ExportFile file) => file.CopyContentBytes();
     public static void ClearExportContent(ExportFile file) => ExportComposer.ClearOwnedContent(file);
     public static string SafeFileName(string name) => ExportComposer.SafeFileName(name);
+
+    public static string FormatDuration(ImageRecord image) => GalleryDisplayFormatter.FormatDuration(image);
+    public static string FormatBytes(long bytes) => GalleryDisplayFormatter.FormatBytes(bytes);
+    public static string FormatModelFilename(string model) => GalleryDisplayFormatter.FormatModelFilename(model);
 }

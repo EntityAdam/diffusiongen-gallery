@@ -13,7 +13,11 @@ internal static class GalleryDisplayFormatter
     private static string RemoveModelExtension(string filename) =>
         filename.EndsWith(ModelExtension, StringComparison.OrdinalIgnoreCase) ? filename[..^ModelExtension.Length] : filename;
 
-    public static string FormatDuration(ImageRecord imageRecord) => RenderDuration(NormalizeDuration(imageRecord.DurationSeconds));
+    public static string FormatDuration(ImageRecord image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        return RenderDuration(NormalizeDuration(image.DurationSeconds));
+    }
 
     private static TimeSpan NormalizeDuration(double seconds) => TimeSpan.FromSeconds(Math.Max(0, Math.Round(seconds)));
 
