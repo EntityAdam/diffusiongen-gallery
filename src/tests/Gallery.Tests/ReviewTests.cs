@@ -2,6 +2,7 @@ using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Web.Components.Features.Collections;
 using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Media;
 using Gallery.Web.Components.Features.Vision;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -133,15 +134,14 @@ public sealed class ReviewTests
         var viewer = new Gallery.Web.Components.Features.Media.FullscreenViewer();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
-        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
-        {
-            new() { Id = "first" }, new() { Id = "last" }
-        });
+        ImageRecord[] images = [new() { Id = "first" }, new() { Id = "last" }];
+        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, images);
         type.GetProperty(nameof(viewer.ReviewMode))!.SetValue(viewer, true);
-        type.GetField("reviewComplete", flags)!.SetValue(viewer, true);
-        type.GetField("hasSkipped", flags)!.SetValue(viewer, hasSkipped);
-        var decisions = (HashSet<string>)type.GetField("decisions", flags)!.GetValue(viewer)!;
-        decisions.UnionWith(new[] { "first", "last" }.Take(reviewed));
+        var progress = (ViewerReviewProgress)type.GetField("review", flags)!.GetValue(viewer)!;
+        if (hasSkipped) progress.RecordSkip(images[0].Id);
+        for (var index = 0; index < reviewed; index++)
+            progress.RecordDecision(images[index].Id, index, new ReviewState(false, false, false, 0));
+        progress.Advance(images, images.Length - 1);
         var js = new CelebrationJsRuntime();
         type.GetProperty("JS", flags)!.SetValue(viewer, js);
 
@@ -180,19 +180,43 @@ public sealed class ReviewTests
         type.GetProperty("JS", flags)!.SetValue(viewer, new ComponentRenderFixture.NoOpJsRuntime());
         type.GetField("index", flags)!.SetValue(viewer, 1);
         Task Skip() => (Task)type.GetMethod("SkipAsync", flags)!.Invoke(viewer, null)!;
+        var progress = (ViewerReviewProgress)type.GetField("review", flags)!.GetValue(viewer)!;
 
         await using var viewerLifetime = viewer;
         await Skip();
 
-        Assert.False((bool)type.GetField("reviewComplete", flags)!.GetValue(viewer)!);
+        Assert.False(progress.IsComplete);
         Assert.Equal(0, type.GetField("index", flags)!.GetValue(viewer));
         Assert.Equal("0 Reviewed + 1 Skipped / 2", type.GetProperty("ReviewProgressText", flags)!.GetValue(viewer));
-        Assert.True((bool)type.GetField("hasSkipped", flags)!.GetValue(viewer)!);
 
         await Skip();
 
-        Assert.True((bool)type.GetField("reviewComplete", flags)!.GetValue(viewer)!);
+        Assert.True(progress.IsComplete);
         Assert.Equal("0 Reviewed + 2 Skipped / 2", type.GetProperty("ReviewProgressText", flags)!.GetValue(viewer));
+    }
+
+    [Fact]
+    public void ReviewProgress_WhenUndoingADecisionOnASkippedImage_RestoresTheSkipAndReopens()
+    {
+        ImageRecord[] images = [new() { Id = "first" }, new() { Id = "last" }];
+        var progress = new ViewerReviewProgress();
+        var previous = new ReviewState(false, false, false, 0);
+        progress.RecordSkip(images[0].Id);
+        progress.RecordDecision(images[1].Id, 1, previous);
+        Assert.Null(progress.Advance(images, 1));
+
+        progress.Reopen();
+        progress.RecordDecision(images[0].Id, 0, previous);
+        Assert.Null(progress.Advance(images, 0));
+        Assert.Equal(2, progress.ReviewedCount);
+        Assert.Equal(0, progress.SkippedCount);
+
+        progress.RecordUndo(images[0].Id);
+
+        Assert.False(progress.IsComplete);
+        Assert.Equal(1, progress.ReviewedCount);
+        Assert.Equal(1, progress.SkippedCount);
+        Assert.Equal(1, progress.PendingUndo?.Index);
     }
 
     [Fact]

@@ -180,8 +180,8 @@ internal static class BackupArchive
         {
             verifiedBytes += await VerifyArchiveEntryAsync(database, expectedHash: null, databasePath);
             if (manifest.DatabaseFingerprint is not null
-                && manifest.DatabaseFingerprint != await storeFactory.CreateForDatabase(databasePath, backend)
-                    .ComputeSnapshotFingerprintAsync(databasePath, StoredBackupSettings.SettingId, key))
+                && manifest.DatabaseFingerprint != await ReadSnapshotFingerprintAsync(
+                    storeFactory.CreateForDatabase(databasePath, backend), databasePath, key))
                 throw new InvalidDataException("The archive database disagrees with its manifest.");
         }
         finally { File.Delete(databasePath); }
@@ -199,6 +199,9 @@ internal static class BackupArchive
         }
         return (verifiedBytes, mediaEntryCount);
     }
+
+    private static Task<string> ReadSnapshotFingerprintAsync(IGalleryCatalogSnapshots snapshots, string databasePath, byte[] key) =>
+        snapshots.ComputeSnapshotFingerprintAsync(databasePath, StoredBackupSettings.SettingId, key);
 
     private static async Task<long> VerifyArchiveEntryAsync(
         ZipArchiveEntry entry, string? expectedHash, string? destinationPath = null)
@@ -368,8 +371,8 @@ internal static class BackupArchive
                     latestManifest = manifest;
                     await ExtractRequiredEntryAsync(archive, CatalogFileName, Path.Combine(staging, CatalogFileName), archiveLength);
                     if (manifest.VaultHeaderSha256 != await FileSha256.ComputeAsync(Path.Combine(staging, VaultHeaderFileName))
-                        || manifest.DatabaseFingerprint != await storeFactory.Create(staging).ComputeSnapshotFingerprintAsync(
-                            Path.Combine(staging, CatalogFileName), StoredBackupSettings.SettingId, key))
+                        || manifest.DatabaseFingerprint != await ReadSnapshotFingerprintAsync(
+                            storeFactory.Create(staging), Path.Combine(staging, CatalogFileName), key))
                         throw new CryptographicException("Backup header or database integrity check failed.");
                 }
                 if (manifest.BackupType == "full")
