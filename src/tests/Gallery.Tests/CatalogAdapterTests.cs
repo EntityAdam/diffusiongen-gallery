@@ -9,7 +9,6 @@ using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Infrastructure.Persistence.Turso;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
 using Gallery.Migrations.Turso;
 using Microsoft.Data.Sqlite;
 
@@ -105,6 +104,65 @@ public sealed class CatalogAdapterTests
         AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(record),
             await fixture.Store.ReadRecordAsync(record.Id, fixture.Key));
         Assert.Equal(0, (await fixture.Store.ReadDriveQueueCountsAsync(fixture.Key)).Pending);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task Metadata_refresh_rejects_a_stale_snapshot_and_publishes_the_current_revision(CatalogBackend backend)
+    {
+        using var fixture = new AdapterFixture(backend);
+        var store = fixture.Store;
+        var key = fixture.Key;
+        await store.InitializeAsync(key);
+        var record = Record() with { MetadataVersion = 0, Generation = null };
+        using var thumbnail = new ImageThumbnail([1, 2, 3]);
+        await store.InsertAsync(record, thumbnail, key);
+        var source = await store.ReadCatalogSnapshotAsync(key, CancellationToken.None);
+
+        var refreshed = record with { MetadataVersion = ComfyMetadata.Version, Generation = new() { Steps = 30 } };
+        await store.UpdateAsync(record with { IsMarkedForDeletion = true }, key);
+        Assert.Null(await store.RefreshGenerationMetadataAsync(source, [refreshed], key, CancellationToken.None));
+        var afterEdit = await store.ReadRecordAsync(record.Id, key);
+        Assert.True(afterEdit.IsMarkedForDeletion);
+        Assert.Equal(0, afterEdit.MetadataVersion);
+        if (backend == CatalogBackend.Sqlite)
+            Assert.Null(await store.ReadInitialPageAsync(12, markedOnly: true, key, CancellationToken.None));
+
+        var current = await store.ReadCatalogSnapshotAsync(key, CancellationToken.None);
+        var revision = await store.RefreshGenerationMetadataAsync(current,
+            [refreshed with { IsMarkedForDeletion = true }], key, CancellationToken.None);
+
+        var page = Assert.IsType<GalleryCatalog>(await store.ReadInitialPageAsync(12, markedOnly: true, key, CancellationToken.None));
+        Assert.True(revision > current.Revision);
+        Assert.Equal(revision, page.Revision);
+        Assert.Equal(backend == CatalogBackend.Sqlite, page.CacheHit);
+        var updated = Assert.Single(page.Records);
+        Assert.True(updated.IsMarkedForDeletion);
+        Assert.Equal(ComfyMetadata.Version, updated.MetadataVersion);
+        Assert.Equal(30, updated.Generation!.Steps);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task Failed_metadata_refresh_rolls_back_earlier_changes(CatalogBackend backend)
+    {
+        using var fixture = new AdapterFixture(backend);
+        var store = fixture.Store;
+        var key = fixture.Key;
+        await store.InitializeAsync(key);
+        var record = Record() with { MetadataVersion = 0 };
+        using var thumbnail = new ImageThumbnail([1, 2, 3]);
+        await store.InsertAsync(record, thumbnail, key);
+        var source = await store.ReadCatalogSnapshotAsync(key, CancellationToken.None);
+        var refreshed = record with { MetadataVersion = ComfyMetadata.Version };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.RefreshGenerationMetadataAsync(source,
+            [refreshed, refreshed with { Id = "missing-record" }], key, CancellationToken.None));
+
+        Assert.Equal(source.Revision, await store.ReadStorageRevisionAsync(key));
+        Assert.Equal(0, (await store.ReadRecordAsync(record.Id, key)).MetadataVersion);
     }
 
     [Fact]
@@ -283,7 +341,7 @@ public sealed class CatalogAdapterTests
         var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
         {
-            if (instrument.Meter.Name == GalleryService.CatalogMeterName && instrument.Name == name)
+            if (instrument.Meter.Name == CatalogMetrics.MeterName && instrument.Name == name)
                 meter.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) => { if (Activity.Current == activity) observe(); });

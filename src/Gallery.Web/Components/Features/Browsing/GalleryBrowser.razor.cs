@@ -77,11 +77,6 @@ public partial class GalleryBrowser
         await State.SaveToolboxStateAsync();
     }
 
-    private async Task SuggestionsChangedAsync(IReadOnlyList<OrganizationSuggestion> suggestions)
-    {
-        await State.SuggestionsChangedAsync(suggestions);
-        await Refreshed.InvokeAsync();
-    }
     internal async Task ResetToolboxPositionAsync()
     {
         State.ToolboxVisible = true;

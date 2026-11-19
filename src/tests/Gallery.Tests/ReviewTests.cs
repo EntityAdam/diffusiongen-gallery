@@ -58,23 +58,24 @@ public sealed class ReviewTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var imageRecord = await fixture.Service.ImportAsync(
+        var imageRecord = await fixture.Scope.Ingestion.ImportAsync(
             new MemoryStream(GalleryTests.MakePng()), "approval.png", "folder");
-        imageRecord = await fixture.Service.UpdateAsync(imageRecord.Id, existingImageRecord => existingImageRecord with
+        imageRecord = await fixture.Scope.Records.UpdateAsync(imageRecord.Id, existingImageRecord => existingImageRecord with
         {
             Tags = "existing",
             Collections = ["Originals"]
         });
-        var organizationSuggestion = new OrganizationSuggestion(
-            imageRecord.Id, imageRecord.Name, "A green hillside.", "landscape", "vision");
+        var checkpoint = await fixture.Scope.Vision.OpenVisionCheckpointAsync();
+        await checkpoint.StageAsync(new(imageRecord.Id, imageRecord.Name, "A green hillside.", "landscape", "vision"));
+        using var analysis = new LibraryAnalysis(fixture.Scope.Catalog, fixture.Scope.Vision, NullLogger.Instance);
+        await analysis.InitializeAsync();
 
         // Act
-        var approvedImageRecord = await LibraryWorkbench.PersistApprovedSuggestionAsync(
-            fixture.Service.Scope.Vision, organizationSuggestion);
-        var storedImageRecord = Assert.Single(await fixture.Service.ListAsync());
+        var approvedImageRecord = await analysis.ApproveAsync(Assert.Single(analysis.Suggestions));
+        var storedImageRecord = Assert.Single(await fixture.Scope.Catalog.ListAsync());
 
         // Assert
-        Assert.Equal("A green hillside.", approvedImageRecord.Description);
+        Assert.Equal("A green hillside.", Assert.IsType<ImageRecord>(approvedImageRecord).Description);
         Assert.Equal("A green hillside.", storedImageRecord.Description);
         Assert.Equal("existing, landscape", storedImageRecord.Tags);
         Assert.Equal("Originals", Assert.Single(storedImageRecord.Collections));

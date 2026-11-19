@@ -469,24 +469,26 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         (byte[]?)await sqliteCommand.ExecuteScalarAsync()
             ?? throw new InvalidOperationException($"Expected one record for media item '{id}', but found 0.");
 
-    public async Task UpdateAsync(ImageRecord imageRecord, byte[] key, bool preserveBrowseIndex = true)
+    public async Task UpdateAsync(ImageRecord imageRecord, byte[] key)
     {
-        await using var sqliteConnection = await OpenAsync();
-        using var transaction = sqliteConnection.BeginTransaction();
-        ImageRecord? previous = null;
-        if (preserveBrowseIndex)
-        {
-            using var read = GalleryStoreCommandFactory.CreateReadRecord(sqliteConnection, imageRecord.Id);
-            read.Transaction = transaction;
-            previous = DecodeRecord(imageRecord.Id, await ReadRequiredEncryptedRecordAsync(read, imageRecord.Id), key);
-        }
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, imageRecord.Id, EncodeRecord(imageRecord, key));
-        sqliteCommand.Transaction = transaction;
-        var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
-        RequireSingleImageMutation(affectedRows, imageRecord.Id, UpdateAction, UpdatedOutcome);
-        if (previous is not null)
-            await PreserveBrowseIndexAsync(sqliteConnection, transaction, previous, imageRecord, key, CancellationToken.None);
+        await using var connection = await OpenAsync();
+        using var transaction = connection.BeginTransaction();
+        using var read = GalleryStoreCommandFactory.CreateReadRecord(connection, imageRecord.Id);
+        read.Transaction = transaction;
+        var previous = DecodeRecord(imageRecord.Id, await ReadRequiredEncryptedRecordAsync(read, imageRecord.Id), key);
+        await WriteUpdatedRecordAsync(connection, transaction, imageRecord, key, CancellationToken.None);
+        await PreserveBrowseIndexAsync(connection, transaction, previous, imageRecord, key, CancellationToken.None);
         transaction.Commit();
+    }
+
+    private static async Task WriteUpdatedRecordAsync(SqliteConnection connection, SqliteTransaction transaction,
+        ImageRecord record, byte[] key, CancellationToken token)
+    {
+        using var command = GalleryStoreCommandFactory.CreateUpdateImage(connection, record.Id, EncodeRecord(record, key));
+        command.Transaction = transaction;
+        using var cancellation = token.Register(command.Cancel);
+        var affectedRows = await command.ExecuteNonQueryAsync(token);
+        RequireSingleImageMutation(affectedRows, record.Id, UpdateAction, UpdatedOutcome);
     }
 
     public async Task DeleteAsync(string id, byte[]? key = null)

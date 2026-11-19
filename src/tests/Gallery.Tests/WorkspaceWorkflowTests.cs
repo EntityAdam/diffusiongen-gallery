@@ -188,6 +188,31 @@ public sealed class WorkspaceWorkflowTests
     }
 
     [Fact]
+    public async Task AnalysisRestoresDraftsAndRefreshesTheCatalogWithoutAWorkbench()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var scope = vault.Scope;
+        var image = await scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var checkpoint = await scope.Vision.OpenVisionCheckpointAsync();
+        await checkpoint.StageAsync(new(image.Id, image.Name, "Sunlit meadow", "landscape", "vision"));
+        using var session = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(scope), new(), new(scope.Collections),
+            new ComponentRenderFixture.NoOpJsRuntime(), NullLogger.Instance, action => action(), () => { });
+
+        await session.InitializeAsync();
+
+        Assert.True(session.IsInitialized);
+        var suggestion = Assert.Single(session.Browser.Suggestions).Value;
+        Assert.Equal(image.Id, suggestion.Id);
+
+        await session.Analysis.ApproveAsync(suggestion);
+
+        Assert.Empty(session.Browser.Suggestions);
+        Assert.Equal("Sunlit meadow", session.Catalog.ImagesById[image.Id].Description);
+        Assert.Empty((await scope.Vision.OpenVisionCheckpointAsync()).State.Drafts);
+    }
+
+    [Fact]
     public async Task DisposingTheSessionDuringRefreshRevokesTheCatalogAndStopsFurtherNotifications()
     {
         using var vault = new TestVault();

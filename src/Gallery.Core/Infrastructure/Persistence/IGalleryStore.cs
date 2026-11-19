@@ -26,7 +26,7 @@ internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReade
     Task<(ImageRecord Record, ImageThumbnail Thumbnail)> ReadVerificationAsync(string id, byte[] key);
     Task BackfillFingerprintsAsync(byte[] key);
     Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key);
-    Task UpdateAsync(ImageRecord imageRecord, byte[] key, bool preserveBrowseIndex = true);
+    Task UpdateAsync(ImageRecord imageRecord, byte[] key);
     Task DeleteAsync(string id, byte[] key);
     Task CommitCollectionCatalogAsync(IReadOnlyList<ImageRecord> records, CollectionCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);
     Task CommitTagCatalogAsync(IReadOnlyList<ImageRecord> records, TagCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);
@@ -37,7 +37,9 @@ internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReade
     Task<List<SavedView>> LoadViewsAsync(byte[] key);
     Task SaveViewAsync(string name, GalleryFilter galleryFilter, byte[] key);
     Task DeleteViewAsync(string name, byte[] key);
-    Task<bool> SaveBrowseIndexAsync(List<ImageRecord> records, long revision, byte[] key, CancellationToken token);
+    // Returns the committed revision, or null when the source snapshot is stale.
+    Task<long?> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot, IReadOnlyList<ImageRecord> refreshedRecords,
+        byte[] key, CancellationToken token);
     Task EnqueueDriveOperationsAsync(IReadOnlyCollection<NewDriveOperation> operations, byte[] key);
     Task DeleteImageAndEnqueueAsync(string id, NewDriveOperation newDriveOperation, byte[] key);
     Task UpdateImageAndEnqueueAsync(ImageRecord imageRecord, byte[] key, NewDriveOperation newDriveOperation, long? supersededSequence = null);

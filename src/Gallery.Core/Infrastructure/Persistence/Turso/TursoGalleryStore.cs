@@ -231,9 +231,9 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
     }
 
     public Task InitializeAsync(byte[]? key = null) => ExecuteAsync(key, _ => Task.CompletedTask, initialize: true);
-    public Task<long> ReadStorageRevisionAsync(byte[]? key = null) => ExecuteAsync(key, ReadRevisionAsync);
-    private static async Task<long> ReadRevisionAsync(DbConnection connection) =>
-        Convert.ToInt64(await ScalarAsync(connection, "SELECT revision FROM storage_overview_state WHERE id=1"));
+    public Task<long> ReadStorageRevisionAsync(byte[]? key = null) => ExecuteAsync(key, connection => ReadRevisionAsync(connection));
+    private static async Task<long> ReadRevisionAsync(DbConnection connection, DbTransaction? transaction = null) =>
+        Convert.ToInt64(await ScalarAsync(connection, "SELECT revision FROM storage_overview_state WHERE id=1", transaction));
 
     public Task<long> CountRecordsAsync(byte[] key, CancellationToken token = default) => ExecuteAsync(key, async connection =>
     {
@@ -314,7 +314,7 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         finally { Gate.Release(); }
     }
 
-    public Task UpdateAsync(ImageRecord imageRecord, byte[] key, bool preserveBrowseIndex = true) => ExecuteAsync(key, async connection =>
+    public Task UpdateAsync(ImageRecord imageRecord, byte[] key) => ExecuteAsync(key, async connection =>
     {
         using var transaction = connection.BeginTransaction();
         await WriteRecordAsync(connection, transaction, imageRecord, insert: false);
@@ -402,8 +402,22 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         });
     }
 
-    public Task<bool> SaveBrowseIndexAsync(List<ImageRecord> records, long revision, byte[] key, CancellationToken token) =>
-        ExecuteAsync(key, async connection => { token.ThrowIfCancellationRequested(); return await ReadRevisionAsync(connection) == revision; });
+    public Task<long?> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot, IReadOnlyList<ImageRecord> refreshedRecords,
+        byte[] key, CancellationToken token) => ExecuteAsync<long?>(key, async connection =>
+    {
+        token.ThrowIfCancellationRequested();
+        using var transaction = connection.BeginTransaction();
+        if (await ReadRevisionAsync(connection, transaction) != sourceSnapshot.Revision) return null;
+        foreach (var record in refreshedRecords)
+        {
+            token.ThrowIfCancellationRequested();
+            await WriteRecordAsync(connection, transaction, record, insert: false);
+        }
+        var revision = await ReadRevisionAsync(connection, transaction);
+        token.ThrowIfCancellationRequested();
+        transaction.Commit();
+        return revision;
+    });
 
     public Task<T?> ReadSettingsAsync<T>(string id, string purpose, byte[] key) where T : class => ExecuteAsync(key, async connection =>
     {

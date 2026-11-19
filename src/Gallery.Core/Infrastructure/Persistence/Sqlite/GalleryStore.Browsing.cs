@@ -83,7 +83,38 @@ internal sealed partial class GalleryStore
         return records;
     }
 
-    public async Task<bool> SaveBrowseIndexAsync(List<ImageRecord> records, long revision, byte[] key, CancellationToken token)
+    public async Task<long?> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot,
+        IReadOnlyList<ImageRecord> refreshedRecords, byte[] key, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        await using var connection = await OpenAsync();
+        using var transaction = connection.BeginTransaction();
+        if (await ReadBrowseRevisionAsync(connection, transaction, token) != sourceSnapshot.Revision) return null;
+        foreach (var record in refreshedRecords)
+        {
+            token.ThrowIfCancellationRequested();
+            await WriteUpdatedRecordAsync(connection, transaction, record, key, token);
+        }
+        var revision = await ReadBrowseRevisionAsync(connection, transaction, token);
+        await WriteBrowseIndexAsync(connection, transaction, sourceSnapshot.Records, revision, key, token);
+        token.ThrowIfCancellationRequested();
+        transaction.Commit();
+        return revision;
+    }
+
+    private async Task<bool> SaveBrowseIndexAsync(List<ImageRecord> records, long revision, byte[] key, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        await using var connection = await OpenAsync();
+        using var transaction = connection.BeginTransaction();
+        if (await ReadBrowseRevisionAsync(connection, transaction, token) != revision) return false;
+        await WriteBrowseIndexAsync(connection, transaction, records, revision, key, token);
+        transaction.Commit();
+        return true;
+    }
+
+    private static async Task WriteBrowseIndexAsync(SqliteConnection connection, SqliteTransaction transaction,
+        List<ImageRecord> records, long revision, byte[] key, CancellationToken token)
     {
         // LINQ's stable ordering preserves the existing newest-first tie order of the catalog scan.
         var ordered = records.OrderByDescending(record => record.ImportedAt);
@@ -91,21 +122,16 @@ internal sealed partial class GalleryStore
             ordered.Take(BrowseIndexCapacity).Select(r => r.Id).ToArray(),
             ordered.Where(r => !r.IsMarkedForDeletion).Take(BrowseIndexCapacity).Select(r => r.Id).ToArray(),
             ordered.Where(r => r.IsMarkedForDeletion).Take(BrowseIndexCapacity).Select(r => r.Id).ToArray());
-        token.ThrowIfCancellationRequested();
-        await using var connection = await OpenAsync();
-        using var transaction = connection.BeginTransaction();
-        if (await ReadBrowseRevisionAsync(connection, transaction, token) != revision) return false;
         var existing = await ReadBrowseIndexAsync(connection, transaction, key, token);
         if (existing is not null && existing.Version == index.Version && existing.Revision == revision
-            && existing.TotalRecords == index.TotalRecords && existing.All is not null && existing.Active is not null && existing.Marked is not null && existing.All.SequenceEqual(index.All)
+            && existing.TotalRecords == index.TotalRecords && existing.All is not null && existing.Active is not null
+            && existing.Marked is not null && existing.All.SequenceEqual(index.All)
             && existing.Active.SequenceEqual(index.Active) && existing.Marked.SequenceEqual(index.Marked))
-            return true;
+            return;
         using var command = GalleryStoreCommandFactory.CreateSaveSettings(connection,
             BrowseIndexId, EncodeSetting(index, BrowseIndexPurpose, key));
         command.Transaction = transaction;
         await command.ExecuteNonQueryAsync(token);
-        transaction.Commit();
-        return true;
     }
 
     private static async Task<BrowseIndex?> ReadBrowseIndexAsync(SqliteConnection connection, SqliteTransaction transaction,

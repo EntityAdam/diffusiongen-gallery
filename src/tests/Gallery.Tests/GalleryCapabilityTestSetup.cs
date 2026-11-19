@@ -19,9 +19,11 @@ internal static class GalleryCapabilityTestSetup
         return services;
     }
 
-    public static WorkspaceGalleryServices Workspace(GalleryService gallery) =>
-        new(gallery.Scope.Vault, gallery.Scope.Settings, gallery.Scope.Catalog, gallery.Scope.Collections, gallery.Scope.Tags,
-            gallery.Scope.Media, gallery.Scope.MediaMaintenance, gallery.Scope.Records, gallery.Scope.Duplicates);
+    public static WorkspaceGalleryServices Workspace(GalleryService gallery) => Workspace(gallery.Scope);
+
+    public static WorkspaceGalleryServices Workspace(GalleryScope gallery) =>
+        new(gallery.Vault, gallery.Settings, gallery.Catalog, gallery.Collections, gallery.Tags,
+            gallery.Media, gallery.MediaMaintenance, gallery.Records, gallery.Duplicates, gallery.Vision);
 
     public static void InjectGalleryCapabilities(IComponent component, GalleryService gallery)
     {

@@ -40,7 +40,7 @@ public sealed class WorkspaceSession : IDisposable
             if (!disposed) _ = dispatch(NotifyChangedAsync);
         };
         Browser = new(vault, services.Catalog, settings, services.Media, Catalog, logger, dispatchChanged, Preferences);
-        Analysis = new(vault);
+        Analysis = new(services.Catalog, services.Vision, logger);
         Commands = new(activity, (status, action) => RunAsync(status, action), Analysis.EnsureIdle);
         Presentation = new(vault, services.Media, js, Commands);
         Removal = new(vault, services.MediaMaintenance, Commands, logger, () =>
@@ -67,6 +67,8 @@ public sealed class WorkspaceSession : IDisposable
         Catalog.RecordsChanged += (_, reloadThumbnails) => Browser.RecordsChangedAsync(reloadThumbnails);
         Catalog.RecordsChanged += (_, _) => NotifyChangedAsync();
         Analysis.Changed += NotifyChanged;
+        Analysis.SuggestionsChanged += Browser.SuggestionsChangedAsync;
+        Analysis.RecordsChanged += Catalog.ReloadAsync;
         history.Changed += dispatchChanged;
         Activity.Ingestion.ProgressChanged += NotifyChanged;
         Activity.Ingestion.Completed += Catalog.ReloadAsync;
@@ -107,6 +109,8 @@ public sealed class WorkspaceSession : IDisposable
                 if (disposed || !vault.IsUnlocked) return;
                 Activity.Ingestion.LoadOptions(ingestionOptions);
                 await Catalog.OpenAsync(Browser.PageSize, Browser.TrashActive);
+                if (disposed || !vault.IsUnlocked) return;
+                await Analysis.InitializeAsync();
                 IsInitialized = !disposed && vault.IsUnlocked;
             }
             catch
@@ -176,8 +180,7 @@ public sealed class WorkspaceSession : IDisposable
         history.Changed -= dispatchChanged;
         Activity.Ingestion.ProgressChanged -= NotifyChanged;
         Activity.Ingestion.Completed -= Catalog.ReloadAsync;
-        Analysis.Changed -= NotifyChanged;
-        Analysis.Clear();
+        Analysis.Dispose();
         Changed = null;
         Navigation.ClearDraftSources();
         Guard.Dispose();

@@ -9,7 +9,7 @@
     <MediaDetailDialog @key="selected.Id" @ref="detailDialog" Image="selected" Preview="@State.Preview" VideoUrl="@State.VideoUrl"
                        Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" Progress="@Activity.Progress" Error="@Activity.Error"
                        Close="CloseDetail" Fullscreen="() => OpenViewerAsync(selected.Id)" Rate="value => Curation.ToggleRatingAsync(selected, value)"
-                       Favorite="() => Curation.ToggleFavoriteAsync(selected)" Mark="() => Curation.ToggleMarkAsync(selected)" Analyze="() => Analysis.AnalyzeAsync(selected, Commands)"
+                       Favorite="() => Curation.ToggleFavoriteAsync(selected)" Mark="() => Curation.ToggleMarkAsync(selected)" Analyze="() => AnalyzeAsync(selected)"
                        ShowPrompt="() => Navigation!.ShowPromptAsync(selected.Prompt)" Remove="() => Removal.PrepareAsync([selected.Id])"
                        Suggestion="@Suggestions.GetValueOrDefault(selected.Id)" Approve="Analysis.ApproveAsync" Dismiss="Analysis.DismissAsync"
                        Changed="Catalog.UpdateAsync" DraftChanged="Changed" />
@@ -40,6 +40,14 @@
 
     private UnsavedChangesSource? GetDraft() =>
         State.Selected is { } selected && detailDialog?.Image.Id == selected.Id ? detailDialog.Draft : null;
+
+    private Task AnalyzeAsync(ImageRecord image) =>
+        Commands.RunLibraryChangeAsync("Analyzing with your local vision model...", async () =>
+        {
+            await Analysis.AnalyzeDetailAsync(image);
+            if (Catalog.CanRead)
+                Activity.Message = "Review available suggestions in the AI analysis drawer. Unfinished analysis can be resumed there.";
+        });
 
     private async Task OpenViewerAsync(string id)
     {

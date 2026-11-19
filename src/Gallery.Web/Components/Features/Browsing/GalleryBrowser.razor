@@ -53,8 +53,7 @@
 </GalleryToolbox>
 
 <LibraryWorkbench KnownTags="Catalog.AllTags" Analysis="Analysis" Visible="@(!Catalog.IsPartial && State.ActiveTool is "organize" or "intelligence")" Workflow="@State.ActiveTool" Images="Catalog.Images" SelectedIds="State.LibrarySelection"
-                  Filter="State.Filter" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection"
-                  SuggestionsChanged="SuggestionsChangedAsync" />
+                  Filter="State.Filter" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection" />
 
 @if (State.ActiveTool is "organize" or "intelligence")
 {

@@ -1,22 +1,17 @@
 using System.Net;
-using System.Reflection;
 using System.Text.Json;
 using System.Text;
 using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Web.Components.Features.Curation;
 using Gallery.Web.Components.Features.Vision;
-using Microsoft.AspNetCore.Components.Rendering;
-using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gallery.Tests;
 
 [Trait("Category", "acceptance")]
 public sealed class VisionCheckpointTests
 {
-    private const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic;
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -30,12 +25,11 @@ public sealed class VisionCheckpointTests
         for (var index = 0; index < 3; index++)
             images.Add(await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20 + index, 20)), $"{index}.png", "folder"));
         await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, images.ToArray());
-        var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "AnalyzeUnanalyzedAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        var run = analysis.AnalyzeUnanalyzedAsync();
         await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Empty((await vault.Scope.Vision.OpenVisionCheckpointAsync()).State.Queue);
-        if (!failSecond) await fixture.HtmlRenderer.Dispatcher.InvokeAsync(workbench.StopAnalysisAsync);
+        if (!failSecond) analysis.StopAnalysis();
         handler.ReleaseSecond.TrySetResult();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         var stopped = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
@@ -43,7 +37,7 @@ public sealed class VisionCheckpointTests
         Assert.Equal(2, stopped.Drafts.Length);
 
         var added = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "newly-added.png", "folder");
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "AnalyzeUnanalyzedAsync"));
+        await analysis.AnalyzeUnanalyzedAsync();
         var restarted = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Empty(restarted.Queue);
         Assert.Equal(4, restarted.Drafts.Length);
@@ -95,15 +89,14 @@ public sealed class VisionCheckpointTests
                 new() { Name = "Disabled", Endpoint = "http://127.0.0.1:1236/v1/", Model = "disabled", Enabled = false }
             ]
         });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [.. images]);
-        var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "SuggestAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        var run = analysis.AnalyzeSelectionAsync([.. images], tagsOnly: false);
         try
         {
             await Task.WhenAll(slowStarted.Task, thirdStarted.Task).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal("automatic", Assert.Single(await vault.Scope.Catalog.ListAsync(), image => image.AnalysisModel.Length > 0).AnalysisModel);
             if (lockVault) vault.Scope.Vault.LockVault();
-            else await fixture.HtmlRenderer.Dispatcher.InvokeAsync(workbench.StopAnalysisAsync);
+            else analysis.StopAnalysis();
             if (!lockVault) release.TrySetResult();
             await run.WaitAsync(TimeSpan.FromSeconds(10));
         }
@@ -154,16 +147,15 @@ public sealed class VisionCheckpointTests
         {
             Lanes = [new() { Name = "Parallel", Model = "vision", MaxConcurrentRequests = 2 }]
         });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [.. images]);
-        var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "SuggestAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        var run = analysis.AnalyzeSelectionAsync([.. images], tagsOnly: false);
         try
         {
             await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(2, Volatile.Read(ref requestCount));
             releaseFirst.TrySetResult();
             await thirdStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await fixture.HtmlRenderer.Dispatcher.InvokeAsync(workbench.StopAnalysisAsync);
+            analysis.StopAnalysis();
             Assert.Equal(3, Volatile.Read(ref requestCount));
             releaseRemaining.TrySetResult();
             await run.WaitAsync(TimeSpan.FromSeconds(10));
@@ -211,9 +203,8 @@ public sealed class VisionCheckpointTests
                 new() { Name = "Healthy", Endpoint = "http://127.0.0.1:1235/v1/", Model = "healthy" }
             ]
         });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [first, second, third]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "SuggestAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        await analysis.AnalyzeSelectionAsync([first, second, third], tagsOnly: false);
         var state = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Equal(2, rejected);
         Assert.Equal(3, succeeded);
@@ -237,9 +228,8 @@ public sealed class VisionCheckpointTests
         VisionDraft existing = new(pending.Id, pending.Name, "Existing result", "old", "vision");
         await checkpoint.StageAsync(existing);
         await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [accepted, pending]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "AnalyzeUnanalyzedAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        await analysis.AnalyzeUnanalyzedAsync();
         var result = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Empty(result.Queue);
         Assert.Equal(2, result.Drafts.Length);
@@ -262,21 +252,20 @@ public sealed class VisionCheckpointTests
         await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
         var legacyCheckpoint = await vault.Scope.Vision.OpenVisionCheckpointAsync();
         await legacyCheckpoint.UpdateAsync(state => state with { AutoAcceptVisionAnalysis = autoAccept });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var original = await RenderAsync(fixture, [first, second]);
-        var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(original, "AnalyzeUnanalyzedAsync"));
+        using var original = await OpenAnalysisAsync(vault.Scope);
+        var run = original.AnalyzeUnanalyzedAsync();
         await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(autoAccept ? "completed response" : "", (await vault.Scope.Catalog.ListAsync()).Single(image => image.Id == first.Id).Description);
         Assert.Empty((await vault.Scope.Vision.OpenVisionCheckpointAsync()).State.Queue);
         Assert.Equal(autoAccept ? 0 : 1, (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts.Length);
         vault.Scope.Vault.LockVault();
         await handler.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(original.Dispose);
+        original.Dispose();
         await vault.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
         handler.ReleaseSecond.TrySetResult();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
-        var restored = await RenderAsync(fixture, [second]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(restored, "AnalyzeUnanalyzedAsync"));
+        using var restored = await OpenAnalysisAsync(vault.Scope);
+        await restored.AnalyzeUnanalyzedAsync();
         var checkpoint = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Equal(autoAccept, checkpoint.AutoAcceptVisionAnalysis);
         Assert.Empty(checkpoint.Queue);
@@ -300,14 +289,13 @@ public sealed class VisionCheckpointTests
         var tagsOnly = firstDraft with { TagsOnly = true };
         VisionQueueItem queued = new("unfinished");
         await checkpoint.UpdateAsync(state => state with { Drafts = [firstDraft, secondDraft, tagsOnly], Queue = [queued] });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [first]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, accept ? "AcceptAllVisionAsync" : "DiscardAllVisionAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        await (accept ? analysis.AcceptAllVisionAsync() : analysis.DiscardAllVisionAsync());
         var state = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Equal(tagsOnly, Assert.Single(state.Drafts));
         Assert.Equal(queued, Assert.Single(state.Queue));
-        Assert.Empty(Suggestions(workbench, false));
-        Assert.Single(Suggestions(workbench, true));
+        Assert.Empty(Suggestions(analysis, false));
+        Assert.Single(Suggestions(analysis, true));
         var records = await vault.Scope.Catalog.ListAsync();
         Assert.Equal(accept ? "First analysis" : "", records.Single(image => image.Id == first.Id).Description);
         Assert.Equal(accept ? "Second analysis" : "", records.Single(image => image.Id == second.Id).Description);
@@ -323,12 +311,11 @@ public sealed class VisionCheckpointTests
         var checkpoint = await vault.Scope.Vision.OpenVisionCheckpointAsync();
         VisionDraft missing = new("missing-image", "missing.png", "Keep this draft", "", "vision");
         await checkpoint.UpdateAsync(state => state with { Drafts = [missing, new(image.Id, image.Name, "Accepted description", "sunlit", "vision")] });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [image]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "AcceptAllVisionAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        await analysis.AcceptAllVisionAsync();
         Assert.Equal(missing, Assert.Single((await vault.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts));
         Assert.Equal("Accepted description", Assert.Single(await vault.Scope.Catalog.ListAsync()).Description);
-        Assert.Equal(missing.Id, Assert.Single(Suggestions(workbench, false)).Id);
+        Assert.Equal(missing.Id, Assert.Single(Suggestions(analysis, false)).Id);
     }
 
     [Theory]
@@ -346,9 +333,8 @@ public sealed class VisionCheckpointTests
         var checkpoint = await vault.Scope.Vision.OpenVisionCheckpointAsync();
         VisionDraft oldDraft = new(pending.Id, pending.Name, "Awaiting review", "old", "vision");
         await checkpoint.StageAsync(oldDraft);
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [image]);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, tagsOnly ? "SuggestTagsAsync" : "AnalyzeUnanalyzedAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        await (tagsOnly ? analysis.AnalyzeSelectionAsync([image], tagsOnly: true) : analysis.AnalyzeUnanalyzedAsync());
         var state = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.True(Assert.Single((await vault.Scope.Vision.LoadSettingsAsync()).Lanes).AutoAccept);
         Assert.Contains(oldDraft, state.Drafts);
@@ -403,33 +389,32 @@ public sealed class VisionCheckpointTests
         await vault.Scope.Tags.AddTagAsync("sunlit");
         await vault.Scope.Tags.AddTagAsync("keep");
         var checkpoint = await vault.Scope.Vision.OpenVisionCheckpointAsync();
-        VisionDraft analysis = new(image.Id, image.Name, "Completed description", "sunlit, keep", "vision", "Review this");
-        VisionDraft tags = analysis with { TagsOnly = true };
+        VisionDraft fullDraft = new(image.Id, image.Name, "Completed description", "sunlit, keep", "vision", "Review this");
+        VisionDraft tags = fullDraft with { TagsOnly = true };
         VisionDraft other = new("off-page", "other.png", "Other description", "unrelated", "vision");
         VisionQueueItem pending = new("unfinished", Failed: true);
-        await checkpoint.UpdateAsync(state => state with { Drafts = [analysis, tags, other], Queue = [pending] });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, [image]);
+        await checkpoint.UpdateAsync(state => state with { Drafts = [fullDraft, tags, other], Queue = [pending] });
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
 
         if (previous is null) await vault.Scope.Tags.AddTagAsync(replacement!);
         else if (replacement is null) await vault.Scope.Tags.DeleteTagAsync(previous);
         else await vault.Scope.Tags.RenameTagAsync(previous, replacement);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => workbench.UpdateSuggestionTagsAsync(new(previous, replacement)));
+        await analysis.UpdateTagsAsync(new(previous, replacement));
 
         var saved = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
-        Assert.Equal(new[] { analysis with { Tags = expectedTags }, tags with { Tags = expectedTags }, other }, saved.Drafts.ToArray());
+        Assert.Equal(new[] { fullDraft with { Tags = expectedTags }, tags with { Tags = expectedTags }, other }, saved.Drafts.ToArray());
         Assert.Equal(pending, Assert.Single(saved.Queue));
-        Assert.Equal(expectedTags, Assert.Single(Suggestions(workbench, true)).Tags);
-        Assert.Equal(2, Suggestions(workbench, false).Count);
+        Assert.Equal(expectedTags, Assert.Single(Suggestions(analysis, true)).Tags);
+        Assert.Equal(2, Suggestions(analysis, false).Count);
         Assert.Empty(Assert.Single(await vault.Scope.Catalog.ListAsync()).Description);
 
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(workbench.Dispose);
+        analysis.Dispose();
         vault.Scope.Vault.LockVault();
         await vault.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        var restored = await RenderAsync(fixture, [image]);
+        using var restored = await OpenAnalysisAsync(vault.Scope);
         var suggestion = Suggestions(restored, false).Single(item => item.Id == image.Id);
         Assert.Equal("Completed description", suggestion.Description);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => restored.ApproveSuggestionAsync(suggestion));
+        await restored.ApproveAsync(suggestion);
         var approved = Assert.Single(await vault.Scope.Catalog.ListAsync());
         Assert.Equal("Completed description", approved.Description);
         Assert.Equal(expectedTags, approved.Tags);
@@ -497,10 +482,8 @@ public sealed class VisionCheckpointTests
         var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
         var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "second.png", "folder");
         await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var original = await RenderAsync(fixture, [first, second]);
-        var action = tagsOnly ? "SuggestTagsAsync" : "SuggestAsync";
-        var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(original, action));
+        using var original = await OpenAnalysisAsync(vault.Scope);
+        var run = original.AnalyzeSelectionAsync([first, second], tagsOnly);
         await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var saved = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Equal(first.Id, Assert.Single(saved.Drafts).Id);
@@ -511,7 +494,7 @@ public sealed class VisionCheckpointTests
         else if (lockKind == "panic") vault.Scope.Vault.Panic();
         else vault.Scope.Vault.LockVault();
         await handler.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => original.Dispose());
+        original.Dispose();
         vault.Scope.Vault.ConfigureInactivityTimeout(null);
         await vault.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
         // Let the old server response arrive after unlock. It must not be checkpointed.
@@ -519,11 +502,11 @@ public sealed class VisionCheckpointTests
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Single((await vault.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts);
 
-        // Restore with a partial UI catalog: drafts for other pages must survive.
-        var restored = await RenderAsync(fixture, [second]);
+        // Restoring the workflow must recover drafts without a rendered catalog.
+        using var restored = await OpenAnalysisAsync(vault.Scope);
         Assert.Single(Suggestions(restored, tagsOnly));
         Assert.Equal(first.Id, Suggestions(restored, tagsOnly)[0].Id);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(restored, "ResumeAnalysisAsync"));
+        await restored.ResumeAnalysisAsync();
         Assert.Equal(3, handler.RequestCount);
         var completed = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Empty(completed.Queue);
@@ -532,22 +515,49 @@ public sealed class VisionCheckpointTests
         Assert.All(await vault.Scope.Catalog.ListAsync(), image => Assert.Empty(image.Tags));
 
         var suggestion = Suggestions(restored, tagsOnly).Single(item => item.Id == first.Id);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
-        {
-            if (tagsOnly) await InvokeAsync(restored, "ApplyTagSuggestionAsync", suggestion);
-            else await restored.ApproveSuggestionAsync(suggestion);
-        });
+        if (tagsOnly) await restored.ApplyTagSuggestionAsync(suggestion);
+        else await restored.ApproveAsync(suggestion);
         var approved = (await vault.Scope.Catalog.ListAsync()).Single(image => image.Id == first.Id);
         Assert.Equal("sunlit", approved.Tags);
         Assert.Equal(tagsOnly ? "" : "completed response", approved.Description);
         Assert.DoesNotContain((await vault.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts, draft => draft.Id == first.Id);
         var remaining = Suggestions(restored, tagsOnly).Single();
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
-        {
-            if (tagsOnly) await InvokeAsync(restored, "DismissTagSuggestionAsync", remaining);
-            else await restored.DismissSuggestionAsync(remaining);
-        });
+        if (tagsOnly) await restored.DismissTagSuggestionAsync(remaining);
+        else await restored.DismissAsync(remaining);
         Assert.Empty((await vault.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts);
+    }
+
+    [Fact]
+    public async Task A_completed_draft_can_be_approved_while_the_next_request_is_running()
+    {
+        using var handler = new InterruptibleVisionHandler();
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault(vision: new VisionManager(client));
+        await vault.InitializeAsync();
+        var scope = vault.Scope;
+        var first = await scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "second.png", "folder");
+        await scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
+        using var analysis = await OpenAnalysisAsync(scope);
+
+        var run = analysis.AnalyzeSelectionAsync([first, second], tagsOnly: false);
+        try
+        {
+            await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(analysis.Status.IsRunning);
+            var draft = Assert.Single(analysis.Suggestions);
+            Assert.Equal(first.Id, draft.Id);
+            var approved = Assert.IsType<ImageRecord>(await analysis.ApproveAsync(draft));
+            Assert.Equal("completed response", approved.Description);
+            Assert.Empty(analysis.Suggestions);
+        }
+        finally
+        {
+            handler.ReleaseSecond.TrySetResult();
+            await run.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        Assert.Equal(second.Id, Assert.Single(analysis.Suggestions).Id);
     }
 
     [Theory]
@@ -563,11 +573,10 @@ public sealed class VisionCheckpointTests
         for (var index = 0; index < 3; index++)
             images.Add(await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20 + index, 20)), $"{index}.png", "folder"));
         await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var workbench = await RenderAsync(fixture, images.ToArray());
-        var run = fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "SuggestAsync"));
+        using var analysis = await OpenAnalysisAsync(vault.Scope);
+        var run = analysis.AnalyzeSelectionAsync(images.ToArray(), tagsOnly: false);
         await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        if (!failSecond) await fixture.HtmlRenderer.Dispatcher.InvokeAsync(workbench.StopAnalysisAsync);
+        if (!failSecond) analysis.StopAnalysis();
         handler.ReleaseSecond.TrySetResult();
         await run.WaitAsync(TimeSpan.FromSeconds(10));
         var state = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
@@ -575,7 +584,7 @@ public sealed class VisionCheckpointTests
         var pending = Assert.Single(state.Queue);
         Assert.Equal(failSecond ? images[1].Id : images[2].Id, pending.Id);
         Assert.Equal(failSecond, pending.Failed);
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => InvokeAsync(workbench, "ResumeAnalysisAsync"));
+        await analysis.ResumeAnalysisAsync();
         Assert.Equal(failSecond ? 4 : 3, handler.RequestCount);
         var resumed = (await vault.Scope.Vision.OpenVisionCheckpointAsync()).State;
         Assert.Empty(resumed.Queue);
@@ -631,37 +640,14 @@ public sealed class VisionCheckpointTests
         }
     }
 
-    private static List<OrganizationSuggestion> Suggestions(LibraryWorkbench component, bool tagsOnly) =>
-        (List<OrganizationSuggestion>)typeof(LibraryWorkbench).GetField(tagsOnly ? "tagSuggestions" : "suggestions", Flags)!.GetValue(component)!;
+    private static IReadOnlyList<OrganizationSuggestion> Suggestions(LibraryAnalysis analysis, bool tagsOnly) =>
+        tagsOnly ? analysis.TagSuggestions : analysis.Suggestions;
 
-    private static Task InvokeAsync(object component, string method, params object[] arguments) =>
-        (Task)component.GetType().GetMethod(method, Flags)!.Invoke(component, arguments)!;
-
-    private static async Task<LibraryWorkbench> RenderAsync(ComponentRenderFixture fixture, ImageRecord[] images)
+    private static async Task<LibraryAnalysis> OpenAnalysisAsync(GalleryScope scope)
     {
-        LibraryWorkbench result = null!;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<Host>(
-            ParameterView.FromDictionary(new Dictionary<string, object?>
-            {
-                [nameof(Host.Images)] = images,
-                [nameof(Host.Capture)] = (Action<LibraryWorkbench>)(value => result = value)
-            })));
-        return result;
-    }
-
-    private sealed class Host : ComponentBase
-    {
-        [Parameter] public ImageRecord[] Images { get; set; } = [];
-        [Parameter] public Action<LibraryWorkbench>? Capture { get; set; }
-        protected override void BuildRenderTree(RenderTreeBuilder builder)
-        {
-            builder.OpenComponent<LibraryWorkbench>(0);
-            builder.AddAttribute(1, nameof(LibraryWorkbench.Images), Images);
-            builder.AddAttribute(2, nameof(LibraryWorkbench.SelectedIds), Images.Select(image => image.Id).ToArray());
-            builder.AddAttribute(3, nameof(LibraryWorkbench.Workflow), "intelligence");
-            builder.AddComponentReferenceCapture(4, value => Capture?.Invoke((LibraryWorkbench)value));
-            builder.CloseComponent();
-        }
+        var analysis = new LibraryAnalysis(scope.Catalog, scope.Vision, NullLogger.Instance);
+        await analysis.InitializeAsync();
+        return analysis;
     }
 
     private sealed class LaneVisionHandler(Func<int, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
