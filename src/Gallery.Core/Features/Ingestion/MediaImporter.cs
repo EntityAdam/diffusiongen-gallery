@@ -201,9 +201,9 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
         int importedCount = 0;
         int failedCount = 0;
         var failuresByPathIndex = new Exception?[mediaPaths.Length];
-        var workers = options.Workers;
+        var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
         var lastReport = Stopwatch.StartNew();
-        timings?.SetFiles(mediaPaths.Length, workers);
+        timings?.SetFiles(mediaPaths.Length, options.Workers);
         await ReportAsync("Importing media...", force: true);
         foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
         {
@@ -211,79 +211,39 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
             Exception? interruption = null;
             try
             {
-                await Parallel.ForEachAsync(pending, new ParallelOptions { MaxDegreeOfParallelism = workers },
-                    async (item, _) =>
+                await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
+                {
+                    try
                     {
-                        try
-                        {
-                            await ReportAsync($"Importing {item.Name}...", name: item.Name);
-                            var start = Stopwatch.GetTimestamp();
-                            item.Source = new ImportSource(item.Path, sourceRetention == SourceRetention.DeleteAfterVerification);
-                            timings?.Record(IngestionStage.OpenSource, start);
-                            ValidateImportName(item.Name);
-                            var prepared = await PrepareImportAsync(item.Source.Stream, item.Name,
-                                Path.GetDirectoryName(item.Path)!, item.Path, key, timings, mediaRoot);
-                            start = Stopwatch.GetTimestamp();
-                            await WriteImportedCiphertextAsync(prepared.Record.StoredPath, prepared.Encrypted);
-                            timings?.Record(IngestionStage.WriteMedia, start);
-                            item.Record = prepared.Record;
-                            item.EncryptedThumbnail = prepared.EncryptedThumb;
-                        }
-                        catch (Exception exception) when (IsImportFailure(exception)) { item.Failure = exception; }
-                    });
+                        await ReportAsync($"Importing {item.Name}...", name: item.Name);
+                        await PrepareBatchItemAsync(item, sourceRetention, key, timings, mediaRoot);
+                    }
+                    catch (Exception exception) when (IsImportFailure(exception))
+                    {
+                        item.Failure = exception;
+                    }
+                });
 
-                await CommitBatchAsync(pending);
-                await Parallel.ForEachAsync(pending, new ParallelOptions { MaxDegreeOfParallelism = workers },
-                    async (item, _) =>
+                await CommitBatchAsync(pending, key, timings);
+
+                await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
+                {
+                    await FinalizeBatchItemAsync(item, sourceRetention, key, timings);
+                    await progressGate.WaitAsync();
+                    try
                     {
-                        try
+                        completedCount++;
+                        if (item.Committed) importedCount++;
+                        if (item.Failure is not null)
                         {
-                            if (item.Committed && sourceRetention == SourceRetention.DeleteAfterVerification)
-                            {
-                                var start = Stopwatch.GetTimestamp();
-                                await VerifyImportedAsync(item.Record!.Id, key);
-                                timings?.Record(IngestionStage.Verify, start);
-                                start = Stopwatch.GetTimestamp();
-                                if (item.Source!.CanDeleteByHandle) item.Source.DeleteVerified();
-                                else
-                                {
-                                    await CloseSourceAsync(item);
-                                    await ImportSource.DeleteVerifiedPathAsync(item.Path, item.Record.Sha256);
-                                }
-                                timings?.Record(IngestionStage.DeleteSource, start);
-                            }
+                            failedCount++;
+                            failuresByPathIndex[item.Index] = new IOException($"Failed to import '{item.Path}'.", item.Failure);
                         }
-                        catch (Exception exception) when (IsImportFailure(exception)) { item.Failure = exception; }
-                        finally
-                        {
-                            try { await CloseSourceAsync(item); }
-                            catch (IOException exception) { item.Failure = exception; }
-                        }
-                        if (!item.Committed && item.Record is not null)
-                        {
-                            try { File.Delete(item.Record.StoredPath); }
-                            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                            {
-                                item.Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
-                                    item.Failure ?? new IOException("Catalog commit failed."), exception);
-                            }
-                            item.MediaCleanupAttempted = true;
-                        }
-                        await progressGate.WaitAsync();
-                        try
-                        {
-                            completedCount++;
-                            if (item.Committed) importedCount++;
-                            if (item.Failure is not null)
-                            {
-                                failedCount++;
-                                failuresByPathIndex[item.Index] = new IOException($"Failed to import '{item.Path}'.", item.Failure);
-                            }
-                        }
-                        finally { progressGate.Release(); }
-                        await ReportAsync($"Processed {item.Name}", force: item.Failure is not null);
-                        timings?.Record(IngestionStage.File, item.Started);
-                    });
+                    }
+                    finally { progressGate.Release(); }
+                    await ReportAsync($"Processed {item.Name}", force: item.Failure is not null);
+                    timings?.Record(IngestionStage.File, item.Started);
+                });
             }
             catch (Exception exception)
             {
@@ -292,23 +252,7 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
             }
             finally
             {
-                var cleanupFailures = new List<Exception>();
-                foreach (var item in pending)
-                {
-                    try { await CloseSourceAsync(item); }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                    {
-                        cleanupFailures.Add(exception);
-                    }
-                    if (!item.Committed && item.Record is not null && !item.MediaCleanupAttempted)
-                    {
-                        try { File.Delete(item.Record.StoredPath); }
-                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                        {
-                            cleanupFailures.Add(exception);
-                        }
-                    }
-                }
+                var cleanupFailures = await CleanupBatchAsync(pending, timings);
                 if (cleanupFailures.Count > 0)
                 {
                     if (interruption is not null) cleanupFailures.Insert(0, interruption);
@@ -319,43 +263,6 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
         timings?.SetOutcome(importedCount, failedCount);
         await ReportAsync(mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.", force: true);
         ThrowImportFailures(folder, failuresByPathIndex);
-
-        async Task CommitBatchAsync(PendingImport[] pending)
-        {
-            var ready = pending.Where(item => item.Record is not null && item.Failure is null).ToArray();
-            if (ready.Length == 0) return;
-            var start = Stopwatch.GetTimestamp();
-            try
-            {
-                var result = await galleryStore.CommitImportsAsync(
-                    ready.Select(item => new ImportCatalogEntry(item.Record!, item.EncryptedThumbnail!)).ToArray(), key);
-                timings?.Record(IngestionStage.CatalogCommit, start);
-                foreach (var item in ready)
-                {
-                    if (result.DuplicateIds.Contains(item.Record!.Id))
-                        item.Failure = new InvalidOperationException($"'{item.Name}' is already in the gallery.");
-                    else
-                    {
-                        item.Committed = true;
-                        timings?.Record(IngestionStage.CatalogInsert, start);
-                    }
-                }
-            }
-            catch (Exception exception) when (IsImportFailure(exception))
-            {
-                foreach (var item in ready) item.Failure ??= exception;
-            }
-        }
-
-        async Task CloseSourceAsync(PendingImport item)
-        {
-            if (item.Source is null) return;
-            var source = item.Source;
-            item.Source = null;
-            var start = Stopwatch.GetTimestamp();
-            try { await source.DisposeAsync(); }
-            finally { timings?.Record(IngestionStage.CloseSource, start); }
-        }
 
         async Task ReportAsync(string status, bool force = false, string? name = null)
         {
@@ -376,6 +283,138 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
                 timings?.Record(IngestionStage.ReportProgress, start);
             }
         }
+    }
+
+    private async Task PrepareBatchItemAsync(PendingImport item, SourceRetention sourceRetention, byte[] key,
+        IngestionTimings? timings, string mediaRoot)
+    {
+        var start = Stopwatch.GetTimestamp();
+        item.Source = new ImportSource(item.Path, sourceRetention == SourceRetention.DeleteAfterVerification);
+        timings?.Record(IngestionStage.OpenSource, start);
+        ValidateImportName(item.Name);
+        var prepared = await PrepareImportAsync(item.Source.Stream, item.Name, Path.GetDirectoryName(item.Path)!,
+            item.Path, key, timings, mediaRoot);
+        start = Stopwatch.GetTimestamp();
+        await WriteImportedCiphertextAsync(prepared.Record.StoredPath, prepared.Encrypted);
+        timings?.Record(IngestionStage.WriteMedia, start);
+        item.Record = prepared.Record;
+        item.EncryptedThumbnail = prepared.EncryptedThumb;
+    }
+
+    private async Task CommitBatchAsync(PendingImport[] pending, byte[] key, IngestionTimings? timings)
+    {
+        var ready = pending.Where(item => item.Record is not null && item.Failure is null).ToArray();
+        if (ready.Length == 0) return;
+
+        var start = Stopwatch.GetTimestamp();
+        try
+        {
+            var result = await galleryStore.CommitImportsAsync(
+                ready.Select(item => new ImportCatalogEntry(item.Record!, item.EncryptedThumbnail!)).ToArray(), key);
+            timings?.Record(IngestionStage.CatalogCommit, start);
+            foreach (var item in ready)
+            {
+                if (result.DuplicateIds.Contains(item.Record!.Id))
+                {
+                    item.Failure = new InvalidOperationException($"'{item.Name}' is already in the gallery.");
+                }
+                else
+                {
+                    item.Committed = true;
+                    timings?.Record(IngestionStage.CatalogInsert, start);
+                }
+            }
+        }
+        catch (Exception exception) when (IsImportFailure(exception))
+        {
+            foreach (var item in ready) item.Failure ??= exception;
+        }
+    }
+
+    private async Task FinalizeBatchItemAsync(PendingImport item, SourceRetention sourceRetention, byte[] key,
+        IngestionTimings? timings)
+    {
+        try
+        {
+            if (item.Committed && sourceRetention == SourceRetention.DeleteAfterVerification)
+                await DeleteVerifiedSourceAsync(item, key, timings);
+        }
+        catch (Exception exception) when (IsImportFailure(exception))
+        {
+            item.Failure = exception;
+        }
+        finally
+        {
+            try { await CloseSourceAsync(item, timings); }
+            catch (IOException exception) { item.Failure = exception; }
+        }
+
+        var cleanupFailure = RemoveUncommittedMedia(item);
+        if (cleanupFailure is not null)
+            item.Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
+                item.Failure ?? new IOException("Catalog commit failed."), cleanupFailure);
+    }
+
+    private async Task DeleteVerifiedSourceAsync(PendingImport item, byte[] key, IngestionTimings? timings)
+    {
+        var start = Stopwatch.GetTimestamp();
+        var record = item.Record!;
+        await VerifyImportedAsync(record.Id, key);
+        timings?.Record(IngestionStage.Verify, start);
+
+        start = Stopwatch.GetTimestamp();
+        if (item.Source!.CanDeleteByHandle)
+        {
+            item.Source.DeleteVerified();
+        }
+        else
+        {
+            await CloseSourceAsync(item, timings);
+            await ImportSource.DeleteVerifiedPathAsync(item.Path, record.Sha256);
+        }
+        timings?.Record(IngestionStage.DeleteSource, start);
+    }
+
+    private static async Task<List<Exception>> CleanupBatchAsync(PendingImport[] pending, IngestionTimings? timings)
+    {
+        var failures = new List<Exception>();
+        foreach (var item in pending)
+        {
+            try { await CloseSourceAsync(item, timings); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                failures.Add(exception);
+            }
+
+            var cleanupFailure = RemoveUncommittedMedia(item);
+            if (cleanupFailure is not null) failures.Add(cleanupFailure);
+        }
+        return failures;
+    }
+
+    private static async Task CloseSourceAsync(PendingImport item, IngestionTimings? timings)
+    {
+        if (item.Source is null) return;
+        var source = item.Source;
+        item.Source = null;
+        var start = Stopwatch.GetTimestamp();
+        try { await source.DisposeAsync(); }
+        finally { timings?.Record(IngestionStage.CloseSource, start); }
+    }
+
+    private static Exception? RemoveUncommittedMedia(PendingImport item)
+    {
+        if (item.Committed || item.Record is null || item.MediaCleanupAttempted) return null;
+
+        try { File.Delete(item.Record.StoredPath); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            item.MediaCleanupAttempted = true;
+            return exception;
+        }
+
+        item.MediaCleanupAttempted = true;
+        return null;
     }
 
     private static bool IsImportFailure(Exception exception) => exception is IOException or InvalidOperationException

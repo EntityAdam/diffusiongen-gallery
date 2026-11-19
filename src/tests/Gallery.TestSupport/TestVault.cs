@@ -17,6 +17,7 @@ internal sealed class TestVault : IDisposable
     public GalleryStore Store { get; }
     public RawGalleryStore RawStore { get; }
     public VaultSession Session { get; } = new();
+    public GalleryScope Scope { get; }
     public GalleryService Service { get; }
 
     public TestVault(VideoTools? video = null, VisionManager? vision = null)
@@ -29,7 +30,8 @@ internal sealed class TestVault : IDisposable
         Vault = new(Root);
         Store = new(Path.Combine(Root, "gallery.db"));
         RawStore = new(Path.Combine(Root, "gallery.db"));
-        Service = new(Store, Vault, Session, video, vision);
+        Scope = new(Store, Vault, Session, video, vision);
+        Service = new(Scope);
     }
 
     public async Task InitializeAsync()
@@ -40,9 +42,9 @@ internal sealed class TestVault : IDisposable
 
     public void Dispose()
     {
-        Service.Dispose();
+        Scope.Dispose();
         // Disposal cancels the background drive player; let its in-flight operation finish before deleting files.
-        Service.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
+        Scope.DriveOperations.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
         if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
         if (Directory.Exists(Root + "-state")) Directory.Delete(Root + "-state", recursive: true);
     }

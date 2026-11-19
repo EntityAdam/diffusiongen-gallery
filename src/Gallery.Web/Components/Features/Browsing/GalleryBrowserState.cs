@@ -108,15 +108,7 @@ public sealed class GalleryBrowserState : IDisposable
     {
         var selection = TrashActive ? RemovalSelection : LibrarySelection;
         var ordered = Filtered.Select(image => image.Id).ToList();
-        var anchor = SelectionAnchor is null ? -1 : ordered.IndexOf(SelectionAnchor);
-        var target = ordered.IndexOf(id);
-        if (range && anchor >= 0 && target >= 0)
-        {
-            var (from, to) = anchor <= target ? (anchor, target) : (target, anchor);
-            selection.UnionWith(ordered.Skip(from).Take(to - from + 1));
-        }
-        else if (!selection.Remove(id)) selection.Add(id);
-        SelectionAnchor = id;
+        SelectionAnchor = MediaRangeSelection.Select(selection, ordered, SelectionAnchor, id, range);
     }
 
     public Task CatalogChangedAsync()

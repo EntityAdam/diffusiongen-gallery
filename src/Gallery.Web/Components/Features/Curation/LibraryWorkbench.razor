@@ -358,7 +358,7 @@
     {
         await EnsureCheckpointAsync();
         checkpoint!.RevocationToken.ThrowIfCancellationRequested();
-        var imageRecord = await ApprovePendingVisionAsync(suggestion);
+        var imageRecord = await ApprovePendingVisionAsync(suggestion, checkpoint);
         if (imageRecord is null) return null;
         suggestions.RemoveAll(item => item.Id == suggestion.Id);
         if (!working) jobMessage = $"{suggestions.Count} suggestions await approval.";

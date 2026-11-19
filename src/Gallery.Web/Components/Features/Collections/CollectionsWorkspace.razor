@@ -1,3 +1,4 @@
+@using Gallery.Web.Components.Features.Browsing
 @using Gallery.Web.Components.Features.Curation
 @using Gallery.Web.Components.Features.Media
 @using Gallery.Web.Components.Features.Tags
@@ -205,9 +206,7 @@
     {
         if (ControlsDisabled) return;
         var ordered = Media.Select(image => image.Id).ToList();
-        if (range && anchor is not null && ordered.Contains(anchor)) { var a = ordered.IndexOf(anchor);var b = ordered.IndexOf(id);foreach (var item in ordered.Skip(Math.Min(a,b)).Take(Math.Abs(a-b)+1)) selection.Add(item); }
-        else if (!selection.Add(id)) selection.Remove(id);
-        anchor = id;
+        anchor = MediaRangeSelection.Select(selection, ordered, anchor, id, range);
     }
     private void BeginName(string? id, bool isSet) { if (ControlsDisabled) return; modal = "name"; modalId = id; modalIsSet = isSet; name = ModalName; error = ""; }
     private void BeginDelete(string id, bool isSet) { if (ControlsDisabled) return; modal = "delete"; modalId = id; modalIsSet = isSet; error = ""; }

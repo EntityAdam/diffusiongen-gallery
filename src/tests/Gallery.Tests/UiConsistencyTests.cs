@@ -657,11 +657,22 @@ public sealed class UiConsistencyTests
     }
 
     [Fact]
+    public void RangeSelection_WhenTargetHasLeftTheResults_KeepsSelectionAndAnchor()
+    {
+        var selection = new HashSet<string> { "last" };
+
+        var anchor = MediaRangeSelection.Select(selection, ["first", "middle", "last"], "last", "stale", range: true);
+
+        Assert.Equal("last", anchor);
+        Assert.Equal("last", Assert.Single(selection));
+    }
+
+    [Fact]
     public async Task Collections_SortingClearsSelectionAndRangeAnchor()
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (workspace, _) = await Render<CollectionsWorkspace>(fixture, new());
         var selection = (HashSet<string>)typeof(CollectionsWorkspace).GetField("selection", Private)!.GetValue(workspace)!;
         selection.Add("hidden");
@@ -676,9 +687,9 @@ public sealed class UiConsistencyTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var first = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var second = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await Invoke(fixture, home, "Navigation.SwitchWorkflowAsync", "unorganized");
         await Invoke(fixture, home, "OpenCollectionDetailsAsync", (new[] { second, first }, first.Id));
@@ -697,16 +708,16 @@ public sealed class UiConsistencyTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var first = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var second = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await Invoke(fixture, home, "Catalog.ReloadAsync");
         await Invoke(fixture, home, "Navigation.SwitchWorkflowAsync", "unorganized");
         var workspace = Field<CollectionsWorkspace>(home, "collectionsWorkspace");
         foreach (var key in new[] { "3", "3", "0", "f", "d" })
             await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<GalleryGridShortcuts>().HandleGridKey(key, first.Id, false));
-        var saved = (await vault.Service.ListAsync()).Single(image => image.Id == first.Id);
+        var saved = (await vault.Scope.Catalog.ListAsync()).Single(image => image.Id == first.Id);
         Assert.Equal(0, saved.Rating);
         Assert.True(saved.IsFavorite);
         Assert.True(saved.IsMarkedForDeletion);
