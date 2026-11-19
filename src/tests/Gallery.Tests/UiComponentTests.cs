@@ -5,6 +5,10 @@ using System.Text.RegularExpressions;
 using Gallery.Core.Models;
 using Gallery.Web.Components.Features.Backups;
 using Gallery.Web.Components.Features.Browsing;
+using Gallery.Web.Components.Features.Curation;
+using Microsoft.Extensions.DependencyInjection;
+using ShadCn.Blazor.Components;
+
 using Gallery.Web.Components.Features.Duplicates;
 using Gallery.Web.Components.Features.Media;
 using Gallery.Web.Components.Features.Storage;
@@ -25,12 +29,38 @@ namespace Gallery.Tests;
 public sealed class UiComponentTests
 {
     [Fact]
+    public async Task WorkbenchSavedView_WhenNameIsEmpty_ThenDisplaysTheNameValidationMessage()
+    {
+        // Arrange
+        const BindingFlags InstanceMembers = BindingFlags.Instance | BindingFlags.NonPublic;
+        using var testVault = new TestVault();
+        using var libraryWorkbench = new LibraryWorkbench();
+        var services = new ServiceCollection();
+        services.AddShadCnBlazorComponents();
+        using var provider = services.BuildServiceProvider();
+        typeof(LibraryWorkbench).GetProperty("Toasts", InstanceMembers)!.SetValue(libraryWorkbench, provider.GetRequiredService<ISonnerService>());
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(libraryWorkbench, testVault.Scope);
+        typeof(LibraryWorkbench).GetProperty("Logger", InstanceMembers)!
+            .SetValue(libraryWorkbench, NullLogger<LibraryWorkbench>.Instance);
+        string[] expectedMessagePhrases = ["Saved view name", "''", "1 to 80 characters"];
+
+        // Act
+        await (Task)typeof(LibraryWorkbench).GetMethod("SaveViewAsync", InstanceMembers)!.Invoke(libraryWorkbench, null)!;
+
+        // Assert - gather the caller-facing message
+        var actualErrorMessage = (string)typeof(LibraryWorkbench).GetField("error", InstanceMembers)!.GetValue(libraryWorkbench)!;
+
+        // Assert
+        AsserterExceptionContract.AssertMessageContains(expectedMessagePhrases, actualErrorMessage);
+    }
+
+    [Fact]
     public async Task TagManagement_ShowsUnusedDefinitionsAndCascadingActions()
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await vault.Service.AddTagAsync("Unused vocabulary");
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await vault.Scope.Tags.AddTagAsync("Unused vocabulary");
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         string html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             var root = await fixture.HtmlRenderer.RenderComponentAsync<TagManagement>();
@@ -51,7 +81,7 @@ public sealed class UiComponentTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         const string prompt = "Describe lighting.\nReturn JSON with description and tags.";
         string html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -304,7 +334,7 @@ public sealed class UiComponentTests
     public async Task Home_WhileImportRuns_ToolboxCannotLeaveIngestionProgress()
     {
         using var fixture = new TestVault();
-        using var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(fixture.Service), new(), new(fixture.Service.Scope.Collections), null!,
+        using var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(fixture.Scope), new(), new(fixture.Scope.Collections), null!,
             NullLogger.Instance, action => action(), () => { });
         ComponentTestAccess.Set(home.Navigation, "Section", "ingest");
         ComponentTestAccess.Set(home.Browser, "ToolboxVisible", false);
@@ -332,8 +362,8 @@ public sealed class UiComponentTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        fixture.Service.LockVault();
-        using var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(fixture.Service), new(), new(fixture.Service.Scope.Collections), null!,
+        fixture.Scope.Vault.LockVault();
+        using var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(fixture.Scope), new(), new(fixture.Scope.Collections), null!,
             NullLogger.Instance, action => action(), () => { });
 
         await home.Preferences.UpdateAutoLockAsync("30", home.Commands);
@@ -567,9 +597,9 @@ public sealed class UiComponentTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var first = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var second = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         FullscreenViewer? viewer = null;
         ImageRecord? changed = null;
         var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
@@ -582,7 +612,7 @@ public sealed class UiComponentTests
             })));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(rating.ToString()));
 
-        var saved = Assert.Single(await vault.Service.ListAsync(), image => image.Id == first.Id);
+        var saved = Assert.Single(await vault.Scope.Catalog.ListAsync(), image => image.Id == first.Id);
         Assert.Equal(rating, saved.Rating);
         Assert.True(saved.IsReviewed);
         Assert.Equal(saved, changed);
@@ -603,12 +633,12 @@ public sealed class UiComponentTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        image = await vault.Service.UpdateAsync(image.Id, edit => vault.Service.AddCollection(edit with { Tags = "existing" }, "Existing"));
-        var collection = await vault.Service.CreateCollectionAsync("Destination");
-        var destinationSet = await vault.Service.CreateSetAsync(collection.Id, "New set");
-        image = (await vault.Service.ListAsync()).Single();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => vault.Scope.Records.AddCollection(edit with { Tags = "existing" }, "Existing"));
+        var collection = await vault.Scope.Collections.CreateCollectionAsync("Destination");
+        var destinationSet = await vault.Scope.Collections.CreateSetAsync(collection.Id, "New set");
+        image = (await vault.Scope.Catalog.ListAsync()).Single();
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         FullscreenViewer? viewer = null;
         ImageRecord? changed = null;
         var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
@@ -639,14 +669,14 @@ public sealed class UiComponentTests
         {
             await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
             {
-                var result = await vault.Service.MoveMediaToSetAsync([image.Id], destinationSet.Id);
+                var result = await vault.Scope.Collections.MoveMediaToSetAsync([image.Id], destinationSet.Id);
                 await (Task)typeof(FullscreenViewer).GetMethod("CollectionMovedAsync", flags)!.Invoke(viewer, [result])!;
                 typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
             });
         }
         else await Save("EXISTING, new tag");
 
-        var saved = Assert.Single(await vault.Service.ListAsync());
+        var saved = Assert.Single(await vault.Scope.Catalog.ListAsync());
         Assert.Equal(key == "c" ? "existing" : "existing, new tag", saved.Tags);
         Assert.Equal(key == "c" ? new[] { "Destination" } : new[] { "Existing" }, saved.Collections.ToArray());
         Assert.False(saved.IsReviewed);
@@ -663,7 +693,7 @@ public sealed class UiComponentTests
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey("ignored"));
         Assert.DoesNotContain("<dialog", await Html());
         Assert.Null(changed);
-        var afterCancel = Assert.Single(await vault.Service.ListAsync());
+        var afterCancel = Assert.Single(await vault.Scope.Catalog.ListAsync());
         Assert.Equal(saved.Tags, afterCancel.Tags);
         Assert.Equal(saved.Collections.ToArray(), afterCancel.Collections.ToArray());
     }
@@ -675,9 +705,9 @@ public sealed class UiComponentTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        image = await vault.Service.UpdateAsync(image.Id, edit => edit with { Tags = "cat, dog" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "cat, dog" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         FullscreenViewer? viewer = null;
         ImageRecord? changed = null;
         var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
@@ -702,7 +732,7 @@ public sealed class UiComponentTests
             await (Task)typeof(FullscreenViewer).GetMethod("SaveQuickEditAsync", flags)!.Invoke(viewer, [""])!;
             typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
         });
-        Assert.Equal("", Assert.Single(await vault.Service.ListAsync()).Tags);
+        Assert.Equal("", Assert.Single(await vault.Scope.Catalog.ListAsync()).Tags);
         Assert.NotNull(changed);
         Assert.False(changed.IsReviewed);
         Assert.DoesNotContain("<dialog", await Html());
@@ -715,7 +745,7 @@ public sealed class UiComponentTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var first = new ImageRecord { Id = "first", Name = "First", Width = 10, Height = 10, OriginalBytes = 10 };
         var second = new ImageRecord { Id = "second", Name = "Second", Width = 10, Height = 10, OriginalBytes = 10 };
         var records = new Dictionary<string, ImageRecord> { [first.Id] = first, [second.Id] = second };

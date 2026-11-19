@@ -51,7 +51,7 @@ public sealed class CollectionBrowsingTests
         Parameter(workspace, nameof(CollectionsWorkspace.Catalog), Catalog);
         Parameter(workspace, nameof(CollectionsWorkspace.Images), source);
         Parameter(workspace, nameof(CollectionsWorkspace.Location), new CollectionLocation("a", "s1"));
-        GalleryCapabilityTestSetup.InjectGalleryCapabilities(workspace, vault.Service);
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(workspace, vault.Scope);
         Set(workspace, "sort", "sequence");
         var initial = Media(workspace);
         Assert.Equal(new[] { "two", "one" }, initial.Select(image => image.Id));
@@ -92,11 +92,11 @@ public sealed class CollectionBrowsingTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         var reloads = 0;
         ImageRecord? changed = null;
         CollectionsWorkspace? workspace = null;
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await fixture.HtmlRenderer.RenderComponentAsync<WorkspaceHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
@@ -115,7 +115,7 @@ public sealed class CollectionBrowsingTests
         Assert.Equal(0, reloads);
         Assert.Equal(5, changed!.Rating);
         Assert.Equal(5, Assert.Single(workspace!.Images).Rating);
-        Assert.Equal(5, Assert.Single(await vault.Service.ListAsync()).Rating);
+        Assert.Equal(5, Assert.Single(await vault.Scope.Catalog.ListAsync()).Rating);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => Invoke(workspace, "RefreshParentAsync"));
         Assert.Equal(1, reloads);
         Assert.Same(Catalog, workspace.Catalog);
@@ -147,7 +147,7 @@ public sealed class CollectionBrowsingTests
         using var vault = new TestVault();
         var js = new PreviewJsRuntime();
         FullscreenViewer? viewer = null;
-        await using var fixture = ComponentRenderFixture.Create(vault.Service, js);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope, js);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await fixture.HtmlRenderer.RenderComponentAsync<ViewerHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
@@ -171,10 +171,10 @@ public sealed class CollectionBrowsingTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "prefetch.png", "folder");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "prefetch.png", "folder");
         var url = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var js = new PreviewJsRuntime(url.Task);
-        var cache = new ViewerMediaCache(vault.Service.Scope.Media, js);
+        var cache = new ViewerMediaCache(vault.Scope.Media, js);
         var prefetch = cache.PrefetchAsync(image);
         Task? shutdown = null;
         try

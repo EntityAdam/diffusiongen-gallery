@@ -193,6 +193,7 @@ internal sealed class VaultLocationCoordinator(
         byte[]? key = null;
         StagedLocation? location = null;
         var lockRequestsAtStart = 0L;
+        var activated = false;
         try
         {
             galleryLifetime.EnsureCheckout();
@@ -202,14 +203,19 @@ internal sealed class VaultLocationCoordinator(
             await StopDriveAndDrainSessionAsync();
 
             var (stagedStore, cleanSource) = await prepare(location, key);
-            using var sourceCheckout = await location.PublishAsync(stagedStore, key);
+            EnsureActive();
+            await location.PublishFilesAsync(stagedStore, key);
+            using var sourceCheckout = ActivatePublishedLocation(location);
+            activated = true;
             history?.Save(destination);
             cleanSource();
         }
         catch (Exception exception)
         {
-            if (location?.IsPublished == true)
+            if (activated)
                 throw new IOException(publishedFailureMessage(destination), exception);
+            if (location?.FilesPublished == true)
+                throw new IOException($"The verified gallery files were published to '{destination}', but the destination could not be activated. The source was not removed.", exception);
             vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
@@ -243,8 +249,9 @@ internal sealed class VaultLocationCoordinator(
             await ClearLocationSettingsAsync(store, key);
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
             await StopDriveAndDrainSessionAsync();
-            var sourceCheckout = await stagedLocation.PublishAsync(store, key);
-            sourceCheckout?.Dispose();
+            EnsureActive();
+            await stagedLocation.PublishFilesAsync(store, key);
+            ActivatePublishedLocation(stagedLocation)?.Dispose();
             history?.Save(destination);
             // Restore returns to regular sign-in; credentials and plaintext never survive the operation.
         }
@@ -269,7 +276,7 @@ internal sealed class VaultLocationCoordinator(
         try
         {
             RequireEmptyDestination(destination);
-            return new StagedLocation(galleryLifetime, destination, checkout);
+            return new StagedLocation(destination, checkout);
         }
         catch
         {
@@ -352,13 +359,25 @@ internal sealed class VaultLocationCoordinator(
                 StoredBackupSettings.SettingId, StoredBackupSettings.SettingPurpose, key);
     }
 
-    private sealed class StagedLocation(GalleryLifetime lifetime, string destination, VaultCheckout destinationCheckout) : IDisposable
+    private VaultCheckout? ActivatePublishedLocation(StagedLocation location)
+    {
+        var destination = location.Destination;
+        var retired = galleryLifetime.PublishLocation(
+            galleryLifetime.StoreFactory.Create(destination), new VaultStore(destination), location.Checkout);
+        location.ReleaseCheckoutOwnership();
+        return retired;
+    }
+
+    private sealed class StagedLocation(string destination, VaultCheckout destinationCheckout) : IDisposable
     {
         private VaultCheckout? checkout = destinationCheckout;
         private string? stagingDirectory;
 
         public string Destination => destination;
-        public bool IsPublished { get; private set; }
+        public bool FilesPublished { get; private set; }
+        public VaultCheckout? Checkout => checkout;
+
+        public void ReleaseCheckoutOwnership() => checkout = null;
 
         public string CreateStagingDirectory(string prefix)
         {
@@ -367,9 +386,8 @@ internal sealed class VaultLocationCoordinator(
             return stagingDirectory;
         }
 
-        public async Task<VaultCheckout?> PublishAsync(IGalleryStore store, byte[] key)
+        public async Task PublishFilesAsync(IGalleryStore store, byte[] key)
         {
-            ObjectDisposedException.ThrowIf(lifetime.IsDisposed, lifetime);
             var staging = stagingDirectory ?? throw new InvalidOperationException("Create the staging directory before publishing.");
             await store.PrepareForPublicationAsync(key);
             var moved = new List<string>();
@@ -397,10 +415,7 @@ internal sealed class VaultLocationCoordinator(
                 throw;
             }
 
-            IsPublished = true;
-            var retired = lifetime.PublishLocation(lifetime.StoreFactory.Create(destination), new VaultStore(destination), checkout);
-            checkout = null;
-            return retired;
+            FilesPublished = true;
         }
 
         public void Dispose()

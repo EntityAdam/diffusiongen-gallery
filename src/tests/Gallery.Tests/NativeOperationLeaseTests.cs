@@ -1,3 +1,4 @@
+using Gallery.Core.Features.Backups;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Net;
@@ -15,26 +16,26 @@ public sealed class NativeOperationLeaseTests
     {
         var root = Path.Combine(Path.GetTempPath(), "gallery-backup-lease-" + Guid.NewGuid().ToString("N"));
         var mediator = new TestMediatorAzureUploads();
-        using var service = GalleryService.Create(root,
+        using var service = GalleryScope.Create(root,
             new GalleryRuntimeOptions { StateDirectory = root + "-state" },
             new HttpClient(mediator.CreateHttpMessageHandler()));
         Task<BackupRunResult>? backup = null;
         try
         {
-            await service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-            await service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "backup.png", "folder");
-            await service.WaitForDriveOperationsAsync();
+            await service.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+            await service.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "backup.png", "folder");
+            await service.DriveOperations.WaitForDriveOperationsAsync();
             var connection = $"DefaultEndpointsProtocol=https;AccountName=testaccount;AccountKey={Convert.ToBase64String(new byte[32])}";
-            await service.SaveBackupOptionsAsync("azure", "", "gallery-backups", "nightly", connection);
-            backup = service.CreateFullBackupAsync();
+            await service.Backup.SaveBackupOptionsAsync("azure", "", "gallery-backups", "nightly", connection);
+            backup = service.Backup.CreateFullBackupAsync();
             await mediator.UploadEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            service.LockVault();
-            await Assert.ThrowsAsync<VaultLockedException>(() => service.ListAsync());
+            service.Vault.LockVault();
+            await Assert.ThrowsAsync<VaultLockedException>(() => service.Catalog.ListAsync());
             mediator.ReleaseUpload.TrySetResult();
 
             var result = await backup.WaitAsync(TimeSpan.FromSeconds(15));
 
-            Assert.False(service.IsUnlocked);
+            Assert.False(service.Vault.IsUnlocked);
             var archivePath = "/gallery-backups/nightly/" + result.BackupName;
             Assert.True(mediator.UploadedBlobs.ContainsKey(archivePath + ".manifest"));
             using (var archive = new ZipArchive(new MemoryStream(mediator.UploadedBlobs[archivePath])))
@@ -42,8 +43,8 @@ public sealed class NativeOperationLeaseTests
                 Assert.NotNull(archive.GetEntry("gallery.db"));
                 Assert.Single(archive.Entries, entry => entry.FullName.StartsWith("media/", StringComparison.Ordinal));
             }
-            await service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-            var options = await service.LoadBackupOptionsAsync();
+            await service.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            var options = await service.Backup.LoadBackupOptionsAsync();
             Assert.Equal(result.BackupName, options.LastBackupName);
             Assert.Equal("full", options.LastBackupType);
         }
@@ -53,7 +54,7 @@ public sealed class NativeOperationLeaseTests
             try { if (backup is not null) await backup.WaitAsync(TimeSpan.FromSeconds(15)); }
             finally
             {
-                await service.CloseVaultAsync();
+                await service.Vault.CloseVaultAsync();
                 if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
                 if (Directory.Exists(root + "-state")) Directory.Delete(root + "-state", recursive: true);
             }
@@ -65,46 +66,46 @@ public sealed class NativeOperationLeaseTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "backup.png", "folder");
-        await fixture.Service.WaitForDriveOperationsAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "backup.png", "folder");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
         var destination = fixture.Root + "-backups";
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
-            var full = await fixture.Service.CreateFullBackupAsync();
-            await fixture.Service.UpdateAsync(image.Id, edit => edit with { Description = "new backup metadata" });
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
+            var full = await fixture.Scope.Backup.CreateFullBackupAsync();
+            await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "new backup metadata" });
             using var parent = new Activity("incremental-lease-test").Start();
             var expired = false;
             using var listener = new ActivityListener
             {
-                ShouldListenTo = source => source.Name == GalleryService.BackupActivitySourceName,
+                ShouldListenTo = source => source.Name == BackupArchive.ActivitySourceName,
                 Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
                 ActivityStarted = activity =>
                 {
                     if (activity.OperationName != "backup.chain.validate" || activity.TraceId != parent.TraceId) return;
-                    fixture.Service.ConfigureInactivityTimeout(TimeSpan.FromTicks(1));
-                    expired = !fixture.Service.IsUnlocked;
+                    fixture.Scope.Vault.ConfigureInactivityTimeout(TimeSpan.FromTicks(1));
+                    expired = !fixture.Scope.Vault.IsUnlocked;
                 }
             };
             ActivitySource.AddActivityListener(listener);
 
-            var result = await fixture.Service.CreateIncrementalBackupAsync();
+            var result = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
 
             Assert.True(expired);
             Assert.False(result.WasSkipped);
             Assert.NotEqual(full.BackupName, result.BackupName);
             Assert.True(File.Exists(Path.Combine(destination, result.BackupName + ".manifest")));
-            await Assert.ThrowsAsync<VaultLockedException>(() => fixture.Service.ListAsync());
-            fixture.Service.ConfigureInactivityTimeout(null);
-            await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-            var options = await fixture.Service.LoadBackupOptionsAsync();
+            await Assert.ThrowsAsync<VaultLockedException>(() => fixture.Scope.Catalog.ListAsync());
+            fixture.Scope.Vault.ConfigureInactivityTimeout(null);
+            await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            var options = await fixture.Scope.Backup.LoadBackupOptionsAsync();
             Assert.Equal(result.BackupName, options.LastBackupName);
             Assert.Equal("incremental", options.LastBackupType);
         }
         finally
         {
-            fixture.Service.ConfigureInactivityTimeout(null);
-            await fixture.Service.CloseVaultAsync();
+            fixture.Scope.Vault.ConfigureInactivityTimeout(null);
+            await fixture.Scope.Vault.CloseVaultAsync();
             if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
         }
     }
@@ -116,38 +117,38 @@ public sealed class NativeOperationLeaseTests
     {
         using var source = new TestVault();
         using var destination = new TestVault();
-        await source.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        await source.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
-        await source.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(64, 48)), "second.png", "folder");
-        if (warmCache) await source.Service.ScanDuplicatesAsync();
-        await source.Service.WaitForDriveOperationsAsync();
-        await destination.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        var destinationImage = await destination.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "destination.png", "folder");
-        await destination.Service.ScanDuplicatesAsync();
+        await source.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await source.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        await source.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(64, 48)), "second.png", "folder");
+        if (warmCache) await source.Scope.Duplicates.ScanDuplicatesAsync();
+        await source.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        await destination.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var destinationImage = await destination.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "destination.png", "folder");
+        await destination.Scope.Duplicates.ScanDuplicatesAsync();
         var settings = new[] { "duplicate-scan", "perceptual-hashes" };
         var expectedCache = new Dictionary<string, byte[]>();
         foreach (var id in settings) expectedCache[id] = (await destination.RawStore.ReadSettingsAsync(id))!;
-        await destination.Service.CloseVaultAsync();
+        await destination.Scope.Vault.CloseVaultAsync();
         var progress = new BlockingProgress();
-        var scan = Task.Run(() => source.Service.ScanDuplicatesAsync(progress));
+        var scan = Task.Run(() => source.Scope.Duplicates.ScanDuplicatesAsync(progress));
         Task? selection = null;
         try
         {
             await progress.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            source.Service.LockVault();
+            source.Scope.Vault.LockVault();
             Assert.False(source.Session.WhenDrainedAsync().IsCompleted);
-            selection = source.Service.OpenExistingVaultAsync(destination.Root);
+            selection = source.Scope.Vault.OpenExistingVaultAsync(destination.Root);
             Assert.False(selection.IsCompleted);
-            Assert.Equal(source.Root, source.Service.VaultRoot);
+            Assert.Equal(source.Root, source.Scope.Vault.VaultRoot);
             progress.Release.TrySetResult();
 
             var result = await scan.WaitAsync(TimeSpan.FromSeconds(10));
             await selection.WaitAsync(TimeSpan.FromSeconds(10));
-            await source.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            await source.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
 
             Assert.Equal(2, result.ScannedCount);
-            Assert.Equal(destinationImage.Id, Assert.Single(await source.Service.ListAsync()).Id);
-            Assert.Equal(1, (await source.Service.CachedDuplicateScanAsync())!.ScannedCount);
+            Assert.Equal(destinationImage.Id, Assert.Single(await source.Scope.Catalog.ListAsync()).Id);
+            Assert.Equal(1, (await source.Scope.Duplicates.CachedDuplicateScanAsync())!.ScannedCount);
             foreach (var id in settings)
                 Assert.Equal(expectedCache[id], await destination.RawStore.ReadSettingsAsync(id));
         }
@@ -156,7 +157,7 @@ public sealed class NativeOperationLeaseTests
             progress.Release.TrySetResult();
             await scan.WaitAsync(TimeSpan.FromSeconds(10));
             if (selection is not null) await selection.WaitAsync(TimeSpan.FromSeconds(10));
-            await source.Service.CloseVaultAsync();
+            await source.Scope.Vault.CloseVaultAsync();
         }
     }
 

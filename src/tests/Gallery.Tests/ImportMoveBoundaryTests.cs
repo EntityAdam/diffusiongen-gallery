@@ -13,7 +13,7 @@ public sealed class ImportMoveBoundaryTests
         using var fixture = new TestVault();
         using var input = new MemoryStream([1, 2, 3]);
         // Act
-        var exception = await Record.ExceptionAsync(() => fixture.Service.ImportAsync(input, "photo.txt", "folder"));
+        var exception = await Record.ExceptionAsync(() => fixture.Scope.Ingestion.ImportAsync(input, "photo.txt", "folder"));
         var inputPosition = input.Position;
         var vaultDirectoryExists = Directory.Exists(fixture.Root);
 
@@ -33,7 +33,7 @@ public sealed class ImportMoveBoundaryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
         var expectedCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var expectedCatalog = await fixture.RawStore.ReadRecordAsync(record.Id);
         var target = Path.Combine(fixture.Root, "destination.dpng");
@@ -44,7 +44,7 @@ public sealed class ImportMoveBoundaryTests
         await command.ExecuteNonQueryAsync();
 
         // Act
-        var exception = await Record.ExceptionAsync(() => fixture.Service.MoveAsync(record.Id, fixture.Root, "destination"));
+        var exception = await Record.ExceptionAsync(() => fixture.Scope.MediaMaintenance.MoveAsync(record.Id, fixture.Root, "destination"));
         var sourceCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var catalog = await fixture.RawStore.ReadRecordAsync(record.Id);
         var targetExists = File.Exists(target);
@@ -62,13 +62,13 @@ public sealed class ImportMoveBoundaryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
         var expectedCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var expectedCatalog = await fixture.RawStore.ReadRecordAsync(record.Id);
         var folder = Path.GetDirectoryName(record.StoredPath)!;
         var name = Path.GetFileNameWithoutExtension(record.StoredPath);
         // Act
-        var exception = await Record.ExceptionAsync(() => fixture.Service.MoveAsync(record.Id, folder, name));
+        var exception = await Record.ExceptionAsync(() => fixture.Scope.MediaMaintenance.MoveAsync(record.Id, folder, name));
         var sourceCiphertext = await File.ReadAllBytesAsync(record.StoredPath);
         var catalog = await fixture.RawStore.ReadRecordAsync(record.Id);
 

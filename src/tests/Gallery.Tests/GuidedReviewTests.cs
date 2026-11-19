@@ -7,17 +7,17 @@ namespace Gallery.Tests;
 public sealed class GuidedReviewTests
 {
     [Fact]
-    public void GuidedReview_WhenStartedWithTheDefaultGoal_ThenOpensADetachedReviewOfTenEligibleImagesAcrossPagesInSortOrder()
+    public async Task GuidedReview_WhenStartedWithTheDefaultGoal_ThenOpensADetachedReviewOfTenEligibleImagesAcrossPagesInSortOrder()
     {
         // Arrange
         using var testVault = new TestVault();
         var imageRecords = CreateImages(30);
         imageRecords[0] = imageRecords[0] with { IsReviewed = true };
         imageRecords[1] = imageRecords[1] with { IsMarkedForDeletion = true };
-        using var home = CreateSession(testVault, imageRecords);
-        ComponentTestAccess.Set(home, "Browser.Filter", new GalleryFilter { Sort = "name" });
-        ComponentTestAccess.Set(home, "Browser.Density", "detail");
-        ComponentTestAccess.Set(home, "Browser.Page", 1);
+        using var home = await OpenSessionAsync(testVault, imageRecords);
+        await home.Browser.ApplyFilterAsync(new GalleryFilter { Sort = "name" });
+        await home.Browser.GoToPageAsync(1);
+        Assert.Equal(1, home.Browser.Page);
         const int ExpectedReviewGoal = 10;
         var expectedImageIds = imageRecords.Skip(2).Take(ExpectedReviewGoal).Select(imageRecord => imageRecord.Id).ToArray();
         var expectedScenario = ExpectedScenario.CreateFrom("Default review selects ten eligible images in library sort order, independent of pagination, in a detached session.", new
@@ -46,7 +46,7 @@ public sealed class GuidedReviewTests
     [InlineData(3, 3)]
     [InlineData(0, 1)]
     [InlineData(-5, 1)]
-    public void GuidedReview_WhenTheGoalIsOutsideThePoolBounds_ThenClampsTheGoalAndSession(int requestedGoal, int expectedGoal)
+    public async Task GuidedReview_WhenTheGoalIsOutsideThePoolBounds_ThenClampsTheGoalAndSession(int requestedGoal, int expectedGoal)
     {
         // Arrange
         using var testVault = new TestVault();
@@ -56,8 +56,8 @@ public sealed class GuidedReviewTests
             {
                 IsFavorite = index < 8, IsReviewed = index == 0, IsMarkedForDeletion = index == 1
             };
-        using var home = CreateSession(testVault, imageRecords);
-        ComponentTestAccess.Set(home, "Browser.Filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        using var home = await OpenSessionAsync(testVault, imageRecords);
+        await home.Browser.ApplyFilterAsync(new GalleryFilter { IncludesFavoritesOnly = true });
         home.Browser.ReviewGoal = requestedGoal;
         var expectedScenario = ExpectedScenario.CreateFrom("Review goals and session sizes stay within the eligible filtered pool.",
             new { Goal = expectedGoal, SessionCount = expectedGoal, AllEligible = true });
@@ -77,7 +77,7 @@ public sealed class GuidedReviewTests
     }
 
     [Fact]
-    public void GuidedReview_WhenRandomOrderIsSelected_ThenChoosesUniqueEligibleImagesWithoutChangingTheLibrary()
+    public async Task GuidedReview_WhenRandomOrderIsSelected_ThenChoosesUniqueEligibleImagesWithoutChangingTheLibrary()
     {
         // Arrange
         const int ExpectedReviewGoal = 7;
@@ -88,8 +88,8 @@ public sealed class GuidedReviewTests
             {
                 IsFavorite = index % 2 == 0, IsReviewed = index < 10, IsMarkedForDeletion = index > 70
             };
-        using var home = CreateSession(testVault, imageRecords);
-        ComponentTestAccess.Set(home, "Browser.Filter", new GalleryFilter { IncludesFavoritesOnly = true });
+        using var home = await OpenSessionAsync(testVault, imageRecords);
+        await home.Browser.ApplyFilterAsync(new GalleryFilter { IncludesFavoritesOnly = true });
         home.Browser.ReviewRandomOrder = true;
         home.Browser.ReviewGoal = ExpectedReviewGoal;
         var eligibleImageIds = imageRecords.Where(imageRecord => imageRecord.IsFavorite && !imageRecord.IsReviewed && !imageRecord.IsMarkedForDeletion)
@@ -119,14 +119,14 @@ public sealed class GuidedReviewTests
     [Theory]
     [InlineData(true, 3)]
     [InlineData(false, 0)]
-    public void GuidedReview_WhenTheEligiblePoolShrinks_ThenCapsTheDisplayedGoalAndSession(bool includesFavorites, int expectedCount)
+    public async Task GuidedReview_WhenTheEligiblePoolShrinks_ThenCapsTheDisplayedGoalAndSession(bool includesFavorites, int expectedCount)
     {
         // Arrange
         using var testVault = new TestVault();
         var imageRecords = CreateImages(20);
         for (var index = 0; index < 3; index++) imageRecords[index] = imageRecords[index] with { IsFavorite = true };
-        using var home = CreateSession(testVault, imageRecords);
-        ComponentTestAccess.Set(home, "Browser.Filter", includesFavorites
+        using var home = await OpenSessionAsync(testVault, imageRecords);
+        await home.Browser.ApplyFilterAsync(includesFavorites
             ? new GalleryFilter { IncludesFavoritesOnly = true }
             : new GalleryFilter { MinRating = 5 });
         var expectedScenario = ExpectedScenario.CreateFrom("A reduced eligible pool caps both the displayed goal and the next review session.",

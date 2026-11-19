@@ -33,10 +33,7 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         HtmlRenderer = htmlRenderer;
     }
 
-    public static ComponentRenderFixture Create(GalleryService? galleryService = null, IJSRuntime? jsRuntime = null) =>
-        Create(galleryService?.Scope, jsRuntime);
-
-    public static ComponentRenderFixture Create(GalleryScope? galleryScope, IJSRuntime? jsRuntime = null)
+    public static ComponentRenderFixture Create(GalleryScope? galleryScope = null, IJSRuntime? jsRuntime = null)
     {
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddLogging();

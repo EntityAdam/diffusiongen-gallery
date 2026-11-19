@@ -11,12 +11,12 @@ public sealed class BackupParentIntegrityTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
         var destination = Path.Combine(Directory.GetCurrentDirectory(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
-            var parent = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
+            var parent = await fixture.Scope.Backup.CreateFullBackupAsync();
             var archivePath = Path.Combine(destination, parent.BackupName);
             var sidecarPath = archivePath + ".manifest";
             await using (var stream = new FileStream(archivePath, FileMode.Open, FileAccess.Write))
@@ -24,11 +24,11 @@ public sealed class BackupParentIntegrityTests
             var sidecar = await File.ReadAllBytesAsync(sidecarPath);
 
             var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => fixture.Service.CreateIncrementalBackupAsync());
+                () => fixture.Scope.Backup.CreateIncrementalBackupAsync());
 
             Assert.Contains("damaged", failure.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(sidecar, await File.ReadAllBytesAsync(sidecarPath));
-            Assert.Equal(parent.BackupName, (await fixture.Service.LoadBackupOptionsAsync()).LastBackupName);
+            Assert.Equal(parent.BackupName, (await fixture.Scope.Backup.LoadBackupOptionsAsync()).LastBackupName);
             Assert.Equal(new[] { parent.BackupName, parent.BackupName + ".manifest" },
                 Directory.GetFiles(destination).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray());
         }
@@ -43,20 +43,20 @@ public sealed class BackupParentIntegrityTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
         var destination = Path.Combine(Directory.GetCurrentDirectory(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
-            var parent = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
+            var parent = await fixture.Scope.Backup.CreateFullBackupAsync();
             using (var archive = ZipFile.Open(Path.Combine(destination, parent.BackupName), ZipArchiveMode.Update))
                 archive.Entries.Single(entry => entry.FullName.StartsWith("media/", StringComparison.Ordinal)).Delete();
 
             var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => fixture.Service.CreateIncrementalBackupAsync());
+                () => fixture.Scope.Backup.CreateIncrementalBackupAsync());
 
             Assert.Contains("missing referenced media", failure.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(parent.BackupName, (await fixture.Service.LoadBackupOptionsAsync()).LastBackupName);
+            Assert.Equal(parent.BackupName, (await fixture.Scope.Backup.LoadBackupOptionsAsync()).LastBackupName);
             Assert.Equal(2, Directory.GetFiles(destination).Length);
         }
         finally
@@ -75,8 +75,8 @@ public sealed class BackupParentIntegrityTests
         var destination = Path.Combine(Directory.GetCurrentDirectory(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
-            var parent = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
+            var parent = await fixture.Scope.Backup.CreateFullBackupAsync();
             var replacement = Path.Combine(destination, "replacement.db");
             if (entryName == "gallery.db")
             {
@@ -102,10 +102,10 @@ public sealed class BackupParentIntegrityTests
             if (File.Exists(replacement)) File.Delete(replacement);
 
             var failure = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => fixture.Service.CreateIncrementalBackupAsync());
+                () => fixture.Scope.Backup.CreateIncrementalBackupAsync());
 
             Assert.Contains("damaged", failure.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(parent.BackupName, (await fixture.Service.LoadBackupOptionsAsync()).LastBackupName);
+            Assert.Equal(parent.BackupName, (await fixture.Scope.Backup.LoadBackupOptionsAsync()).LastBackupName);
             Assert.Equal(2, Directory.GetFiles(destination).Length);
         }
         finally

@@ -16,15 +16,15 @@ public sealed class BackupTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "second.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "second.png", "folder");
         var destination = Path.Combine(Path.GetTempPath(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
 
             // Act - create the baseline archive
-            var full = await fixture.Service.CreateFullBackupAsync();
+            var full = await fixture.Scope.Backup.CreateFullBackupAsync();
 
             // Assert - gather the full archive evidence
             var fullPath = Path.Combine(destination, full.BackupName);
@@ -59,20 +59,20 @@ public sealed class BackupTests
             }
 
             // Arrange - only catalog metadata changes
-            await fixture.Service.UpdateAsync(first.Id, image => image with { Description = "Updated caption" });
+            await fixture.Scope.Records.UpdateAsync(first.Id, image => image with { Description = "Updated caption" });
 
             // Act
-            var metadataOnly = await fixture.Service.CreateIncrementalBackupAsync();
+            var metadataOnly = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
 
             // Assert
             Assert.Equal(full.BackupName, ReadParentName(Path.Combine(destination, metadataOnly.BackupName), fixture.Session.Key));
             Assert.Equal(0, ReadMediaEntries(Path.Combine(destination, metadataOnly.BackupName)));
 
             // Arrange - add media after the metadata-only increment
-            var third = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 12)), "third.png", "folder");
+            var third = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 12)), "third.png", "folder");
 
             // Act
-            var changed = await fixture.Service.CreateIncrementalBackupAsync();
+            var changed = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
 
             // Assert
             Assert.Equal(1, changed.MediaFilesCopied);
@@ -93,16 +93,16 @@ public sealed class BackupTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
         var destination = Path.Combine(Path.GetTempPath(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
-            var full = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
+            var full = await fixture.Scope.Backup.CreateFullBackupAsync();
             var filesAfterFull = Directory.GetFiles(destination).Length;
 
             // Act - no catalog or media changes
-            var skipped = await fixture.Service.CreateIncrementalBackupAsync();
+            var skipped = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
 
             // Assert
             Assert.True(skipped.WasSkipped);
@@ -110,20 +110,20 @@ public sealed class BackupTests
             Assert.Equal(0, skipped.MediaFilesCopied);
             Assert.Equal(0, skipped.BytesWritten);
             Assert.Equal(filesAfterFull, Directory.GetFiles(destination).Length);
-            Assert.Equal(full.BackupName, (await fixture.Service.LoadBackupOptionsAsync()).LastBackupName);
+            Assert.Equal(full.BackupName, (await fixture.Scope.Backup.LoadBackupOptionsAsync()).LastBackupName);
 
             // Arrange - change the catalog to create a new baseline
-            await fixture.Service.UpdateAsync(first.Id, image => image with { Description = "Changed" });
+            await fixture.Scope.Records.UpdateAsync(first.Id, image => image with { Description = "Changed" });
 
             // Act
-            var changed = await fixture.Service.CreateIncrementalBackupAsync();
+            var changed = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
 
             // Assert
             Assert.False(changed.WasSkipped);
             Assert.Equal(full.BackupName, ReadParentName(Path.Combine(destination, changed.BackupName), fixture.Session.Key));
 
             // Act - unchanged since the latest increment
-            var skippedAgain = await fixture.Service.CreateIncrementalBackupAsync();
+            var skippedAgain = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
 
             // Assert
             Assert.True(skippedAgain.WasSkipped);
@@ -144,11 +144,11 @@ public sealed class BackupTests
         var destination = Path.Combine(Path.GetTempPath(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
 
             // Act
             var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => fixture.Service.CreateIncrementalBackupAsync());
+                () => fixture.Scope.Backup.CreateIncrementalBackupAsync());
 
             // Assert
             Assert.Contains("full backup", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -166,11 +166,11 @@ public sealed class BackupTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var insideVault = Path.Combine(fixture.Root, "backups");
-        await fixture.Service.SaveBackupOptionsAsync("local", insideVault, "", "", "");
+        await fixture.Scope.Backup.SaveBackupOptionsAsync("local", insideVault, "", "", "");
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => fixture.Service.CreateFullBackupAsync());
+            () => fixture.Scope.Backup.CreateFullBackupAsync());
 
         // Assert
         Assert.Contains("inside", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -186,14 +186,14 @@ public sealed class BackupTests
         var destination = Path.Combine(Path.GetTempPath(), "gallery-backup-tests-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", destination, "", "", "");
-            var full = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", destination, "", "", "");
+            var full = await fixture.Scope.Backup.CreateFullBackupAsync();
             File.Delete(Path.Combine(destination, full.BackupName + ".manifest"));
 
 
             // Act
             var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => fixture.Service.CreateIncrementalBackupAsync());
+                () => fixture.Scope.Backup.CreateIncrementalBackupAsync());
 
             // Assert
             Assert.Contains("missing", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -214,11 +214,11 @@ public sealed class BackupTests
             + Convert.ToBase64String(new byte[32]) + ";EndpointSuffix=core.windows.net";
 
         // Act
-        var saved = await fixture.Service.SaveBackupOptionsAsync(
+        var saved = await fixture.Scope.Backup.SaveBackupOptionsAsync(
             "azure", "", "gallery-backups", "nightly", connectionString);
 
         // Assert - gather persisted options and their ciphertext
-        var loaded = await fixture.Service.LoadBackupOptionsAsync();
+        var loaded = await fixture.Scope.Backup.LoadBackupOptionsAsync();
         var encryptedSettings = await fixture.RawStore.ReadSettingsAsync("backup-settings");
         var ciphertext = Encoding.UTF8.GetString(encryptedSettings!);
 

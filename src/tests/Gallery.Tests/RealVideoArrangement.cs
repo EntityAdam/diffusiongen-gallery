@@ -52,7 +52,7 @@ internal sealed class RealVideoArrangement : IDisposable
         var arrangement = await CreateSourceAsync();
         try
         {
-            arrangement.ImageRecord = await arrangement.TestVault.Service.ImportAsync(new MemoryStream(arrangement.Bytes), "clip.mp4", "folder");
+            arrangement.ImageRecord = await arrangement.TestVault.Scope.Ingestion.ImportAsync(new MemoryStream(arrangement.Bytes), "clip.mp4", "folder");
             return arrangement;
         }
         catch

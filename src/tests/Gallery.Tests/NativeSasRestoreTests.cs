@@ -14,40 +14,40 @@ public sealed class NativeSasRestoreTests
     public async Task SasRestore_WhenBackupsShareAPrefix_ThenListsAndRestoresTheWholeIncrementalChain(string prefix)
     {
         using var source = new TestVault();
-        await source.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await source.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         var firstBytes = GalleryTests.MakePng(32, 24);
         var secondBytes = GalleryTests.MakePng(40, 30);
-        var first = await source.Service.ImportAsync(new MemoryStream(firstBytes), "first.png", "folder");
+        var first = await source.Scope.Ingestion.ImportAsync(new MemoryStream(firstBytes), "first.png", "folder");
         var backups = source.Root + "-backups";
         var destination = source.Root + "-restored";
         var clientRoot = source.Root + "-client";
-        GalleryService? restored = null;
+        GalleryScope? restored = null;
         try
         {
-            await source.Service.SaveBackupOptionsAsync("local", backups, "", "", "");
-            var full = await source.Service.CreateFullBackupAsync();
-            await source.Service.UpdateAsync(first.Id, edit => edit with { Description = "latest metadata" });
-            var second = await source.Service.ImportAsync(new MemoryStream(secondBytes), "second.png", "folder");
-            var incremental = await source.Service.CreateIncrementalBackupAsync();
+            await source.Scope.Backup.SaveBackupOptionsAsync("local", backups, "", "", "");
+            var full = await source.Scope.Backup.CreateFullBackupAsync();
+            await source.Scope.Records.UpdateAsync(first.Id, edit => edit with { Description = "latest metadata" });
+            var second = await source.Scope.Ingestion.ImportAsync(new MemoryStream(secondBytes), "second.png", "folder");
+            var incremental = await source.Scope.Backup.CreateIncrementalBackupAsync();
             var archives = new Dictionary<string, byte[]>
             {
                 [full.BackupName] = await File.ReadAllBytesAsync(Path.Combine(backups, full.BackupName)),
                 [incremental.BackupName] = await File.ReadAllBytesAsync(Path.Combine(backups, incremental.BackupName))
             };
             var mediator = new TestMediatorAzureBackups(prefix, archives);
-            restored = GalleryService.Create(clientRoot,
+            restored = GalleryScope.Create(clientRoot,
                 new GalleryRuntimeOptions { StateDirectory = clientRoot + "-state" },
                 new HttpClient(mediator.CreateHttpMessageHandler()));
             const string sas = "https://account.blob.core.windows.net/backups?sr=c&sp=rl&sig=test-only";
             var enteredPrefix = prefix.Length == 0 ? "" : " /" + prefix + "/ ";
 
-            var names = await restored.ListRestoreBackupsFromSasAsync(sas, enteredPrefix);
+            var names = await restored.Restore.ListRestoreBackupsFromSasAsync(sas, enteredPrefix);
             Assert.Equal(archives.Keys.Order(StringComparer.Ordinal), names.Order(StringComparer.Ordinal));
-            await restored.RestoreGalleryFromSasAsync(sas, incremental.BackupName, destination,
+            await restored.Restore.RestoreGalleryFromSasAsync(sas, incremental.BackupName, destination,
                 TestVault.Passphrase, azurePrefix: enteredPrefix);
-            await restored.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            await restored.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
 
-            var records = await restored.ListAsync();
+            var records = await restored.Catalog.ListAsync();
             Assert.Equal(new[] { first.Id, second.Id }.Order(StringComparer.Ordinal),
                 records.Select(record => record.Id).Order(StringComparer.Ordinal));
             Assert.Equal("latest metadata", records.Single(record => record.Id == first.Id).Description);
@@ -63,7 +63,7 @@ public sealed class NativeSasRestoreTests
         {
             if (restored is not null)
             {
-                await restored.CloseVaultAsync();
+                await restored.Vault.CloseVaultAsync();
                 restored.Dispose();
             }
             foreach (var directory in new[] { backups, destination, clientRoot, clientRoot + "-state" })
@@ -78,13 +78,13 @@ public sealed class NativeSasRestoreTests
     {
         using var source = new TestVault();
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await source.Service.ListRestoreBackupsFromSasAsync(
+            await source.Scope.Restore.ListRestoreBackupsFromSasAsync(
                 "https://account.blob.core.windows.net/backups?sr=c&sp=rl&sig=test-only", prefix));
     }
 
-    private static async Task<byte[]> ReadMediaAsync(GalleryService service, string id)
+    private static async Task<byte[]> ReadMediaAsync(GalleryScope service, string id)
     {
-        var media = await service.OpenMediaAsync(id);
+        var media = await service.Media.OpenMediaAsync(id);
         await using var stream = media.Content;
         using var bytes = new MemoryStream();
         await stream.CopyToAsync(bytes);

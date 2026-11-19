@@ -16,7 +16,7 @@ public sealed class TestRawStoreFingerprintConstraint
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
         var fingerprint = VaultCrypto.ContentFingerprint(fixture.Session.Key, Convert.FromHexString(image.Sha256));
         // Act
         var exception = await Assert.ThrowsAsync<SqliteException>(
@@ -24,7 +24,7 @@ public sealed class TestRawStoreFingerprintConstraint
 
         // Assert
         Assert.Equal(19, exception.SqliteErrorCode);
-        var survivors = await fixture.Service.ListAsync();
+        var survivors = await fixture.Scope.Catalog.ListAsync();
         Assert.True(survivors.Count == 1, $"Expected exactly 1 surviving record; Actual: {survivors.Count} records.");
         AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(image), survivors[0]);
     }

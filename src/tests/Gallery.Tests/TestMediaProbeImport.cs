@@ -28,7 +28,7 @@ public sealed class TestMediaProbeImport
         var expectedTags = new Dictionary<string, string> { ["major_brand"] = "isom", ["comment"] = "{\"prompt\": {}}" };
 
         // Act
-        var probe = await fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "probe.mp4", "folder");
+        var probe = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "probe.mp4", "folder");
 
         // Assert
         Assert.Equal(1280, probe.Width);
@@ -74,7 +74,7 @@ public sealed class TestMediaProbeImport
         await fixture.InitializeAsync();
         // Act
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "invalid-probe.mp4", "folder"));
+            fixture.Scope.Ingestion.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "invalid-probe.mp4", "folder"));
 
         // Assert
         var invalidMetadata = Assert.IsType<InvalidOperationException>(exception);
@@ -106,7 +106,7 @@ public sealed class TestMediaProbeImport
         await fixture.InitializeAsync();
         // Act
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "invalid-probe.mp4", "folder"));
+            fixture.Scope.Ingestion.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "invalid-probe.mp4", "folder"));
 
         // Assert
         var missingField = Assert.IsType<InvalidOperationException>(exception);
@@ -137,7 +137,7 @@ public sealed class TestMediaProbeImport
         await fixture.InitializeAsync();
 
         // Act
-        var probeResult = await fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "optional-probe.mp4", "folder");
+        var probeResult = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "optional-probe.mp4", "folder");
 
         // Assert
         Assert.Equal((1280, 720, expectedDuration, "video/mp4"),
@@ -157,10 +157,10 @@ public sealed class TestMediaProbeImport
         await fixture.InitializeAsync();
 
         var error = await Assert.ThrowsAsync<VideoProbeMetadataException>(() =>
-            fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "unknown-duration.mp4", "folder"));
+            fixture.Scope.Ingestion.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "unknown-duration.mp4", "folder"));
 
         AsserterExceptionContract.AssertMessageContains(["ffprobe", "duration"], error.Message);
-        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
         var imagesDirectory = Path.Combine(fixture.Root, "images");
         var publishedFiles = Directory.Exists(imagesDirectory)
             ? Directory.EnumerateFiles(imagesDirectory, "*", SearchOption.AllDirectories).ToArray() : [];

@@ -29,19 +29,19 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(MakePng(20, 10)), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(MakePng(30, 15)), "second.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng(20, 10)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng(30, 15)), "second.png", "folder");
         var imageIds = new List<string> { first.Id, first.Id, second.Id };
         var updatedImageIds = new List<string>();
 
         // Act
-        await fixture.Service.UpdateManyAsync(imageIds, imageRecordEdit =>
+        await fixture.Scope.Records.UpdateManyAsync(imageIds, imageRecordEdit =>
         {
             imageIds.Clear();
             updatedImageIds.Add(imageRecordEdit.Id);
             return imageRecordEdit with { Rating = 4 };
         });
-        var actualImageRecords = await fixture.Service.ListAsync();
+        var actualImageRecords = await fixture.Scope.Catalog.ListAsync();
 
         // Assert
         Assert.Equal(new[] { first.Id, second.Id }, updatedImageIds);
@@ -55,18 +55,18 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var original = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "immutable.png", "folder");
+        var original = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng()), "immutable.png", "folder");
         ImageRecordEdit? priorEdit = null;
         ImageRecordEdit? replacement = null;
 
         // Act
-        await fixture.Service.UpdateAsync(original.Id, edit =>
+        await fixture.Scope.Records.UpdateAsync(original.Id, edit =>
         {
             priorEdit = edit;
             replacement = edit with { Rating = 4, Collections = edit.Collections.Add("Selected") };
             return replacement;
         });
-        var actual = await fixture.Service.ListAsync();
+        var actual = await fixture.Scope.Catalog.ListAsync();
 
         // Assert
         Assert.NotSame(priorEdit, replacement);
@@ -87,8 +87,8 @@ public sealed class GalleryTests
         await fixture.InitializeAsync();
         var settings = new VisionSettings { Endpoint = "http://127.0.0.1:1234/v1", Model = "private-vision-model", ApiKey = "private-api-token", RequestTimeoutSeconds = 600, SystemPrompt = "Private vision instructions.\nReturn JSON with description and tags." };
         // Act
-        await fixture.Service.SaveSettingsAsync(settings);
-        var reloaded = await fixture.Service.SettingsAsync();
+        await fixture.Scope.Vision.SaveSettingsAsync(settings);
+        var reloaded = await fixture.Scope.Vision.LoadSettingsAsync();
         var blob = await fixture.RawStore.ReadSettingsAsync("vision-settings");
 
         // Assert
@@ -114,13 +114,13 @@ public sealed class GalleryTests
         var exception = operationName switch
         {
             "preview" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.PreviewAsync("unused", (ImageResolution)99)),
+                fixture.Scope.Media.PreviewAsync("unused", (ImageResolution)99)),
             "viewer" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.ViewerImageAsync("unused", (ImageResolution)99)),
+                fixture.Scope.Media.ViewerImageAsync("unused", (ImageResolution)99)),
             "folder-scope" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.ImportFolderAsync(fixture.Root, (FolderSearchScope)99)),
+                fixture.Scope.Ingestion.ImportFolderAsync(fixture.Root, (FolderSearchScope)99)),
             "source-retention" => await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                fixture.Service.ImportFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder,
+                fixture.Scope.Ingestion.ImportFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder,
                     sourceRetention: (SourceRetention)99)),
             _ => throw new ArgumentOutOfRangeException(nameof(operationName))
         };
@@ -131,7 +131,7 @@ public sealed class GalleryTests
         Assert.Contains("99", invalidChoice.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(firstOption, invalidChoice.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(secondOption, invalidChoice.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
     }
 
     [Fact]
@@ -140,10 +140,10 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng(1800, 10)), "wide.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng(1800, 10)), "wide.png", "folder");
         // Act
-        var data = await fixture.Service.PreviewAsync(record.Id);
-        var fullData = await fixture.Service.PreviewAsync(record.Id, resolution: ImageResolution.Original);
+        var data = await fixture.Scope.Media.PreviewAsync(record.Id);
+        var fullData = await fixture.Scope.Media.PreviewAsync(record.Id, resolution: ImageResolution.Original);
         using var preview = Image.Load(Convert.FromBase64String(data["data:image/png;base64,".Length..]));
         using var fullImage = Image.Load(Convert.FromBase64String(fullData["data:image/png;base64,".Length..]));
 
@@ -161,10 +161,10 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng(1800, 10)), "wide.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng(1800, 10)), "wide.png", "folder");
         // Act
-        var fit = await fixture.Service.ViewerImageAsync(record.Id, ImageResolution.Fit);
-        var full = await fixture.Service.ViewerImageAsync(record.Id, ImageResolution.Original);
+        var fit = await fixture.Scope.Media.ViewerImageAsync(record.Id, ImageResolution.Fit);
+        var full = await fixture.Scope.Media.ViewerImageAsync(record.Id, ImageResolution.Original);
         using var fitImage = Image.Load(Convert.FromBase64String(fit["data:image/jpeg;base64,".Length..]));
         var fullBytes = Convert.FromBase64String(full["data:image/png;base64,".Length..]);
         using var fullImage = Image.Load(fullBytes);
@@ -184,12 +184,12 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
         var encrypted = await File.ReadAllBytesAsync(record.StoredPath);
         encrypted[^1] ^= 1;
         await File.WriteAllBytesAsync(record.StoredPath, encrypted);
         // Act
-        var error = await Assert.ThrowsAsync<AuthenticationTagMismatchException>(() => fixture.Service.PreviewAsync(record.Id));
+        var error = await Assert.ThrowsAsync<AuthenticationTagMismatchException>(() => fixture.Scope.Media.PreviewAsync(record.Id));
 
         // Assert
         Assert.IsAssignableFrom<CryptographicException>(error);
@@ -205,16 +205,16 @@ public sealed class GalleryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng()), "image.png", "folder");
         using var input = new MemoryStream(MakePng());
         fixture.Session.Lock();
         // Act
         var actual = await Assert.ThrowsAsync<VaultLockedException>(() => operation switch
         {
-            "import" => fixture.Service.ImportAsync(input, "other.png", "folder"),
-            "update" => fixture.Service.UpdateAsync(record.Id, image => image with { IsFavorite = true }),
-            "move" => fixture.Service.MoveAsync(record.Id, fixture.Root, "new"),
-            "settings" => fixture.Service.SaveSettingsAsync(new() { Model = "vision" }),
+            "import" => fixture.Scope.Ingestion.ImportAsync(input, "other.png", "folder"),
+            "update" => fixture.Scope.Records.UpdateAsync(record.Id, image => image with { IsFavorite = true }),
+            "move" => fixture.Scope.MediaMaintenance.MoveAsync(record.Id, fixture.Root, "new"),
+            "settings" => fixture.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" }),
             _ => throw new ArgumentOutOfRangeException(nameof(operation))
         });
 

@@ -114,7 +114,7 @@ public sealed class StressGeneratorTests
                 {
                     using var vault = new TestVault();
                     await vault.InitializeAsync();
-                    var record = await vault.Service.ImportAsync(new MemoryStream(first), "synthetic.png", "generated");
+                    var record = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(first), "synthetic.png", "generated");
                     Assert.False(string.IsNullOrWhiteSpace(record.Generation?.Prompt));
                     Assert.False(string.IsNullOrWhiteSpace(record.Generation?.Model));
                     Assert.True(record.Generation?.HasWorkflow);
@@ -151,7 +151,7 @@ public sealed class StressGeneratorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "one.png", "");
+        await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "one.png", "");
         var db = Path.Combine(vault.Root, "gallery.db");
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = db }.ToString()))
         {

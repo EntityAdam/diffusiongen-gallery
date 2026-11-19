@@ -27,9 +27,9 @@ public sealed class OriginalStorageTests
         var source = MakeImage(contentType);
 
         // Act
-        var record = await fixture.Service.ImportAsync(new MemoryStream(source), name, "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(source), name, "folder");
         var stored = VaultCrypto.Decrypt(await File.ReadAllBytesAsync(record.StoredPath), fixture.Session.Key, $"image:{record.Id}");
-        var original = await fixture.Service.ViewerImageAsync(record.Id, ImageResolution.Original);
+        var original = await fixture.Scope.Media.ViewerImageAsync(record.Id, ImageResolution.Original);
 
         // Assert
         Assert.Equal(source, stored);
@@ -37,7 +37,7 @@ public sealed class OriginalStorageTests
         Assert.Equal(record.Sha256, record.ContentSha256);
         Assert.StartsWith($"data:{contentType};base64,", original);
         Assert.Equal(source, Convert.FromBase64String(original[$"data:{contentType};base64,".Length..]));
-        await fixture.Service.VerifyImportedAsync(record.Id);
+        await fixture.Scope.Ingestion.VerifyImportedAsync(record.Id);
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public sealed class OriginalStorageTests
 
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ImportAsync(new MemoryStream(bmp.ToArray()), "disguised.png", "folder"));
+            fixture.Scope.Ingestion.ImportAsync(new MemoryStream(bmp.ToArray()), "disguised.png", "folder"));
 
         // Assert
         AsserterExceptionContract.AssertMessageContains(["BMP", "PNG", "JPEG", "WebP"], error.Message);
@@ -66,10 +66,10 @@ public sealed class OriginalStorageTests
         await fixture.InitializeAsync();
         var clean = MakeCompressedTextPng();
         var source = AppendTrailing(InsertPngChunkBeforeIend(clean, "prVt", "private"u8.ToArray()));
-        var record = await fixture.Service.ImportAsync(new MemoryStream(source), "comfy.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(source), "comfy.png", "folder");
 
         // Act
-        var export = await fixture.Service.ExportAsync(record.Id);
+        var export = await fixture.Scope.Media.ExportAsync(record.Id);
         var exported = export.CopyContentBytes();
 
         // Assert
@@ -94,10 +94,10 @@ public sealed class OriginalStorageTests
         var clean = MakeImage("image/jpeg");
         byte[] privateSegment = [0xFF, 0xE5, 0x00, 0x09, .. "PRIVATE"u8];
         var source = AppendTrailing([.. clean[..2], .. privateSegment, .. clean[2..]]);
-        var record = await fixture.Service.ImportAsync(new MemoryStream(source), "photo.jpg", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(source), "photo.jpg", "folder");
 
         // Act
-        var export = await fixture.Service.ExportAsync(record.Id);
+        var export = await fixture.Scope.Media.ExportAsync(record.Id);
         var exported = export.CopyContentBytes();
 
         // Assert
@@ -118,10 +118,10 @@ public sealed class OriginalStorageTests
         BinaryPrimitives.WriteUInt32LittleEndian(withChunk.AsSpan(clean.Length + 4), 4);
         "data"u8.CopyTo(withChunk.AsSpan(clean.Length + 8));
         BinaryPrimitives.WriteUInt32LittleEndian(withChunk.AsSpan(4), (uint)(withChunk.Length - 8));
-        var record = await fixture.Service.ImportAsync(new MemoryStream(AppendTrailing(withChunk)), "photo.webp", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(AppendTrailing(withChunk)), "photo.webp", "folder");
 
         // Act
-        var export = await fixture.Service.ExportAsync(record.Id);
+        var export = await fixture.Scope.Media.ExportAsync(record.Id);
         var exported = export.CopyContentBytes();
 
         // Assert
@@ -145,10 +145,10 @@ public sealed class OriginalStorageTests
             """{"streams":[{"codec_type":"video","width":32,"height":24,"duration":"1"}],"format":{"format_name":"mov,mp4","duration":"1"}}""");
         using var fixture = new TestVault(transport.VideoTools);
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(source), "clip.mp4", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(source), "clip.mp4", "folder");
 
         // Act
-        var export = await fixture.Service.ExportAsync(record.Id);
+        var export = await fixture.Scope.Media.ExportAsync(record.Id);
 
         // Assert - gather the exported bytes
         var exported = export.CopyContentBytes();

@@ -25,11 +25,11 @@ public sealed class TimingAndRuntimeConfigurationTests
             FFmpegPath = configuredPathIsSupplied ? quotedPath : " ",
             ToolSearchPaths = [" ", quotedPath]
         };
-        using var service = GalleryService.Create(fixture.Root, options, new HttpClient());
-        await service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        using var service = GalleryScope.Create(fixture.Root, options, new HttpClient());
+        await service.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
 
         // Act
-        var importedImage = await service.ImportAsync(new MemoryStream([1, 2, 3]), "configured-video.mp4", "source");
+        var importedImage = await service.Ingestion.ImportAsync(new MemoryStream([1, 2, 3]), "configured-video.mp4", "source");
 
         // Assert
         Assert.Equal((1280, 720, 3d, "video/mp4"),
@@ -54,8 +54,8 @@ public sealed class TimingAndRuntimeConfigurationTests
         Action<IngestionTimingReport> observeReport = actualReports.Add;
 
         // Act
-        await fixture.Service.ImportFolderAsync(firstFolder, FolderSearchScope.SelectedFolder, reportTimings: observeReport);
-        await fixture.Service.ImportFolderAsync(secondFolder, FolderSearchScope.SelectedFolder, reportTimings: observeReport);
+        await fixture.Scope.Ingestion.ImportFolderAsync(firstFolder, FolderSearchScope.SelectedFolder, reportTimings: observeReport);
+        await fixture.Scope.Ingestion.ImportFolderAsync(secondFolder, FolderSearchScope.SelectedFolder, reportTimings: observeReport);
 
         // Assert
         Assert.True(actualReports.Count == 2, $"Expected 2 completed timing reports; Actual: {actualReports.Count} reports.");

@@ -25,8 +25,8 @@ public sealed class VaultManagementTests
         using var provider = services.BuildServiceProvider();
         using var firstScope = provider.CreateScope();
         using var secondScope = provider.CreateScope();
-        var first = firstScope.ServiceProvider.GetRequiredService<GalleryService>();
-        var second = secondScope.ServiceProvider.GetRequiredService<GalleryService>();
+        var first = firstScope.ServiceProvider.GetRequiredService<IGalleryVault>();
+        var second = secondScope.ServiceProvider.GetRequiredService<IGalleryVault>();
         await first.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "First vault");
         Assert.Equal("First vault", first.VaultName);
         await Assert.ThrowsAsync<IOException>(() => second.OpenExistingVaultAsync(fixture.Root));
@@ -47,7 +47,7 @@ public sealed class VaultManagementTests
         await first.CloseVaultAsync();
         await second.UnlockWithPassphraseAsync(TestVault.Passphrase);
         using var nextScope = provider.CreateScope();
-        var next = nextScope.ServiceProvider.GetRequiredService<GalleryService>();
+        var next = nextScope.ServiceProvider.GetRequiredService<IGalleryVault>();
         Assert.Equal(otherRoot, next.VaultRoot);
         Assert.Equal("Second vault", next.VaultName);
     }
@@ -56,28 +56,28 @@ public sealed class VaultManagementTests
     public async Task Close_WaitsForOutstandingKeyLeases_BeforeReleasingCheckout()
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         using var lease = fixture.Session.AcquireUnlockedSession().Borrow();
-        var closing = fixture.Service.CloseVaultAsync();
+        var closing = fixture.Scope.Vault.CloseVaultAsync();
         Assert.False(closing.IsCompleted);
         Assert.Throws<IOException>(() => VaultCheckout.Acquire(fixture.Root));
         lease.Dispose();
         await closing;
         using var checkout = VaultCheckout.Acquire(fixture.Root);
-        Assert.False(fixture.Service.IsUnlocked);
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
     }
 
     [Fact]
     public async Task Lock_WaitsForOutstandingKeyLeases_BeforeReleasingCheckout()
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         using var lease = fixture.Session.AcquireUnlockedSession().Borrow();
-        fixture.Service.LockVault();
+        fixture.Scope.Vault.LockVault();
         Assert.Throws<IOException>(() => VaultCheckout.Acquire(fixture.Root));
         lease.Dispose();
         using var checkout = await WaitForCheckoutReleaseAsync(fixture.Root);
-        Assert.False(fixture.Service.IsUnlocked);
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
     }
 
     [Theory]
@@ -90,7 +90,7 @@ public sealed class VaultManagementTests
     {
         using var fixture = new TestVault();
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => fixture.Service.ListRestoreBackupsFromSasAsync(sasUrl));
+            () => fixture.Scope.Restore.ListRestoreBackupsFromSasAsync(sasUrl));
         Assert.Contains("SAS", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -98,40 +98,40 @@ public sealed class VaultManagementTests
     public async Task Move_TransfersCatalogAndExternalMedia_ThenPurgeDestroysOnlyVaultData()
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Travel vault");
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "second.png", "folder");
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Travel vault");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "second.png", "folder");
         var destination = NewTemporaryDirectory();
         var external = NewTemporaryDirectory();
         Directory.CreateDirectory(external);
         try
         {
-            await fixture.Service.MoveAsync(second.Id, external, "external");
-            var externalPath = (await fixture.Service.ListAsync()).Single(record => record.Id == second.Id).StoredPath;
-            var originalThumbnail = await fixture.Service.ThumbnailAsync(first.Id);
-            await fixture.Service.MoveVaultAsync(destination);
-            Assert.False(fixture.Service.IsUnlocked);
+            await fixture.Scope.MediaMaintenance.MoveAsync(second.Id, external, "external");
+            var externalPath = (await fixture.Scope.Catalog.ListAsync()).Single(record => record.Id == second.Id).StoredPath;
+            var originalThumbnail = await fixture.Scope.Media.ThumbnailAsync(first.Id);
+            await fixture.Scope.Vault.MoveVaultAsync(destination);
+            Assert.False(fixture.Scope.Vault.IsUnlocked);
             Assert.False(File.Exists(Path.Combine(fixture.Root, "vault.json")));
             Assert.False(File.Exists(first.StoredPath));
             Assert.False(File.Exists(externalPath));
-            await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-            Assert.Equal("Travel vault", fixture.Service.VaultName);
-            var moved = await fixture.Service.ListAsync();
+            await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            Assert.Equal("Travel vault", fixture.Scope.Vault.VaultName);
+            var moved = await fixture.Scope.Catalog.ListAsync();
             Assert.Equal(2, moved.Count);
             Assert.All(moved, record => Assert.StartsWith(destination, record.StoredPath));
-            Assert.Equal(originalThumbnail, await fixture.Service.ThumbnailAsync(first.Id));
+            Assert.Equal(originalThumbnail, await fixture.Scope.Media.ThumbnailAsync(first.Id));
             await File.WriteAllTextAsync(Path.Combine(destination, "unrelated.txt"), "keep");
-            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.PurgeVaultAsync("yes"));
-            Assert.True(fixture.Service.IsUnlocked);
-            await fixture.Service.PurgeVaultAsync("PURGE");
-            Assert.False(fixture.Service.VaultExists);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Vault.PurgeVaultAsync("yes"));
+            Assert.True(fixture.Scope.Vault.IsUnlocked);
+            await fixture.Scope.Vault.PurgeVaultAsync("PURGE");
+            Assert.False(fixture.Scope.Vault.VaultExists);
             Assert.False(File.Exists(Path.Combine(destination, "gallery.db")));
             Assert.All(moved, record => Assert.False(File.Exists(record.StoredPath)));
             Assert.True(File.Exists(Path.Combine(destination, "unrelated.txt")));
         }
         finally
         {
-            await fixture.Service.CloseVaultAsync();
+            await fixture.Scope.Vault.CloseVaultAsync();
             DeleteTemporaryDirectory(destination);
             DeleteTemporaryDirectory(external);
         }
@@ -141,16 +141,16 @@ public sealed class VaultManagementTests
     public async Task Move_RejectsNonemptyAndOverlappingDestinations_WithoutChangingSource()
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         var destination = NewTemporaryDirectory();
         Directory.CreateDirectory(destination);
         try
         {
             await File.WriteAllTextAsync(Path.Combine(destination, "keep.txt"), "keep");
-            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.MoveVaultAsync(destination));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.MoveVaultAsync(Path.Combine(fixture.Root, "nested")));
-            Assert.True(fixture.Service.IsUnlocked);
-            Assert.Equal(fixture.Root, fixture.Service.VaultRoot);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Vault.MoveVaultAsync(destination));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Vault.MoveVaultAsync(Path.Combine(fixture.Root, "nested")));
+            Assert.True(fixture.Scope.Vault.IsUnlocked);
+            Assert.Equal(fixture.Root, fixture.Scope.Vault.VaultRoot);
         }
         finally { DeleteTemporaryDirectory(destination); }
     }
@@ -162,40 +162,40 @@ public sealed class VaultManagementTests
     public async Task Restore_RebuildsFullOrIncrementalChain_InANewDirectory(bool incremental, bool recovery)
     {
         using var fixture = new TestVault();
-        var words = await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Original vault");
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        var words = await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Original vault");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
         var backups = NewTemporaryDirectory();
         var destination = NewTemporaryDirectory();
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", backups, "", "", "");
-            var full = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", backups, "", "", "");
+            var full = await fixture.Scope.Backup.CreateFullBackupAsync();
             var latest = full;
             if (incremental)
             {
-                await fixture.Service.UpdateAsync(first.Id, edit => edit with { Description = "Latest metadata" });
-                latest = await fixture.Service.CreateIncrementalBackupAsync();
-                await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "new.png", "folder");
-                latest = await fixture.Service.CreateIncrementalBackupAsync();
+                await fixture.Scope.Records.UpdateAsync(first.Id, edit => edit with { Description = "Latest metadata" });
+                latest = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
+                await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "new.png", "folder");
+                latest = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
             }
-            Assert.Contains(latest.BackupName, await fixture.Service.ListRestoreBackupsAsync("local", backups, "", "", ""));
-            await fixture.Service.RestoreVaultAsync("local", backups, "", "", "", latest.BackupName, destination,
+            Assert.Contains(latest.BackupName, await fixture.Scope.Restore.ListRestoreBackupsAsync("local", backups, "", "", ""));
+            await fixture.Scope.Restore.RestoreVaultAsync("local", backups, "", "", "", latest.BackupName, destination,
                 recovery ? words : TestVault.Passphrase, recovery, "Restored vault");
-            Assert.False(fixture.Service.IsUnlocked);
+            Assert.False(fixture.Scope.Vault.IsUnlocked);
             Assert.True(File.Exists(first.StoredPath));
-            await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-            Assert.Equal("Restored vault", fixture.Service.VaultName);
-            var restored = await fixture.Service.ListAsync();
+            await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            Assert.Equal("Restored vault", fixture.Scope.Vault.VaultName);
+            var restored = await fixture.Scope.Catalog.ListAsync();
             Assert.Equal(incremental ? 2 : 1, restored.Count);
             Assert.All(restored, record => Assert.StartsWith(destination, record.StoredPath));
             Assert.Equal(incremental ? "Latest metadata" : "", restored.Single(record => record.Id == first.Id).Description);
-            Assert.StartsWith("data:image/png;base64,", await fixture.Service.ThumbnailAsync(first.Id));
-            Assert.StartsWith("data:image/", await fixture.Service.PreviewAsync(first.Id));
-            Assert.Null((await fixture.Service.LoadBackupOptionsAsync()).LastBackupName);
+            Assert.StartsWith("data:image/png;base64,", await fixture.Scope.Media.ThumbnailAsync(first.Id));
+            Assert.StartsWith("data:image/", await fixture.Scope.Media.PreviewAsync(first.Id));
+            Assert.Null((await fixture.Scope.Backup.LoadBackupOptionsAsync()).LastBackupName);
         }
         finally
         {
-            await fixture.Service.CloseVaultAsync();
+            await fixture.Scope.Vault.CloseVaultAsync();
             DeleteTemporaryDirectory(destination);
             DeleteTemporaryDirectory(backups);
         }
@@ -209,19 +209,19 @@ public sealed class VaultManagementTests
     public async Task Restore_RejectsInvalidBackups_WithoutPublishingOrReplacingTheOpenVault(string failure)
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
         var backups = NewTemporaryDirectory();
         var destination = NewTemporaryDirectory();
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", backups, "", "", "");
-            var full = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", backups, "", "", "");
+            var full = await fixture.Scope.Backup.CreateFullBackupAsync();
             var latest = full;
             if (failure == "missing-parent")
             {
-                await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "new.png", "folder");
-                latest = await fixture.Service.CreateIncrementalBackupAsync();
+                await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(24, 16)), "new.png", "folder");
+                latest = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
                 File.Delete(Path.Combine(backups, full.BackupName));
             }
 
@@ -234,7 +234,7 @@ public sealed class VaultManagementTests
                 using var stream = archive.CreateEntry(name).Open();
                 stream.Write([1, 2, 3]);
             }
-            Func<Task> restore = () => fixture.Service.RestoreVaultAsync("local", backups, "", "", "",
+            Func<Task> restore = () => fixture.Scope.Restore.RestoreVaultAsync("local", backups, "", "", "",
                 latest.BackupName, destination, failure == "credentials" ? "incorrect credentials" : TestVault.Passphrase);
             switch (failure)
             {
@@ -255,8 +255,8 @@ public sealed class VaultManagementTests
                 default:
                     throw new ArgumentOutOfRangeException(nameof(failure));
             }
-            Assert.Equal(fixture.Root, fixture.Service.VaultRoot);
-            Assert.True(fixture.Service.IsUnlocked);
+            Assert.Equal(fixture.Root, fixture.Scope.Vault.VaultRoot);
+            Assert.True(fixture.Scope.Vault.IsUnlocked);
             Assert.False(File.Exists(Path.Combine(destination, "vault.json")));
             Assert.False(File.Exists(Path.Combine(destination, "gallery.db")));
             Assert.DoesNotContain(Directory.EnumerateDirectories(destination), path => path.Contains(".vault-stage-"));
@@ -272,8 +272,8 @@ public sealed class VaultManagementTests
     public async Task Restore_FromAzure_ListsAndDownloadsArchivesUsingTheSpecifiedStorageAccount()
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "azure.png", "folder");
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "azure.png", "folder");
         var backups = NewTemporaryDirectory();
         var destination = NewTemporaryDirectory();
         using var listener = StartLoopbackListener(out var endpoint);
@@ -281,8 +281,8 @@ public sealed class VaultManagementTests
         var requests = new System.Collections.Concurrent.ConcurrentQueue<AzureRequest>();
         try
         {
-            await fixture.Service.SaveBackupOptionsAsync("local", backups, "", "", "");
-            var full = await fixture.Service.CreateFullBackupAsync();
+            await fixture.Scope.Backup.SaveBackupOptionsAsync("local", backups, "", "", "");
+            var full = await fixture.Scope.Backup.CreateFullBackupAsync();
             var bytes = await File.ReadAllBytesAsync(Path.Combine(backups, full.BackupName));
             server = Task.Run(async () =>
             {
@@ -322,8 +322,8 @@ public sealed class VaultManagementTests
                 }
             });
             var connection = $"DefaultEndpointsProtocol=http;AccountName=testaccount;AccountKey={Convert.ToBase64String(new byte[32])};BlobEndpoint={endpoint}testaccount";
-            Assert.Contains(full.BackupName, await fixture.Service.ListRestoreBackupsAsync("azure", "", "gallery-backups", "nightly", connection));
-            var error = await Record.ExceptionAsync(() => fixture.Service.RestoreVaultAsync("azure", "", "gallery-backups", "nightly", connection,
+            Assert.Contains(full.BackupName, await fixture.Scope.Restore.ListRestoreBackupsAsync("azure", "", "gallery-backups", "nightly", connection));
+            var error = await Record.ExceptionAsync(() => fixture.Scope.Restore.RestoreVaultAsync("azure", "", "gallery-backups", "nightly", connection,
                 full.BackupName, destination, TestVault.Passphrase));
             var observedRequests = requests.ToArray().ToImmutableArray();
             Assert.True(error is null, $"Expected no restore exception; Actual: {error?.ToString() ?? "<none>"}. Requests: {JsonSerializer.Serialize(observedRequests)}.");
@@ -336,15 +336,15 @@ public sealed class VaultManagementTests
                 && Uri.UnescapeDataString(request.Path) == $"/testaccount/gallery-backups/nightly/{full.BackupName}"
                 && !string.IsNullOrEmpty(request.Version)),
                 $"Expected a versioned GET download for backup '{full.BackupName}'; Actual: {JsonSerializer.Serialize(observedRequests)}.");
-            await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-            Assert.Equal(image.Id, Assert.Single(await fixture.Service.ListAsync()).Id);
-            Assert.StartsWith("data:image/", await fixture.Service.PreviewAsync(image.Id));
+            await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            Assert.Equal(image.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).Id);
+            Assert.StartsWith("data:image/", await fixture.Scope.Media.PreviewAsync(image.Id));
         }
         finally
         {
             listener.Stop();
             if (server is not null) await server.WaitAsync(TimeSpan.FromSeconds(10));
-            await fixture.Service.CloseVaultAsync();
+            await fixture.Scope.Vault.CloseVaultAsync();
             DeleteTemporaryDirectory(destination);
             DeleteTemporaryDirectory(backups);
         }

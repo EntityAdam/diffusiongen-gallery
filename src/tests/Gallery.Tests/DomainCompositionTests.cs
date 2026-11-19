@@ -27,12 +27,12 @@ public sealed class DomainCompositionTests
         testVault.Configuration["Gallery:StateDirectory"] = changedStateDirectory;
         using var serviceProvider = serviceCollection.BuildServiceProvider();
         using var serviceScope = serviceProvider.CreateScope();
-        var galleryService = serviceScope.ServiceProvider.GetRequiredService<GalleryService>();
+        var vault = serviceScope.ServiceProvider.GetRequiredService<IGalleryVault>();
         var expectedScenario = ExpectedScenario.CreateFrom("Scopes use the state directory captured at registration, not later configuration changes.",
             new { VaultRoot = testVault.Root, ChangedDirectoryExists = false });
 
         // Act
-        await galleryService.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
 
         // Assert - gather persisted state
         var actualVaultRoot = JsonSerializer.Deserialize<string>(
@@ -242,7 +242,7 @@ public sealed class DomainCompositionTests
 
         // Act
         var actualInvalidSavedViewNameException = await Assert.ThrowsAsync<InvalidSavedViewNameException>(
-            () => testVault.Service.SaveViewAsync(invalidName, new()));
+            () => testVault.Scope.Settings.SaveViewAsync(invalidName, new()));
 
         // Assert
         AsserterExceptionContract.AssertMatches(expectedExceptionContract, actualInvalidSavedViewNameException);
@@ -267,7 +267,7 @@ public sealed class DomainCompositionTests
     }
 
     [Fact]
-    public void DomainConstruction_WhenScopeIsDisposed_ThenOwnedTransportIsDisposed()
+    public void CompatibilityFacade_WhenDisposed_ThenDisposesTheScopeAndOwnedTransport()
     {
         // Arrange
         using var testVault = new TestVault();
@@ -285,7 +285,7 @@ public sealed class DomainCompositionTests
     }
 
     [Fact]
-    public void DomainConstruction_WhenHistoryCannotBeRead_ThenOwnedTransportIsDisposed()
+    public void CompatibilityFacade_WhenHistoryCannotBeRead_ThenOwnedTransportIsDisposed()
     {
         // Arrange
         using var testVault = new TestVault();

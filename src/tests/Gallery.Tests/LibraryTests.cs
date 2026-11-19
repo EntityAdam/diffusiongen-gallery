@@ -25,7 +25,7 @@ public sealed class LibraryTests
         var image = new ImageRecordEdit(new ImageRecord { Rating = 4, IsReviewed = true, IsFavorite = true, IsMarkedForDeletion = true });
 
         // Act
-        image = fixture.Service.SetCuration(image, rating, reviewed);
+        image = fixture.Scope.Records.SetCuration(image, rating, reviewed);
 
         // Assert
         Assert.Equal(expectedRating, image.Rating);
@@ -42,7 +42,7 @@ public sealed class LibraryTests
         var image = new ImageRecordEdit(new ImageRecord { Rating = 4, IsReviewed = true });
 
         // Act
-        var error = Assert.Throws<InvalidOperationException>(() => fixture.Service.SetCuration(image, 6, false));
+        var error = Assert.Throws<InvalidOperationException>(() => fixture.Scope.Records.SetCuration(image, 6, false));
 
         // Assert
         Assert.IsType<InvalidOperationException>(error);
@@ -65,7 +65,7 @@ public sealed class LibraryTests
         var image = new ImageRecordEdit(new ImageRecord { IsReviewed = false });
 
         // Act
-        image = fixture.Service.SetCuration(image, rating, false);
+        image = fixture.Scope.Records.SetCuration(image, rating, false);
 
         // Assert
         Assert.Equal(expectedReviewed, image.IsReviewed);
@@ -82,7 +82,7 @@ public sealed class LibraryTests
         var image = new ImageRecordEdit(new ImageRecord { IsReviewed = false });
 
         // Act
-        image = fixture.Service.SetDeletionMark(image, markedForDeletion);
+        image = fixture.Scope.Records.SetDeletionMark(image, markedForDeletion);
 
         // Assert
         Assert.Equal(markedForDeletion, image.IsMarkedForDeletion);
@@ -95,18 +95,18 @@ public sealed class LibraryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
         // Act
-        await fixture.Service.UpdateAsync(image.Id, current =>
+        await fixture.Scope.Records.UpdateAsync(image.Id, current =>
         {
-            current = fixture.Service.SetOrganization(current, 4, true, "Private collection");
-            current = fixture.Service.SetOrganization(current, 4, true, "private collection");
-            return current with { Tags = fixture.Service.MergeTags("green, landscape", "GREEN, cinema") };
+            current = fixture.Scope.Records.SetOrganization(current, 4, true, "Private collection");
+            current = fixture.Scope.Records.SetOrganization(current, 4, true, "private collection");
+            return current with { Tags = fixture.Scope.Records.MergeTags("green, landscape", "GREEN, cinema") };
         });
-        var storedRecords = await fixture.Service.ListAsync();
+        var storedRecords = await fixture.Scope.Catalog.ListAsync();
         var encryptedRecord = await fixture.RawStore.ReadRecordAsync(image.Id);
         var ratingError = Assert.Throws<InvalidOperationException>(() =>
-            fixture.Service.SetOrganization(new ImageRecordEdit(image), 6, true, null));
+            fixture.Scope.Records.SetOrganization(new ImageRecordEdit(image), 6, true, null));
 
         // Assert
         var stored = Assert.Single(storedRecords);
@@ -127,21 +127,21 @@ public sealed class LibraryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var library = fixture.Service;
+        var settings = fixture.Scope.Settings;
         var filter = new GalleryFilter { Collection = "private-worlds", MinRating = 4, Review = "pending", Sort = "rating" };
         // Act
-        await library.SaveViewAsync("Private view", filter);
+        await settings.SaveViewAsync("Private view", filter);
         filter = filter with { MinRating = 1 };
-        var initialViews = await library.LoadViewsAsync();
+        var initialViews = await settings.LoadViewsAsync();
         var payload = await fixture.RawStore.ReadSettingsAsync("saved-views");
-        await library.SaveViewAsync("private VIEW", filter);
-        var replacedViews = await library.LoadViewsAsync();
+        await settings.SaveViewAsync("private VIEW", filter);
+        var replacedViews = await settings.LoadViewsAsync();
         fixture.Session.Lock();
-        var lockedError = await Assert.ThrowsAsync<VaultLockedException>(() => library.LoadViewsAsync());
+        var lockedError = await Assert.ThrowsAsync<VaultLockedException>(() => settings.LoadViewsAsync());
         fixture.Session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
-        var restartedViews = await library.LoadViewsAsync();
-        await library.DeleteViewAsync("private VIEW");
-        var remainingViews = await library.LoadViewsAsync();
+        var restartedViews = await settings.LoadViewsAsync();
+        await settings.DeleteViewAsync("private VIEW");
+        var remainingViews = await settings.LoadViewsAsync();
 
         // Assert
         Assert.Equal(4, Assert.Single(initialViews).GalleryFilter.MinRating);
@@ -161,13 +161,13 @@ public sealed class LibraryTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var library = fixture.Service;
+        var settings = fixture.Scope.Settings;
         // Act
-        await Task.WhenAll(library.SaveViewAsync("First", new() { MinRating = 3 }),
-            library.SaveViewAsync("Second", new() { Review = "pending" }));
+        await Task.WhenAll(settings.SaveViewAsync("First", new() { MinRating = 3 }),
+            settings.SaveViewAsync("Second", new() { Review = "pending" }));
 
         // Assert
-        var views = (await library.LoadViewsAsync()).OrderBy(view => view.Name, StringComparer.Ordinal);
+        var views = (await settings.LoadViewsAsync()).OrderBy(view => view.Name, StringComparer.Ordinal);
         Assert.Collection(views,
             first =>
             {
@@ -193,10 +193,10 @@ public sealed class LibraryTests
         using var scope = provider.CreateScope();
 
         // Act
-        var service = scope.ServiceProvider.GetRequiredService<GalleryService>();
+        var vault = scope.ServiceProvider.GetRequiredService<IGalleryVault>();
 
         // Assert - the configured new vault directory is retained by production composition
-        Assert.Equal(root, service.VaultRoot);
+        Assert.Equal(root, vault.VaultRoot);
     }
 
     [Fact]
@@ -209,9 +209,9 @@ public sealed class LibraryTests
         var third = first with { Id = "third", Collections = [], Rating = 0 };
         var filter = new GalleryFilter { Collection = "worlds", MinRating = 4, Review = "pending" };
         // Act
-        var matching = fixture.Service.Filter([first, second, third], filter);
-        var unorganized = fixture.Service.Filter([first, second, third], new() { IncludesUnorganizedOnly = true });
-        var ratingSorted = fixture.Service.Filter([first, second, third], new() { Sort = "rating" });
+        var matching = fixture.Scope.Catalog.Filter([first, second, third], filter);
+        var unorganized = fixture.Scope.Catalog.Filter([first, second, third], new() { IncludesUnorganizedOnly = true });
+        var ratingSorted = fixture.Scope.Catalog.Filter([first, second, third], new() { Sort = "rating" });
 
         // Assert
         Assert.Equal(first, Assert.Single(matching));
@@ -227,7 +227,7 @@ public sealed class LibraryTests
         var image = new ImageRecord { StoredPath = "image.dpng" };
 
         // Act
-        var matches = fixture.Service.Filter([image], new GalleryFilter { Folder = "source" });
+        var matches = fixture.Scope.Catalog.Filter([image], new GalleryFilter { Folder = "source" });
 
         // Assert
         Assert.Empty(matches);
