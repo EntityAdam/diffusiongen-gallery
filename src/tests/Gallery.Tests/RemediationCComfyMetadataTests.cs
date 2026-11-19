@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Services.Processors;
+using Gallery.Core.Features.Ingestion.Metadata;
 
 namespace Gallery.Tests;
 

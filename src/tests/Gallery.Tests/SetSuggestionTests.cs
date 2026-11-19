@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
-using Gallery.Core.Services.Gateways;
 
 namespace Gallery.Tests;
 

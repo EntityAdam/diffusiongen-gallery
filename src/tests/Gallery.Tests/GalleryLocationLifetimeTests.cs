@@ -1,6 +1,6 @@
 using System.Reflection;
+using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Services;
-using Gallery.Core.Services.Sessions.Locations;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;

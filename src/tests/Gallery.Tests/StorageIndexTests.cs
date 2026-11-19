@@ -1,7 +1,6 @@
-using Gallery.Core.Services.Processors.Codecs;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.DataManagers;
 using System.Security.Cryptography;
+using Gallery.Core.Features.Vaults.Security;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
 using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
 
@@ -39,7 +38,7 @@ public sealed class StorageIndexTests
         var loaded = Assert.Single(await fixture.Service.LoadAsync());
         await fixture.Service.WaitForDriveOperationsAsync();
 
-        Assert.Equal(Gallery.Core.Services.Processors.ComfyMetadata.Version, loaded.MetadataVersion);
+        Assert.Equal(Gallery.Core.Features.Ingestion.Metadata.ComfyMetadata.Version, loaded.MetadataVersion);
         Assert.True(await fixture.Store.ContainsFingerprintAsync(legacy.Sha256, fixture.Session.Key));
         Assert.True(File.Exists(legacy.StoredPath));
         Assert.False(File.Exists(stagedPath));

@@ -1,6 +1,8 @@
-using Gallery.Core.Services.Gateways;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Sessions;
+using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Features.Vision.Endpoints;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
 using Gallery.Core.Services;
 using Microsoft.Extensions.Configuration;
 

@@ -1,10 +1,10 @@
 using System.Net;
 using System.Reflection;
-using Gallery.Web.Components;
-using Microsoft.AspNetCore.Components;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Shared;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
-using Gallery.Web.Components.Collections;
+using Microsoft.AspNetCore.Components;
 
 namespace Gallery.Tests;
 

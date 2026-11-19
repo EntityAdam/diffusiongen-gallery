@@ -1,5 +1,4 @@
 using Gallery.Core.Models;
-using Gallery.Core.Services.Ports.Models;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;

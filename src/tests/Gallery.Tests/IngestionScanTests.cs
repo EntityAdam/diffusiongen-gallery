@@ -1,7 +1,6 @@
-using Gallery.Core.Services.Processors;
+using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Gallery.Core.Services.Processors.Codecs;
 
 namespace Gallery.Tests;
 

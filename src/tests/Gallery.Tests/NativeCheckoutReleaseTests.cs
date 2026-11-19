@@ -1,7 +1,7 @@
 using System.Reflection;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults;
 using Gallery.Core.Services;
-using Gallery.Core.Services.Sessions;
-using Gallery.Core.Services.Sessions.Locations;
 
 namespace Gallery.Tests;
 

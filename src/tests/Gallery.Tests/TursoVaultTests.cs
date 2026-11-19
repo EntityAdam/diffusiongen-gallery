@@ -1,8 +1,10 @@
 using System.Text.Json;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Turso;
+using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.DataManagers.Turso;
 
 namespace Gallery.Tests;
 

@@ -1,5 +1,5 @@
 using Gallery.Core.Models;
-using Gallery.Web.Components.Browsing;
+using Gallery.Web.Components.Features.Browsing;
 
 namespace Gallery.Tests;
 

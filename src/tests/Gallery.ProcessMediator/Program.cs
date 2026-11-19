@@ -10,7 +10,7 @@ if (args is ["interrupt-creation", var creationRoot, var phase])
         await service.CloseVaultAsync();
     }
     // Arrange the exact durable publication prefix, then let the parent terminate this process.
-    var manager = typeof(Gallery.Core.Services.GalleryService).Assembly.GetType("Gallery.Core.Services.VaultManager")!;
+    var manager = typeof(Gallery.Core.Services.GalleryService).Assembly.GetType("Gallery.Core.Features.Vaults.VaultManager")!;
     manager.GetMethod("PrepareCreationPublication", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
         .Invoke(null, [staging, creationRoot]);
     if (phase is "catalog" or "header")

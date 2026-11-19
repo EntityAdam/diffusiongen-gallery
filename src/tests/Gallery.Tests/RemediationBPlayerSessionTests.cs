@@ -1,10 +1,9 @@
 using System.Collections.Concurrent;
+using Gallery.Core.Features.Storage.DriveOperations;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Infrastructure.Persistence.Sqlite;
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Ports.Models;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.Sessions;
-using Gallery.Core.Services.Sessions.Locations;
 
 namespace Gallery.Tests;
 

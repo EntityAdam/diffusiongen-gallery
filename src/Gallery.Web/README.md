@@ -704,6 +704,26 @@ the HTTP client. The original `GalleryService` API delegates to those contracts
 for compatibility. Standalone tools can create and dispose a `GalleryScope`
 directly.
 
+### Source organization
+
+Core feature code lives in `Gallery.Core/Features`. Web uses the same feature
+names under `Gallery.Web/Components/Features`. Put Core contracts, workflows,
+rules, and feature DTOs together. Keep Razor components, their partial classes,
+and feature state together on the Web side.
+
+The feature folders are Backups, Browsing, Collections, Curation, Duplicates,
+Ingestion, Media, Settings, Storage, Tags, Vaults, and Vision. Restore belongs
+to Backups, removal and moves belong to Media, and the drive queue belongs to
+Storage. The Settings UI hosts tabs whose content is owned by the corresponding
+feature.
+
+Core `Composition` owns gallery setup, `Compatibility` holds the original
+`GalleryService` adapter, and `Infrastructure/Persistence` owns the catalog port
+and both database adapters. Web `Components/Workspace` coordinates features,
+`Components/Pages` owns routes, and `Components/Shared` holds reusable controls.
+Internal namespaces follow their folders. Public Core types retain their
+published namespaces when they move.
+
 Browsing projections require immutable media and index collections. Invalid
 saved-view names throw `InvalidSavedViewNameException` before vault access,
 with the normalized name and permitted length range in diagnostic context.

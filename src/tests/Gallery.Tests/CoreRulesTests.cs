@@ -1,6 +1,8 @@
+using Gallery.Core.Features.Browsing;
+using Gallery.Core.Features.Curation;
+using Gallery.Core.Features.Duplicates;
+using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Models;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.Queries;
 
 namespace Gallery.Tests;
 

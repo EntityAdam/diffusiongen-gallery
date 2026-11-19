@@ -2,11 +2,10 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
+using Gallery.Core.Features.Tags;
+using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Ports;
-using Gallery.Core.Services.Ports.Models;
 
 namespace Gallery.Tests;
 

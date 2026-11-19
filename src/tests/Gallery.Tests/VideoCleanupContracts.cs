@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
-using Gallery.Core.Services.Gateways;
+using Gallery.Core.Features.Ingestion.Video;
 
 namespace Gallery.Tests;
 

@@ -1,12 +1,8 @@
-using Gallery.Core.Services.Processors.Codecs;
-using Gallery.Core.Services.Validators;
-using Gallery.Core.Exceptions;
-using Gallery.Core.Services.Processors;
-using Gallery.Core.Services.DataManagers;
-using Gallery.Core.Services.Sessions;
 using System.Security.Cryptography;
-using Gallery.Core.Services;
-using Microsoft.Extensions.Configuration;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Features.Vaults.Security;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults;
 
 namespace Gallery.Tests;
 

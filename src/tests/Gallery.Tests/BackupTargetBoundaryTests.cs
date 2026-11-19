@@ -1,6 +1,6 @@
 using System.Reflection;
+using Gallery.Core.Features.Backups.Targets;
 using Gallery.Core.Services;
-using Gallery.Core.Services.Gateways;
 
 namespace Gallery.Tests;
 

@@ -1,9 +1,14 @@
-using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Components.Features.Browsing;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Duplicates;
+using Gallery.Web.Components.Features.Media.Removal;
+using Gallery.Web.Components.Features.Media;
+using Gallery.Web.Components.Features.Settings;
+using Gallery.Web.Components.Features.Tags;
+using Gallery.Web.Components.Features.Vision;
 using Microsoft.JSInterop;
-using Gallery.Web.Components.Browsing;
-using Gallery.Web.Components.Collections;
-using Gallery.Web.Components.Media;
 
 namespace Gallery.Web.Components.Workspace;
 

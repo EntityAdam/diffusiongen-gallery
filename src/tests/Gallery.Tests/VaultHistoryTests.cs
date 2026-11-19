@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Gallery.Core.Services;
+using Gallery.Core.Features.Vaults;
 using Gallery.Core.Models;
-using Gallery.Core.Services.DataManagers;
+using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 

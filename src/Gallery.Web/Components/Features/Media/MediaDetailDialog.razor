@@ -1,0 +1,161 @@
+@using Gallery.Web.Components.Workspace
+@using Gallery.Web.Components.Features.Vision
+@implements IDisposable
+@inject IGalleryMedia GalleryMedia
+@inject IGalleryRecordEditor GalleryRecords
+@inject IJSRuntime JS
+
+<ModalDialog Class="image-detail-overlay" LabelledBy="detail-title" Busy="@Busy" Close="RequestCloseDetailAsync">
+    <Card Class="image-detail-dialog mx-auto w-full max-w-6xl shadow-2xl mb-6 p-5 md:p-6">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 id="detail-title" class="min-w-0 flex-1 break-words">@Image.Name</h2><Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="@Busy" OnClick="RequestCloseDetailAsync" aria-label="Close media details"><XIcon aria-hidden="true" /></Button></div>
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1.2fr_1fr]">
+            <ImageDetailPreview Image="Image" Preview="@Preview" VideoUrl="@VideoUrl" Busy="Busy"
+                                Download="() => ExportAsync(Image)" Fullscreen="RequestDetailViewerAsync"
+                                Rate="Rate" Favorite="Favorite"
+                                Mark="Mark" />
+            <div class="min-w-0 space-y-4">
+                <ImageDetailFields @key="Image.Id" Image="Image" Busy="Busy" CatalogLoading="CatalogPartial" @bind-Description="editDescription" @bind-Description:after="NotifyDraftChanged" @bind-UserDescription="editUserDescription" @bind-UserDescription:after="NotifyDraftChanged"
+                                   Save="SaveNotesAsync" Analyze="Analyze" Dirty="NotesDirty" Discard="DiscardNotes"
+                                   Suggestion="Suggestion" Approve="ApproveDetailSuggestionAsync" Dismiss="DismissDetailSuggestionAsync" DownloadWorkflow="() => ExportWorkflowAsync(Image)"
+                                   ShowPrompt="RequestDetailPromptAsync" Remove="RequestDetailRemovalAsync" />
+                @if (Busy) { <p class="my-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm break-words" role="status">@Progress</p> }
+                @if (Error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@Error</Alert> }
+            </div>
+        </div>
+    </Card>
+</ModalDialog>
+@if (NavigationGuard is null)
+{
+    <UnsavedChangesGuard State="Guard" Error="@Error" Changed="NotifyDraftChanged" />
+}
+
+@code {
+
+    [Parameter, EditorRequired] public ImageRecord Image { get; set; } = default!;
+    [Parameter] public string Preview { get; set; } = "";
+    [Parameter] public string VideoUrl { get; set; } = "";
+    [Parameter] public string Progress { get; set; } = "";
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool CatalogPartial { get; set; }
+    [Parameter] public OrganizationSuggestion? Suggestion { get; set; }
+    [Parameter] public Func<OrganizationSuggestion, Task<ImageRecord?>> Approve { get; set; } = default!;
+    [Parameter] public EventCallback<OrganizationSuggestion> Dismiss { get; set; }
+    [Parameter] public EventCallback<ImageRecord> Changed { get; set; }
+    [Parameter] public EventCallback DraftChanged { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+    [Parameter] public EventCallback Fullscreen { get; set; }
+    [Parameter] public EventCallback<int> Rate { get; set; }
+    [Parameter] public EventCallback Favorite { get; set; }
+    [Parameter] public EventCallback Mark { get; set; }
+    [Parameter] public EventCallback Analyze { get; set; }
+    [Parameter] public EventCallback ShowPrompt { get; set; }
+    [Parameter] public EventCallback Remove { get; set; }
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    private string editDescription = "", editUserDescription = "";
+
+    protected override void OnInitialized()
+    {
+        editDescription = Image.Description;
+        editUserDescription = Image.UserDescription;
+    }
+
+    private Task NotifyDraftChanged() => DraftChanged.InvokeAsync();
+
+    [CascadingParameter] public UnsavedChangesGuardState? NavigationGuard { get; set; }
+    private UnsavedChangesGuardState? guard;
+    private UnsavedChangesGuardState Guard => NavigationGuard ?? (guard ??= new(Commands.Activity, () => Busy));
+    public UnsavedChangesSource Draft => new("notes", () => NotesDirty, () => Busy, SaveDraftAsync, DiscardNotes);
+    public bool NotesDirty => Image is not null &&
+        (editDescription != Image.Description || editUserDescription != Image.UserDescription);
+
+    private async Task DiscardNotes()
+    {
+        if (Busy || Image is null) return;
+        editDescription = Image.Description;
+        editUserDescription = Image.UserDescription;
+        await NotifyDraftChanged();
+    }
+
+    internal async Task RequestDetailActionAsync(Func<Task> action)
+    {
+        await Guard.RequestAsync([Draft], action);
+        if (Guard.IsPending)
+        {
+            StateHasChanged();
+            await NotifyDraftChanged();
+        }
+    }
+
+    private Task RequestCloseDetailAsync() => RequestDetailActionAsync(() => Close.InvokeAsync());
+    private Task RequestDetailViewerAsync() => RequestDetailActionAsync(() => Fullscreen.InvokeAsync());
+    private Task RequestDetailPromptAsync() => RequestDetailActionAsync(() => ShowPrompt.InvokeAsync());
+    private Task RequestDetailRemovalAsync() => RequestDetailActionAsync(() => Remove.InvokeAsync());
+    private async Task<bool> SaveDraftAsync()
+    {
+        var saved = false;
+        await Commands.RunAsync("Saving notes...", async () =>
+        {
+            await SaveDetailNotesCoreAsync();
+            saved = true;
+        });
+        return saved;
+    }
+
+    public void Dispose() => guard?.Dispose();
+
+    private async Task SaveDetailNotesCoreAsync()
+    {
+        if (Image is null) return;
+        var updated = await GalleryRecords.UpdateAsync(Image.Id, image => image with
+        { Description = editDescription.Trim(), UserDescription = editUserDescription.Trim() });
+        await Changed.InvokeAsync(updated);
+        editDescription = updated.Description;
+        editUserDescription = updated.UserDescription;
+        Commands.Activity.Message = "Notes saved.";
+    }
+
+    private Task ApproveDetailSuggestionAsync() => Commands.RunAsync("Saving approved analysis...", async () =>
+    {
+        if (NotesDirty || Image is null || Suggestion is not { } suggestion) return;
+        if (await Approve(suggestion) is not { } updated) return;
+        await Changed.InvokeAsync(updated);
+        editDescription = updated.Description;
+        Commands.Activity.Message = "Vision analysis approved and saved.";
+    });
+
+    private Task DismissDetailSuggestionAsync() => Image is not null && Suggestion is { } suggestion
+        ? Dismiss.InvokeAsync(suggestion) : Task.CompletedTask;
+    private async Task DownloadAsync(ExportFile file)
+    {
+        var contentBytes = file.CopyContentBytes();
+        try { await DownloadAsync(new MemoryStream(contentBytes, writable: false), file.FileName, file.ContentType); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(contentBytes); }
+    }
+
+    private async Task DownloadAsync(Stream content, string fileName, string contentType)
+    {
+        using var reference = new DotNetStreamReference(content);
+        await JS.InvokeVoidAsync("galleryMedia.download", reference, fileName, contentType);
+    }
+
+    private Task ExportAsync(ImageRecord image) => Commands.RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing image copy...", async () =>
+    {
+        var file = await GalleryMedia.ExportAsync(image.Id);
+        try { await DownloadAsync(file); }
+        finally { file.ClearContent(); }
+        Commands.Activity.Message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the gallery.";
+    });
+
+    private Task SaveNotesAsync() => Commands.RunAsync("Saving notes...", SaveDetailNotesCoreAsync);
+
+    private Task ExportWorkflowAsync(ImageRecord image) => Commands.RunAsync("Exporting workflow...", async () =>
+    {
+        var file = await GalleryMedia.WorkflowAsync(image.Id)
+            ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
+        try { await DownloadAsync(file); }
+        finally { file.ClearContent(); }
+        Commands.Activity.Message = $"Saved the ComfyUI workflow as {file.FileName}.";
+    });
+
+}

@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using System.Net;
-using System.Text.Json;
 using Gallery.Core.Exceptions;
+using Gallery.Core.Shared.Diagnostics;
 
 namespace Gallery.Tests;
 

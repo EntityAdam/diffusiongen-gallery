@@ -1,7 +1,8 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using Gallery.Core.Services;
+using System.Diagnostics;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Infrastructure.Persistence;
 
 namespace Gallery.Stress;
 

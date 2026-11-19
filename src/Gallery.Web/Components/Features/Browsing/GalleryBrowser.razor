@@ -1,0 +1,134 @@
+@using Microsoft.AspNetCore.Components.Sections
+@using Gallery.Web.Components.Features.Curation
+@using Gallery.Web.Components.Features.Media
+@using Gallery.Web.Components.Features.Media.Removal
+
+<SectionContent SectionName="gallery-browser">
+    @if (Active)
+    {
+    <div class="gallery-layout grid min-w-0 grid-cols-1" data-has-selection="@((State.LibrarySelection.Count > 0 || State.RemovalSelection.Count > 0) ? "true" : "false")">
+        <section aria-label="@(State.TrashActive ? "Trash" : "Gallery")">
+            @if (Catalog.IsPartial)
+            {
+                <div class="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground" role="status" data-testid="catalog-loading">
+                    @if (Catalog.IsLoading) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
+                    <span>Showing the initial page. Full-library search, filters and counts are @(Catalog.IsLoading ? "loading in the background" : "not ready yet").</span>
+                    @if (Catalog.LoadError.Length > 0)
+                    {
+                        <span>@Catalog.LoadError</span>
+                        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" OnClick="RetryCatalogLoadAsync">Retry loading library</Button>
+                    }
+                </div>
+            }
+            @if (State.Filtered.Count > 0)
+            {
+                <GroupedImageGrid Images="State.PageImages" Density="@State.Density" Grouping="@State.Grouping" Busy="Activity.Busy" Context="image"
+                                  PromptGroups="State.Browsing.PromptGroupsByImageId" ModelGroups="State.Browsing.DiffusionModelGroupsByImageId" ShowPrompt="Navigation.ShowPromptAsync">
+                    @{ var isSelected = (State.TrashActive ? State.RemovalSelection : State.LibrarySelection).Contains(image.Id); }
+                    <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@State.Thumbnails.Get(image.Id)" ThumbnailFailed="@State.Thumbnails.Failed(image.Id)"
+                                      Busy="Activity.Busy" Selected="isSelected" ShowSelection="true"
+                                      Select="args => State.SelectCard(image.Id, args.ShiftKey)" Open="() => Presentation.OpenAsync(image)"
+                                      Rate="value => Curation.ToggleRatingAsync(image, value)" Favorite="() => Curation.ToggleFavoriteAsync(image)"
+                                      Mark="() => Curation.ToggleMarkAsync(image)"
+                                      HasSuggestion="@State.Suggestions.ContainsKey(image.Id)" ReviewSuggestion="() => OpenViewerAsync(image.Id)" />
+                </GroupedImageGrid>
+                <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(State.Page == 0 || Activity.Busy)" OnClick="PreviousAsync"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
+                    <span>@if (Catalog.IsPartial) { <text>Initial page · library loading</text> } else { <text>Page @(State.Page + 1) of @State.PageCount</text> }</span>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(Catalog.IsPartial || State.Page + 1 >= State.PageCount || Activity.Busy)" OnClick="NextAsync">Next <ArrowRightIcon aria-hidden="true" /></Button>
+                </div>
+            }
+        </section>
+    </div>
+    }
+</SectionContent>
+
+<GalleryToolbox @ref="toolbox" Visible="@(State.ToolboxVisible && Active && !OverlayOpen)" ActiveTool="@State.ActiveTool" ActiveToolChanged="SetActiveToolAsync"
+                CatalogLoading="Catalog.IsPartial" Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="State.ToolboxX" Y="State.ToolboxY" Badge="State.ToolBadge">
+    @if (State.ActiveTool == "trash")
+    {
+        <TrashTool Busy="Activity.Busy" SelectedCount="State.RemovalSelection.Count" Results="Removal.Results"
+                   ClearSelection="State.ClearSelection" Delete="DeleteAsync" Restore="RestoreAsync" />
+    }
+</GalleryToolbox>
+
+<LibraryWorkbench KnownTags="Catalog.AllTags" Analysis="Analysis" Visible="@(!Catalog.IsPartial && State.ActiveTool is "organize" or "intelligence")" Workflow="@State.ActiveTool" Images="Catalog.Images" SelectedIds="State.LibrarySelection"
+                  Filter="State.Filter" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection"
+                  SuggestionsChanged="SuggestionsChangedAsync" />
+
+@if (State.ActiveTool is "organize" or "intelligence")
+{
+    var drawerTitle = State.ActiveTool == "organize" ? "Organize" : "AI analysis";
+    <aside class="gallery-filter-drawer @(State.ActiveTool == "organize" ? "gallery-organize-drawer" : "gallery-analysis-drawer")" aria-labelledby="gallery-workbench-drawer-title"
+           hidden="@(!Active || OverlayOpen)">
+        <div class="gallery-filter-drawer-header">
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="@($"Close {drawerTitle}")"><XIcon aria-hidden="true" /></Button>
+            <h2 id="gallery-workbench-drawer-title">@drawerTitle</h2>
+        </div>
+        <div class="gallery-analysis-drawer-body">
+            @if (Catalog.IsPartial)
+            {
+                <p class="text-muted-foreground" role="status">@drawerTitle will be available when the full library finishes loading.</p>
+            }
+            <Microsoft.AspNetCore.Components.Sections.SectionOutlet SectionName="gallery-workbench" />
+        </div>
+    </aside>
+}
+
+@if (State.ActiveTool == "review" && Active && !OverlayOpen)
+{
+    <aside class="gallery-filter-drawer gallery-review-drawer" aria-labelledby="gallery-review-drawer-title">
+        <div class="gallery-filter-drawer-header">
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="Close guided review"><XIcon aria-hidden="true" /></Button>
+            <h2 id="gallery-review-drawer-title">Guided review</h2>
+        </div>
+        <div class="gallery-review-drawer-body">
+            @if (Catalog.IsPartial)
+            {
+                <p class="text-muted-foreground" role="status">Guided review will be available when the full library finishes loading.</p>
+            }
+            else
+            {
+                <div class="review-intro space-y-4">
+                    <p class="text-muted-foreground text-sm">Review media one item at a time. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
+                    <div class="flex items-center gap-3">
+                        <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(State.ReviewRandomOrder ? "true" : "false")"
+                                aria-labelledby="review-random-order-label" disabled="@Activity.Busy" @onclick="() => State.ReviewRandomOrder = !State.ReviewRandomOrder"><span></span></button>
+                        <Label id="review-random-order-label" For="review-random-order">Random order</Label>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <Label For="review-goal">Goal:</Label>
+                        <input id="review-goal" type="number" min="@(State.ReviewPoolCount > 0 ? 1 : 0)" max="@State.ReviewPoolCount" step="1"
+                               class="review-goal-input" disabled="@(Activity.Busy || State.ReviewPoolCount == 0)" @bind="State.ReviewGoal" />
+                        <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(Activity.Busy || State.ReviewPoolCount == 0)" OnClick="StartReviewAsync">Start Review</Button>
+                    </div>
+                    <p class="text-muted-foreground text-sm">@State.ReviewPoolCount of the filtered media items await review.</p>
+                </div>
+            }
+        </div>
+    </aside>
+}
+
+@if (State.ActiveTool == "views" && Active && !OverlayOpen)
+{
+    <aside class="gallery-filter-drawer gallery-view-drawer" aria-labelledby="gallery-view-drawer-title">
+        <div class="gallery-filter-drawer-header">
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Activity.Busy" OnClick='() => SetActiveToolAsync("")' aria-label="Close change view"><XIcon aria-hidden="true" /></Button>
+            <h2 id="gallery-view-drawer-title">Change view</h2>
+        </div>
+        <div class="gallery-view-drawer-body">
+            <GalleryViewOptions Density="@State.Density" DensityChanged="SetDensityAsync" @bind-Grouping="State.Grouping"
+                                @bind-Grouping:after="FilterChangedAsync" Sort="@State.Filter.Sort" SortChanged="SetSort"
+                                Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" HasImages="State.PageImages.Any()"
+                                Fullscreen="() => OpenViewerAsync(null)" ResetPosition="ResetToolboxPositionAsync" />
+        </div>
+    </aside>
+}
+
+@if (State.ActiveTool == "filters" && Active && !OverlayOpen)
+{
+    <FilterDrawer Filter="State.Filter" KnownTags="Catalog.AllTags" Images="Catalog.Images" ResultCount="State.Filtered.Count"
+                  QuickFilters="State.QuickFilters" Saved="value => State.QuickFilters = value" Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial"
+                  ResetVersion="State.FilterInputRevision" Close='() => SetActiveToolAsync("")' Reset="ResetFilters"
+                  Changed="ApplyFilterPanelAsync" />
+}

@@ -1,0 +1,65 @@
+@using Gallery.Core.Features.Vaults
+@using Gallery.Web.Components.Workspace
+@inject IGalleryVault GalleryVault
+
+<Card Class="mb-6 p-5 md:p-6 space-y-4">
+    <h3>Gallery security</h3>
+    <div class="space-y-4 rounded-lg border border-border bg-background p-4">
+        <h4>Inactivity auto-lock</h4>
+        <p class="text-muted-foreground">Saves automatically when you choose a timer.</p>
+        <p class="text-muted-foreground">Automatically drop encryption keys from memory and lock the gallery when no mouse, keyboard or touch activity is detected. Locking also releases the gallery checkout after active work finishes.</p>
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <Label For="auto-lock" Class="mt-4 mb-2 block">Auto-lock timer</Label>
+            <Select id="auto-lock" Value="@AutoLockMinutes.ToString()" ValueChanged="UpdateTimer" Disabled="@Busy" Class="min-w-0 flex-1">
+                <option value="0">Disabled (never lock automatically)</option>
+                <option value="5">5 minutes</option>
+                <option value="15">15 minutes (default)</option>
+                <option value="30">30 minutes</option>
+                <option value="60">60 minutes (1 hour)</option>
+            </Select>
+        </div>
+        <p class="text-muted-foreground">
+            @(AutoLockMinutes == 0
+                ? "Auto-lock is currently disabled. The gallery remains unlocked until manually locked or closed."
+                : $"The gallery will automatically lock after {AutoLockMinutes} minutes of inactivity.")
+        </p>
+    </div>
+
+    <div class="space-y-4 rounded-lg border border-border bg-background p-4">
+        <h4>Panic / Emergency quick-lock</h4>
+        <p class="text-muted-foreground">Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> (or <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>, or <kbd>Shift</kbd>+<kbd>Esc</kbd>) anywhere in the application to instantly lock the gallery, release its checkout after active work finishes, zero-out keys in RAM, revoke media blob URLs, and clear browser caches.</p>
+        <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Disabled="@Busy" OnClick="Panic">Trigger panic lock now</Button>
+    </div>
+
+    <div class="space-y-4 rounded-lg border border-border bg-background p-4">
+        <h4>Passphrase</h4>
+        <form @onsubmit="ChangePassphraseAsync" @onsubmit:preventDefault>
+            <Label For="new-passphrase" Class="mt-4 mb-2 block">New passphrase</Label>
+            <Input id="new-passphrase" Type="password" @bind-Value="newPassphrase" minlength="14" autocomplete="off" required />
+            <Label For="new-confirm" Class="mt-4 mb-2 block">Confirm new passphrase</Label>
+            <Input id="new-confirm" Type="password" @bind-Value="newConfirm" minlength="14" autocomplete="off" required />
+            <p class="text-muted-foreground">Use this after unlocking with recovery words. Your recovery words remain unchanged. Back up the gallery header, database, and all encrypted media together.</p>
+            <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@Busy" Type="submit">Change passphrase</Button>
+        </form>
+    </div>
+</Card>
+
+@code {
+    [Parameter] public int AutoLockMinutes { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<string> UpdateTimer { get; set; }
+    [Parameter] public EventCallback Panic { get; set; }
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    private string newPassphrase = "", newConfirm = "";
+
+    private Task ChangePassphraseAsync() => Commands.RunLibraryChangeAsync("Updating passphrase...", async () =>
+    {
+        try
+        {
+            await GalleryVault.ChangePassphraseAsync(newPassphrase, newConfirm);
+            Commands.Activity.Message = "Passphrase updated. Your recovery words are unchanged.";
+        }
+        finally { newPassphrase = newConfirm = ""; }
+    });
+
+}

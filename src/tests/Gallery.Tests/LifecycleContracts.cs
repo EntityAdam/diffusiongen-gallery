@@ -1,10 +1,9 @@
-using Gallery.Core.Exceptions;
-using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Gallery.Core.Services.Sessions;
-using Gallery.Core.Services.Sessions.Generations;
 using System.Collections.Immutable;
 using System.Reflection;
+using Gallery.Core.Exceptions;
+using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Models;
+using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 

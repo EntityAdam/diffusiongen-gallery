@@ -1,10 +1,12 @@
 using Gallery.Core.Models;
-using Gallery.Web.Components;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Media.Removal;
+using Gallery.Web.Components.Features.Media;
 using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.JSInterop;
-using Gallery.Web.Components.Media;
 
 namespace Gallery.Tests;
 

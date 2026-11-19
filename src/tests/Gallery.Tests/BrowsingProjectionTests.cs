@@ -1,4 +1,3 @@
-using Gallery.Core.Services.Processors;
 using Gallery.Web.Components.Workspace;
 // Class tests pin projection identity, enumeration and private component transitions that HTTP cannot expose.
 using System.Collections;
@@ -6,14 +5,16 @@ using System.Collections.Immutable;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Gallery.Web.Components;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using ShadCn.Blazor.Components;
 using Microsoft.JSInterop;
-using Gallery.Web.Components.Browsing;
+using Gallery.Core.Features.Ingestion;
+using Gallery.Web.Components.Features.Browsing;
+using Gallery.Web.Components.Features.Curation;
+using Gallery.Web.Components.Features.Ingestion;
+using Gallery.Web.Components.Features.Vision;
 
 namespace Gallery.Tests;
 

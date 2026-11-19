@@ -1,0 +1,82 @@
+@using Gallery.Web.Components.Workspace
+@inject IGalleryStorage GalleryStorage
+
+<Card Class="mb-6 p-5 md:p-6 storage-overview" aria-labelledby="storage-overview-title" aria-busy="@(Refreshing ? "true" : "false")">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h3 id="storage-overview-title">Gallery overview</h3>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Type="button" Disabled="@(Busy || CatalogPartial)" OnClick="RefreshStorageOverviewAsync">
+            @if (Refreshing) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
+            @(Refreshing ? "Refreshing..." : "Refresh")
+        </Button>
+    </div>
+    @if (Refreshing)
+    {
+        <p class="text-muted-foreground" role="status">Refreshing gallery overview...</p>
+    }
+    @if (Overview is null)
+    {
+        <p class="text-muted-foreground">Storage has not been measured yet. Select Refresh to calculate it.</p>
+    }
+    else
+    {
+        <dl class="my-4 grid grid-cols-1 gap-3 lg:grid-cols-3 [&>div]:min-w-0 [&>div]:rounded-lg [&>div]:border [&>div]:border-border [&>div]:p-4 [&_dt]:text-xs [&_dt]:uppercase [&_dt]:text-muted-foreground [&_dd]:my-2 [&_dd]:text-2xl [&_dd]:text-primary [&_dd]:break-all [&_span]:text-xs">
+            <div><dt>Database size</dt><dd data-testid="database-size">@GalleryDisplay.FormatBytes(Overview.DatabaseBytes)</dd><span class="text-muted-foreground">gallery.db with WAL files, including thumbnails</span></div>
+            <div><dt>Total file count</dt><dd data-testid="file-count">@Overview.TotalFileCount.ToString("N0")</dd><span class="text-muted-foreground">@Overview.ImageFileCount.ToString("N0") encrypted media files + @Overview.VaultFileCount gallery files</span></div>
+            <div><dt>Total size on disk</dt><dd data-testid="total-size">@GalleryDisplay.FormatBytes(Overview.TotalBytes)</dd><span class="text-muted-foreground">@GalleryDisplay.FormatBytes(Overview.ImageBytes) of encrypted media</span></div>
+        </dl>
+        @if (Overview.MissingImageFiles > 0)
+        {
+            <Alert Variant="AlertVariant.Destructive">@Overview.MissingImageFiles catalogued media file(s) were not found on disk and are not counted.</Alert>
+        }
+        @if (Overview.IsIndexPending)
+        {
+            <p class="text-muted-foreground" data-testid="index-pending">The file index is still being built in the background; some sizes were measured directly. Refresh once background file operations finish.</p>
+        }
+        <StorageOverviewStatus Overview="@Overview" />
+    }
+    <p class="text-muted-foreground flex flex-wrap items-center gap-2">
+        <span>Sizes come from a cached file index. Rebuild it if files were changed outside the gallery.</span>
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@(Busy || CatalogPartial)" OnClick="RebuildStorageIndexAsync">Rebuild file index</Button>
+    </p>
+    <p class="text-muted-foreground flex flex-wrap items-center gap-2">
+        @if (!HasScan) { <span>Duplicates have not been scanned yet.</span> }
+        else { <span>Last duplicate scan found @Groups.Sum(group => group.ImageIds.Length - 1).ToString("N0") likely duplicate(s), about @GalleryDisplay.FormatBytes(Groups.Sum(group => group.ReclaimableBytes)) reclaimable.</span> }
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@Busy" OnClick="FindDuplicates">Find duplicates <ArrowRightIcon aria-hidden="true" /></Button>
+    </p>
+</Card>
+
+@code {
+    [Parameter] public StorageOverview? Overview { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool CatalogPartial { get; set; }
+    [Parameter] public bool HasScan { get; set; }
+    [Parameter] public IReadOnlyList<DuplicateGroup> Groups { get; set; } = default!;
+    [Parameter] public EventCallback<StorageOverview?> OverviewChanged { get; set; }
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    [Parameter] public EventCallback FindDuplicates { get; set; }
+
+    private bool Refreshing;
+    private Task RebuildStorageIndexAsync() => Commands.RunAsync("Scheduling file index rebuild...", async () =>
+    {
+        await GalleryStorage.RebuildStorageIndexAsync();
+        await OverviewChanged.InvokeAsync(await GalleryStorage.CachedStorageOverviewAsync());
+        Commands.Activity.Message = "The file index is being rebuilt in the background. Refresh the overview when it finishes.";
+    });
+
+    private async Task RefreshStorageOverviewAsync()
+    {
+        if (Busy) return;
+        Refreshing = true;
+        try
+        {
+            await Commands.RunAsync("Measuring gallery storage...", async () =>
+            {
+                // SQLite reads/decryption can run synchronously before the service's first yield.
+                // Keep that work off the renderer so the busy state is visible throughout the refresh.
+                await OverviewChanged.InvokeAsync(await Task.Run(GalleryStorage.RefreshStorageOverviewAsync));
+                Commands.Activity.Message = "Gallery overview refreshed.";
+            });
+        }
+        finally { Refreshing = false; }
+    }
+}

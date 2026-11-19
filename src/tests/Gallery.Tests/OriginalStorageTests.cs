@@ -1,15 +1,11 @@
-using Gallery.Core.Services.Processors.Codecs;
 using System.Buffers.Binary;
 using System.Text;
-using Gallery.Core.Exceptions;
-using Gallery.Core.Services.Queries;
+using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
-using Gallery.Core.Services;
-using Gallery.Core.Services.Processors;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats.Png.Chunks;
+using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp;
 
 namespace Gallery.Tests;
 

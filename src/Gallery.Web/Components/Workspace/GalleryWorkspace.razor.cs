@@ -1,8 +1,9 @@
 using Gallery.Core.Models;
+using Gallery.Web.Components.Features.Browsing;
+using Gallery.Web.Components.Features.Collections;
+using Gallery.Web.Components.Features.Duplicates;
+using Gallery.Web.Components.Features.Media;
 using Microsoft.AspNetCore.Components;
-using Gallery.Web.Components.Browsing;
-using Gallery.Web.Components.Collections;
-using Gallery.Web.Components.Media;
 
 namespace Gallery.Web.Components.Workspace;
 
