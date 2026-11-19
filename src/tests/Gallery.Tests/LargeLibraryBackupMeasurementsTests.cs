@@ -1,3 +1,4 @@
+using Gallery.Core.Features.Backups;
 using System.Diagnostics;
 using System.Globalization;
 using Gallery.Core.Models;
@@ -37,23 +38,23 @@ public sealed class LargeLibraryBackupMeasurementsTests(ITestOutputHelper output
                 ImageRecord? firstRecord = null;
                 for (var index = 0; index < librarySize; index++)
                 {
-                    var record = await fixture.Service.ImportAsync(
+                    var record = await fixture.Scope.Ingestion.ImportAsync(
                         new MemoryStream(CreateUniquePng(index)), $"image-{index:D6}.png", "large-library");
                     firstRecord ??= record;
                 }
                 libraryBuild.Stop();
-                await fixture.Service.SaveBackupOptionsAsync("local", backupDirectory, "", "", "");
-                await fixture.Service.CreateFullBackupAsync();
+                await fixture.Scope.Backup.SaveBackupOptionsAsync("local", backupDirectory, "", "", "");
+                await fixture.Scope.Backup.CreateFullBackupAsync();
 
                 for (var generation = 1; generation < chainDepth; generation++)
                 {
-                    await fixture.Service.UpdateAsync(firstRecord!.Id,
+                    await fixture.Scope.Records.UpdateAsync(firstRecord!.Id,
                         image => image with { Description = $"Backup generation {generation}" });
-                    await fixture.Service.CreateIncrementalBackupAsync();
+                    await fixture.Scope.Backup.CreateIncrementalBackupAsync();
                 }
                 listener.Measurements.Clear();
                 var incremental = Stopwatch.StartNew();
-                var result = await fixture.Service.CreateIncrementalBackupAsync();
+                var result = await fixture.Scope.Backup.CreateIncrementalBackupAsync();
                 incremental.Stop();
                 Assert.True(result.WasSkipped);
 
@@ -191,7 +192,7 @@ public sealed class LargeLibraryBackupMeasurementsTests(ITestOutputHelper output
         {
             listener = new ActivityListener
             {
-                ShouldListenTo = source => source.Name == GalleryService.BackupActivitySourceName,
+                ShouldListenTo = source => source.Name == BackupArchive.ActivitySourceName,
                 Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
                 SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
                 ActivityStopped = activity =>

@@ -42,33 +42,33 @@ public sealed class VaultHistoryTests : IDisposable
     {
         var first = Path.Combine(root, "first");
         var options = new GalleryRuntimeOptions { StateDirectory = Path.Combine(root, "state") };
-        using var gallery = GalleryService.Create(first, options, new HttpClient());
-        await gallery.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "First gallery");
+        using var gallery = GalleryScope.Create(first, options, new HttpClient());
+        await gallery.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "First gallery");
         var second = Path.Combine(first, "second");
-        await gallery.SelectNewVaultAsync(second);
-        await gallery.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Second gallery");
-        await gallery.CloseVaultAsync();
-        await gallery.OpenExistingVaultAsync(first);
-        Assert.Equal(2, gallery.KnownGalleries.Count);
-        Assert.Equal(first, gallery.KnownGalleries[0].Directory);
-        Assert.False(gallery.IsUnlocked);
-        await gallery.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        await gallery.RenameVaultAsync("Renamed gallery");
-        Assert.Equal("Renamed gallery", gallery.KnownGalleries[0].Name);
-        await gallery.CloseVaultAsync();
+        await gallery.Vault.SelectNewVaultAsync(second);
+        await gallery.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Second gallery");
+        await gallery.Vault.CloseVaultAsync();
+        await gallery.Vault.OpenExistingVaultAsync(first);
+        Assert.Equal(2, gallery.Vault.KnownGalleries.Count);
+        Assert.Equal(first, gallery.Vault.KnownGalleries[0].Directory);
+        Assert.False(gallery.Vault.IsUnlocked);
+        await gallery.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        await gallery.Vault.RenameVaultAsync("Renamed gallery");
+        Assert.Equal("Renamed gallery", gallery.Vault.KnownGalleries[0].Name);
+        await gallery.Vault.CloseVaultAsync();
 
         // An invalid selection must not be remembered or replace the current gallery.
-        await Assert.ThrowsAsync<InvalidOperationException>(() => gallery.OpenExistingVaultAsync(Path.Combine(root, "missing")));
-        Assert.Equal(2, gallery.KnownGalleries.Count);
-        Assert.Equal(first, gallery.VaultRoot);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => gallery.Vault.OpenExistingVaultAsync(Path.Combine(root, "missing")));
+        Assert.Equal(2, gallery.Vault.KnownGalleries.Count);
+        Assert.Equal(first, gallery.Vault.VaultRoot);
 
-        using var reopened = GalleryService.Create(second, options, new HttpClient());
-        Assert.Equal(first, reopened.VaultRoot);
-        Assert.Equal(2, reopened.KnownGalleries.Count);
-        Assert.Equal("Renamed gallery", reopened.KnownGalleries[0].Name);
+        using var reopened = GalleryScope.Create(second, options, new HttpClient());
+        Assert.Equal(first, reopened.Vault.VaultRoot);
+        Assert.Equal(2, reopened.Vault.KnownGalleries.Count);
+        Assert.Equal("Renamed gallery", reopened.Vault.KnownGalleries[0].Name);
 
         File.Delete(Path.Combine(second, "vault.json"));
-        Assert.Equal("Renamed gallery", Assert.Single(gallery.KnownGalleries).Name);
+        Assert.Equal("Renamed gallery", Assert.Single(gallery.Vault.KnownGalleries).Name);
     }
 
     public void Dispose()

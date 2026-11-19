@@ -12,11 +12,11 @@ public sealed class ValidationAndFormattingRegressionTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        await fixture.Service.SaveViewAsync("Favorites", new GalleryFilter());
+        await fixture.Scope.Settings.SaveViewAsync("Favorites", new GalleryFilter());
 
-        await fixture.Service.DeleteViewAsync("fAVORITES");
+        await fixture.Scope.Settings.DeleteViewAsync("fAVORITES");
 
-        Assert.Empty(await fixture.Service.LoadViewsAsync());
+        Assert.Empty(await fixture.Scope.Settings.LoadViewsAsync());
     }
 
     [Theory]
@@ -26,12 +26,12 @@ public sealed class ValidationAndFormattingRegressionTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var original = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "cats.png", "folder");
+        var original = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "cats.png", "folder");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.UpdateAsync(original.Id, edit => edit with { Collections = [collection] }));
+            fixture.Scope.Records.UpdateAsync(original.Id, edit => edit with { Collections = [collection] }));
 
-        Assert.Empty(Assert.Single(await fixture.Service.ListAsync()).Collections);
+        Assert.Empty(Assert.Single(await fixture.Scope.Catalog.ListAsync()).Collections);
     }
 
     [Fact]
@@ -39,18 +39,18 @@ public sealed class ValidationAndFormattingRegressionTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var original = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "cats.png", "folder");
+        var original = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "cats.png", "folder");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.UpdateAsync(original.Id, edit => edit with { Collections = ["Cats", "cats"] }));
-        var added = await fixture.Service.UpdateAsync(original.Id, edit =>
-            fixture.Service.AddCollection(fixture.Service.AddCollection(edit, " Cats "), "cATS"));
-        var removed = await fixture.Service.UpdateAsync(original.Id, edit =>
-            fixture.Service.RemoveCollection(edit, " cats "));
+            fixture.Scope.Records.UpdateAsync(original.Id, edit => edit with { Collections = ["Cats", "cats"] }));
+        var added = await fixture.Scope.Records.UpdateAsync(original.Id, edit =>
+            fixture.Scope.Records.AddCollection(fixture.Scope.Records.AddCollection(edit, " Cats "), "cATS"));
+        var removed = await fixture.Scope.Records.UpdateAsync(original.Id, edit =>
+            fixture.Scope.Records.RemoveCollection(edit, " cats "));
 
         Assert.Equal(["Cats"], added.Collections.ToArray());
         Assert.Empty(removed.Collections);
-        Assert.Empty(Assert.Single(await fixture.Service.ListAsync()).Collections);
+        Assert.Empty(Assert.Single(await fixture.Scope.Catalog.ListAsync()).Collections);
     }
 
     [Theory]
@@ -60,14 +60,14 @@ public sealed class ValidationAndFormattingRegressionTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var original = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "original.png", "folder");
+        var original = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "original.png", "folder");
         var ciphertext = File.ReadAllBytes(original.StoredPath);
         var destination = Path.Combine(fixture.Root, "destination");
         Directory.CreateDirectory(destination);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.MoveAsync(original.Id, destination, name));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.MediaMaintenance.MoveAsync(original.Id, destination, name));
 
-        var stored = Assert.Single(await fixture.Service.ListAsync());
+        var stored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Equal(original.Name, stored.Name);
         Assert.Equal(original.StoredPath, stored.StoredPath);
         Assert.Equal(ciphertext, File.ReadAllBytes(original.StoredPath));
@@ -81,7 +81,7 @@ public sealed class ValidationAndFormattingRegressionTests
     {
         var image = new ImageRecord { DurationSeconds = TimeSpan.FromHours(hours).TotalSeconds };
 
-        Assert.Equal(expected, GalleryService.FormatDuration(image));
+        Assert.Equal(expected, GalleryDisplay.FormatDuration(image));
     }
 
     [Theory]

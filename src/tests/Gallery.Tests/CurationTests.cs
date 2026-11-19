@@ -35,13 +35,13 @@ public sealed class CurationTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var original = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(320, 240, 0)), "original.png", "folder");
-        var resized = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(160, 120, 0)), "resized.png", "folder");
-        var different = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(320, 240, 1)), "different.png", "folder");
+        var original = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(320, 240, 0)), "original.png", "folder");
+        var resized = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(160, 120, 0)), "resized.png", "folder");
+        var different = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(320, 240, 1)), "different.png", "folder");
         var expectedIds = new[] { original.Id, resized.Id }.Order(StringComparer.Ordinal);
 
         // Act
-        var scan = await fixture.Service.ScanDuplicatesAsync();
+        var scan = await fixture.Scope.Duplicates.ScanDuplicatesAsync();
 
         // Assert - the actual perceptual threshold groups the resized copy and excludes the different image
         Assert.Equal(expectedIds, Assert.Single(scan.Groups).ImageIds.Order(StringComparer.Ordinal));
@@ -54,22 +54,22 @@ public sealed class CurationTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var initialCache = await fixture.Service.CachedDuplicateScanAsync();
-        var small = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(200, 150, 0)), "small.png", "folder");
-        var large = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(400, 300, 0)), "large.png", "folder");
-        var other = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(200, 150, 1)), "other.png", "folder");
+        var initialCache = await fixture.Scope.Duplicates.CachedDuplicateScanAsync();
+        var small = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(200, 150, 0)), "small.png", "folder");
+        var large = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(400, 300, 0)), "large.png", "folder");
+        var other = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(200, 150, 1)), "other.png", "folder");
         var progress = new SynchronousProgress();
 
         // Act
-        var scan = await fixture.Service.ScanDuplicatesAsync(progress);
+        var scan = await fixture.Scope.Duplicates.ScanDuplicatesAsync(progress);
         var initialProgress = progress.Snapshot();
-        var cachedResult = await fixture.Service.CachedDuplicateScanAsync();
+        var cachedResult = await fixture.Scope.Duplicates.CachedDuplicateScanAsync();
         var encryptedSettings = new Dictionary<string, string>();
         foreach (var id in new[] { "duplicate-scan", "perceptual-hashes" })
             encryptedSettings[id] = Encoding.UTF8.GetString((await fixture.RawStore.ReadSettingsAsync(id))!);
-        await fixture.Service.UpdateAsync(small.Id, image => image with { Rating = 5 });
+        await fixture.Scope.Records.UpdateAsync(small.Id, image => image with { Rating = 5 });
         var rescanProgress = new SynchronousProgress();
-        var rescan = await fixture.Service.ScanDuplicatesAsync(rescanProgress);
+        var rescan = await fixture.Scope.Duplicates.ScanDuplicatesAsync(rescanProgress);
         var finalProgress = rescanProgress.Snapshot();
 
         // Assert
@@ -105,15 +105,15 @@ public sealed class CurationTests
         var bigger = new ImageRecord { Id = "big", Width = 400, Height = 300, ImportedAt = now };
         var smaller = new ImageRecord { Id = "small", Width = 200, Height = 150, ImportedAt = now.AddDays(-1) };
         // Act
-        var resolutionKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
+        var resolutionKeeper = fixture.Scope.Duplicates.PickDuplicateKeeper([smaller, bigger]).Id;
         smaller = smaller with { IsFavorite = true };
-        var favoriteKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
+        var favoriteKeeper = fixture.Scope.Duplicates.PickDuplicateKeeper([smaller, bigger]).Id;
         bigger = bigger with { Rating = 3 };
-        var ratingKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
+        var ratingKeeper = fixture.Scope.Duplicates.PickDuplicateKeeper([smaller, bigger]).Id;
         bigger = bigger with { IsMarkedForDeletion = true };
-        var unmarkedKeeper = fixture.Service.PickDuplicateKeeper([smaller, bigger]).Id;
+        var unmarkedKeeper = fixture.Scope.Duplicates.PickDuplicateKeeper([smaller, bigger]).Id;
         var twin = new ImageRecord { Id = "twin", Width = 200, Height = 150, IsFavorite = true, ImportedAt = now.AddDays(-2) };
-        var oldestKeeper = fixture.Service.PickDuplicateKeeper([smaller, twin]).Id;
+        var oldestKeeper = fixture.Scope.Duplicates.PickDuplicateKeeper([smaller, twin]).Id;
 
         // Assert
         Assert.Equal("big", resolutionKeeper);
@@ -132,13 +132,13 @@ public sealed class CurationTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var wide = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(400, 100, 0)), "wide.png", "folder");
-        var square = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(100, 100, 1)), "square.png", "folder");
+        var wide = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(400, 100, 0)), "wide.png", "folder");
+        var square = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(100, 100, 1)), "square.png", "folder");
         var arrangedSquare = identicalPixels ? square with { ContentSha256 = wide.ContentSha256 } : square;
         await DuplicateCacheArrangement.ArrangeAsync(fixture, [(wide, identicalPixels ? 0UL : 42UL), (arrangedSquare, identicalPixels ? ulong.MaxValue : 42UL)]);
 
         // Act
-        var scan = await fixture.Service.ScanDuplicatesAsync();
+        var scan = await fixture.Scope.Duplicates.ScanDuplicatesAsync();
 
         // Assert - migrated catalog/cached hashes still enforce the shape and exact-pixel rule
         if (identicalPixels)
@@ -158,18 +158,18 @@ public sealed class CurationTests
         await fixture.InitializeAsync();
 
         // Act
-        var initial = await fixture.Service.LoadPreferencesAsync();
+        var initial = await fixture.Scope.Settings.LoadPreferencesAsync();
         var defaultDensity = initial.GridDensity;
         var defaultAutoLock = initial.AutoLockMinutes;
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 30 });
-        var savedPreferences = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 30 });
+        var savedPreferences = await fixture.Scope.Settings.LoadPreferencesAsync();
         var storedPreferences = await fixture.RawStore.ReadSettingsAsync("ui-preferences");
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "gigantic", AutoLockMinutes = -5 });
-        var invalidFallback = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 0 });
-        var disabledAutoLock = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { GridDensity = "large", AutoLockMinutes = 99999 });
-        var clampedHigh = await fixture.Service.LoadPreferencesAsync();
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { GridDensity = "gigantic", AutoLockMinutes = -5 });
+        var invalidFallback = await fixture.Scope.Settings.LoadPreferencesAsync();
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { GridDensity = "compact", AutoLockMinutes = 0 });
+        var disabledAutoLock = await fixture.Scope.Settings.LoadPreferencesAsync();
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { GridDensity = "large", AutoLockMinutes = 99999 });
+        var clampedHigh = await fixture.Scope.Settings.LoadPreferencesAsync();
 
         // Assert
         Assert.Equal("detail", defaultDensity);
@@ -197,7 +197,7 @@ public sealed class CurationTests
         await fixture.Store.SaveSettingsAsync(legacyPreferences, "ui-preferences",
             "ui-preferences:v1", fixture.Session.Key);
 
-        Assert.Equal(expectedDensity, (await fixture.Service.LoadPreferencesAsync()).GridDensity);
+        Assert.Equal(expectedDensity, (await fixture.Scope.Settings.LoadPreferencesAsync()).GridDensity);
         Assert.Equal(new[] { "compact", "detail" }, UiPreferences.Densities.ToArray());
     }
 
@@ -209,11 +209,11 @@ public sealed class CurationTests
         await fixture.InitializeAsync();
 
         // Act
-        var initial = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { ToolboxVisible = false, ToolboxX = 120.5, ToolboxY = 64, ToolboxTool = "trash" });
-        var saved = await fixture.Service.LoadPreferencesAsync();
-        await fixture.Service.SavePreferencesAsync(new UiPreferences { ToolboxX = double.NaN, ToolboxY = -10, ToolboxTool = "explore" });
-        var normalized = await fixture.Service.LoadPreferencesAsync();
+        var initial = await fixture.Scope.Settings.LoadPreferencesAsync();
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { ToolboxVisible = false, ToolboxX = 120.5, ToolboxY = 64, ToolboxTool = "trash" });
+        var saved = await fixture.Scope.Settings.LoadPreferencesAsync();
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { ToolboxX = double.NaN, ToolboxY = -10, ToolboxTool = "explore" });
+        var normalized = await fixture.Scope.Settings.LoadPreferencesAsync();
 
         // Assert
         Assert.True(initial.ToolboxVisible);
@@ -234,21 +234,21 @@ public sealed class CurationTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "a.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "b.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "a.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "b.png", "folder");
 
         // Act
         var failure = await Assert.ThrowsAsync<AggregateException>(() =>
-            fixture.Service.UpdateManyAsync([first.Id, second.Id, "missing", first.Id], image =>
+            fixture.Scope.Records.UpdateManyAsync([first.Id, second.Id, "missing", first.Id], image =>
         {
-            return image with { IsFavorite = true, Tags = fixture.Service.MergeTags(image.Tags, "batch") };
+            return image with { IsFavorite = true, Tags = fixture.Scope.Records.MergeTags(image.Tags, "batch") };
         }));
 
         // Assert
         var recordFailure = Assert.Single(failure.InnerExceptions);
         Assert.Contains("missing", recordFailure.Message);
         Assert.IsType<InvalidOperationException>(recordFailure.InnerException);
-        var images = await fixture.Service.ListAsync();
+        var images = await fixture.Scope.Catalog.ListAsync();
         Assert.Equal(new[] { first.Id, second.Id }.Order(StringComparer.Ordinal),
             images.Select(image => image.Id).Order(StringComparer.Ordinal));
         Assert.All(images, image =>
@@ -267,12 +267,12 @@ public sealed class CurationTests
         var small = new ImageRecord { Id = "small", Width = 200, Height = 150 };
         var tiny = new ImageRecord { Id = "tiny", Width = 100, Height = 75 };
         // Act
-        var initialKeepers = fixture.Service.InitialDuplicateKeepers([small, big, tiny]);
+        var initialKeepers = fixture.Scope.Duplicates.InitialDuplicateKeepers([small, big, tiny]);
         tiny = tiny with { IsMarkedForDeletion = true };
-        var partialDecisionKeepers = fixture.Service.InitialDuplicateKeepers([big, small, tiny]);
+        var partialDecisionKeepers = fixture.Scope.Duplicates.InitialDuplicateKeepers([big, small, tiny]);
         big = big with { IsMarkedForDeletion = true };
         small = small with { IsMarkedForDeletion = true };
-        var allMarkedKeepers = fixture.Service.InitialDuplicateKeepers([big, small, tiny]);
+        var allMarkedKeepers = fixture.Scope.Duplicates.InitialDuplicateKeepers([big, small, tiny]);
 
         // Assert
         Assert.Equal(["big"], initialKeepers);
@@ -286,20 +286,20 @@ public sealed class CurationTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var a = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "a.png", "folder");
-        var b = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "b.png", "folder");
-        var c = await fixture.Service.ImportAsync(new MemoryStream(MakePattern(80, 60, 0)), "c.png", "folder");
-        await fixture.Service.UpdateAsync(a.Id, image => image with { IsMarkedForDeletion = true });
+        var a = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "a.png", "folder");
+        var b = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "b.png", "folder");
+        var c = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(80, 60, 0)), "c.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(a.Id, image => image with { IsMarkedForDeletion = true });
         string[] group = [a.Id, b.Id, c.Id];
 
         // Act
-        await fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string> { a.Id, c.Id });
-        var marks = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id, image => image.IsMarkedForDeletion);
+        await fixture.Scope.Duplicates.ApplyDuplicateDecisionAsync(group, new HashSet<string> { a.Id, c.Id });
+        var marks = (await fixture.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id, image => image.IsMarkedForDeletion);
         var emptyKeepersError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string>()));
+            fixture.Scope.Duplicates.ApplyDuplicateDecisionAsync(group, new HashSet<string>()));
         var outsideKeeperError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ApplyDuplicateDecisionAsync(group, new HashSet<string> { "elsewhere" }));
-        var afterRejectedDecisions = await fixture.Service.ListAsync();
+            fixture.Scope.Duplicates.ApplyDuplicateDecisionAsync(group, new HashSet<string> { "elsewhere" }));
+        var afterRejectedDecisions = await fixture.Scope.Catalog.ListAsync();
 
         // Assert
         Assert.False(marks[a.Id]);

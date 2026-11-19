@@ -1,3 +1,5 @@
+using Gallery.Core.Infrastructure.Persistence;
+using Gallery.Core.Features.Vaults;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -21,7 +23,7 @@ public sealed class VaultOpenTelemetryTests
             using var png = new MemoryStream();
             image.SaveAsPng(png);
             png.Position = 0;
-            records.Add(await fixture.Service.ImportAsync(png, $"private-record-name-{index}.png", "private-source-folder"));
+            records.Add(await fixture.Scope.Ingestion.ImportAsync(png, $"private-record-name-{index}.png", "private-source-folder"));
         }
 
         using var scope = new Activity("telemetry-test").Start();
@@ -31,7 +33,7 @@ public sealed class VaultOpenTelemetryTests
         var measurementTags = new ConcurrentQueue<object?>();
         using var activityListener = new ActivityListener
         {
-            ShouldListenTo = source => source.Name == GalleryService.VaultOpenActivitySourceName,
+            ShouldListenTo = source => source.Name == VaultOpenTelemetry.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
                 options.TraceId == traceId ? ActivitySamplingResult.AllData : ActivitySamplingResult.None,
             ActivityStopped = activity =>
@@ -44,7 +46,7 @@ public sealed class VaultOpenTelemetryTests
         {
             InstrumentPublished = (instrument, listener) =>
             {
-                if (instrument.Meter.Name == GalleryService.CatalogMeterName) listener.EnableMeasurementEvents(instrument);
+                if (instrument.Meter.Name == CatalogMetrics.MeterName) listener.EnableMeasurementEvents(instrument);
             }
         };
         meterListener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
@@ -59,10 +61,10 @@ public sealed class VaultOpenTelemetryTests
         });
         meterListener.Start();
 
-        await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        Assert.Equal(3, (await fixture.Service.LoadAsync()).Count);
-        await fixture.Service.ThumbnailAsync(records[0].Id);
-        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        Assert.Equal(3, (await fixture.Scope.Catalog.LoadAsync()).Count);
+        await fixture.Scope.Media.ThumbnailAsync(records[0].Id);
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
 
         var unlock = Assert.Single(activities, activity => activity.OperationName == "vault.unlock");
         Assert.Equal("passphrase", unlock.GetTagItem("vault.unlock.method"));
@@ -104,19 +106,19 @@ public sealed class VaultOpenTelemetryTests
     public async Task RecoveryUnlockEmitsTheSameTimings()
     {
         using var fixture = new TestVault();
-        var recovery = await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var recovery = await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         using var scope = new Activity("telemetry-test").Start();
         var traceId = scope.TraceId;
         var activities = new ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
         {
-            ShouldListenTo = source => source.Name == GalleryService.VaultOpenActivitySourceName,
+            ShouldListenTo = source => source.Name == VaultOpenTelemetry.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
                 options.TraceId == traceId ? ActivitySamplingResult.AllData : ActivitySamplingResult.None,
             ActivityStopped = activity => activities.Enqueue(activity)
         };
         ActivitySource.AddActivityListener(listener);
-        await fixture.Service.UnlockWithRecoveryPhraseAsync(recovery);
+        await fixture.Scope.Vault.UnlockWithRecoveryPhraseAsync(recovery);
         var unlock = Assert.Single(activities, activity => activity.OperationName == "vault.unlock");
         Assert.Equal("recovery", unlock.GetTagItem("vault.unlock.method"));
         Assert.True((double)unlock.GetTagItem("vault.unlock.kdf_ms")! > 0);
@@ -128,8 +130,8 @@ public sealed class VaultOpenTelemetryTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var originalActivity = Activity.Current;
-        Assert.Empty(await fixture.Service.LoadAsync());
+        Assert.Empty(await fixture.Scope.Catalog.LoadAsync());
         Assert.Same(originalActivity, Activity.Current);
-        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
     }
 }

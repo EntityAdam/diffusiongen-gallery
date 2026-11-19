@@ -85,7 +85,7 @@ public sealed class StructuredVisionTests
         var image = await fixture.ImportAsync();
         var settings = Settings() with { SystemPrompt = "Describe the scene and its entities as JSON." };
 
-        var result = await fixture.Service.AnalyzeForDraftAsync(image.Id, settings);
+        var result = await fixture.Scope.Vision.AnalyzeForDraftAsync(image.Id, settings);
 
         Assert.Equal(1, fixture.Handler.RequestCount);
         using var request = JsonDocument.Parse(fixture.Handler.Request!);
@@ -121,13 +121,13 @@ public sealed class StructuredVisionTests
     {
         using var fixture = new Fixture(CatalogBackend.Sqlite);
         await fixture.InitializeAsync();
-        await fixture.Service.AddTagAsync("Portrait"); // unused definitions must still be candidates
+        await fixture.Scope.Tags.AddTagAsync("Portrait"); // unused definitions must still be candidates
         var image = await fixture.ImportAsync();
         var settings = Settings() with { UseExistingTags = existing, SuggestNewTags = novel };
-        var result = await fixture.Service.AnalyzeForDraftAsync(image.Id, settings);
+        var result = await fixture.Scope.Vision.AnalyzeForDraftAsync(image.Id, settings);
         Assert.Equal(expected, result.Tags);
         Assert.Equal(1, fixture.Handler.RequestCount);
-        Assert.Empty(Assert.Single(await fixture.Service.ListAsync()).Tags);
+        Assert.Empty(Assert.Single(await fixture.Scope.Catalog.ListAsync()).Tags);
         Assert.NotNull(result.Analysis);
         using var request = JsonDocument.Parse(fixture.Handler.Request!);
         var userPrompt = request.RootElement.GetProperty("messages")[1].GetProperty("content")[0].GetProperty("text").GetString()!;
@@ -140,10 +140,10 @@ public sealed class StructuredVisionTests
         Assert.Equal("never assign me", original.RootElement.GetProperty("scene").GetProperty("booru_tags")[0].GetString());
         Assert.DoesNotContain("never assign me", result.Tags);
         Assert.Equal(settings.BuildImageAnalysisSystemPrompt(existing), result.Analysis!.EffectiveSystemPrompt);
-        await fixture.Service.ApproveVisionAsync(image.Id, result.Description, result.Tags, settings.Model, result.Analysis,
+        await fixture.Scope.Vision.ApproveVisionAsync(image.Id, result.Description, result.Tags, settings.Model, result.Analysis,
             useExistingTags: existing, suggestNewTags: novel);
-        Assert.Equal(expected, Assert.Single(await fixture.Service.ListAsync()).Tags);
-        Assert.DoesNotContain("never assign me", await fixture.Service.LoadTagNamesAsync());
+        Assert.Equal(expected, Assert.Single(await fixture.Scope.Catalog.ListAsync()).Tags);
+        Assert.DoesNotContain("never assign me", await fixture.Scope.Tags.LoadTagNamesAsync());
     }
 
     [Theory]
@@ -154,41 +154,41 @@ public sealed class StructuredVisionTests
         using var fixture = new Fixture(backend);
         var recovery = await fixture.InitializeAsync();
         var image = await fixture.ImportAsync();
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with { UserDescription = "Manual notes", Tags = "keep", Rating = 3 });
-        var result = await fixture.Service.AnalyzeForDraftAsync(image.Id, Settings());
-        var checkpoint = await fixture.Service.OpenVisionCheckpointAsync();
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { UserDescription = "Manual notes", Tags = "keep", Rating = 3 });
+        var result = await fixture.Scope.Vision.AnalyzeForDraftAsync(image.Id, Settings());
+        var checkpoint = await fixture.Scope.Vision.OpenVisionCheckpointAsync();
         await checkpoint.StageAsync(new(image.Id, image.Name, result.Description, result.Tags, "", "vision", Analysis: result.Analysis));
-        Assert.Equal(result.Analysis!.Json, Assert.Single((await fixture.Service.OpenVisionCheckpointAsync()).State.Drafts).Analysis!.Json);
-        var approved = await fixture.Service.ApproveVisionAsync(image.Id, result.Description, result.Tags, "vision", result.Analysis);
+        Assert.Equal(result.Analysis!.Json, Assert.Single((await fixture.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts).Analysis!.Json);
+        var approved = await fixture.Scope.Vision.ApproveVisionAsync(image.Id, result.Description, result.Tags, "vision", result.Analysis);
         Assert.Equal("Manual notes", approved.UserDescription);
         Assert.Equal(3, approved.Rating);
         Assert.Contains("keep", approved.Tags);
         Assert.True(approved.IsReviewed);
         Assert.NotNull(approved.VisionFacts);
         Assert.DoesNotContain("future_field", JsonSerializer.Serialize(approved)); // raw JSON is not in browse records
-        Assert.Contains("future_field", (await fixture.Service.ReadVisionAnalysisAsync(image.Id))!.Json);
-        await fixture.Service.SaveViewAsync("Yellow hat", new GalleryFilter { Vision = new VisionQuery { Subject = "woman", Relationship = "wearing", Object = "hat", Attribute = "color", Value = "yellow" } });
+        Assert.Contains("future_field", (await fixture.Scope.Vision.ReadVisionAnalysisAsync(image.Id))!.Json);
+        await fixture.Scope.Settings.SaveViewAsync("Yellow hat", new GalleryFilter { Vision = new VisionQuery { Subject = "woman", Relationship = "wearing", Object = "hat", Attribute = "color", Value = "yellow" } });
         var backupDir = Path.Combine(fixture.Root, "backups");
-        await fixture.Service.SaveBackupOptionsAsync("local", backupDir, "", "", "");
-        var backup = await fixture.Service.CreateFullBackupAsync();
-        await fixture.Service.CloseVaultAsync();
-        await fixture.Service.OpenExistingVaultAsync(fixture.VaultPath);
-        await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        Assert.Equal(result.Analysis.Json, (await fixture.Service.ReadVisionAnalysisAsync(image.Id))!.Json);
-        using var exported = new ExportOwner(await fixture.Service.ExportVisionAnalysisAsync(image.Id));
-        Assert.Equal(result.Analysis.Json, Encoding.UTF8.GetString(GalleryService.CopyExportContent(exported.File)));
+        await fixture.Scope.Backup.SaveBackupOptionsAsync("local", backupDir, "", "", "");
+        var backup = await fixture.Scope.Backup.CreateFullBackupAsync();
+        await fixture.Scope.Vault.CloseVaultAsync();
+        await fixture.Scope.Vault.OpenExistingVaultAsync(fixture.VaultPath);
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        Assert.Equal(result.Analysis.Json, (await fixture.Scope.Vision.ReadVisionAnalysisAsync(image.Id))!.Json);
+        using var exported = new ExportOwner(await fixture.Scope.Vision.ExportVisionAnalysisAsync(image.Id));
+        Assert.Equal(result.Analysis.Json, Encoding.UTF8.GetString(exported.File.CopyContentBytes()));
         var restored = Path.Combine(fixture.Root, "restored");
-        await fixture.Service.RestoreVaultAsync("local", backupDir, "", "", "", backup.BackupName, restored, recovery, useRecovery: true);
-        await fixture.Service.CloseVaultAsync();
-        await fixture.Service.OpenExistingVaultAsync(restored);
-        await fixture.Service.UnlockWithRecoveryPhraseAsync(recovery);
-        Assert.Equal(result.Analysis.Json, (await fixture.Service.ReadVisionAnalysisAsync(image.Id))!.Json);
-        var records = await fixture.Service.ListAsync();
-        Assert.Single(fixture.Service.Filter(records, new GalleryFilter { Vision = new VisionQuery { Subject = "woman", Relationship = "wearing", Object = "hat", Attribute = "color", Value = "yellow" } }));
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with { IsMarkedForDeletion = true });
-        var removal = await fixture.Service.PrepareRemovalAsync([image.Id]);
-        await fixture.Service.RemoveAsync(removal, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "");
-        Assert.Empty(await fixture.Service.ListAsync());
+        await fixture.Scope.Restore.RestoreVaultAsync("local", backupDir, "", "", "", backup.BackupName, restored, recovery, useRecovery: true);
+        await fixture.Scope.Vault.CloseVaultAsync();
+        await fixture.Scope.Vault.OpenExistingVaultAsync(restored);
+        await fixture.Scope.Vault.UnlockWithRecoveryPhraseAsync(recovery);
+        Assert.Equal(result.Analysis.Json, (await fixture.Scope.Vision.ReadVisionAnalysisAsync(image.Id))!.Json);
+        var records = await fixture.Scope.Catalog.ListAsync();
+        Assert.Single(fixture.Scope.Catalog.Filter(records, new GalleryFilter { Vision = new VisionQuery { Subject = "woman", Relationship = "wearing", Object = "hat", Attribute = "color", Value = "yellow" } }));
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { IsMarkedForDeletion = true });
+        var removal = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([image.Id]);
+        await fixture.Scope.MediaMaintenance.RemoveAsync(removal, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "");
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
         var key = await new VaultStore(restored).UnlockWithRecoveryPhraseAsync(recovery);
         try { Assert.Null(await fixture.Store(restored).ReadVisionAnalysisAsync(image.Id, key)); }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
@@ -200,22 +200,22 @@ public sealed class StructuredVisionTests
         using var fixture = new Fixture(CatalogBackend.Sqlite);
         await fixture.InitializeAsync();
         var image = await fixture.ImportAsync();
-        var result = await fixture.Service.AnalyzeForDraftAsync(image.Id, Settings());
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with { Description = "Edited while analyzing" });
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ApproveVisionAsync(image.Id, result.Description, result.Tags, "vision", result.Analysis));
-        await fixture.Service.ApproveVisionAsync(image.Id, result.Description, result.Tags, "vision", result.Analysis, tagsOnly: true);
-        var stored = Assert.Single(await fixture.Service.ListAsync());
+        var result = await fixture.Scope.Vision.AnalyzeForDraftAsync(image.Id, Settings());
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "Edited while analyzing" });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Vision.ApproveVisionAsync(image.Id, result.Description, result.Tags, "vision", result.Analysis));
+        await fixture.Scope.Vision.ApproveVisionAsync(image.Id, result.Description, result.Tags, "vision", result.Analysis, tagsOnly: true);
+        var stored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Equal("Edited while analyzing", stored.Description);
         Assert.Equal("", stored.AnalysisModel);
         Assert.Null(stored.VisionFacts);
-        Assert.Null(await fixture.Service.ReadVisionAnalysisAsync(image.Id));
+        Assert.Null(await fixture.Scope.Vision.ReadVisionAnalysisAsync(image.Id));
     }
 
     private static VisionSettings Settings() => new() { Model = "vision", StructuredAnalysis = true, SystemPrompt = StructuredVision.DefaultSystemPrompt, AnalysisMaxTokens = 8192 };
     private sealed class ExportOwner(ExportFile file) : IDisposable
     {
         public ExportFile File { get; } = file;
-        public void Dispose() => GalleryService.ClearExportContent(File);
+        public void Dispose() => File.ClearContent();
     }
     private sealed class Handler : HttpMessageHandler
     {
@@ -233,20 +233,20 @@ public sealed class StructuredVisionTests
         public string Root { get; } = Path.Combine(Path.GetTempPath().Replace("/var/", "/private/var/"), "structured-vision-" + Guid.NewGuid().ToString("N"));
         public string VaultPath => Path.Combine(Root, "vault");
         public Handler Handler { get; } = new();
-        public GalleryService Service { get; }
+        public GalleryScope Scope { get; }
         private readonly CatalogBackend backend;
         public Fixture(CatalogBackend backend)
         {
             this.backend = backend;
-            Service = GalleryService.Create(VaultPath, new GalleryRuntimeOptions { CatalogBackend = backend, StateDirectory = Path.Combine(Root, "state") }, new HttpClient(Handler));
+            Scope = GalleryScope.Create(VaultPath, new GalleryRuntimeOptions { CatalogBackend = backend, StateDirectory = Path.Combine(Root, "state") }, new HttpClient(Handler));
         }
         public IGalleryStore Store(string root) => backend == CatalogBackend.Sqlite ? new GalleryStore(Path.Combine(root, "gallery.db")) : new Gallery.Core.Infrastructure.Persistence.Turso.TursoGalleryStore(Path.Combine(root, "gallery.db"));
-        public Task<string> InitializeAsync() => Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        public Task<ImageRecord> ImportAsync() => Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "scene.png", "test");
+        public Task<string> InitializeAsync() => Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        public Task<ImageRecord> ImportAsync() => Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "scene.png", "test");
         public void Dispose()
         {
-            Service.Dispose();
-            Service.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
+            Scope.Dispose();
+            Scope.DriveOperations.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
             Handler.Dispose();
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
         }

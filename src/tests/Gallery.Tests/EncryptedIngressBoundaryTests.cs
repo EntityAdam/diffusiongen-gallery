@@ -56,7 +56,7 @@ public sealed class EncryptedIngressBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var imageRecord = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var imageRecord = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         using var keyLease = fixture.Session.AcquireUnlockedSession().Borrow();
         var envelope = MalformedEnvelope(wrongMagic);
         var sql = route switch
@@ -104,16 +104,16 @@ public sealed class EncryptedIngressBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var imageRecord = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var imageRecord = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         await File.WriteAllBytesAsync(imageRecord.StoredPath, MalformedEnvelope(wrongMagic));
         Func<Task> read = route switch
         {
             "reader" => () => StoredMediaProcessor.ReadAsync(imageRecord, []),
-            "preview" => () => fixture.Service.PreviewAsync(imageRecord.Id),
-            "viewer" => () => fixture.Service.ViewerImageAsync(imageRecord.Id, ImageResolution.Original),
-            "export" => () => fixture.Service.ExportAsync(imageRecord.Id),
-            "verify" => () => fixture.Service.VerifyImportedAsync(imageRecord.Id),
-            _ => () => fixture.Service.OpenMediaAsync(imageRecord.Id)
+            "preview" => () => fixture.Scope.Media.PreviewAsync(imageRecord.Id),
+            "viewer" => () => fixture.Scope.Media.ViewerImageAsync(imageRecord.Id, ImageResolution.Original),
+            "export" => () => fixture.Scope.Media.ExportAsync(imageRecord.Id),
+            "verify" => () => fixture.Scope.Ingestion.VerifyImportedAsync(imageRecord.Id),
+            _ => () => fixture.Scope.Media.OpenMediaAsync(imageRecord.Id)
         };
 
         var exception = await Assert.ThrowsAsync<CryptographicException>(read);
@@ -153,16 +153,16 @@ public sealed class EncryptedIngressBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var imageRecord = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var imageRecord = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         await fixture.Store.EnqueueDriveOperationsAsync(
             [new NewDriveOperation(DriveOperationKind.DeleteFile, new byte[32], imageRecord.Id, MalformedEnvelope(wrongMagic))]);
 
-        await fixture.Service.LoadAsync();
-        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Scope.Catalog.LoadAsync();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
 
         Assert.True(File.Exists(imageRecord.StoredPath));
-        Assert.True(fixture.Service.DriveQueueStatus.Failed == 1,
-            $"Unreadable persisted queue entries: Expected: 1; Actual: {fixture.Service.DriveQueueStatus.Failed}.");
+        Assert.True(fixture.Scope.DriveOperations.DriveQueueStatus.Failed == 1,
+            $"Unreadable persisted queue entries: Expected: 1; Actual: {fixture.Scope.DriveOperations.DriveQueueStatus.Failed}.");
     }
 
     [Theory]
@@ -172,19 +172,19 @@ public sealed class EncryptedIngressBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var imageRecord = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var imageRecord = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         var stagedPath = imageRecord.StoredPath + ".removing-" + imageRecord.Id;
         File.Move(imageRecord.StoredPath, stagedPath);
         var envelope = MalformedEnvelope(wrongMagic);
         await File.WriteAllBytesAsync(stagedPath, envelope);
 
-        await fixture.Service.LoadAsync();
-        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Scope.Catalog.LoadAsync();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
 
         Assert.False(File.Exists(imageRecord.StoredPath));
         Assert.Equal(envelope, await File.ReadAllBytesAsync(stagedPath));
-        Assert.True(fixture.Service.DriveQueueStatus.Failed == 1,
-            $"Conflicted recovery entries: Expected: 1; Actual: {fixture.Service.DriveQueueStatus.Failed}.");
+        Assert.True(fixture.Scope.DriveOperations.DriveQueueStatus.Failed == 1,
+            $"Conflicted recovery entries: Expected: 1; Actual: {fixture.Scope.DriveOperations.DriveQueueStatus.Failed}.");
     }
 
     private static byte[] MalformedEnvelope(bool wrongMagic) => wrongMagic ? new byte[36] : [0x44];

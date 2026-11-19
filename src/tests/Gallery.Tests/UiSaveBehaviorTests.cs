@@ -27,8 +27,8 @@ public sealed class UiSaveBehaviorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         CollectionDestinationDialog dialog = null!;
         var canceled = false;
         CollectionMutation? saved = null;
@@ -50,19 +50,19 @@ public sealed class UiSaveBehaviorTests
             await Invoke(dialog, "CancelAsync");
         });
         Assert.True(canceled);
-        var catalog = await vault.Service.LoadCollectionCatalogAsync();
+        var catalog = await vault.Scope.Collections.LoadCollectionCatalogAsync();
         Assert.Empty(catalog.Collections);
         Assert.Empty(catalog.Sets);
-        Assert.Null(Assert.Single(await vault.Service.ListAsync()).SetId);
+        Assert.Null(Assert.Single(await vault.Scope.Catalog.ListAsync()).SetId);
 
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => Invoke(dialog, "MoveAsync"));
         Assert.NotNull(saved);
         Assert.Equal("New collection", Assert.Single(saved.Catalog.Collections).Name);
         Assert.Equal("New set", Assert.Single(saved.Catalog.Sets).Name);
-        Assert.Equal(saved.Catalog.Sets[0].Id, Assert.Single(await vault.Service.ListAsync()).SetId);
-        await vault.Service.UndoCollectionChangeAsync(saved.Undo);
-        Assert.Empty((await vault.Service.LoadCollectionCatalogAsync()).Collections);
-        Assert.Null(Assert.Single(await vault.Service.ListAsync()).SetId);
+        Assert.Equal(saved.Catalog.Sets[0].Id, Assert.Single(await vault.Scope.Catalog.ListAsync()).SetId);
+        await vault.Scope.Collections.UndoCollectionChangeAsync(saved.Undo);
+        Assert.Empty((await vault.Scope.Collections.LoadCollectionCatalogAsync()).Collections);
+        Assert.Null(Assert.Single(await vault.Scope.Catalog.ListAsync()).SetId);
     }
 
     [Theory]
@@ -73,9 +73,9 @@ public sealed class UiSaveBehaviorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        image = await vault.Service.UpdateAsync(image.Id, edit => edit with { UserDescription = "original" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { UserDescription = "original" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         MediaDetailDialog detail = null!;
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
@@ -91,7 +91,7 @@ public sealed class UiSaveBehaviorTests
             if (Call(detail, choice) is Task task) await task;
         });
         Assert.Equal(closes, Get<ImageRecord?>(home, "Presentation.Selected") is null);
-        Assert.Equal(saves ? "edited" : "original", Assert.Single(await vault.Service.ListAsync()).UserDescription);
+        Assert.Equal(saves ? "edited" : "original", Assert.Single(await vault.Scope.Catalog.ListAsync()).UserDescription);
         if (!closes) Assert.Equal("edited", Get<string>(detail, "editUserDescription"));
         Assert.False(Get<bool>(detail, "Guard.IsPending"));
     }
@@ -101,7 +101,7 @@ public sealed class UiSaveBehaviorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -125,11 +125,11 @@ public sealed class UiSaveBehaviorTests
         using var client = new HttpClient(new AnalysisHandler());
         using var vault = new TestVault(vision: new VisionManager(client));
         await vault.InitializeAsync();
-        await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "vision" });
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        image = await vault.Service.UpdateAsync(image.Id, edit => edit with
+        await vault.Scope.Vision.SaveSettingsAsync(new VisionSettings { Model = "vision" });
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with
         { Description = "old analysis", UserDescription = "my notes", Tags = "existing" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         MediaDetailDialog detail = null!;
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
@@ -143,19 +143,19 @@ public sealed class UiSaveBehaviorTests
         });
         Assert.Empty(home.Session.Activity.Error);
         Assert.NotNull(fixture.LatestComponent<LibraryWorkbench>());
-        var unchanged = Assert.Single(await vault.Service.ListAsync());
+        var unchanged = Assert.Single(await vault.Scope.Catalog.ListAsync());
         Assert.Equal("old analysis", unchanged.Description);
         Assert.Equal("existing", unchanged.Tags);
         Assert.Equal("my notes", unchanged.UserDescription);
         Assert.Single(Get<IReadOnlyDictionary<string, OrganizationSuggestion>>(home, "Browser.Suggestions"));
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => Invoke(detail, "ApproveDetailSuggestionAsync"));
-        Assert.Equal("old analysis", Assert.Single(await vault.Service.ListAsync()).Description);
+        Assert.Equal("old analysis", Assert.Single(await vault.Scope.Catalog.ListAsync()).Description);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             Call(detail, "DiscardNotes");
             await Invoke(detail, "ApproveDetailSuggestionAsync");
         });
-        var approved = Assert.Single(await vault.Service.ListAsync());
+        var approved = Assert.Single(await vault.Scope.Catalog.ListAsync());
         Assert.Equal("new analysis", approved.Description);
         Assert.Equal("existing, suggested", approved.Tags);
         Assert.Equal("my notes", approved.UserDescription);
@@ -170,8 +170,8 @@ public sealed class UiSaveBehaviorTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var original = new VisionSettings { Model = "original" };
-        await vault.Service.SaveSettingsAsync(original);
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await vault.Scope.Vision.SaveSettingsAsync(original);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         LlmEndpointSettings component = null!;
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.HtmlRenderer.RenderComponentAsync<CaptureHost<LlmEndpointSettings>>(
             ParameterView.FromDictionary(new Dictionary<string, object?>
@@ -183,9 +183,9 @@ public sealed class UiSaveBehaviorTests
         Assert.False((bool)dirty.GetValue(component)!);
         Call(component, "SetLaneModel", "changed");
         Assert.True((bool)dirty.GetValue(component)!);
-        Assert.Equal("original", (await vault.Service.SettingsAsync()).Model);
+        Assert.Equal("original", (await vault.Scope.Vision.LoadSettingsAsync()).Model);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => Invoke(component, "SaveAsync"));
-        Assert.Equal("changed", (await vault.Service.SettingsAsync()).Model);
+        Assert.Equal("changed", (await vault.Scope.Vision.LoadSettingsAsync()).Model);
         Assert.False((bool)dirty.GetValue(component)!);
     }
 
@@ -194,16 +194,16 @@ public sealed class UiSaveBehaviorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await Invoke(home, "Catalog.ReloadAsync");
             home.Session.Activity.Ingestion.Workers = 2;
             Assert.True(home.Session.Activity.Ingestion.SettingsDirty);
-            Assert.NotEqual(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
-            await home.Session.Activity.Ingestion.SaveOptionsAsync(vault.Service.Scope.Settings);
-            Assert.Equal(2, (await vault.Service.LoadIngestionOptionsAsync()).Workers);
+            Assert.NotEqual(2, (await vault.Scope.Settings.LoadIngestionOptionsAsync()).Workers);
+            await home.Session.Activity.Ingestion.SaveOptionsAsync(vault.Scope.Settings);
+            Assert.Equal(2, (await vault.Scope.Settings.LoadIngestionOptionsAsync()).Workers);
             Assert.False(home.Session.Activity.Ingestion.SettingsDirty);
             await Invoke(home, "Navigation.SwitchWorkflowAsync", "settings");
             await Invoke(home, "Navigation.SwitchSettingsTabAsync", "backups");
@@ -211,7 +211,7 @@ public sealed class UiSaveBehaviorTests
             Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").LocalDirectory = vault.Root + "-backups";
             Assert.True(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").HasChanges);
             Assert.False(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").Ready);
-            await Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").SaveAsync(vault.Service.Scope.Backup);
+            await Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").SaveAsync(vault.Scope.Backup);
             Assert.False(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").HasChanges);
             Assert.True(Get<BackupDraft>(fixture.LatestComponent<SettingsWorkspace>(), "backup").Ready);
         });
@@ -225,10 +225,10 @@ public sealed class UiSaveBehaviorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "original" });
-        var checkpoint = await vault.Service.OpenVisionCheckpointAsync();
+        await vault.Scope.Vision.SaveSettingsAsync(new VisionSettings { Model = "original" });
+        var checkpoint = await vault.Scope.Vision.OpenVisionCheckpointAsync();
         await checkpoint.UpdateAsync(state => state with { AutoAcceptVisionAnalysis = true });
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -247,7 +247,7 @@ public sealed class UiSaveBehaviorTests
             Call(home, "StateHasChanged");
         });
         Assert.Equal(leaves ? "overview" : "endpoints", Get<string>(home, "Navigation.SettingsTab"));
-        var settings = await vault.Service.SettingsAsync();
+        var settings = await vault.Scope.Vision.LoadSettingsAsync();
         Assert.Equal(saves ? "edited" : "original", settings.Model);
         if (saves) Assert.True(Assert.Single(settings.Lanes).AutoAccept);
         Assert.False(Get<bool>(home, "Session.Guard.IsPending"));
@@ -259,8 +259,8 @@ public sealed class UiSaveBehaviorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await vault.Service.SaveSettingsAsync(new VisionSettings { Model = "original" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await vault.Scope.Vision.SaveSettingsAsync(new VisionSettings { Model = "original" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -280,7 +280,7 @@ public sealed class UiSaveBehaviorTests
         Assert.True(Get<bool>(home, "Session.Guard.IsPending"));
         Assert.True(component.HasUnsavedChanges);
         Assert.Equal("invalid-url", Get<VisionEndpointLane>(component, "Lane").Endpoint);
-        Assert.Equal("original", (await vault.Service.SettingsAsync()).Model);
+        Assert.Equal("original", (await vault.Scope.Vision.LoadSettingsAsync()).Model);
     }
 
     [Theory]
@@ -292,7 +292,7 @@ public sealed class UiSaveBehaviorTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, _) = await fixture.RenderWorkspaceAsync();
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -316,8 +316,8 @@ public sealed class UiSaveBehaviorTests
         });
         Assert.Equal("gallery", Get<string>(home, "Navigation.Section"));
         Assert.False(Get<bool>(home, "Session.Guard.IsPending"));
-        if (section == "ingest") Assert.Equal(save, (await vault.Service.LoadIngestionOptionsAsync()).Workers == 2);
-        else Assert.Equal(save ? vault.Root + "-backups" : "", (await vault.Service.LoadBackupOptionsAsync()).LocalDirectory);
+        if (section == "ingest") Assert.Equal(save, (await vault.Scope.Settings.LoadIngestionOptionsAsync()).Workers == 2);
+        else Assert.Equal(save ? vault.Root + "-backups" : "", (await vault.Scope.Backup.LoadBackupOptionsAsync()).LocalDirectory);
     }
 
     private sealed class AnalysisHandler : HttpMessageHandler

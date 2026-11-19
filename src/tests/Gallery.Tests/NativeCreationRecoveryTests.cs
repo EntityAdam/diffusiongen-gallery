@@ -22,18 +22,18 @@ public sealed class NativeCreationRecoveryTests
         Assert.False(File.Exists(Path.Combine(fixture.Root, "vault.json")));
         Assert.Equal(phase == "catalog", File.Exists(Path.Combine(fixture.Root, "gallery.db")));
 
-        if (selectDestination) await fixture.Service.SelectNewVaultAsync(fixture.Root);
-        var recovery = await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Retried creation");
-        fixture.Service.LockVault();
-        await fixture.Service.UnlockWithRecoveryPhraseAsync(recovery);
+        if (selectDestination) await fixture.Scope.Vault.SelectNewVaultAsync(fixture.Root);
+        var recovery = await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Retried creation");
+        fixture.Scope.Vault.LockVault();
+        await fixture.Scope.Vault.UnlockWithRecoveryPhraseAsync(recovery);
 
-        Assert.True(fixture.Service.IsUnlocked);
-        Assert.Equal("Retried creation", fixture.Service.VaultName);
-        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+        Assert.Equal("Retried creation", fixture.Scope.Vault.VaultName);
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
         Assert.False(File.Exists(Path.Combine(fixture.Root, ".vault-create.json")));
         Assert.Empty(Directory.EnumerateDirectories(fixture.Root, ".vault-create-*"));
         if (!selectDestination) Assert.Equal("caller-owned", await File.ReadAllTextAsync(sentinel));
-        await fixture.Service.CloseVaultAsync();
+        await fixture.Scope.Vault.CloseVaultAsync();
     }
 
     [Fact]
@@ -45,14 +45,14 @@ public sealed class NativeCreationRecoveryTests
         var header = await File.ReadAllBytesAsync(Path.Combine(fixture.Root, "vault.json"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
+            fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
         Assert.Equal(catalog, await File.ReadAllBytesAsync(Path.Combine(fixture.Root, "gallery.db")));
         Assert.Equal(header, await File.ReadAllBytesAsync(Path.Combine(fixture.Root, "vault.json")));
         Assert.False(File.Exists(Path.Combine(fixture.Root, ".vault-create.json")));
         Assert.Empty(Directory.EnumerateDirectories(fixture.Root, ".vault-create-*"));
-        await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        Assert.Equal("Interrupted creation", fixture.Service.VaultName);
-        await fixture.Service.CloseVaultAsync();
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        Assert.Equal("Interrupted creation", fixture.Scope.Vault.VaultName);
+        await fixture.Scope.Vault.CloseVaultAsync();
     }
 
     [Theory]
@@ -67,13 +67,13 @@ public sealed class NativeCreationRecoveryTests
         await File.WriteAllTextAsync(changedPath, "caller-owned replacement");
 
         var failure = await Assert.ThrowsAsync<IOException>(() =>
-            fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
+            fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
 
         Assert.Contains("preserved", failure.Message);
         Assert.Equal("caller-owned replacement", await File.ReadAllTextAsync(changedPath));
         Assert.True(File.Exists(Path.Combine(fixture.Root, ".vault-create.json")));
         Assert.Single(Directory.EnumerateDirectories(fixture.Root, ".vault-create-*"));
-        await fixture.Service.CloseVaultAsync();
+        await fixture.Scope.Vault.CloseVaultAsync();
     }
 
     [Fact]
@@ -85,11 +85,11 @@ public sealed class NativeCreationRecoveryTests
         await File.WriteAllTextAsync(catalog, "caller-owned catalog");
 
         await Assert.ThrowsAsync<IOException>(() =>
-            fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
+            fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
 
         Assert.Equal("caller-owned catalog", await File.ReadAllTextAsync(catalog));
         Assert.False(File.Exists(Path.Combine(fixture.Root, "vault.json")));
-        await fixture.Service.CloseVaultAsync();
+        await fixture.Scope.Vault.CloseVaultAsync();
     }
 
     [Theory]
@@ -107,15 +107,15 @@ public sealed class NativeCreationRecoveryTests
         await File.WriteAllTextAsync(sentinel, "caller-owned");
         if (failure == "history") await File.WriteAllTextAsync(state, "block history directory");
         else Directory.CreateDirectory(Path.Combine(root, failure == "existing-catalog" ? "gallery.db" : "vault.json"));
-        using var service = GalleryService.Create(root, new GalleryRuntimeOptions { StateDirectory = state }, new HttpClient());
+        using var service = GalleryScope.Create(root, new GalleryRuntimeOptions { StateDirectory = state }, new HttpClient());
         try
         {
             var storage = new MediaStorageOptions { MediaDirectory = media };
-            await Assert.ThrowsAnyAsync<IOException>(() => service.CreateVaultAsync(
+            await Assert.ThrowsAnyAsync<IOException>(() => service.Vault.CreateVaultAsync(
                 TestVault.Passphrase, TestVault.Passphrase, "Recovery test", storage));
 
-            Assert.False(service.VaultExists);
-            Assert.False(service.IsUnlocked);
+            Assert.False(service.Vault.VaultExists);
+            Assert.False(service.Vault.IsUnlocked);
             Assert.Equal("caller-owned", await File.ReadAllTextAsync(sentinel));
             if (failure == "history")
             {
@@ -132,19 +132,19 @@ public sealed class NativeCreationRecoveryTests
             }
             Assert.Empty(Directory.EnumerateDirectories(root, ".vault-create-*"));
 
-            var recovery = await service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Recovery test", storage);
-            service.LockVault();
-            await service.UnlockWithRecoveryPhraseAsync(recovery);
+            var recovery = await service.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Recovery test", storage);
+            service.Vault.LockVault();
+            await service.Vault.UnlockWithRecoveryPhraseAsync(recovery);
 
-            Assert.True(service.IsUnlocked);
-            Assert.Equal("Recovery test", service.VaultName);
-            Assert.Equal(storage, await service.LoadMediaStorageOptionsAsync());
+            Assert.True(service.Vault.IsUnlocked);
+            Assert.Equal("Recovery test", service.Vault.VaultName);
+            Assert.Equal(storage, await service.Settings.LoadMediaStorageOptionsAsync());
             Assert.Equal("caller-owned", await File.ReadAllTextAsync(sentinel));
-            await service.CloseVaultAsync();
+            await service.Vault.CloseVaultAsync();
         }
         finally
         {
-            await service.CloseVaultAsync();
+            await service.Vault.CloseVaultAsync();
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
             if (Directory.Exists(state)) Directory.Delete(state, recursive: true);
             if (File.Exists(state)) File.Delete(state);

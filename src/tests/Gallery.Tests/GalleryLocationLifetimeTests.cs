@@ -18,27 +18,27 @@ public sealed class GalleryLocationLifetimeTests
         await fixture.InitializeAsync();
         var destination = fixture.Root + "-next";
         using var lease = fixture.Session.AcquireUnlockedSession().Borrow();
-        var originalRoot = fixture.Service.VaultRoot;
+        var originalRoot = fixture.Scope.Vault.VaultRoot;
         var keyBefore = lease.Bytes.ToArray();
         try
         {
             var transition = operation switch
             {
-                "select" => fixture.Service.SelectNewVaultAsync(destination),
-                "move" => fixture.Service.MoveVaultAsync(destination),
-                "relocate" => fixture.Service.RelocateCatalogAsync(destination),
+                "select" => fixture.Scope.Vault.SelectNewVaultAsync(destination),
+                "move" => fixture.Scope.Vault.MoveVaultAsync(destination),
+                "relocate" => fixture.Scope.Vault.RelocateCatalogAsync(destination),
                 _ => throw new ArgumentOutOfRangeException(nameof(operation))
             };
 
             Assert.False(transition.IsCompleted);
-            Assert.Equal(originalRoot, fixture.Service.VaultRoot);
+            Assert.Equal(originalRoot, fixture.Scope.Vault.VaultRoot);
             Assert.Equal(keyBefore, lease.Bytes);
             lease.Dispose();
             await transition.WaitAsync(TimeSpan.FromSeconds(10));
 
-            Assert.Equal(destination, fixture.Service.VaultRoot);
-            Assert.False(fixture.Service.IsUnlocked);
-            await fixture.Service.CloseVaultAsync();
+            Assert.Equal(destination, fixture.Scope.Vault.VaultRoot);
+            Assert.False(fixture.Scope.Vault.IsUnlocked);
+            await fixture.Scope.Vault.CloseVaultAsync();
         }
         finally
         {
@@ -53,7 +53,7 @@ public sealed class GalleryLocationLifetimeTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         await fixture.Store.InitializeAsync();
-        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
         await using (var connection = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False"))
         {
             await connection.OpenAsync();
@@ -61,16 +61,16 @@ public sealed class GalleryLocationLifetimeTests
             command.CommandText = "ALTER TABLE drive_operations RENAME TO saved_drive_operations; CREATE TABLE drive_operations (corrupt INTEGER)";
             await command.ExecuteNonQueryAsync();
         }
-        fixture.Service.ResumeDriveOperations();
-        await Assert.ThrowsAsync<SqliteException>(fixture.Service.WaitForDriveOperationsAsync);
+        fixture.Scope.DriveOperations.ResumeDriveOperations();
+        await Assert.ThrowsAsync<SqliteException>(fixture.Scope.DriveOperations.WaitForDriveOperationsAsync);
         using var keyLease = fixture.Session.AcquireUnlockedSession().Borrow();
 
-        var close = fixture.Service.CloseVaultAsync();
+        var close = fixture.Scope.Vault.CloseVaultAsync();
         Assert.False(close.IsCompleted);
         keyLease.Dispose();
         await Assert.ThrowsAsync<SqliteException>(() => close);
 
-        Assert.False(fixture.Service.IsUnlocked);
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
         using var releasedCheckout = VaultCheckout.Acquire(fixture.Root);
 
         await using (var connection = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False"))
@@ -81,8 +81,8 @@ public sealed class GalleryLocationLifetimeTests
             await command.ExecuteNonQueryAsync();
         }
         await fixture.Store.InitializeAsync();
-        fixture.Service.ResumeDriveOperations();
-        await fixture.Service.WaitForDriveOperationsAsync();
+        fixture.Scope.DriveOperations.ResumeDriveOperations();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
     }
 
     [Fact]

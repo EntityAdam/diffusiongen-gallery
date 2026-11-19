@@ -17,13 +17,13 @@ public sealed class WorkspaceWorkflowTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
-        await vault.Service.UpdateAsync(image.Id, edit => edit with { UserDescription = "current notes" });
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { UserDescription = "current notes" });
         var activity = new GalleryActivity();
-        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action => action());
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action => action());
         var reloads = 0;
         catalog.Changed += () => { reloads++; return Task.CompletedTask; };
-        var curation = new MediaCurationCommands(vault.Service.Scope.Records, catalog, CreateCommands(activity));
+        var curation = new MediaCurationCommands(vault.Scope.Records, catalog, CreateCommands(activity));
         var edits = 0;
 
         await curation.CurateAsync([image.Id, "missing", image.Id], edit =>
@@ -46,12 +46,12 @@ public sealed class WorkspaceWorkflowTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var stale = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
-        await vault.Service.UpdateAsync(stale.Id, edit => edit with { Rating = 3, IsFavorite = true, IsMarkedForDeletion = true, UserDescription = "keep" });
+        var stale = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await vault.Scope.Records.UpdateAsync(stale.Id, edit => edit with { Rating = 3, IsFavorite = true, IsMarkedForDeletion = true, UserDescription = "keep" });
         var activity = new GalleryActivity();
-        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action => action());
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action => action());
         await catalog.ReloadAsync();
-        var curation = new MediaCurationCommands(vault.Service.Scope.Records, catalog, CreateCommands(activity));
+        var curation = new MediaCurationCommands(vault.Scope.Records, catalog, CreateCommands(activity));
 
         await curation.ToggleRatingAsync(stale, 3);
         var rated = catalog.ImagesById[stale.Id];
@@ -63,7 +63,7 @@ public sealed class WorkspaceWorkflowTests
         var unmarked = catalog.ImagesById[stale.Id];
         Assert.False(unmarked.IsMarkedForDeletion);
         Assert.Equal("keep", unmarked.UserDescription);
-        Assert.Equal(unmarked, Assert.Single(await vault.Service.ListAsync()));
+        Assert.Equal(unmarked, Assert.Single(await vault.Scope.Catalog.ListAsync()));
     }
 
     [Fact]
@@ -74,14 +74,14 @@ public sealed class WorkspaceWorkflowTests
         List<ImageRecord> images = [];
         for (var i = 0; i < 3; i++)
         {
-            var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30 + i, 20)), "image.png", "folder");
-            images.Add(await vault.Service.UpdateAsync(image.Id, edit => edit with { IsMarkedForDeletion = true }));
+            var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(30 + i, 20)), "image.png", "folder");
+            images.Add(await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { IsMarkedForDeletion = true }));
         }
         await File.WriteAllTextAsync(Path.Combine(vault.Root, images[1].Id + ".png"), "collision");
         var activity = new GalleryActivity();
         IReadOnlyList<ImageRecord>? refreshed = null;
-        using var removal = new RemovalWorkflowState(vault.Service.Scope.Vault, vault.Service.Scope.MediaMaintenance, CreateCommands(activity), NullLogger.Instance,
-            async () => { refreshed = await vault.Service.ListAsync(); });
+        using var removal = new RemovalWorkflowState(vault.Scope.Vault, vault.Scope.MediaMaintenance, CreateCommands(activity), NullLogger.Instance,
+            async () => { refreshed = await vault.Scope.Catalog.ListAsync(); });
         await removal.PrepareAsync(images.Select(image => image.Id));
         Assert.True(removal.IsOpen);
         await removal.ExecuteAsync((ExistingOriginalAction.Retain, MissingOriginalAction.RestorePng, vault.Root));
@@ -97,12 +97,12 @@ public sealed class WorkspaceWorkflowTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
-        await vault.Service.UpdateAsync(image.Id, edit => edit with { IsMarkedForDeletion = true });
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { IsMarkedForDeletion = true });
         var activity = new GalleryActivity();
         var jobRunning = true;
         var refreshes = 0;
-        using var removal = new RemovalWorkflowState(vault.Service.Scope.Vault, vault.Service.Scope.MediaMaintenance, CreateCommands(activity, () =>
+        using var removal = new RemovalWorkflowState(vault.Scope.Vault, vault.Scope.MediaMaintenance, CreateCommands(activity, () =>
         {
             if (jobRunning) throw new InvalidOperationException("Job is running");
         }), NullLogger.Instance, () => { refreshes++; return Task.CompletedTask; });
@@ -115,7 +115,7 @@ public sealed class WorkspaceWorkflowTests
         jobRunning = true;
         await removal.ExecuteAsync((ExistingOriginalAction.Retain, MissingOriginalAction.Discard, ""));
         Assert.True(removal.IsOpen);
-        Assert.Equal(image.Id, Assert.Single(await vault.Service.ListAsync()).Id);
+        Assert.Equal(image.Id, Assert.Single(await vault.Scope.Catalog.ListAsync()).Id);
         Assert.Equal(0, refreshes);
     }
 
@@ -124,15 +124,15 @@ public sealed class WorkspaceWorkflowTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         var js = new DelayedMediaJs();
         var activity = new GalleryActivity();
-        using var presentation = new MediaPresentationState(vault.Service.Scope.Vault, vault.Service.Scope.Media, js, CreateCommands(activity));
+        using var presentation = new MediaPresentationState(vault.Scope.Vault, vault.Scope.Media, js, CreateCommands(activity));
         // The stored bytes suffice here: only the video URL lifecycle is under test.
         var opening = presentation.OpenAsync(image with { MediaType = "video" });
         await js.Creating.Task.WaitAsync(TimeSpan.FromSeconds(5));
         presentation.Dispose();
-        vault.Service.LockVault();
+        vault.Scope.Vault.LockVault();
         js.Created.SetResult("blob:late-video");
         await opening.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(presentation.IsOpen);
@@ -145,13 +145,13 @@ public sealed class WorkspaceWorkflowTests
     public async Task LockedGalleryDoesNotRenderRetainedPresentationData()
     {
         using var vault = new TestVault();
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
-        using var presentation = new MediaPresentationState(vault.Service.Scope.Vault, vault.Service.Scope.Media, null!, CreateCommands(new()));
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
+        using var presentation = new MediaPresentationState(vault.Scope.Vault, vault.Scope.Media, null!, CreateCommands(new()));
         var image = new ImageRecord { Id = "retained", Name = "private name" };
         ComponentTestAccess.Set(presentation, "Selected", image);
         ComponentTestAccess.Set(presentation, "Preview", "data:image/png;base64,private");
         ComponentTestAccess.Set(presentation, "ViewerImages", new[] { image });
-        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action => action());
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action => action());
         var html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             var root = await fixture.HtmlRenderer.RenderComponentAsync<MediaPresentationHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
@@ -171,17 +171,17 @@ public sealed class WorkspaceWorkflowTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var activity = new GalleryActivity();
-        var history = new OrganizationHistory(vault.Service.Scope.Collections);
-        using var retired = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(vault.Service), activity, history, null!,
+        var history = new OrganizationHistory(vault.Scope.Collections);
+        using var retired = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(vault.Scope), activity, history, null!,
             NullLogger.Instance, action => action(), () => { });
         retired.Dispose();
-        using var current = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(vault.Service), activity, history, null!,
+        using var current = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(vault.Scope), activity, history, null!,
             NullLogger.Instance, action => action(), () => { });
-        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
 
         await activity.Ingestion.NotifyCompletedAsync();
         await current.Browser.PauseAsync();
-        await vault.Service.WaitForDriveOperationsAsync();
+        await vault.Scope.DriveOperations.WaitForDriveOperationsAsync();
 
         Assert.Empty(retired.Catalog.Images);
         Assert.Equal(image.Id, Assert.Single(current.Catalog.Images).Id);
@@ -217,7 +217,7 @@ public sealed class WorkspaceWorkflowTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        using var session = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(vault.Service), new(), new(vault.Service.Scope.Collections), null!,
+        using var session = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(vault.Scope), new(), new(vault.Scope.Collections), null!,
             NullLogger.Instance, action => action(), () => { });
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

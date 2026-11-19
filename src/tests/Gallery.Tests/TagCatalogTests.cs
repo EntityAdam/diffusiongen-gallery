@@ -19,15 +19,15 @@ public sealed class TagCatalogTests
     {
         using var fixture = new ServiceFixture(backend);
         await fixture.InitializeAsync();
-        await fixture.Service.AddTagAsync("old");
-        await fixture.Service.AddTagAsync("target");
-        await fixture.Service.SaveViewAsync("Multiple tags", new GalleryFilter { Tag = "old, keep, target" });
+        await fixture.Scope.Tags.AddTagAsync("old");
+        await fixture.Scope.Tags.AddTagAsync("target");
+        await fixture.Scope.Settings.SaveViewAsync("Multiple tags", new GalleryFilter { Tag = "old, keep, target" });
 
-        await fixture.Service.RenameTagAsync("OLD", "target");
-        Assert.Equal("target, keep", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
+        await fixture.Scope.Tags.RenameTagAsync("OLD", "target");
+        Assert.Equal("target, keep", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Tag);
 
-        await fixture.Service.DeleteTagAsync("target");
-        Assert.Equal("target, keep", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
+        await fixture.Scope.Tags.DeleteTagAsync("target");
+        Assert.Equal("target, keep", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Tag);
     }
 
     [Theory]
@@ -37,15 +37,15 @@ public sealed class TagCatalogTests
     {
         using var fixture = new ServiceFixture(backend);
         await fixture.InitializeAsync();
-        await Task.WhenAll(fixture.Service.AddTagAsync("Cinematic"), fixture.Service.AddTagAsync("Landscapes"));
-        await fixture.Service.AddTagAsync("cinematic");
-        Assert.Equal(new[] { new TagDefinition("Cinematic", 0), new TagDefinition("Landscapes", 0) }, await fixture.Service.LoadTagCatalogAsync());
-        Assert.Empty(await fixture.Service.ListAsync());
-        string vault = fixture.Service.VaultRoot;
-        await fixture.Service.CloseVaultAsync();
-        await fixture.Service.OpenExistingVaultAsync(vault);
-        await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        Assert.Equal(new[] { "Cinematic", "Landscapes" }, await fixture.Service.LoadTagNamesAsync());
+        await Task.WhenAll(fixture.Scope.Tags.AddTagAsync("Cinematic"), fixture.Scope.Tags.AddTagAsync("Landscapes"));
+        await fixture.Scope.Tags.AddTagAsync("cinematic");
+        Assert.Equal(new[] { new TagDefinition("Cinematic", 0), new TagDefinition("Landscapes", 0) }, await fixture.Scope.Tags.LoadTagCatalogAsync());
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
+        string vault = fixture.Scope.Vault.VaultRoot;
+        await fixture.Scope.Vault.CloseVaultAsync();
+        await fixture.Scope.Vault.OpenExistingVaultAsync(vault);
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        Assert.Equal(new[] { "Cinematic", "Landscapes" }, await fixture.Scope.Tags.LoadTagNamesAsync());
     }
 
     [Theory]
@@ -55,21 +55,21 @@ public sealed class TagCatalogTests
     {
         using var fixture = new ServiceFixture(backend);
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
-        await fixture.Service.UpdateAsync(first.Id, image => image with { Tags = "old, KEEP", IsFavorite = true, Rating = 5 });
-        await fixture.Service.UpdateAsync(second.Id, image => image with { Tags = "Old, target", IsMarkedForDeletion = true });
-        await fixture.Service.SaveViewAsync("Tagged", new GalleryFilter { Tag = "old" });
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(first.Id, image => image with { Tags = "old, KEEP", IsFavorite = true, Rating = 5 });
+        await fixture.Scope.Records.UpdateAsync(second.Id, image => image with { Tags = "Old, target", IsMarkedForDeletion = true });
+        await fixture.Scope.Settings.SaveViewAsync("Tagged", new GalleryFilter { Tag = "old" });
 
-        await fixture.Service.RenameTagAsync("OLD", "TARGET");
-        Assert.Equal(new TagDefinition("target", 2), Assert.Single(await fixture.Service.LoadTagCatalogAsync(), tag => tag.Name == "target"));
-        Assert.DoesNotContain(await fixture.Service.LoadTagNamesAsync(), tag => tag.Equals("old", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal("target", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
-        await fixture.Service.RenameTagAsync("target", "Target");
-        Assert.Equal(new TagDefinition("Target", 2), Assert.Single(await fixture.Service.LoadTagCatalogAsync(), tag => tag.Name == "Target"));
-        await fixture.Service.DeleteTagAsync("TARGET");
+        await fixture.Scope.Tags.RenameTagAsync("OLD", "TARGET");
+        Assert.Equal(new TagDefinition("target", 2), Assert.Single(await fixture.Scope.Tags.LoadTagCatalogAsync(), tag => tag.Name == "target"));
+        Assert.DoesNotContain(await fixture.Scope.Tags.LoadTagNamesAsync(), tag => tag.Equals("old", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("target", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Tag);
+        await fixture.Scope.Tags.RenameTagAsync("target", "Target");
+        Assert.Equal(new TagDefinition("Target", 2), Assert.Single(await fixture.Scope.Tags.LoadTagCatalogAsync(), tag => tag.Name == "Target"));
+        await fixture.Scope.Tags.DeleteTagAsync("TARGET");
 
-        var records = await fixture.Service.ListAsync();
+        var records = await fixture.Scope.Catalog.ListAsync();
         Assert.Equal(2, records.Count);
         var savedFirst = Assert.Single(records, image => image.Id == first.Id);
         var savedSecond = Assert.Single(records, image => image.Id == second.Id);
@@ -78,8 +78,8 @@ public sealed class TagCatalogTests
         Assert.Equal(5, savedFirst.Rating);
         Assert.True(savedSecond.IsMarkedForDeletion);
         Assert.Equal("", savedSecond.Tags);
-        Assert.Equal(new[] { new TagDefinition("KEEP", 1) }, await fixture.Service.LoadTagCatalogAsync());
-        Assert.Equal("Target", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
+        Assert.Equal(new[] { new TagDefinition("KEEP", 1) }, await fixture.Scope.Tags.LoadTagCatalogAsync());
+        Assert.Equal("Target", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Tag);
     }
 
     [Fact]
@@ -87,11 +87,11 @@ public sealed class TagCatalogTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy.png", "folder");
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy.png", "folder");
         await fixture.Store.UpdateAsync(image with { Tags = "legacy" }, fixture.Session.Key);
-        Assert.Equal(new[] { "legacy" }, await fixture.Service.LoadTagNamesAsync());
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with { Tags = "" });
-        Assert.Equal(new[] { new TagDefinition("legacy", 0) }, await fixture.Service.LoadTagCatalogAsync());
+        Assert.Equal(new[] { "legacy" }, await fixture.Scope.Tags.LoadTagNamesAsync());
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "" });
+        Assert.Equal(new[] { new TagDefinition("legacy", 0) }, await fixture.Scope.Tags.LoadTagCatalogAsync());
     }
 
     [Theory]
@@ -133,14 +133,14 @@ public sealed class TagCatalogTests
         using var handler = new CaptureHandler();
         using var fixture = new ServiceFixture(CatalogBackend.Sqlite, new HttpClient(handler));
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var other = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "other.png", "folder");
-        await fixture.Service.UpdateAsync(first.Id, image => image with { Tags = "Current image" });
-        await fixture.Service.UpdateAsync(other.Id, image => image with { Tags = "Elsewhere" });
-        await fixture.Service.AddTagAsync("Unused \"quoted\" tag");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var other = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "other.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(first.Id, image => image with { Tags = "Current image" });
+        await fixture.Scope.Records.UpdateAsync(other.Id, image => image with { Tags = "Elsewhere" });
+        await fixture.Scope.Tags.AddTagAsync("Unused \"quoted\" tag");
         var settings = new VisionSettings { Model = "vision", SystemPrompt = "Base instructions.", TagVocabularyInstructions = "Reuse vocabulary when relevant; allow new tags." };
-        await fixture.Service.SaveSettingsAsync(settings);
-        var tags = (await fixture.Service.AnalyzeImageAsync(settings, "image")).Tags;
+        await fixture.Scope.Vision.SaveSettingsAsync(settings);
+        var tags = (await fixture.Scope.Vision.AnalyzeImageAsync(settings, "image")).Tags;
         using var request = JsonDocument.Parse(handler.Body!);
         var messages = request.RootElement.GetProperty("messages");
         var system = messages[0].GetProperty("content").GetString()!;
@@ -149,8 +149,8 @@ public sealed class TagCatalogTests
         string payload = prompt.Split("Existing tags: ")[1];
         Assert.Equal(new[] { "Current image", "Elsewhere", "Unused \"quoted\" tag" }, JsonSerializer.Deserialize<string[]>(payload));
         Assert.Equal("Elsewhere, New idea", tags);
-        Assert.DoesNotContain("New idea", await fixture.Service.LoadTagNamesAsync());
-        Assert.Equal(0, Assert.Single(await fixture.Service.LoadTagCatalogAsync(), tag => tag.Name.StartsWith("Unused")).MediaCount);
+        Assert.DoesNotContain("New idea", await fixture.Scope.Tags.LoadTagNamesAsync());
+        Assert.Equal(0, Assert.Single(await fixture.Scope.Tags.LoadTagCatalogAsync(), tag => tag.Name.StartsWith("Unused")).MediaCount);
     }
 
     [Theory]
@@ -161,8 +161,8 @@ public sealed class TagCatalogTests
     {
         using var fixture = new ServiceFixture(CatalogBackend.Sqlite);
         await fixture.InitializeAsync();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.AddTagAsync(name));
-        Assert.Empty(await fixture.Service.LoadTagCatalogAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Tags.AddTagAsync(name));
+        Assert.Empty(await fixture.Scope.Tags.LoadTagCatalogAsync());
     }
 
     [Theory]
@@ -172,38 +172,38 @@ public sealed class TagCatalogTests
     {
         using var fixture = new ServiceFixture(backend);
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with { Tags = "Existing", Rating = 4 });
-        await fixture.Service.AddTagAsync("Unused");
-        await fixture.Service.SaveViewAsync("Existing only", new GalleryFilter { Tag = "Existing" });
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "Existing", Rating = 4 });
+        await fixture.Scope.Tags.AddTagAsync("Unused");
+        await fixture.Scope.Settings.SaveViewAsync("Existing only", new GalleryFilter { Tag = "Existing" });
         using var input = new MemoryStream(Encoding.UTF8.GetBytes("\uFEFFtag\r\n\"existing\"\r\n\"quoted \"\"tag\"\"\"\r\n\"星空\"\r\nnew\r\nNEW\r\n\r\n"));
 
-        Assert.Equal((3, 2), await fixture.Service.ImportTagsCsvAsync(input));
+        Assert.Equal((3, 2), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
 
-        var catalog = await fixture.Service.LoadTagCatalogAsync();
+        var catalog = await fixture.Scope.Tags.LoadTagCatalogAsync();
         Assert.Equal(new[] { "Existing", "new", "quoted \"tag\"", "Unused", "星空" }, catalog.Select(tag => tag.Name));
         Assert.Equal(1, Assert.Single(catalog, tag => tag.Name == "Existing").MediaCount);
         Assert.All(catalog.Where(tag => tag.Name != "Existing"), tag => Assert.Equal(0, tag.MediaCount));
-        var stored = Assert.Single(await fixture.Service.ListAsync());
+        var stored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Equal("Existing", stored.Tags);
         Assert.Equal(4, stored.Rating);
-        Assert.Equal("Existing", Assert.Single(await fixture.Service.LoadViewsAsync()).GalleryFilter.Tag);
-        var file = await fixture.Service.ExportTagsCsvAsync();
+        Assert.Equal("Existing", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Tag);
+        var file = await fixture.Scope.Tags.ExportTagsCsvAsync();
         try
         {
             Assert.Equal("tags.csv", file.FileName);
             Assert.StartsWith("text/csv", file.ContentType);
-            var bytes = GalleryService.CopyExportContent(file);
+            var bytes = file.CopyContentBytes();
             Assert.Equal("\uFEFFtag\r\n\"Existing\"\r\n\"new\"\r\n\"quoted \"\"tag\"\"\"\r\n\"Unused\"\r\n\"星空\"\r\n", Encoding.UTF8.GetString(bytes));
             using var reimport = new MemoryStream(bytes);
-            Assert.Equal((0, 5), await fixture.Service.ImportTagsCsvAsync(reimport));
+            Assert.Equal((0, 5), await fixture.Scope.Tags.ImportTagsCsvAsync(reimport));
         }
-        finally { GalleryService.ClearExportContent(file); }
-        var vault = fixture.Service.VaultRoot;
-        await fixture.Service.CloseVaultAsync();
-        await fixture.Service.OpenExistingVaultAsync(vault);
-        await fixture.Service.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        Assert.Equal(catalog, await fixture.Service.LoadTagCatalogAsync());
+        finally { file.ClearContent(); }
+        var vault = fixture.Scope.Vault.VaultRoot;
+        await fixture.Scope.Vault.CloseVaultAsync();
+        await fixture.Scope.Vault.OpenExistingVaultAsync(vault);
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        Assert.Equal(catalog, await fixture.Scope.Tags.LoadTagCatalogAsync());
     }
 
     [Theory]
@@ -220,12 +220,12 @@ public sealed class TagCatalogTests
     {
         using var fixture = new ServiceFixture(CatalogBackend.Sqlite);
         await fixture.InitializeAsync();
-        await fixture.Service.AddTagAsync("Keep");
+        await fixture.Scope.Tags.AddTagAsync("Keep");
         using var input = new MemoryStream(Encoding.UTF8.GetBytes(csv));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ImportTagsCsvAsync(input));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Tags.ImportTagsCsvAsync(input));
 
-        Assert.Equal(new[] { "Keep" }, await fixture.Service.LoadTagNamesAsync());
+        Assert.Equal(new[] { "Keep" }, await fixture.Scope.Tags.LoadTagNamesAsync());
     }
 
     [Fact]
@@ -234,17 +234,17 @@ public sealed class TagCatalogTests
         using var fixture = new ServiceFixture(CatalogBackend.Sqlite);
         await fixture.InitializeAsync();
         using var invalid = new MemoryStream([.. Encoding.UTF8.GetBytes("tag\n"), 0xff]);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ImportTagsCsvAsync(invalid));
-        using var oversized = new MemoryStream(new byte[GalleryService.MaxTagCsvBytes + 1]);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ImportTagsCsvAsync(oversized));
-        Assert.Empty(await fixture.Service.LoadTagNamesAsync());
-        var file = await fixture.Service.ExportTagsCsvAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Tags.ImportTagsCsvAsync(invalid));
+        using var oversized = new MemoryStream(new byte[IGalleryTags.MaxCsvBytes + 1]);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Tags.ImportTagsCsvAsync(oversized));
+        Assert.Empty(await fixture.Scope.Tags.LoadTagNamesAsync());
+        var file = await fixture.Scope.Tags.ExportTagsCsvAsync();
         try
         {
-            using var input = new MemoryStream(GalleryService.CopyExportContent(file));
-            Assert.Equal((0, 0), await fixture.Service.ImportTagsCsvAsync(input));
+            using var input = new MemoryStream(file.CopyContentBytes());
+            Assert.Equal((0, 0), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
         }
-        finally { GalleryService.ClearExportContent(file); }
+        finally { file.ClearContent(); }
     }
 
     private sealed class CaptureHandler : HttpMessageHandler
@@ -266,14 +266,14 @@ public sealed class TagCatalogTests
             string path = Path.GetTempPath();
             return OperatingSystem.IsMacOS() && path.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + path : path;
         }
-        public GalleryService Service { get; }
-        public ServiceFixture(CatalogBackend backend, HttpClient? client = null) => Service = GalleryService.Create(Path.Combine(root, "vault"),
+        public GalleryScope Scope { get; }
+        public ServiceFixture(CatalogBackend backend, HttpClient? client = null) => Scope = GalleryScope.Create(Path.Combine(root, "vault"),
             new GalleryRuntimeOptions { CatalogBackend = backend, StateDirectory = Path.Combine(root, "state") }, client ?? new HttpClient());
-        public Task<string> InitializeAsync() => Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        public Task<string> InitializeAsync() => Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
         public void Dispose()
         {
-            Service.Dispose();
-            Service.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
+            Scope.Dispose();
+            Scope.DriveOperations.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
     }

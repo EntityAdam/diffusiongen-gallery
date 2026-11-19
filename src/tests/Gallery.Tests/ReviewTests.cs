@@ -19,29 +19,29 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "organize.png", "folder");
-        image = await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "organize.png", "folder");
+        image = await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with
         {
             Description = "preserve", Tags = "existing", Rating = 3, IsFavorite = true
         });
         var services = new ServiceCollection();
         services.AddShadCnBlazorComponents();
         using var provider = services.BuildServiceProvider();
-        using var workbench = CreateWorkbench(fixture.Service, provider.GetRequiredService<ISonnerService>());
+        using var workbench = CreateWorkbench(fixture.Scope, provider.GetRequiredService<ISonnerService>());
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = workbench.GetType();
         type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { image.Id });
-        var collection = await fixture.Service.CreateCollectionAsync("new collection");
-        var set = await fixture.Service.CreateSetAsync(collection.Id, "New set");
+        var collection = await fixture.Scope.Collections.CreateCollectionAsync("new collection");
+        var set = await fixture.Scope.Collections.CreateSetAsync(collection.Id, "New set");
         type.GetField("tags", flags)!.SetValue(workbench, "new tag");
-        var moved = await fixture.Service.MoveMediaToSetAsync([image.Id], set.Id);
+        var moved = await fixture.Scope.Collections.MoveMediaToSetAsync([image.Id], set.Id);
         await (Task)type.GetMethod("DestinationSavedAsync", flags)!.Invoke(workbench, [moved])!;
-        var collected = Assert.Single(await fixture.Service.ListAsync());
+        var collected = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Contains("new collection", collected.Collections);
         Assert.Equal("existing", collected.Tags);
         await (Task)type.GetMethod("ApplyTagsAsync", flags)!.Invoke(workbench, null)!;
         Assert.Equal("", type.GetField("error", flags)!.GetValue(workbench));
-        var tagged = Assert.Single(await fixture.Service.ListAsync());
+        var tagged = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Contains("existing", tagged.Tags);
         Assert.Contains("new tag", tagged.Tags);
         Assert.Equal(collected.Collections.ToArray(), tagged.Collections.ToArray());
@@ -87,16 +87,16 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(9, 9)), "second.png", "folder");
-        var other = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(11, 11)), "other.png", "folder");
-        first = await fixture.Service.UpdateAsync(first.Id, edit => edit with { Tags = "warm, Portrait", Rating = 4 });
-        second = await fixture.Service.UpdateAsync(second.Id, edit => edit with { Tags = "portrait" });
-        other = await fixture.Service.UpdateAsync(other.Id, edit => edit with { Tags = "warm" });
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(9, 9)), "second.png", "folder");
+        var other = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(11, 11)), "other.png", "folder");
+        first = await fixture.Scope.Records.UpdateAsync(first.Id, edit => edit with { Tags = "warm, Portrait", Rating = 4 });
+        second = await fixture.Scope.Records.UpdateAsync(second.Id, edit => edit with { Tags = "portrait" });
+        other = await fixture.Scope.Records.UpdateAsync(other.Id, edit => edit with { Tags = "warm" });
         var services = new ServiceCollection();
         services.AddShadCnBlazorComponents();
         using var provider = services.BuildServiceProvider();
-        using var workbench = CreateWorkbench(fixture.Service, provider.GetRequiredService<ISonnerService>());
+        using var workbench = CreateWorkbench(fixture.Scope, provider.GetRequiredService<ISonnerService>());
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = workbench.GetType();
         type.GetProperty(nameof(workbench.Images))!.SetValue(workbench, new List<ImageRecord> { first, second, other });
@@ -107,20 +107,20 @@ public sealed class ReviewTests
 
         await (Task)type.GetMethod("RemoveTagAsync", flags)!.Invoke(workbench, ["warm"])!;
         Assert.Equal("", type.GetField("error", flags)!.GetValue(workbench));
-        var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
+        var stored = (await fixture.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
         Assert.Equal("Portrait", stored[first.Id].Tags);
         Assert.Equal(4, stored[first.Id].Rating);
         Assert.Equal("portrait", stored[second.Id].Tags);
         Assert.Equal("warm", stored[other.Id].Tags);
     }
 
-    private static LibraryWorkbench CreateWorkbench(GalleryService gallery, ISonnerService toasts)
+    private static LibraryWorkbench CreateWorkbench(GalleryScope gallery, ISonnerService toasts)
     {
         var workbench = new LibraryWorkbench();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = typeof(LibraryWorkbench);
         GalleryCapabilityTestSetup.InjectGalleryCapabilities(workbench, gallery);
-        type.GetProperty("OrganizationHistory", flags)!.SetValue(workbench, new OrganizationHistory(gallery.Scope.Collections));
+        type.GetProperty("OrganizationHistory", flags)!.SetValue(workbench, new OrganizationHistory(gallery.Collections));
         type.GetProperty("Toasts", flags)!.SetValue(workbench, toasts);
         type.GetProperty("Logger", flags)!.SetValue(workbench, NullLogger<LibraryWorkbench>.Instance);
         return workbench;
@@ -171,13 +171,13 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var last = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "last.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var last = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "last.png", "folder");
         var viewer = new Gallery.Web.Components.Features.Media.FullscreenViewer();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
         type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new[] { first, last });
-        GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Service);
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Scope);
         type.GetProperty("JS", flags)!.SetValue(viewer, new ComponentRenderFixture.NoOpJsRuntime());
         type.GetField("index", flags)!.SetValue(viewer, 1);
         Task Skip() => (Task)type.GetMethod("SkipAsync", flags)!.Invoke(viewer, null)!;
@@ -225,14 +225,14 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var stale = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "stale-review.png", "folder");
-        await fixture.Service.UpdateAsync(stale.Id, edit => edit with { IsFavorite = true, Rating = 3 });
-        await fixture.Service.UpdateAsync(stale.Id, edit => edit with { IsReviewed = false, Description = "latest" });
+        var stale = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "stale-review.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(stale.Id, edit => edit with { IsFavorite = true, Rating = 3 });
+        await fixture.Scope.Records.UpdateAsync(stale.Id, edit => edit with { IsReviewed = false, Description = "latest" });
         var viewer = new Gallery.Web.Components.Features.Media.FullscreenViewer();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
         type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord> { stale });
-        GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Service);
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Scope);
         type.GetProperty("JS", flags)!.SetValue(viewer, new ComponentRenderFixture.NoOpJsRuntime());
         type.GetProperty("Logger", flags)!.SetValue(viewer,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.Features.Media.FullscreenViewer>.Instance);
@@ -244,8 +244,8 @@ public sealed class ReviewTests
 
         Assert.False(Current().IsFavorite);
         Assert.Equal("latest", Current().Description);
-        await fixture.Service.UpdateAsync(stale.Id, edit => edit with { Rating = 2, IsFavorite = true });
-        var beforeReview = fixture.Service.CaptureReviewState(await fixture.Service.UpdateAsync(stale.Id,
+        await fixture.Scope.Records.UpdateAsync(stale.Id, edit => edit with { Rating = 2, IsFavorite = true });
+        var beforeReview = fixture.Scope.Records.CaptureReviewState(await fixture.Scope.Records.UpdateAsync(stale.Id,
             edit => edit with { IsReviewed = false, Description = "latest review note" }));
         Assert.Equal(3, Current().Rating);
         Assert.Equal(2, beforeReview.Rating);
@@ -256,8 +256,8 @@ public sealed class ReviewTests
         await Invoke("UndoAsync");
 
         Assert.Equal("", type.GetField("error", flags)!.GetValue(viewer));
-        Assert.Equal(beforeReview, fixture.Service.CaptureReviewState(Current()));
-        Assert.Equal(beforeReview, fixture.Service.CaptureReviewState(Assert.Single(await fixture.Service.ListAsync())));
+        Assert.Equal(beforeReview, fixture.Scope.Records.CaptureReviewState(Current()));
+        Assert.Equal(beforeReview, fixture.Scope.Records.CaptureReviewState(Assert.Single(await fixture.Scope.Catalog.ListAsync())));
         Assert.Equal("latest review note", Current().Description);
     }
 
@@ -271,21 +271,21 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "undo-rating.png", "folder");
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "undo-rating.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with
         {
             Rating = rating, IsMarkedForDeletion = markedForDeletion, IsFavorite = favorite
         });
-        var unreviewed = await fixture.Service.UpdateAsync(image.Id, edit => edit with { IsReviewed = false });
-        var snapshot = fixture.Service.CaptureReviewState(unreviewed);
-        await fixture.Service.UpdateAsync(image.Id, edit => fixture.Service.ApplyReviewDecision(edit, ReviewAction.Rate, 4));
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with { Description = "new note", Tags = "new tag" });
+        var unreviewed = await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { IsReviewed = false });
+        var snapshot = fixture.Scope.Records.CaptureReviewState(unreviewed);
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => fixture.Scope.Records.ApplyReviewDecision(edit, ReviewAction.Rate, 4));
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "new note", Tags = "new tag" });
 
-        var restored = await fixture.Service.RestoreReviewStateAsync(image.Id, snapshot);
-        var stored = Assert.Single(await fixture.Service.ListAsync());
+        var restored = await fixture.Scope.Records.RestoreReviewStateAsync(image.Id, snapshot);
+        var stored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
 
-        Assert.Equal(snapshot, fixture.Service.CaptureReviewState(restored));
-        Assert.Equal(snapshot, fixture.Service.CaptureReviewState(stored));
+        Assert.Equal(snapshot, fixture.Scope.Records.CaptureReviewState(restored));
+        Assert.Equal(snapshot, fixture.Scope.Records.CaptureReviewState(stored));
         Assert.False(restored.IsReviewed);
         Assert.Equal("new note", restored.Description);
         Assert.Equal("new tag", restored.Tags);
@@ -300,7 +300,7 @@ public sealed class ReviewTests
         using var fixture = new TestVault();
 
         var invalidRating = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.RestoreReviewStateAsync("image", new(false, false, false, rating)));
+            fixture.Scope.Records.RestoreReviewStateAsync("image", new(false, false, false, rating)));
         AsserterExceptionContract.AssertMessageContains(
             [rating.ToString(System.Globalization.CultureInfo.InvariantCulture), "rating", "0", "5"], invalidRating.Message);
 
@@ -312,13 +312,13 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "projection.png", "folder");
-        ImageRecordEdit Edit(ImageRecordEdit edit) => fixture.Service.AddCollection(
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "projection.png", "folder");
+        ImageRecordEdit Edit(ImageRecordEdit edit) => fixture.Scope.Records.AddCollection(
             edit with { Rating = 4, IsFavorite = true }, " collection ");
 
-        var projected = fixture.Service.ApplyEdit(image, Edit);
-        await fixture.Service.UpdateAsync(image.Id, Edit);
-        var stored = Assert.Single(await fixture.Service.ListAsync());
+        var projected = fixture.Scope.Records.ApplyEdit(image, Edit);
+        await fixture.Scope.Records.UpdateAsync(image.Id, Edit);
+        var stored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
 
         Assert.Equal(4, projected.Rating);
         Assert.True(projected.IsFavorite);
@@ -340,8 +340,8 @@ public sealed class ReviewTests
         var edit = new ImageRecordEdit(new ImageRecord());
 
         var expectedPhrases = new[] { $"'{collection}'", "collection", "1", "80" };
-        var invalidAddition = Assert.Throws<InvalidOperationException>(() => fixture.Service.AddCollection(edit, collection));
-        var invalidRemoval = Assert.Throws<InvalidOperationException>(() => fixture.Service.RemoveCollection(edit, collection));
+        var invalidAddition = Assert.Throws<InvalidOperationException>(() => fixture.Scope.Records.AddCollection(edit, collection));
+        var invalidRemoval = Assert.Throws<InvalidOperationException>(() => fixture.Scope.Records.RemoveCollection(edit, collection));
         AsserterExceptionContract.AssertMessageContains(expectedPhrases, invalidAddition.Message);
         AsserterExceptionContract.AssertMessageContains(expectedPhrases, invalidRemoval.Message);
         Assert.Empty(edit.Collections);
@@ -353,13 +353,13 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var rated = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "rated.png", "folder");
-        var marked = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "marked.png", "folder");
+        var rated = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 20)), "rated.png", "folder");
+        var marked = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "marked.png", "folder");
 
-        await fixture.Service.UpdateAsync(rated.Id, image => image with { Rating = 3 });
-        await fixture.Service.UpdateAsync(marked.Id, image => image with { IsMarkedForDeletion = true });
+        await fixture.Scope.Records.UpdateAsync(rated.Id, image => image with { Rating = 3 });
+        await fixture.Scope.Records.UpdateAsync(marked.Id, image => image with { IsMarkedForDeletion = true });
 
-        var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
+        var stored = (await fixture.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
         Assert.True(stored[rated.Id].IsReviewed);
         Assert.True(stored[marked.Id].IsReviewed);
     }
@@ -370,16 +370,16 @@ public sealed class ReviewTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "undo.png", "folder");
-        await fixture.Service.UpdateAsync(record.Id, image => image with { Rating = 3, IsFavorite = true, Tags = "original" });
-        var before = fixture.Service.CaptureReviewState(Assert.Single(await fixture.Service.ListAsync()));
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "undo.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => image with { Rating = 3, IsFavorite = true, Tags = "original" });
+        var before = fixture.Scope.Records.CaptureReviewState(Assert.Single(await fixture.Scope.Catalog.ListAsync()));
         // Act
-        await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.ApplyReviewDecision(image, ReviewAction.MarkDeletion));
-        await fixture.Service.UpdateAsync(record.Id, image => image with { Description = "New note" });
-        await fixture.Service.RestoreReviewStateAsync(record.Id, before);
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => fixture.Scope.Records.ApplyReviewDecision(image, ReviewAction.MarkDeletion));
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => image with { Description = "New note" });
+        await fixture.Scope.Records.RestoreReviewStateAsync(record.Id, before);
         // Assert
-        var restored = Assert.Single(await fixture.Service.ListAsync());
-        Assert.Equal(before, fixture.Service.CaptureReviewState(restored));
+        var restored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
+        Assert.Equal(before, fixture.Scope.Records.CaptureReviewState(restored));
         Assert.Equal("original", restored.Tags);
         Assert.Equal("New note", restored.Description);
         Assert.True(File.Exists(restored.StoredPath));
@@ -396,12 +396,12 @@ public sealed class ReviewTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "review.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "review.png", "folder");
         // Act
-        await fixture.Service.UpdateAsync(record.Id, image => fixture.Service.ApplyReviewDecision(image, action, 4));
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => fixture.Scope.Records.ApplyReviewDecision(image, action, 4));
 
         // Assert
-        var stored = Assert.Single(await fixture.Service.ListAsync());
+        var stored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.True(stored.IsReviewed);
         Assert.Equal(action == ReviewAction.MarkDeletion, stored.IsMarkedForDeletion);
         Assert.Equal(action == ReviewAction.Favorite, stored.IsFavorite);
@@ -417,7 +417,7 @@ public sealed class ReviewTests
         var record = new ImageRecordEdit(new ImageRecord { Rating = 5, IsFavorite = true, IsMarkedForDeletion = true });
 
         // Act
-        record = fixture.Service.ApplyReviewDecision(record, ReviewAction.Keep);
+        record = fixture.Scope.Records.ApplyReviewDecision(record, ReviewAction.Keep);
 
         // Assert
         Assert.True(record.IsReviewed);
@@ -434,9 +434,9 @@ public sealed class ReviewTests
         var record = new ImageRecordEdit(new ImageRecord());
 
         // Act
-        var ratingError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, ReviewAction.Rate, 0));
+        var ratingError = Record.Exception(() => fixture.Scope.Records.ApplyReviewDecision(record, ReviewAction.Rate, 0));
         var reviewedAfterInvalidRating = record.IsReviewed;
-        var actionError = Record.Exception(() => fixture.Service.ApplyReviewDecision(record, (ReviewAction)99));
+        var actionError = Record.Exception(() => fixture.Scope.Records.ApplyReviewDecision(record, (ReviewAction)99));
 
         // Assert
         Assert.IsType<InvalidOperationException>(ratingError);

@@ -24,7 +24,7 @@ public sealed class EditBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "boundary.png", "folder");
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "boundary.png", "folder");
         var before = await fixture.RawStore.ReadRecordAsync(image.Id);
         ImageRecordEdit InvalidEdit(ImageRecordEdit edit) => scenario switch
         {
@@ -61,10 +61,10 @@ public sealed class EditBoundaryTests
             "different-image" => new[] { image.Id, "different", "identity" },
             _ => throw new ArgumentOutOfRangeException(nameof(scenario))
         };
-        var projectedError = Assert.Throws<InvalidOperationException>(() => fixture.Service.ApplyEdit(image, InvalidEdit));
-        var persistedError = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.UpdateAsync(image.Id, InvalidEdit));
+        var projectedError = Assert.Throws<InvalidOperationException>(() => fixture.Scope.Records.ApplyEdit(image, InvalidEdit));
+        var persistedError = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Records.UpdateAsync(image.Id, InvalidEdit));
         var batchError = await Assert.ThrowsAsync<AggregateException>(() =>
-            fixture.Service.UpdateManyAsync([image.Id], InvalidEdit));
+            fixture.Scope.Records.UpdateManyAsync([image.Id], InvalidEdit));
 
         var perImageError = Assert.IsType<InvalidOperationException>(Assert.Single(batchError.InnerExceptions).InnerException);
         AsserterExceptionContract.AssertMessageContains(expectedPhrases, projectedError.Message);
@@ -90,17 +90,17 @@ public sealed class EditBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "notes.png", "folder");
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "notes.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with
         { UserDescription = "My personal note", Description = "Original vision notes" });
-        await fixture.Service.UpdateAsync(image.Id, edit => edit with
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with
         { Description = "New vision notes", Tags = "cat", AnalysisModel = "vision-model" });
         fixture.Session.Lock();
         fixture.Session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
-        var stored = Assert.Single(await fixture.Service.ListAsync());
+        var stored = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Equal("My personal note", stored.UserDescription);
         Assert.Equal("New vision notes", stored.Description);
-        Assert.Single(fixture.Service.Filter([stored], new GalleryFilter { Search = "personal note" }));
+        Assert.Single(fixture.Scope.Catalog.Filter([stored], new GalleryFilter { Search = "personal note" }));
     }
 
     [Fact]
@@ -108,14 +108,14 @@ public sealed class EditBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 15)), "second.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 15)), "second.png", "folder");
         var invocations = 0;
-        var single = await fixture.Service.UpdateAsync(first.Id, edit =>
+        var single = await fixture.Scope.Records.UpdateAsync(first.Id, edit =>
             edit with { Description = $"invocation-{++invocations}" });
-        var batch = await fixture.Service.UpdateManyAsync([second.Id, first.Id, second.Id], edit =>
+        var batch = await fixture.Scope.Records.UpdateManyAsync([second.Id, first.Id, second.Id], edit =>
             edit with { Rating = ++invocations });
-        var stored = (await fixture.Service.ListAsync()).ToDictionary(image => image.Id);
+        var stored = (await fixture.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
 
         Assert.Equal("invocation-1", single.Description);
         Assert.Equal(3, invocations);
@@ -138,12 +138,12 @@ public sealed class EditBoundaryTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 15)), "second.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(30, 15)), "second.png", "folder");
         var before = await fixture.RawStore.ReadRecordAsync(first.Id);
         var calls = 0;
 
-        await Assert.ThrowsAsync<AggregateException>(() => fixture.Service.UpdateManyAsync([first.Id, second.Id], edit =>
+        await Assert.ThrowsAsync<AggregateException>(() => fixture.Scope.Records.UpdateManyAsync([first.Id, second.Id], edit =>
         {
             calls++;
             return edit with { Rating = edit.Id == first.Id ? 99 : 5 };
@@ -151,6 +151,6 @@ public sealed class EditBoundaryTests
 
         Assert.Equal(2, calls);
         Assert.Equal(before, await fixture.RawStore.ReadRecordAsync(first.Id));
-        Assert.Equal(5, (await fixture.Service.ListAsync()).Single(image => image.Id == second.Id).Rating);
+        Assert.Equal(5, (await fixture.Scope.Catalog.ListAsync()).Single(image => image.Id == second.Id).Rating);
     }
 }

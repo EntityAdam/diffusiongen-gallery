@@ -71,7 +71,7 @@ public static class LifecycleContracts
         ImmutableArray<byte> snapshot = file.ContentBytes;
 
         // Act
-        GalleryService.ClearExportContent(file);
+        file.ClearContent();
         byte[] cleared = file.CopyContentBytes();
 
         // Assert
@@ -181,12 +181,12 @@ public static class LifecycleContracts
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        Assert.True(fixture.Service.IsUnlocked);
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
 
         // Act
-        fixture.Service.Panic();
+        fixture.Scope.Vault.Panic();
 
         // Assert
-        Assert.False(fixture.Service.IsUnlocked);
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
     }
 }

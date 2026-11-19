@@ -21,7 +21,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var records = await fixture.Service.LoadAsync();
+        var records = await fixture.Scope.Catalog.LoadAsync();
 
         // Assert - gather the returned generation metadata
         var info = Assert.Single(records).Generation!;
@@ -48,7 +48,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, PngMetadata(("prompt", CustomSamplerPrompt)));
 
         // Act
-        var records = await fixture.Service.LoadAsync();
+        var records = await fixture.Scope.Catalog.LoadAsync();
 
         // Assert - gather the returned generation metadata
         var info = Assert.Single(records).Generation!;
@@ -76,7 +76,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, CarrierMetadata(carrier));
 
         // Act
-        var records = await fixture.Service.LoadAsync();
+        var records = await fixture.Scope.Catalog.LoadAsync();
 
         // Assert - the catalog exposes generation from either carrier
         Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", Assert.Single(records).Generation!.Prompt);
@@ -94,7 +94,7 @@ public sealed class TestComfyMetadataMigration
         var expectedWorkflow = carrier == "video" ? JsonNode.Parse(UiWorkflow)!.ToJsonString() : UiWorkflow;
 
         // Act
-        var workflow = await fixture.Service.WorkflowAsync(record.Id);
+        var workflow = await fixture.Scope.Media.WorkflowAsync(record.Id);
 
         // Assert - exported workflow preserves the carrier document
         Assert.Equal(expectedWorkflow, System.Text.Encoding.UTF8.GetString(workflow!.CopyContentBytes()));
@@ -113,7 +113,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var records = await fixture.Service.LoadAsync();
+        var records = await fixture.Scope.Catalog.LoadAsync();
 
         // Assert - catalog migration preserves absence of generation metadata
         Assert.Null(Assert.Single(records).Generation);
@@ -129,7 +129,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.LoadAsync());
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Catalog.LoadAsync());
 
         // Assert - the boundary identifies the failing catalog image and preserves its parse cause
         var invalidStoredMetadata = Assert.IsType<StoredMetadataFormatException>(exception.InnerException);
@@ -149,7 +149,7 @@ public sealed class TestComfyMetadataMigration
         await ArrangeStoredMetadataAsync(fixture, metadata);
 
         // Act
-        var records = await fixture.Service.LoadAsync();
+        var records = await fixture.Scope.Catalog.LoadAsync();
 
         // Assert - gather the returned generation metadata
         var generation = Assert.Single(records).Generation!;

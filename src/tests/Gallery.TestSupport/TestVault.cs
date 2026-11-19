@@ -18,7 +18,6 @@ internal sealed class TestVault : IDisposable
     public RawGalleryStore RawStore { get; }
     public VaultSession Session { get; } = new();
     public GalleryScope Scope { get; }
-    public GalleryService Service { get; }
 
     public TestVault(VideoTools? video = null, VisionManager? vision = null)
     {
@@ -31,7 +30,6 @@ internal sealed class TestVault : IDisposable
         Store = new(Path.Combine(Root, "gallery.db"));
         RawStore = new(Path.Combine(Root, "gallery.db"));
         Scope = new(Store, Vault, Session, video, vision);
-        Service = new(Scope);
     }
 
     public async Task InitializeAsync()

@@ -27,7 +27,7 @@ public sealed class StorageIndexTests
         File.Move(legacy.StoredPath, stagedPath);
         var originalPayload = await fixture.RawStore.ReadRecordAsync(legacy.Id);
 
-        var listed = Assert.Single(await fixture.Service.ListAsync());
+        var listed = Assert.Single(await fixture.Scope.Catalog.ListAsync());
 
         Assert.Equal(0, listed.MetadataVersion);
         Assert.Equal(originalPayload, await fixture.RawStore.ReadRecordAsync(legacy.Id));
@@ -35,15 +35,15 @@ public sealed class StorageIndexTests
         Assert.True(File.Exists(stagedPath));
         Assert.False(File.Exists(legacy.StoredPath));
 
-        var loaded = Assert.Single(await fixture.Service.LoadAsync());
-        await fixture.Service.WaitForDriveOperationsAsync();
+        var loaded = Assert.Single(await fixture.Scope.Catalog.LoadAsync());
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
 
         Assert.Equal(Gallery.Core.Features.Ingestion.Metadata.ComfyMetadata.Version, loaded.MetadataVersion);
         Assert.True(await fixture.Store.ContainsFingerprintAsync(legacy.Sha256, fixture.Session.Key));
         Assert.True(File.Exists(legacy.StoredPath));
         Assert.False(File.Exists(stagedPath));
-        await fixture.Service.VerifyImportedAsync(legacy.Id);
-        Assert.Equal(loaded.MetadataVersion, Assert.Single(await fixture.Service.ListAsync()).MetadataVersion);
+        await fixture.Scope.Ingestion.VerifyImportedAsync(legacy.Id);
+        Assert.Equal(loaded.MetadataVersion, Assert.Single(await fixture.Scope.Catalog.ListAsync()).MetadataVersion);
     }
 
 
@@ -54,10 +54,10 @@ public sealed class StorageIndexTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         // Act
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 20)), "image.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "image.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 20)), "image.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "image.png", "folder");
         foreach (var record in new[] { first, second })
-            await fixture.Service.VerifyImportedAsync(record.Id);
+            await fixture.Scope.Ingestion.VerifyImportedAsync(record.Id);
 
         // Assert
         Assert.NotEqual(first.Id, second.Id);
@@ -74,13 +74,13 @@ public sealed class StorageIndexTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         foreach (var name in new[] { "gallery.db-wal", "gallery.db-shm", "gallery.db" })
             File.Delete(Path.Combine(fixture.Root, name));
 
         // Act
         var records = await fixture.Store.ReadRecordsAsync(fixture.Session.Key);
-        var reimported = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var reimported = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
 
         // Assert
         Assert.Empty(records);
@@ -94,9 +94,9 @@ public sealed class StorageIndexTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var bytes = GalleryTests.MakePng();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(bytes), "legacy.png", "folder");
-        await fixture.Service.MoveAsync(image.Id, fixture.Root, "legacy-flat");
-        await fixture.Service.WaitForDriveOperationsAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(bytes), "legacy.png", "folder");
+        await fixture.Scope.MediaMaintenance.MoveAsync(image.Id, fixture.Root, "legacy-flat");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
         await using (var connection = Connect(fixture))
         {
             await connection.OpenAsync();
@@ -108,17 +108,17 @@ public sealed class StorageIndexTests
             transaction.Commit();
         }
         var store = new GalleryStore(Path.Combine(fixture.Vault.Root, "gallery.db"));
-        using var service = new GalleryService(store, fixture.Vault, fixture.Session);
+        using var service = new GalleryScope(store, fixture.Vault, fixture.Session);
         // Act
-        var migratedRecords = await service.LoadAsync();
-        await service.WaitForDriveOperationsAsync();
+        var migratedRecords = await service.Catalog.LoadAsync();
+        await service.DriveOperations.WaitForDriveOperationsAsync();
         var migrated = Assert.Single(migratedRecords);
         var fingerprintPresent = await store.ContainsFingerprintAsync(migrated.Sha256, fixture.Session.Key);
-        var duplicateError = await Record.ExceptionAsync(() => service.ImportAsync(new MemoryStream(bytes), "different-name.png", "another-folder"));
+        var duplicateError = await Record.ExceptionAsync(() => service.Ingestion.ImportAsync(new MemoryStream(bytes), "different-name.png", "another-folder"));
         await fixture.Vault.ChangePassphraseAsync(fixture.Session.Key, "a different strong passphrase");
         fixture.Session.Lock();
         fixture.Session.Unlock(await fixture.Vault.UnlockWithPassphraseAsync("a different strong passphrase"));
-        var rotatedDuplicateError = await Record.ExceptionAsync(() => service.ImportAsync(new MemoryStream(bytes), "another.png", "folder"));
+        var rotatedDuplicateError = await Record.ExceptionAsync(() => service.Ingestion.ImportAsync(new MemoryStream(bytes), "another.png", "folder"));
         await using var verify = Connect(fixture);
         await verify.OpenAsync();
         using var query = verify.CreateCommand();
@@ -146,8 +146,8 @@ public sealed class StorageIndexTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "two.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "two.png", "folder");
         await using (var connection = Connect(fixture))
         {
             await connection.OpenAsync();
@@ -158,7 +158,7 @@ public sealed class StorageIndexTests
             await command.ExecuteNonQueryAsync();
         }
         // Act
-        var authenticationError = await Record.ExceptionAsync(() => fixture.Service.LoadAsync());
+        var authenticationError = await Record.ExceptionAsync(() => fixture.Scope.Catalog.LoadAsync());
         await using var verify = Connect(fixture);
         await verify.OpenAsync();
         using var query = verify.CreateCommand();
@@ -177,14 +177,14 @@ public sealed class StorageIndexTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
         await fixture.RawStore.UpdateAsync(first.Id, new byte[40]);
 
         // Act
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "two.png", "folder");
-        await fixture.Service.VerifyImportedAsync(second.Id);
-        var preview = await fixture.Service.PreviewAsync(second.Id);
-        var listingError = await Record.ExceptionAsync(() => fixture.Service.ListAsync());
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "two.png", "folder");
+        await fixture.Scope.Ingestion.VerifyImportedAsync(second.Id);
+        var preview = await fixture.Scope.Media.PreviewAsync(second.Id);
+        var listingError = await Record.ExceptionAsync(() => fixture.Scope.Catalog.ListAsync());
 
         // Assert
         Assert.StartsWith("data:image/png;base64,", preview);
@@ -203,7 +203,7 @@ public sealed class StorageIndexTests
         {
             try
             {
-                await fixture.Service.ImportAsync(new MemoryStream(bytes), "image.png", "folder");
+                await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(bytes), "image.png", "folder");
                 return true;
             }
             catch (InvalidOperationException exception)
@@ -222,7 +222,7 @@ public sealed class StorageIndexTests
             Assert.Contains("already in the gallery", exception.Message, StringComparison.OrdinalIgnoreCase);
         });
         Assert.Single(results, success => success);
-        Assert.Single(await fixture.Service.ListAsync());
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Single(Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories));
     }
 

@@ -19,8 +19,8 @@ public sealed class IngestionScanTests
         await File.WriteAllTextAsync(Path.Combine(folder, "ignored.txt"), "not media");
         await File.WriteAllBytesAsync(Path.Combine(folder, "nested", "image.webp"), new byte[42]);
 
-        var flat = await fixture.Service.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
-        var recursive = await fixture.Service.ScanFolderAsync(folder, FolderSearchScope.Descendants);
+        var flat = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
+        var recursive = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.Descendants);
 
         Assert.Equal(1, flat.ImageCount);
         Assert.Equal(1, flat.VideoCount);
@@ -28,8 +28,8 @@ public sealed class IngestionScanTests
         Assert.Equal(2, recursive.ImageCount);
         Assert.Equal(flat.SourceBytes + 42, recursive.SourceBytes);
 
-        var images = await fixture.Service.EstimateIngestionSpaceAsync(recursive, true, false);
-        var videos = await fixture.Service.EstimateIngestionSpaceAsync(recursive, false, true);
+        var images = await fixture.Scope.Ingestion.EstimateIngestionSpaceAsync(recursive, true, false);
+        var videos = await fixture.Scope.Ingestion.EstimateIngestionSpaceAsync(recursive, false, true);
         Assert.Equal(2, images.FileCount);
         Assert.Equal(recursive.SourceBytes - 123, images.SelectedSourceBytes);
         Assert.Equal(1, videos.FileCount);
@@ -50,18 +50,18 @@ public sealed class IngestionScanTests
         var unselectedVideo = Path.Combine(folder, "not-selected.mp4");
         await File.WriteAllBytesAsync(original, GalleryTests.MakePng());
         await File.WriteAllBytesAsync(unselectedVideo, new byte[123]);
-        var scan = await fixture.Service.ScanFolderAsync(folder, FolderSearchScope.Descendants);
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.Descendants);
         // A fresh enumeration would discover this image (and fail on the new video).
         await File.WriteAllBytesAsync(Path.Combine(folder, "later.png"), GalleryTests.MakePng(30, 20));
         await File.WriteAllBytesAsync(Path.Combine(folder, "later.mp4"), new byte[99]);
         File.Delete(unselectedVideo);
         ImportProgress? final = null;
 
-        await fixture.Service.ImportFolderAsync(folder, scan.SearchScope, scan: scan, includeVideos: false,
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, scan.SearchScope, scan: scan, includeVideos: false,
             sourceRetention: SourceRetention.DeleteAfterVerification,
             reportProgress: update => { final = update; return Task.CompletedTask; });
 
-        Assert.Equal("scanned", Assert.Single(await fixture.Service.ListAsync()).Name);
+        Assert.Equal("scanned", Assert.Single(await fixture.Scope.Catalog.ListAsync()).Name);
         Assert.Equal(1, final!.Total);
         Assert.Equal(1, final.Imported);
         Assert.False(File.Exists(original));
@@ -80,15 +80,15 @@ public sealed class IngestionScanTests
         Directory.CreateDirectory(folder);
         var source = Path.Combine(folder, "source.png");
         await File.WriteAllBytesAsync(source, GalleryTests.MakePng());
-        var scan = await fixture.Service.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
         if (remove) File.Delete(source);
         else await File.WriteAllBytesAsync(source, new byte[7]);
 
         var error = await Assert.ThrowsAsync<IOException>(() =>
-            fixture.Service.ImportFolderAsync(folder, scan.SearchScope, scan: scan));
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, scan.SearchScope, scan: scan));
 
         Assert.Contains("Scan the folder again", error.Message);
-        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
     }
 
     [InstalledVideoToolsFact]
@@ -100,12 +100,12 @@ public sealed class IngestionScanTests
         Directory.CreateDirectory(folder);
         await File.WriteAllBytesAsync(Path.Combine(folder, "image.png"), GalleryTests.MakePng());
         await File.WriteAllBytesAsync(Path.Combine(folder, "clip.mp4"), arrangement.Bytes);
-        var scan = await fixture.Service.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
 
-        await fixture.Service.ImportFolderAsync(folder, scan.SearchScope, scan: scan,
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, scan.SearchScope, scan: scan,
             includeImages: false, includeVideos: true, sourceRetention: SourceRetention.DeleteAfterVerification);
 
-        Assert.True(Assert.Single(await fixture.Service.ListAsync()).IsVideo);
+        Assert.True(Assert.Single(await fixture.Scope.Catalog.ListAsync()).IsVideo);
         Assert.True(File.Exists(Path.Combine(folder, "image.png")));
         Assert.False(File.Exists(Path.Combine(folder, "clip.mp4")));
     }
@@ -115,15 +115,15 @@ public sealed class IngestionScanTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var scan = await fixture.Service.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
         var other = Path.Combine(fixture.Root, "other");
         Directory.CreateDirectory(other);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ImportFolderAsync(other, scan.SearchScope, scan: scan));
+            fixture.Scope.Ingestion.ImportFolderAsync(other, scan.SearchScope, scan: scan));
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ImportFolderAsync(scan.Folder, FolderSearchScope.Descendants, scan: scan));
-        Assert.Empty(await fixture.Service.ListAsync());
+            fixture.Scope.Ingestion.ImportFolderAsync(scan.Folder, FolderSearchScope.Descendants, scan: scan));
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
     }
 
     [Fact]
@@ -131,13 +131,13 @@ public sealed class IngestionScanTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var scan = await fixture.Service.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
         var destination = Path.Combine(fixture.Root, "other-media");
         Directory.CreateDirectory(destination);
-        await fixture.Service.SaveMediaStorageOptionsAsync(new() { MediaDirectory = destination });
+        await fixture.Scope.Settings.SaveMediaStorageOptionsAsync(new() { MediaDirectory = destination });
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.EstimateIngestionSpaceAsync(scan, true, true));
+            fixture.Scope.Ingestion.EstimateIngestionSpaceAsync(scan, true, true));
     }
 
     [Fact]
@@ -145,15 +145,15 @@ public sealed class IngestionScanTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var scan = await fixture.Service.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
-        var space = await fixture.Service.EstimateIngestionSpaceAsync(scan, false, false);
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
+        var space = await fixture.Scope.Ingestion.EstimateIngestionSpaceAsync(scan, false, false);
 
         Assert.Equal(0, space.FileCount);
         Assert.Equal(0, space.RequiredBytes);
         Assert.Equal(0, space.EstimatedBytes);
         Assert.False(space.HasEnoughSpace);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ImportFolderAsync(scan.Folder, scan.SearchScope,
+            fixture.Scope.Ingestion.ImportFolderAsync(scan.Folder, scan.SearchScope,
                 scan: scan, includeImages: false, includeVideos: false));
     }
 
@@ -163,13 +163,13 @@ public sealed class IngestionScanTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         await File.WriteAllBytesAsync(Path.Combine(fixture.Root, "video.mp4"), new byte[123]);
-        var scan = await fixture.Service.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(fixture.Root, FolderSearchScope.SelectedFolder);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.ImportFolderAsync(scan.Folder, scan.SearchScope, scan: scan, includeImages: false));
+            fixture.Scope.Ingestion.ImportFolderAsync(scan.Folder, scan.SearchScope, scan: scan, includeImages: false));
 
         Assert.Contains("ffmpeg", error.Message);
-        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
     }
 
     [Theory]

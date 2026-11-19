@@ -13,17 +13,17 @@ public sealed class NativeCheckoutReleaseTests
     public async Task CheckoutRelease_WhenInitialPublicationIsStillUnderTheGate_ThenObservesThePublishedCheckout()
     {
         using var fixture = new TestVault();
-        var lifetime = Lifetime(fixture.Service);
+        var lifetime = Lifetime(fixture.Scope);
         Task cleanup;
         await lifetime.Gate.WaitAsync();
         try
         {
             Assert.Null(lifetime.Current.Checkout);
-            cleanup = Access(fixture.Service).ReleaseCheckoutAfterOperationsAsync();
+            cleanup = Access(fixture.Scope).ReleaseCheckoutAfterOperationsAsync();
             Assert.False(cleanup.IsCompleted);
             lifetime.EnsureCheckout();
             Assert.Throws<IOException>(() => VaultCheckout.Acquire(fixture.Root));
-            fixture.Service.Dispose();
+            fixture.Scope.Dispose();
         }
         finally { lifetime.Gate.Release(); }
 
@@ -37,9 +37,9 @@ public sealed class NativeCheckoutReleaseTests
     public async Task CheckoutRelease_WhenOldDrainCompletedBeforeNewLeasedGeneration_ThenWaitsForCurrentDrain()
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        var lifetime = Lifetime(fixture.Service);
-        var access = Access(fixture.Service);
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var lifetime = Lifetime(fixture.Scope);
+        var access = Access(fixture.Scope);
         var expectedCheckout = lifetime.Current.Checkout!;
         var oldDrain = fixture.Session.WhenDrainedAsync();
         var key = fixture.Session.Key;
@@ -70,14 +70,14 @@ public sealed class NativeCheckoutReleaseTests
     public async Task CheckoutRelease_WhenLocationWasReplaced_ThenRetainsReplacementCheckout()
     {
         using var fixture = new TestVault();
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        var lifetime = Lifetime(fixture.Service);
-        var access = Access(fixture.Service);
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var lifetime = Lifetime(fixture.Scope);
+        var access = Access(fixture.Scope);
         var previousCheckout = lifetime.Current.Checkout!;
         var destination = fixture.Root + "-replacement";
         try
         {
-            await fixture.Service.SelectNewVaultAsync(destination);
+            await fixture.Scope.Vault.SelectNewVaultAsync(destination);
             await lifetime.Gate.WaitAsync();
             try
             {
@@ -86,12 +86,12 @@ public sealed class NativeCheckoutReleaseTests
                 Assert.Throws<IOException>(() => VaultCheckout.Acquire(destination));
             }
             finally { lifetime.Gate.Release(); }
-            await fixture.Service.CloseVaultAsync();
+            await fixture.Scope.Vault.CloseVaultAsync();
             using var releasedCheckout = VaultCheckout.Acquire(destination);
         }
         finally
         {
-            await fixture.Service.CloseVaultAsync();
+            await fixture.Scope.Vault.CloseVaultAsync();
             if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
         }
     }
@@ -128,9 +128,9 @@ public sealed class NativeCheckoutReleaseTests
         Assert.Equal(Enumerable.Repeat((byte)3, 32), lease.Bytes);
     }
 
-    private static GalleryLifetime Lifetime(GalleryService service) =>
-        (GalleryLifetime)typeof(GalleryScope).GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service.Scope)!;
+    private static GalleryLifetime Lifetime(GalleryScope service) =>
+        (GalleryLifetime)typeof(GalleryScope).GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
 
-    private static VaultAccess Access(GalleryService service) =>
-        (VaultAccess)typeof(GalleryScope).GetField("vaultAccess", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service.Scope)!;
+    private static VaultAccess Access(GalleryScope service) =>
+        (VaultAccess)typeof(GalleryScope).GetField("vaultAccess", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
 }

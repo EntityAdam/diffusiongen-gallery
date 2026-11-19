@@ -16,7 +16,7 @@ public sealed class WorkspaceCatalogTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var records = await SeedAsync(vault);
-        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action => action());
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action => action());
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         catalog.Changed += () =>
         {
@@ -41,7 +41,7 @@ public sealed class WorkspaceCatalogTests
         var records = await SeedAsync(vault);
         var queued = new TaskCompletionSource<Func<Task>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action =>
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action =>
         {
             queued.TrySetResult(action);
             return release.Task;
@@ -52,7 +52,7 @@ public sealed class WorkspaceCatalogTests
         try
         {
             catalog.Dispose();
-            vault.Service.LockVault();
+            vault.Scope.Vault.LockVault();
             await publish();
             await catalog.UpdateAsync(records[0]);
             Assert.Empty(catalog.Images);
@@ -70,7 +70,7 @@ public sealed class WorkspaceCatalogTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        using var catalog = new WorkspaceCatalog(vault.Service.Scope.Vault, vault.Service.Scope.Catalog, vault.Service.Scope.Collections, vault.Service.Scope.Tags, NullLogger.Instance, action => action());
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action => action());
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var publications = new List<string>();
@@ -114,7 +114,7 @@ public sealed class WorkspaceCatalogTests
         await vault.Store.CommitImportsAsync(records.Select(image => new ImportCatalogEntry(image,
             VaultCrypto.Encrypt(thumbnail, key.Bytes, $"thumbnail:{image.Id}"))).ToArray(), key.Bytes);
         // Warm the encrypted first-page index so the workspace opens a partial page.
-        await vault.Service.LoadInitialPageAsync(1);
+        await vault.Scope.Catalog.LoadInitialPageAsync(1);
         return records;
     }
 }

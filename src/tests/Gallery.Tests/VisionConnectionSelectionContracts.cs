@@ -15,8 +15,8 @@ public sealed class VisionConnectionSelectionContracts
         var visionRequestRecorder = new VisionRequestRecorder();
         using var httpClient = new HttpClient(visionRequestRecorder);
         using var fixture = new VisionGalleryFixture(httpClient);
-        await fixture.Service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        var galleryService = fixture.Service;
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var galleryService = fixture.Scope;
         var firstSettings = new VisionSettings { ApiKey = "first-token", Model = "first-model", RequestTimeoutSeconds = 10 };
         var secondSettings = new VisionSettings { Endpoint = "http://192.168.1.2:8080/api/", ApiKey = "second-token", Model = "second-model", RequestTimeoutSeconds = 20 };
         var expectedRequests = new[]
@@ -26,26 +26,26 @@ public sealed class VisionConnectionSelectionContracts
         };
 
         // Act
-        var analyses = await Task.WhenAll(galleryService.AnalyzeImageAsync(firstSettings, "image"),
-            galleryService.AnalyzeImageAsync(secondSettings, "image"));
+        var analyses = await Task.WhenAll(galleryService.Vision.AnalyzeImageAsync(firstSettings, "image"),
+            galleryService.Vision.AnalyzeImageAsync(secondSettings, "image"));
 
         // Assert
         Assert.Equal(expectedRequests.Order(StringComparer.Ordinal), visionRequestRecorder.ReadRequests());
         Assert.All(analyses, analysis => Assert.Equal(("A landscape.", "green"), analysis));
         Assert.Null(httpClient.DefaultRequestHeaders.Authorization);
-        Assert.Equal(new[] { "available" }, await galleryService.GetVisionModelsAsync(new VisionSettings { RequestTimeoutSeconds = 10 }));
+        Assert.Equal(new[] { "available" }, await galleryService.Vision.GetVisionModelsAsync(new VisionSettings { RequestTimeoutSeconds = 10 }));
     }
 
     private sealed class VisionGalleryFixture : IDisposable
     {
         private readonly string root = Path.Combine(Path.GetTempPath(), "vision-connection-" + Guid.NewGuid().ToString("N"));
-        public GalleryService Service { get; }
-        public VisionGalleryFixture(HttpClient client) => Service = GalleryService.Create(Path.Combine(root, "vault"),
+        public GalleryScope Scope { get; }
+        public VisionGalleryFixture(HttpClient client) => Scope = GalleryScope.Create(Path.Combine(root, "vault"),
             new GalleryRuntimeOptions { StateDirectory = Path.Combine(root, "state") }, client);
         public void Dispose()
         {
-            Service.Dispose();
-            Service.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
+            Scope.Dispose();
+            Scope.DriveOperations.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
     }

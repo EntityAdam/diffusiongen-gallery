@@ -10,24 +10,24 @@ public sealed class NativeStoragePathTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "original.png", "folder");
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "original.png", "folder");
         var folder = Path.GetDirectoryName(image.StoredPath)!;
-        await fixture.Service.MoveAsync(image.Id, folder, "lower");
-        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Scope.MediaMaintenance.MoveAsync(image.Id, folder, "lower");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
         var lower = Path.Combine(folder, "lower.dpng");
         var expectedCiphertext = await File.ReadAllBytesAsync(lower);
 
-        await fixture.Service.MoveAsync(image.Id, folder, "LOWER");
-        await fixture.Service.WaitForDriveOperationsAsync();
+        await fixture.Scope.MediaMaintenance.MoveAsync(image.Id, folder, "LOWER");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
 
         var target = Path.Combine(folder, "LOWER.dpng");
-        var moved = Assert.Single(await fixture.Service.ListAsync());
+        var moved = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Equal(image.Id, moved.Id);
         Assert.Equal("LOWER", moved.Name);
         Assert.Equal(target, moved.StoredPath);
         Assert.Equal(expectedCiphertext, await File.ReadAllBytesAsync(target));
         Assert.False(File.Exists(lower));
-        Assert.StartsWith("data:image/", await fixture.Service.PreviewAsync(image.Id));
+        Assert.StartsWith("data:image/", await fixture.Scope.Media.PreviewAsync(image.Id));
     }
 
     [Fact]
@@ -46,10 +46,10 @@ public sealed class NativeStoragePathTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 20)), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "second.png", "folder");
-        await fixture.Service.WaitForDriveOperationsAsync();
-        await fixture.Service.PauseDriveOperationsAsync();
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 20)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "second.png", "folder");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        await fixture.Scope.DriveOperations.PauseDriveOperationsAsync();
         var lower = Path.Combine(fixture.Root, "indexed", "photo.dpng");
         var upper = Path.Combine(fixture.Root, "indexed", "PHOTO.dpng");
         var key = fixture.Session.Key;
@@ -64,7 +64,7 @@ public sealed class NativeStoragePathTests
         }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
 
-        var overview = await fixture.Service.RefreshStorageOverviewAsync();
+        var overview = await fixture.Scope.Storage.RefreshStorageOverviewAsync();
 
         Assert.Equal(OperatingSystem.IsWindows() ? 1 : 2, overview.ImageFileCount);
         Assert.Equal(OperatingSystem.IsWindows() ? 200 : 300, overview.ImageBytes);
@@ -76,10 +76,10 @@ public sealed class NativeStoragePathTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 20)), "first.png", "folder");
-        var second = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "second.png", "folder");
-        await fixture.Service.WaitForDriveOperationsAsync();
-        await fixture.Service.PauseDriveOperationsAsync();
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 20)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 20)), "second.png", "folder");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        await fixture.Scope.DriveOperations.PauseDriveOperationsAsync();
         var external = fixture.Root + "-case-paths";
         Directory.CreateDirectory(external);
         try
@@ -98,8 +98,8 @@ public sealed class NativeStoragePathTests
             Assert.Equal(2, Directory.EnumerateFiles(external).Count());
             var expectedBytes = new FileInfo(lower).Length + new FileInfo(upper).Length;
 
-            var measured = await fixture.Service.RefreshStorageOverviewAsync();
-            var indexed = await fixture.Service.RefreshStorageOverviewAsync();
+            var measured = await fixture.Scope.Storage.RefreshStorageOverviewAsync();
+            var indexed = await fixture.Scope.Storage.RefreshStorageOverviewAsync();
 
             Assert.Equal(2, measured.ImageFileCount);
             Assert.Equal(expectedBytes, measured.ImageBytes);

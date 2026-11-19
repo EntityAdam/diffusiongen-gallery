@@ -31,7 +31,7 @@ public static class VisionTests
         using var client = new HttpClient(new FakeHandler(_ => { calls++; throw new Exception("Must not send"); }));
         var manager = new VisionManager(client);
         var valid = new VisionSettings { Model = "vision" };
-        await vault.Service.SaveSettingsAsync(valid);
+        await vault.Scope.Vision.SaveSettingsAsync(valid);
         VisionSettings[] invalid =
         [
             valid with { AnalysisMaxTokens = 0 },
@@ -41,12 +41,12 @@ public static class VisionTests
         ];
         foreach (var settings in invalid)
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(() => vault.Service.SaveSettingsAsync(settings));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => vault.Scope.Vision.SaveSettingsAsync(settings));
             await Assert.ThrowsAsync<InvalidOperationException>(() => manager.AnalyzeImageAsync(settings, "image"));
             await Assert.ThrowsAsync<InvalidOperationException>(() => manager.SuggestSetAsync(settings, "Series", [], []));
         }
         Assert.Equal(0, calls);
-        Assert.Equal(valid, await vault.Service.SettingsAsync());
+        Assert.Equal(valid, await vault.Scope.Vision.LoadSettingsAsync());
     }
 
     [Theory]

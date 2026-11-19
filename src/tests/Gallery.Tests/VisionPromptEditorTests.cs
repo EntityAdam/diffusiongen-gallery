@@ -24,9 +24,9 @@ public sealed class VisionPromptEditorTests
         using var vault = new TestVault(vision: new VisionManager(client));
         await vault.InitializeAsync();
         var saved = new VisionSettings { Model = "vision", SystemPrompt = "Previously saved image instructions." };
-        await vault.Service.SaveSettingsAsync(saved);
+        await vault.Scope.Vision.SaveSettingsAsync(saved);
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Scope).BuildServiceProvider();
         await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
         VisionSettings? savedCallback = null;
         ParameterView Parameters(VisionSettings settings) => ParameterView.FromDictionary(new Dictionary<string, object?>
@@ -66,7 +66,7 @@ public sealed class VisionPromptEditorTests
             await renderer.DispatchEventAsync(form.Event("onsubmit"), null, EventArgs.Empty);
         });
 
-        var reloaded = await vault.Service.SettingsAsync();
+        var reloaded = await vault.Scope.Vision.LoadSettingsAsync();
         Assert.Equal(custom, reloaded.SystemPrompt);
         Assert.Equal(16384, reloaded.AnalysisMaxTokens);
         Assert.Equal(8192, reloaded.TextMaxTokens);
@@ -75,7 +75,7 @@ public sealed class VisionPromptEditorTests
         Assert.NotNull(savedCallback);
         Assert.Equal(reloaded.Lanes.AsEnumerable(), savedCallback.Lanes.AsEnumerable());
         Assert.Equal(reloaded with { Lanes = [] }, savedCallback with { Lanes = [] });
-        await vault.Service.AnalyzeImageAsync(reloaded, "data:image/png;base64,example");
+        await vault.Scope.Vision.AnalyzeImageAsync(reloaded, "data:image/png;base64,example");
         Assert.NotNull(handler.Body);
         using var request = JsonDocument.Parse(handler.Body);
         var sent = request.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
@@ -97,7 +97,7 @@ public sealed class VisionPromptEditorTests
         await vault.InitializeAsync();
         var settings = new VisionSettings { Model = "vision", SetSuggestionSystemPrompt = "Keep set instructions" };
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Scope).BuildServiceProvider();
         await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
         await renderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -116,7 +116,7 @@ public sealed class VisionPromptEditorTests
             var form = renderer.FindElement("form", null);
             await renderer.DispatchEventAsync(form.Event("onsubmit"), null, EventArgs.Empty);
         });
-        var saved = await vault.Service.SettingsAsync();
+        var saved = await vault.Scope.Vision.LoadSettingsAsync();
         Assert.True(saved.StructuredAnalysis);
         Assert.False(saved.UseExistingTags);
         Assert.True(saved.SuggestNewTags);
@@ -133,9 +133,9 @@ public sealed class VisionPromptEditorTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var original = new VisionSettings { Model = "vision", StructuredAnalysis = initiallyStructured, SystemPrompt = "Original custom prompt" };
-        await vault.Service.SaveSettingsAsync(original);
+        await vault.Scope.Vision.SaveSettingsAsync(original);
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Scope).BuildServiceProvider();
         await using (var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>()))
         {
             await renderer.Dispatcher.InvokeAsync(async () =>
@@ -162,7 +162,7 @@ public sealed class VisionPromptEditorTests
                 Assert.False(renderer.Editor.HasUnsavedChanges);
             });
         }
-        var saved = await vault.Service.SettingsAsync();
+        var saved = await vault.Scope.Vision.LoadSettingsAsync();
         Assert.Equal(!initiallyStructured, saved.StructuredAnalysis);
         Assert.Equal("Other mode custom prompt", saved.SystemPrompt);
         Assert.Equal("Custom set prompt", saved.SetSuggestionSystemPrompt);
@@ -196,7 +196,7 @@ public sealed class VisionPromptEditorTests
         await vault.InitializeAsync();
         var primary = new VisionEndpointLane { Name = "Primary", Model = "first", AutoAccept = true };
         using var services = new ServiceCollection().AddLogging().AddShadCnBlazorComponents()
-            .AddGalleryCapabilities(vault.Service).BuildServiceProvider();
+            .AddGalleryCapabilities(vault.Scope).BuildServiceProvider();
         await using var renderer = new EditorRenderer(services, services.GetRequiredService<ILoggerFactory>());
         await renderer.Dispatcher.InvokeAsync(async () =>
         {
@@ -220,7 +220,7 @@ public sealed class VisionPromptEditorTests
             Assert.True(await renderer.Editor.SaveDraftAsync());
         });
 
-        var saved = await vault.Service.SettingsAsync();
+        var saved = await vault.Scope.Vision.LoadSettingsAsync();
         Assert.Equal(primary, saved.Lanes[0]);
         Assert.Equal(new VisionEndpointLane
         {

@@ -17,13 +17,13 @@ public sealed class AutoLockCheckoutReleaseTests
         var root = Path.Combine(Directory.GetCurrentDirectory(), ".gallery-autolock-" + Guid.NewGuid().ToString("N"));
         var session = new VaultSession(Timeout.InfiniteTimeSpan);
         var service = CreateService(root, session);
-        GalleryService? otherService = null;
+        GalleryScope? otherService = null;
         KeyLease? lease = null;
         try
         {
-            await service.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+            await service.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
             var autoLocked = 0;
-            service.OnAutoLocked += () => autoLocked++;
+            service.Vault.OnAutoLocked += () => autoLocked++;
             byte[]? borrowedKey = null;
             if (holdLease)
             {
@@ -33,7 +33,7 @@ public sealed class AutoLockCheckoutReleaseTests
 
             session.InactivityTimeout = TimeSpan.FromTicks(1);
 
-            Assert.False(service.IsUnlocked);
+            Assert.False(service.Vault.IsUnlocked);
             Assert.Equal(1, autoLocked);
             var locked = Assert.Throws<VaultLockedException>(() => session.AcquireUnlockedSession());
             Assert.Equal("timed_out", locked.ContextualDataByName.ValuesByName["Vault.State"]);
@@ -42,36 +42,36 @@ public sealed class AutoLockCheckoutReleaseTests
             if (holdLease)
             {
                 Assert.Equal(borrowedKey, lease!.Bytes);
-                await Assert.ThrowsAsync<IOException>(() => otherService.UnlockWithPassphraseAsync(TestVault.Passphrase));
+                await Assert.ThrowsAsync<IOException>(() => otherService.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
                 lease.Dispose();
                 lease = null;
             }
 
             await WaitForSecondUnlockAsync(otherService);
-            Assert.True(otherService.IsUnlocked);
-            await otherService.CloseVaultAsync();
+            Assert.True(otherService.Vault.IsUnlocked);
+            await otherService.Vault.CloseVaultAsync();
         }
         finally
         {
             lease?.Dispose();
             otherService?.Dispose();
             service.Dispose();
-            await service.WaitForDriveOperationsAsync();
+            await service.DriveOperations.WaitForDriveOperationsAsync();
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
 
-    private static GalleryService CreateService(string root, VaultSession session) =>
+    private static GalleryScope CreateService(string root, VaultSession session) =>
         new(new GalleryStore(Path.Combine(root, "gallery.db")), new VaultStore(root), session);
 
-    private static async Task WaitForSecondUnlockAsync(GalleryService service)
+    private static async Task WaitForSecondUnlockAsync(GalleryScope service)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (true)
         {
             try
             {
-                await service.UnlockWithPassphraseAsync(TestVault.Passphrase);
+                await service.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
                 return;
             }
             catch (IOException) when (!timeout.IsCancellationRequested)

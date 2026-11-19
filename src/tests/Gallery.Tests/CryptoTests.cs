@@ -129,7 +129,7 @@ public sealed class CryptoTests
 
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.CreateVaultAsync("short", "short"));
+            fixture.Scope.Vault.CreateVaultAsync("short", "short"));
 
         // Assert
         Assert.IsType<InvalidOperationException>(error);
