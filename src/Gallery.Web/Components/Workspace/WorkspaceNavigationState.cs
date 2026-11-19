@@ -55,11 +55,8 @@ public sealed class WorkspaceNavigationState(
     internal Task ToggleToolboxAsync() => Activity.Busy ? Task.CompletedTask
         : Section == "gallery" ? browser.ToggleToolboxAsync() : InGalleryAsync(browser.ShowToolboxAsync);
 
-    internal Task OpenTrashAsync() => InGalleryAsync(async () =>
-    {
-        browser.ToolboxVisible = true;
-        await SetActiveToolAsync("trash");
-    });
+    internal Task OpenTrashAsync() => InGalleryAsync(() =>
+        Activity.Busy ? Task.CompletedTask : browser.OpenTrashAsync());
 
     internal Task ViewTagAsync(string tag) =>
         catalog.IsPartial ? Task.CompletedTask : InGalleryAsync(() => commands.RunAsync("Filtering...", () => browser.ViewTagAsync(tag)));
@@ -110,8 +107,7 @@ public sealed class WorkspaceNavigationState(
         {
             Section = "gallery";
             duplicates.Active = false;
-            browser.ActiveTool = "review";
-            return commands.RunAsync("Filtering...", browser.FilterChangedAsync);
+            return commands.RunAsync("Filtering...", browser.OpenReviewAsync);
         }
 
         Section = section;
@@ -122,7 +118,7 @@ public sealed class WorkspaceNavigationState(
         browser.ClearSelection();
         return section == "duplicates"
             ? commands.RunAsync("Loading duplicates...", duplicates.OpenAsync)
-            : commands.RunAsync("Filtering...", browser.FilterChangedAsync);
+            : commands.RunAsync("Filtering...", browser.ResetPageAndSelectionAsync);
     }
 
     internal async Task ReceiveRouteAsync(string? route, NavigationManager? navigationManager)

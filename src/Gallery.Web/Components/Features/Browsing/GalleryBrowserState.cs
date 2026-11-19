@@ -31,26 +31,28 @@ public sealed class GalleryBrowserState : IDisposable
         Thumbnails = new(vault, media, logger, changed);
     }
 
-    public GalleryFilter Filter { get; set; } = new();
-    public GalleryFilter? BrowsingFilter { get; set; }
-    public long FilterInputRevision { get; set; }
-    public string Grouping { get; set; } = "none";
-    public string Density { get; set; } = UiPreferences.DetailDensity;
-    public int Page { get; set; }
+    public GalleryFilter Filter { get; private set; } = new();
+    public GalleryFilter? BrowsingFilter { get; private set; }
+    public long FilterInputRevision { get; private set; }
+    public string Grouping { get; private set; } = "none";
+    public string Density { get; private set; } = UiPreferences.DetailDensity;
+    public int Page { get; private set; }
     public int PageSize => Density == "compact" ? 49 : 12;
     public int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
     public IReadOnlyList<ImageRecord> Filtered => Browsing.Images;
     public IEnumerable<ImageRecord> PageImages => Filtered.Skip(Page * PageSize).Take(PageSize);
-    public HashSet<string> LibrarySelection { get; } = [];
-    public HashSet<string> RemovalSelection { get; } = [];
-    public string? SelectionAnchor { get; set; }
-    public IReadOnlyList<SavedView> QuickFilters { get; set; } = [];
+    private readonly HashSet<string> librarySelection = [];
+    private readonly HashSet<string> removalSelection = [];
+    public IReadOnlySet<string> LibrarySelection => librarySelection;
+    public IReadOnlySet<string> RemovalSelection => removalSelection;
+    public string? SelectionAnchor { get; private set; }
+    public IReadOnlyList<SavedView> QuickFilters { get; private set; } = [];
     public IReadOnlyDictionary<string, OrganizationSuggestion> Suggestions { get; private set; } = new Dictionary<string, OrganizationSuggestion>();
-    public string ActiveTool { get; set; } = "";
+    public string ActiveTool { get; private set; } = "";
     public bool TrashActive => ActiveTool == "trash";
-    public bool ToolboxVisible { get; set; } = true;
-    public double? ToolboxX { get; set; }
-    public double? ToolboxY { get; set; }
+    public bool ToolboxVisible { get; private set; } = true;
+    public double? ToolboxX { get; private set; }
+    public double? ToolboxY { get; private set; }
     public bool ReviewRandomOrder { get; set; }
     private int reviewGoal = 10;
     public IEnumerable<ImageRecord> ReviewPool => Filtered.Where(image => !image.IsReviewed && !image.IsMarkedForDeletion);
@@ -99,14 +101,14 @@ public sealed class GalleryBrowserState : IDisposable
 
     public void ClearSelection()
     {
-        LibrarySelection.Clear();
-        RemovalSelection.Clear();
+        librarySelection.Clear();
+        removalSelection.Clear();
         SelectionAnchor = null;
     }
 
     public void SelectCard(string id, bool range)
     {
-        var selection = TrashActive ? RemovalSelection : LibrarySelection;
+        var selection = TrashActive ? removalSelection : librarySelection;
         var ordered = Filtered.Select(image => image.Id).ToList();
         SelectionAnchor = MediaRangeSelection.Select(selection, ordered, SelectionAnchor, id, range);
     }
@@ -116,8 +118,8 @@ public sealed class GalleryBrowserState : IDisposable
         Filter = UpdateCollectionName(Filter);
         if (BrowsingFilter is { } saved) BrowsingFilter = UpdateCollectionName(saved);
         previousCollections = catalog.Collections;
-        RemovalSelection.IntersectWith(catalog.Images.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
-        LibrarySelection.IntersectWith(catalog.Images.Select(image => image.Id));
+        removalSelection.IntersectWith(catalog.Images.Where(image => image.IsMarkedForDeletion).Select(image => image.Id));
+        librarySelection.IntersectWith(catalog.Images.Select(image => image.Id));
         Page = Math.Min(Page, PageCount - 1);
         return LoadThumbnailsAsync();
     }
@@ -152,7 +154,7 @@ public sealed class GalleryBrowserState : IDisposable
         BrowsingFilter = null;
         ActiveTool = "filters";
         ToolboxVisible = true;
-        await FilterChangedAsync();
+        await ResetPageAndSelectionAsync();
         await SaveToolboxStateAsync();
     }
 
@@ -168,43 +170,107 @@ public sealed class GalleryBrowserState : IDisposable
         return SaveToolboxStateAsync();
     }
 
-    public Task FilterChangedAsync()
+    internal Task ResetPageAndSelectionAsync()
+    {
+        ResetPageAndSelection();
+        return LoadThumbnailsAsync();
+    }
+
+    private void ResetPageAndSelection()
     {
         Page = 0;
         ClearSelection();
+    }
+
+    public Task GoToPageAsync(int page)
+    {
+        if (catalog.IsPartial || page < 0 || page >= PageCount || page == Page)
+            return Task.CompletedTask;
+
+        Page = page;
         return LoadThumbnailsAsync();
     }
+
+    public Task SetGroupingAsync(string grouping)
+    {
+        if (catalog.IsPartial) return Task.CompletedTask;
+        Grouping = grouping;
+        return ResetPageAndSelectionAsync();
+    }
+
+    internal void SetQuickFilters(IReadOnlyList<SavedView> views) => QuickFilters = views;
+
+    internal Task SetToolboxPositionAsync((double? X, double? Y) position)
+    {
+        if ((ToolboxX, ToolboxY) == position) return Task.CompletedTask;
+        (ToolboxX, ToolboxY) = position;
+        return SaveToolboxStateAsync();
+    }
+
+    internal Task ResetToolboxPositionAsync()
+    {
+        ToolboxVisible = true;
+        (ToolboxX, ToolboxY) = (null, null);
+        return SaveToolboxStateAsync();
+    }
+
     public Task ResetFiltersAsync()
     {
         FilterInputRevision++;
         Filter = TrashActive ? new() { Deletion = "marked" } : new();
-        return FilterChangedAsync();
+        return ResetPageAndSelectionAsync();
     }
     public Task ApplyFilterAsync(GalleryFilter value)
     {
         if (catalog.IsPartial) return Task.CompletedTask;
         Filter = value;
-        return FilterChangedAsync();
+        return ResetPageAndSelectionAsync();
     }
     public Task SetSortAsync(string? value) => ApplyFilterAsync(Filter with { Sort = value ?? "newest" });
+    internal Task OpenReviewAsync() => ChangeActiveToolAsync("review", resetView: true);
+
+    internal Task OpenTrashAsync()
+    {
+        ToolboxVisible = true;
+        return SetActiveToolAsync("trash");
+    }
+
     public async Task SetActiveToolAsync(string value)
     {
         if (catalog.IsPartial && value is not ("" or "views")) return;
+        if (await ChangeActiveToolAsync(value)) await SaveToolboxStateAsync();
+    }
+
+    private async Task<bool> ChangeActiveToolAsync(string value, bool resetView = false)
+    {
         value = UiPreferences.ToolboxTools.Contains(value) ? value : "";
-        if (ActiveTool == value) return;
+        var changed = ActiveTool != value;
         var wasTrash = TrashActive;
         ActiveTool = value;
-        if (TrashActive != wasTrash)
+        var trashChanged = TrashActive != wasTrash;
+        if (trashChanged)
         {
             FilterInputRevision++;
-            if (TrashActive) { BrowsingFilter = Filter with { }; Filter = new() { Deletion = "marked" }; }
-            else { Filter = BrowsingFilter ?? new(); BrowsingFilter = null; }
-            ClearSelection();
-            if (catalog.IsPartial) await catalog.OpenAsync(PageSize, TrashActive);
-            await FilterChangedAsync();
+            if (TrashActive)
+            {
+                BrowsingFilter = Filter;
+                Filter = new() { Deletion = "marked" };
+            }
+            else
+            {
+                Filter = BrowsingFilter ?? new();
+                BrowsingFilter = null;
+            }
         }
-        await SaveToolboxStateAsync();
+
+        if (!resetView && !trashChanged) return changed;
+
+        ResetPageAndSelection();
+        if (trashChanged && catalog.IsPartial) await catalog.OpenAsync(PageSize, TrashActive);
+        await LoadThumbnailsAsync();
+        return changed;
     }
+
     public async Task SetDensityAsync(string value)
     {
         if (Density == value) return;
@@ -215,7 +281,7 @@ public sealed class GalleryBrowserState : IDisposable
         await LoadThumbnailsAsync();
         await SavePreferencesAsync();
     }
-    public async Task SaveToolboxStateAsync()
+    private async Task SaveToolboxStateAsync()
     {
         if (disposed || !vault.IsUnlocked) return;
         try { await SavePreferencesAsync(); }

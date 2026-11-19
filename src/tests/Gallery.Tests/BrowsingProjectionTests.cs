@@ -558,6 +558,39 @@ public sealed class BrowsingProjectionTests
         });
     }
 
+    [Fact]
+    public async Task Browser_only_navigates_to_available_pages_and_resets_the_view_when_grouping_changes()
+    {
+        using var vault = new TestVault();
+        var images = CreateImages(15);
+        using var home = CreateSession(vault, images);
+        var browser = home.Browser;
+        browser.SelectCard(images[0].Id, range: false);
+
+        SetField(home, "Catalog.IsPartial", true);
+        await browser.GoToPageAsync(1);
+        await browser.SetGroupingAsync("prompt");
+        Assert.Equal(0, browser.Page);
+        Assert.Equal("none", browser.Grouping);
+        Assert.Contains(images[0].Id, browser.LibrarySelection);
+
+        SetField(home, "Catalog.IsPartial", false);
+        await browser.GoToPageAsync(1);
+        Assert.Equal(1, browser.Page);
+        Assert.Contains(images[0].Id, browser.LibrarySelection);
+
+        await browser.GoToPageAsync(-1);
+        await browser.GoToPageAsync(browser.PageCount);
+        Assert.Equal(1, browser.Page);
+
+        await browser.SetGroupingAsync("prompt");
+        Assert.Equal("prompt", browser.Grouping);
+        Assert.Equal(0, browser.Page);
+        Assert.Empty(browser.LibrarySelection);
+        Assert.Null(browser.SelectionAnchor);
+        await browser.PauseAsync();
+    }
+
     [Theory]
     [InlineData("review")]
     [InlineData("trash")]
@@ -570,8 +603,8 @@ public sealed class BrowsingProjectionTests
         for (var index = 0; index < images.Count; index++)
             images[index] = images[index] with { Generation = new() { Prompt = index < 3 ? "First prompt" : "Second prompt" } };
         using var home = CreateSession(testVault, images);
-        home.Browser.Grouping = "prompt";
-        home.Browser.Filter = new GalleryFilter { Review = "pending", Sort = "name" };
+        SetField(home, "Browser.Grouping", "prompt");
+        SetField(home, "Browser.Filter", new GalleryFilter { Review = "pending", Sort = "name" });
         Assert.Equal(images.Select(image => image.Id), home.Browser.Filtered.Select(image => image.Id));
 
         if (action == "delete")
@@ -595,7 +628,7 @@ public sealed class BrowsingProjectionTests
         Assert.Equal("First prompt", group.Prompt);
         Assert.Equal(images[2].Id, Assert.Single(group.Images).Id);
 
-        home.Browser.Filter = home.Browser.Filter with { Sort = "oldest" };
+        SetField(home, "Browser.Filter", home.Browser.Filter with { Sort = "oldest" });
         Assert.Equal(images.Skip(3).Append(images[2]).Select(image => image.Id), home.Browser.Filtered.Select(image => image.Id));
         Assert.Equal(PromptGroup.Unique, home.Browser.Browsing.PromptGroupsByImageId[images[2].Id].Kind);
     }
@@ -796,8 +829,8 @@ public sealed class BrowsingProjectionTests
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
-            SelectedIds = GetField<HashSet<string>>(home, "Browser.RemovalSelection").Order(StringComparer.Ordinal).ToArray(),
-            LibrarySelectionCount = GetField<HashSet<string>>(home, "Browser.LibrarySelection").Count
+            SelectedIds = GetField<IReadOnlySet<string>>(home, "Browser.RemovalSelection").Order(StringComparer.Ordinal).ToArray(),
+            LibrarySelectionCount = GetField<IReadOnlySet<string>>(home, "Browser.LibrarySelection").Count
         });
     }
 
@@ -819,7 +852,7 @@ public sealed class BrowsingProjectionTests
         ComponentTestAccess.Call(home, SelectCardMethod, imageRecords[1].Id, false);
 
         // Assert
-        Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "Browser.RemovalSelection").Order(StringComparer.Ordinal));
+        Assert.Equal(expectedSelectedIds, GetField<IReadOnlySet<string>>(home, "Browser.RemovalSelection").Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -863,7 +896,7 @@ public sealed class BrowsingProjectionTests
         home.Browser.ClearSelection();
 
         // Assert
-        Assert.Equal(expectedSelectedIds, GetField<HashSet<string>>(home, "Browser.RemovalSelection"));
+        Assert.Equal(expectedSelectedIds, GetField<IReadOnlySet<string>>(home, "Browser.RemovalSelection"));
     }
 
     [Fact]

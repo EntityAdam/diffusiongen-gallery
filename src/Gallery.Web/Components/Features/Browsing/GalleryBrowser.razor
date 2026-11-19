@@ -116,8 +116,8 @@
             <h2 id="gallery-view-drawer-title">Change view</h2>
         </div>
         <div class="gallery-view-drawer-body">
-            <GalleryViewOptions Density="@State.Density" DensityChanged="SetDensityAsync" @bind-Grouping="State.Grouping"
-                                @bind-Grouping:after="FilterChangedAsync" Sort="@State.Filter.Sort" SortChanged="SetSort"
+            <GalleryViewOptions Density="@State.Density" DensityChanged="SetDensityAsync"
+                                Grouping="@State.Grouping" GroupingChanged="SetGroupingAsync" Sort="@State.Filter.Sort" SortChanged="SetSort"
                                 Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" HasImages="State.PageImages.Any()"
                                 Fullscreen="() => OpenViewerAsync(null)" ResetPosition="ResetToolboxPositionAsync" />
         </div>
@@ -127,7 +127,7 @@
 @if (State.ActiveTool == "filters" && Active && !OverlayOpen)
 {
     <FilterDrawer Filter="State.Filter" KnownTags="Catalog.AllTags" Images="Catalog.Images" ResultCount="State.Filtered.Count"
-                  QuickFilters="State.QuickFilters" Saved="value => State.QuickFilters = value" Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial"
+                  QuickFilters="State.QuickFilters" Saved="State.SetQuickFilters" Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial"
                   ResetVersion="State.FilterInputRevision" Close='() => SetActiveToolAsync("")' Reset="ResetFilters"
                   Changed="ApplyFilterPanelAsync" />
 }

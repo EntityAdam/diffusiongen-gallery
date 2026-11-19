@@ -107,7 +107,7 @@ public sealed class UiConsistencyTests
             await session.Navigation.SwitchWorkflowAsync("duplicates");
             await session.Presentation.OpenAsync(image);
             ComponentTestAccess.Set(fixture.LatestComponent<MediaDetailDialog>(), "editUserDescription", "draft");
-            session.Browser.ToolboxVisible = false;
+            if (session.Browser.ToolboxVisible) await session.Browser.ToggleToolboxAsync();
 
             await session.Navigation.OpenTrashAsync();
             Assert.True(session.Guard.IsPending);
@@ -595,8 +595,8 @@ public sealed class UiConsistencyTests
         await vault.InitializeAsync();
         await using var fixture = ComponentRenderFixture.Create(vault.Service);
         var (home, _) = await fixture.RenderWorkspaceAsync();
-        var selected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.LibrarySelection")!;
-        var trashSelected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.RemovalSelection")!;
+        var selected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.librarySelection")!;
+        var trashSelected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.removalSelection")!;
         selected.Add("hidden"); trashSelected.Add("marked");
         ComponentTestAccess.Set(home, "Browser.SelectionAnchor", "hidden");
         await Invoke(fixture, home, action, action == "Browser.SetSortAsync" ? ["name"] : []);
@@ -632,8 +632,8 @@ public sealed class UiConsistencyTests
         await Invoke(fixture, home, "Navigation.SwitchWorkflowAsync", "tags");
         Assert.Contains("View media tagged", await Html(fixture, root));
         ComponentTestAccess.Set(home, "Browser.Page", 2);
-        Field<HashSet<string>>(home, "Browser.LibrarySelection").Add(other.Id);
-        Field<HashSet<string>>(home, "Browser.RemovalSelection").Add(marked.Id);
+        Field<HashSet<string>>(home, "Browser.librarySelection").Add(other.Id);
+        Field<HashSet<string>>(home, "Browser.removalSelection").Add(marked.Id);
         ComponentTestAccess.Set(home, "Browser.SelectionAnchor", other.Id);
         var revision = Field<long>(home, "Browser.FilterInputRevision");
 
@@ -649,8 +649,8 @@ public sealed class UiConsistencyTests
         Assert.Contains("aria-label=\"Close filters\"", galleryHtml);
         Assert.Equal(0, Field<int>(home, "Browser.Page"));
         Assert.True(Field<long>(home, "Browser.FilterInputRevision") > revision);
-        Assert.Empty(Field<HashSet<string>>(home, "Browser.LibrarySelection"));
-        Assert.Empty(Field<HashSet<string>>(home, "Browser.RemovalSelection"));
+        Assert.Empty(Field<IReadOnlySet<string>>(home, "Browser.LibrarySelection"));
+        Assert.Empty(Field<IReadOnlySet<string>>(home, "Browser.RemovalSelection"));
         Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.SelectionAnchor"));
         var filtered = (IReadOnlyList<ImageRecord>)ComponentTestAccess.Get<object>(home, "Browser.Filtered")!;
         Assert.Equal(tag == "cat" ? new[] { matching.Id } : Array.Empty<string>(), filtered.Select(image => image.Id));

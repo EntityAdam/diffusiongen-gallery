@@ -113,59 +113,30 @@ internal sealed class VaultLocationCoordinator(
         finally { galleryLifetime.Gate.Release(); }
     }
 
-    public async Task MoveVaultAsync(string directory)
+    public Task MoveVaultAsync(string directory) => RelocateUnlockedVaultAsync(directory, StageVaultMoveAsync,
+        destination => $"The gallery was moved to '{destination}', but old-location cleanup or history persistence failed. The verified destination is intact; inspect the original location before removing any remaining files.");
+
+    private async Task<(IGalleryStore Store, Action CleanSource)> StageVaultMoveAsync(StagedLocation location, byte[] key)
     {
-        var destination = CatalogDirectoryRules.NormalizeVaultDirectory(directory);
-        CatalogDirectoryRules.RequireLocalCatalogDirectory(destination);
-        await galleryLifetime.Gate.WaitAsync();
-        byte[]? key = null;
-        StagedLocation? stagedLocation = null;
-        var published = false;
-        var lockRequestsAtStart = 0L;
-        try
+        var sourceRoot = VaultRoot;
+        await GalleryDriveQueue.ReconcileOutstandingDeletesAsync(galleryStore, key);
+        var records = await galleryStore.ReadRecordsAsync(key);
+        var staging = location.CreateStagingDirectory(".vault-stage-");
+        await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
+        var stagedStore = galleryLifetime.StoreFactory.Create(staging);
+        foreach (var record in records)
         {
-            galleryLifetime.EnsureCheckout();
-            stagedLocation = AcquireStagedLocation(destination);
-            lockRequestsAtStart = vaultAccess.ExplicitLockRequests;
-            key = vaultSession.Key;
-            await StopDriveAndDrainSessionAsync();
-            var sourceRoot = VaultRoot;
-            await GalleryDriveQueue.ReconcileOutstandingDeletesAsync(galleryStore, key);
-            var records = await galleryStore.ReadRecordsAsync(key);
-            var staging = stagedLocation.CreateStagingDirectory(".vault-stage-");
-            await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
-            var stagedStore = galleryLifetime.StoreFactory.Create(staging);
-            foreach (var record in records)
-            {
-                ValidateMediaPath(record);
-                var relative = StoredMediaProcessor.RelativePath(record);
-                var target = Path.Combine(staging, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.Copy(record.StoredPath, target, overwrite: false);
-                if (await FileSha256.ComputeAsync(record.StoredPath) != await FileSha256.ComputeAsync(target))
-                    throw new IOException($"Media verification failed for '{record.Name}'. The source gallery was not removed.");
-                await stagedStore.UpdateAsync(record with { StoredPath = Path.Combine(destination, relative) }, key);
-            }
-            await ClearLocationSettingsAsync(stagedStore, key);
-            await PublishStagedVaultAsync(stagedStore, key, staging, destination);
-            published = true;
-            var sourceCheckout = stagedLocation.Activate();
-            try
-            {
-                history?.Save(destination);
-                DeleteVaultData(sourceRoot, records);
-            }
-            finally { sourceCheckout?.Dispose(); }
+            ValidateMediaPath(record);
+            var relative = StoredMediaProcessor.RelativePath(record);
+            var target = Path.Combine(staging, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(record.StoredPath, target, overwrite: false);
+            if (await FileSha256.ComputeAsync(record.StoredPath) != await FileSha256.ComputeAsync(target))
+                throw new IOException($"Media verification failed for '{record.Name}'. The source gallery was not removed.");
+            await stagedStore.UpdateAsync(record with { StoredPath = Path.Combine(location.Destination, relative) }, key);
         }
-        catch (Exception exception)
-        {
-            // Until publication, the original vault remains intact and can be unlocked again.
-            if (published)
-                throw new IOException($"The gallery was moved to '{destination}', but old-location cleanup or history persistence failed. The verified destination is intact; inspect the original location before removing any remaining files.", exception);
-            vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
-            throw;
-        }
-        finally { FinishStagedLocation(stagedLocation, key); }
+        await ClearLocationSettingsAsync(stagedStore, key);
+        return (stagedStore, () => DeleteVaultData(sourceRoot, records));
     }
 
     public async Task PurgeVaultAsync(string confirmation)
@@ -192,54 +163,57 @@ internal sealed class VaultLocationCoordinator(
     }
 
     /// <summary>Relocates only the encrypted catalog and header; all encrypted media stays at its existing paths.</summary>
-    public async Task RelocateCatalogAsync(string directory)
+    public Task RelocateCatalogAsync(string directory) => RelocateUnlockedVaultAsync(directory, StageCatalogRelocationAsync,
+        destination => $"The local catalog is intact at '{destination}', but old catalog cleanup or history persistence failed. Media files were not moved.");
+
+    private async Task<(IGalleryStore Store, Action CleanSource)> StageCatalogRelocationAsync(StagedLocation location, byte[] key)
+    {
+        var mediaDirectory = await GallerySettings.ReadMediaDirectoryAsync(galleryLifetime.Current, key);
+        var sourceRoot = VaultRoot;
+        var staging = location.CreateStagingDirectory(".catalog-stage-");
+        await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
+        var stagedStore = galleryLifetime.StoreFactory.Create(staging);
+        await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
+            MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose, key);
+        await stagedStore.DeleteSettingsAsync(key, StorageOverview.SettingId);
+        var copiedRecords = await stagedStore.ReadRecordsAsync(key);
+        var sourceRecords = await galleryStore.ReadRecordsAsync(key);
+        if (!CatalogRecordsMatch(copiedRecords, sourceRecords))
+            throw new IOException("The copied catalog did not match the original; relocation was stopped.");
+        return (stagedStore, () => DeleteCatalogFiles(sourceRoot));
+    }
+
+    private async Task RelocateUnlockedVaultAsync(string directory,
+        Func<StagedLocation, byte[], Task<(IGalleryStore Store, Action CleanSource)>> prepare,
+        Func<string, string> publishedFailureMessage)
     {
         var destination = CatalogDirectoryRules.NormalizeVaultDirectory(directory);
         CatalogDirectoryRules.RequireLocalCatalogDirectory(destination);
         await galleryLifetime.Gate.WaitAsync();
         byte[]? key = null;
-        StagedLocation? stagedLocation = null;
-        var published = false;
+        StagedLocation? location = null;
         var lockRequestsAtStart = 0L;
         try
         {
             galleryLifetime.EnsureCheckout();
-            stagedLocation = AcquireStagedLocation(destination);
+            location = AcquireStagedLocation(destination);
             lockRequestsAtStart = vaultAccess.ExplicitLockRequests;
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
-            var mediaDirectory = await GallerySettings.ReadMediaDirectoryAsync(galleryLifetime.Current, key);
-            var sourceRoot = VaultRoot;
-            var staging = stagedLocation.CreateStagingDirectory(".catalog-stage-");
-            await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
-            var stagedStore = galleryLifetime.StoreFactory.Create(staging);
-            await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
-                MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose, key);
-            await stagedStore.DeleteSettingsAsync(key, StorageOverview.SettingId);
-            var records = await stagedStore.ReadRecordsAsync(key);
-            var sourceRecords = await galleryStore.ReadRecordsAsync(key);
-            if (!CatalogRecordsMatch(records, sourceRecords))
-                throw new IOException("The copied catalog did not match the original; relocation was stopped.");
-            await PublishStagedVaultAsync(stagedStore, key, staging, destination);
-            published = true;
-            var sourceCheckout = stagedLocation.Activate();
-            try
-            {
-                history?.Save(destination);
-                foreach (var name in new[]
-                    { CatalogFileName + "-wal", CatalogFileName + "-shm", CatalogFileName, VaultHeaderFileName })
-                    File.Delete(Path.Combine(sourceRoot, name));
-            }
-            finally { sourceCheckout?.Dispose(); }
+
+            var (stagedStore, cleanSource) = await prepare(location, key);
+            using var sourceCheckout = await location.PublishAsync(stagedStore, key);
+            history?.Save(destination);
+            cleanSource();
         }
         catch (Exception exception)
         {
-            if (published)
-                throw new IOException($"The local catalog is intact at '{destination}', but old catalog cleanup or history persistence failed. Media files were not moved.", exception);
+            if (location?.IsPublished == true)
+                throw new IOException(publishedFailureMessage(destination), exception);
             vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
-        finally { FinishStagedLocation(stagedLocation, key); }
+        finally { FinishStagedLocation(location, key); }
     }
 
     private static bool CatalogRecordsMatch(List<ImageRecord> copied, List<ImageRecord> source) =>
@@ -269,8 +243,8 @@ internal sealed class VaultLocationCoordinator(
             await ClearLocationSettingsAsync(store, key);
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
             await StopDriveAndDrainSessionAsync();
-            await PublishStagedVaultAsync(store, key, staging, destination);
-            stagedLocation.Activate()?.Dispose();
+            var sourceCheckout = await stagedLocation.PublishAsync(store, key);
+            sourceCheckout?.Dispose();
             history?.Save(destination);
             // Restore returns to regular sign-in; credentials and plaintext never survive the operation.
         }
@@ -357,39 +331,14 @@ internal sealed class VaultLocationCoordinator(
                 if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
             if (!Directory.EnumerateFileSystemEntries(imagesDirectory).Any()) Directory.Delete(imagesDirectory);
         }
-        // Delete the header last; a partial failure remains an identifiable, checked-out vault.
-        foreach (var name in new[] { CatalogFileName + "-wal", CatalogFileName + "-shm", CatalogFileName, VaultHeaderFileName })
-            File.Delete(Path.Combine(root, name));
+        DeleteCatalogFiles(root);
     }
 
-    private async Task PublishStagedVaultAsync(IGalleryStore store, byte[] key, string staging, string destination)
+    private static void DeleteCatalogFiles(string root)
     {
-        EnsureActive();
-        await store.PrepareForPublicationAsync(key);
-        var moved = new List<string>();
-        try
-        {
-            foreach (var name in new[] { "images", CatalogFileName, VaultHeaderFileName })
-            {
-                var source = Path.Combine(staging, name);
-                var target = Path.Combine(destination, name);
-                if (Directory.Exists(source)) Directory.Move(source, target);
-                else if (File.Exists(source)) File.Move(source, target);
-                else continue;
-                moved.Add(name);
-            }
-        }
-        catch
-        {
-            foreach (var name in moved.AsEnumerable().Reverse())
-            {
-                var source = Path.Combine(destination, name);
-                var target = Path.Combine(staging, name);
-                if (Directory.Exists(source)) Directory.Move(source, target);
-                else File.Move(source, target);
-            }
-            throw;
-        }
+        // Delete the header last so a partial failure leaves an identifiable vault.
+        foreach (var name in new[] { CatalogFileName + "-wal", CatalogFileName + "-shm", CatalogFileName, VaultHeaderFileName })
+            File.Delete(Path.Combine(root, name));
     }
 
     // Queued drive work and the file index describe paths at the old location, so they never travel with a copy.
@@ -408,6 +357,9 @@ internal sealed class VaultLocationCoordinator(
         private VaultCheckout? checkout = destinationCheckout;
         private string? stagingDirectory;
 
+        public string Destination => destination;
+        public bool IsPublished { get; private set; }
+
         public string CreateStagingDirectory(string prefix)
         {
             stagingDirectory = Path.Combine(destination, prefix + Guid.NewGuid().ToString("N"));
@@ -415,8 +367,37 @@ internal sealed class VaultLocationCoordinator(
             return stagingDirectory;
         }
 
-        public VaultCheckout? Activate()
+        public async Task<VaultCheckout?> PublishAsync(IGalleryStore store, byte[] key)
         {
+            ObjectDisposedException.ThrowIf(lifetime.IsDisposed, lifetime);
+            var staging = stagingDirectory ?? throw new InvalidOperationException("Create the staging directory before publishing.");
+            await store.PrepareForPublicationAsync(key);
+            var moved = new List<string>();
+            try
+            {
+                foreach (var name in new[] { "images", CatalogFileName, VaultHeaderFileName })
+                {
+                    var source = Path.Combine(staging, name);
+                    var target = Path.Combine(destination, name);
+                    if (Directory.Exists(source)) Directory.Move(source, target);
+                    else if (File.Exists(source)) File.Move(source, target);
+                    else continue;
+                    moved.Add(name);
+                }
+            }
+            catch
+            {
+                foreach (var name in moved.AsEnumerable().Reverse())
+                {
+                    var source = Path.Combine(destination, name);
+                    var target = Path.Combine(staging, name);
+                    if (Directory.Exists(source)) Directory.Move(source, target);
+                    else File.Move(source, target);
+                }
+                throw;
+            }
+
+            IsPublished = true;
             var retired = lifetime.PublishLocation(lifetime.StoreFactory.Create(destination), new VaultStore(destination), checkout);
             checkout = null;
             return retired;

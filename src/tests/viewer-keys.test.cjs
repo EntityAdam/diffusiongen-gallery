@@ -4,6 +4,15 @@ const path = require("node:path");
 const { test } = require("node:test");
 const vm = require("node:vm");
 
+function loadGalleryScripts(globals) {
+    const context = vm.createContext(globals);
+    const scripts = ["gallery-dom.js", "gallery-grid.js", "gallery-toolbox.js", "gallery-security.js", "viewer.js"];
+    for (const script of scripts) {
+        const source = readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", script), "utf8");
+        vm.runInContext(source, context, { filename: script });
+    }
+}
+
 function setup({ dialog = false, selection = false } = {}) {
     const listeners = new Map();
     const calls = [];
@@ -28,7 +37,7 @@ function setup({ dialog = false, selection = false } = {}) {
         querySelectorAll() { return []; }
     };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, Element: class { }, document: { addEventListener() { } }
     });
     window.galleryGrid.attach({ invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } }, doc);
@@ -59,7 +68,7 @@ test("review confetti bursts left then right after 80ms and cleans up", async ()
         }
     };
     const window = { matchMedia: () => ({ matches: false }) };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, document, Element: class {},
         setTimeout(resolve, delay) { delays.push(delay); resolve(); }
     });
@@ -185,7 +194,7 @@ test("toolbox stays inside the viewport and can be reset to its default position
         removeEventListener(name) { handlers.delete(name); }
     };
     const window = { innerWidth: 800, innerHeight: 600, addEventListener() {}, removeEventListener() {} };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, Element: class { },
         document: { addEventListener() { }, querySelector: () => ({ getBoundingClientRect: () => ({ left: 250, top: 0 }) }) }
     });
@@ -214,7 +223,7 @@ test("full screen viewer forwards declared extra keys only", async () => {
         removeEventListener() { keydown = null; }
     };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), { window, Element: class { }, document });
+    loadGalleryScripts({ window, Element: class { }, document });
     const calls = [];
     const element = { dataset: { review: "false", keys: "arrowup k a" }, focus() { }, querySelectorAll() { return []; } };
     window.galleryViewer.attach(element, { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } });
@@ -238,7 +247,7 @@ for (const review of ["false", "true"]) {
             removeEventListener() {}
         };
         const window = {};
-        vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+        loadGalleryScripts({
             window, document, Element: class {}
         });
         const calls = [];
@@ -274,7 +283,7 @@ test("quick edit focuses its input and returns focus when dismissed", () => {
     const previous = { isConnected: true, focus() { focused = "viewer"; } };
     const document = { activeElement: previous, addEventListener() {} };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, document, Element: class {}
     });
     const dialog = {
@@ -307,7 +316,7 @@ test("gallerySecurity recognizes panic hotkeys and triggers panic lock", () => {
             revokeObjectURL(url) { revokedUrls.push(url); }
         }
     };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, Element: class { }, document: { addEventListener() { } }, URL: window.URL, setInterval, clearInterval, Date
     });
 
@@ -345,7 +354,7 @@ test("gallerySecurity purgeAllMedia clears tracked blobs and DOM images/videos",
     const window = {
         URL: { revokeObjectURL: url => revoked.push(url) }
     };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, Element: class { }, document: { addEventListener() { } }, URL: window.URL
     });
 
@@ -388,7 +397,7 @@ test("gallerySecurity idle auto-lock triggers after configured inactivity", () =
     let timerCleared = false;
     let now = 0;
     const clock = { now: () => now };
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, Element: class { }, document: { addEventListener() { } }, URL: window.URL,
         setInterval: callback => { idleCheck = callback; return 1; },
         clearInterval: id => { assert.equal(id, 1); timerCleared = true; }, Date: clock
@@ -418,7 +427,7 @@ test("modal opening respects autofocus before other controls and restores its op
     const opener = { isConnected: true, focus() { focused = "opener"; } };
     const document = { activeElement: opener, addEventListener() {} };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, document, Element: class {}
     });
     const dialog = {
@@ -444,7 +453,7 @@ test("modal restores an opener that lost focus while disabled by a busy render",
         addEventListener(name, listener) { if (name === "focusin") focusin = listener; }
     };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, document, Element: class {}
     });
     const opener = { isConnected: true, matches() { return true; }, focus() { focused = true; } };
@@ -459,7 +468,7 @@ test("modal restores an opener that lost focus while disabled by a busy render",
 test("Escape leaves native dialogs open until the save/discard decision closes them", () => {
     const document = { activeElement: null, body: {}, addEventListener() {}, querySelector() { return null; } };
     const window = {};
-    vm.runInNewContext(readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", "viewer.js"), "utf8"), {
+    loadGalleryScripts({
         window, document, Element: class {}
     });
     const makeDialog = () => {
