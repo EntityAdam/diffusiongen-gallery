@@ -25,12 +25,15 @@ internal static class GalleryCapabilityTestSetup
         new(gallery.Vault, gallery.Settings, gallery.Catalog, gallery.Collections, gallery.Tags,
             gallery.Media, gallery.MediaMaintenance, gallery.Records, gallery.Duplicates, gallery.Vision);
 
-    public static void InjectGalleryCapabilities(IComponent component, GalleryService gallery)
+    public static void InjectGalleryCapabilities(IComponent component, GalleryService gallery) =>
+        InjectGalleryCapabilities(component, gallery.Scope);
+
+    public static void InjectGalleryCapabilities(IComponent component, GalleryScope gallery)
     {
         using var services = new ServiceCollection().AddGalleryCapabilities(gallery).BuildServiceProvider();
         foreach (var property in component.GetType().GetProperties(BindingFlags.Instance | BindingFlags.NonPublic))
         {
-            if (property.IsDefined(typeof(InjectAttribute)) && property.PropertyType.Assembly == typeof(GalleryService).Assembly)
+            if (property.IsDefined(typeof(InjectAttribute)) && property.PropertyType.Assembly == typeof(GalleryScope).Assembly)
                 property.SetValue(component, services.GetRequiredService(property.PropertyType));
         }
     }

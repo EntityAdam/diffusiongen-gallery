@@ -111,7 +111,7 @@ internal sealed class GalleryBackupWriter(GalleryLifetime galleryLifetime, Vault
             BackupArchive.Manifest? previousManifest = null;
             if (previousName is not null)
             {
-                previousManifest = await BackupArchive.ValidateChainAsync(galleryLifetime.StoreFactory, target, previousName, stagingDirectory, keyLease.Bytes);
+                previousManifest = await BackupChainValidator.ValidateChainAsync(galleryLifetime.StoreFactory, target, previousName, stagingDirectory, keyLease.Bytes);
             }
 
             var mediaEntries = new Dictionary<string, BackupArchive.MediaEntry>(StringComparer.Ordinal);

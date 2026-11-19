@@ -12,16 +12,16 @@ using SixLabors.ImageSharp;
 namespace Gallery.Core.Features.Ingestion;
 
 /// <summary>Runs ingestion against the catalog selected by the caller's vault lease.</summary>
-internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPreparer mediaPreparer)
+internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreSlim catalogGate, ImportMediaPreparer mediaPreparer)
 {
     public static void ValidateImportName(string name) =>
         ImportRequestValidator.ValidateName(name, IngestionSourceScanner.Extensions);
 
     public async Task PrepareFingerprintIndexAsync(byte[] key)
     {
-        await galleryStore.Gate.WaitAsync();
+        await catalogGate.WaitAsync();
         try { await galleryStore.BackfillFingerprintsAsync(key); }
-        finally { galleryStore.Gate.Release(); }
+        finally { catalogGate.Release(); }
     }
 
     public async Task<ImageRecord> ImportAsync(Stream input, string name, string sourceFolder,
@@ -66,14 +66,14 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
         IngestionTimings? timings)
     {
         var stageStart = Stopwatch.GetTimestamp();
-        await galleryStore.Gate.WaitAsync();
+        await catalogGate.WaitAsync();
         timings?.Record(IngestionStage.DuplicateWait, stageStart);
         stageStart = Stopwatch.GetTimestamp();
         try { await RejectKnownFingerprintAsync(sourceHash, name, key); }
         finally
         {
             timings?.Record(IngestionStage.DuplicateCheck, stageStart);
-            galleryStore.Gate.Release();
+            catalogGate.Release();
         }
     }
 
