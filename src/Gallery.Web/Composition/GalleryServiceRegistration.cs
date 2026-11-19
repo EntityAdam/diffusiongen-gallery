@@ -67,7 +67,6 @@ public static class GalleryServiceRegistration
 
     internal static void RegisterCapabilities(IServiceCollection services)
     {
-        services.AddScoped(provider => new GalleryService(provider.GetRequiredService<GalleryScope>()));
         services.AddScoped<IGalleryBackup>(provider => provider.GetRequiredService<GalleryScope>().Backup);
         services.AddScoped<IGalleryCatalog>(provider => provider.GetRequiredService<GalleryScope>().Catalog);
         services.AddScoped<IGalleryCollections>(provider => provider.GetRequiredService<GalleryScope>().Collections);

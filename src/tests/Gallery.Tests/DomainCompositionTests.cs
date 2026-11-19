@@ -103,7 +103,7 @@ public sealed class DomainCompositionTests
         var serviceCollection = new ServiceCollection();
         Type[] expectedDomainTypes =
         [
-            typeof(GalleryScope), typeof(GalleryService), typeof(IGalleryBackup), typeof(IGalleryCatalog), typeof(IGalleryCollections),
+            typeof(GalleryScope), typeof(IGalleryBackup), typeof(IGalleryCatalog), typeof(IGalleryCollections),
             typeof(IGallerySettings), typeof(IGalleryDriveOperations), typeof(IGalleryDuplicates), typeof(IGalleryRecordEditor),
             typeof(IGalleryIngestion), typeof(IGalleryVault), typeof(IGalleryMedia), typeof(IGalleryMediaMaintenance),
             typeof(IGalleryRestore), typeof(IGalleryStorage), typeof(IGalleryTags), typeof(IGalleryVision)
@@ -114,7 +114,7 @@ public sealed class DomainCompositionTests
 
         // Assert - gather registrations without changing them
         var actualDomainTypes = serviceCollection
-            .Where(serviceDescriptor => serviceDescriptor.ServiceType.Assembly == typeof(GalleryService).Assembly)
+            .Where(serviceDescriptor => serviceDescriptor.ServiceType.Assembly == typeof(GalleryScope).Assembly)
             .ToArray();
 
         // Assert
@@ -129,7 +129,6 @@ public sealed class DomainCompositionTests
             var resolved = first.ServiceProvider.GetRequiredService(capability);
             Assert.Same(resolved, first.ServiceProvider.GetRequiredService(capability));
             Assert.NotSame(resolved, second.ServiceProvider.GetRequiredService(capability));
-            Assert.IsNotType<GalleryService>(resolved);
         }
     }
 
@@ -267,25 +266,25 @@ public sealed class DomainCompositionTests
     }
 
     [Fact]
-    public void CompatibilityFacade_WhenDisposed_ThenDisposesTheScopeAndOwnedTransport()
+    public void GalleryScope_WhenDisposed_ThenDisposesOwnedTransport()
     {
         // Arrange
         using var testVault = new TestVault();
         using var disposalTrackingTransport = new DisposalTrackingTransport();
         using var httpClient = new HttpClient(disposalTrackingTransport);
         var galleryRuntimeOptions = new GalleryRuntimeOptions { StateDirectory = testVault.Root + "-state" };
-        using var galleryService = GalleryService.Create(testVault.Root, galleryRuntimeOptions, httpClient);
+        using var galleryScope = GalleryScope.Create(testVault.Root, galleryRuntimeOptions, httpClient);
         const bool ExpectedIsDisposed = true;
 
         // Act
-        galleryService.Dispose();
+        galleryScope.Dispose();
 
         // Assert
         Assert.Equal(ExpectedIsDisposed, disposalTrackingTransport.IsDisposed);
     }
 
     [Fact]
-    public void CompatibilityFacade_WhenHistoryCannotBeRead_ThenOwnedTransportIsDisposed()
+    public void GalleryScope_WhenHistoryCannotBeRead_ThenDisposesOwnedTransport()
     {
         // Arrange
         using var testVault = new TestVault();
@@ -299,7 +298,7 @@ public sealed class DomainCompositionTests
         const bool ExpectedIsDisposed = true;
 
         // Act
-        Assert.Throws<IOException>(() => GalleryService.Create(testVault.Root, galleryRuntimeOptions, httpClient));
+        Assert.Throws<IOException>(() => GalleryScope.Create(testVault.Root, galleryRuntimeOptions, httpClient));
 
         // Assert
         Assert.Equal(ExpectedIsDisposed, disposalTrackingTransport.IsDisposed);

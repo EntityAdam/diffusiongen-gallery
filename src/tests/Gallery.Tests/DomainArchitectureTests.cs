@@ -24,7 +24,7 @@ public sealed class DomainArchitectureTests
     [Fact]
     public void ProductionAssemblies_KeepDomainBehaviorBehindAnIndependentCoreEntry()
     {
-        var core = typeof(GalleryService).Assembly;
+        var core = typeof(GalleryScope).Assembly;
         var web = typeof(App).Assembly;
 
         Assert.Equal("Gallery.Core", core.GetName().Name);
@@ -68,10 +68,10 @@ public sealed class DomainArchitectureTests
     [Fact]
     public void EntryContracts_UseCanonicalCoreModelsWithoutExposingInteriorComponents()
     {
-        var core = typeof(GalleryService).Assembly;
+        var core = typeof(GalleryScope).Assembly;
         var contracts = typeof(GalleryScope).GetProperties()
             .Select(property => property.PropertyType)
-            .Append(typeof(GalleryService));
+            .Append(typeof(GalleryScope));
         foreach (var method in contracts.SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)))
         {
             AssertPublicContract(method.ReturnType, core);
@@ -88,7 +88,7 @@ public sealed class DomainArchitectureTests
     {
         Assert.DoesNotContain(type.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static),
             method => method.Name is "ToRecord" or "Capture");
-        Assert.Same(typeof(GalleryService).Assembly, type.Assembly);
+        Assert.Same(typeof(GalleryScope).Assembly, type.Assembly);
     }
 
     private static void AssertPublicContract(Type type, Assembly core)
