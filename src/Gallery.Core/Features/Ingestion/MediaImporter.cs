@@ -85,41 +85,22 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
 
     private async Task<ImageRecord> PersistImportAsync(PreparedImport prepared, string name, byte[] key)
     {
-        var record = prepared.Record;
-        await WriteImportedCiphertextAsync(record.StoredPath, prepared.EncryptedMedia);
+        var staged = await StagedImport.WriteAsync(prepared);
+        var entry = staged.Entry;
         try
         {
-            var committed = await galleryStore.CommitImportsAsync([new ImportCatalogEntry(record, prepared.EncryptedThumbnail)], key);
+            var committed = await galleryStore.CommitImportsAsync([entry], key);
             if (committed.DuplicateIds.Length != 0)
                 throw new InvalidOperationException($"'{name}' is already in the gallery.");
-            return record;
+            staged.MarkCommitted();
+            return entry.Record;
         }
         catch (Exception importError)
         {
-            try { File.Delete(record.StoredPath); }
-            catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException)
-            {
+            if (staged.RemoveUncommitted() is { } cleanupError)
                 throw new AggregateException(
-                    $"Import failed and uncommitted ciphertext remains at '{record.StoredPath}'.",
+                    $"Import failed and uncommitted ciphertext remains at '{entry.Record.StoredPath}'.",
                     importError, cleanupError);
-            }
-            throw;
-        }
-    }
-
-    private static async Task WriteImportedCiphertextAsync(string storedPath, byte[] encrypted)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(storedPath)!);
-        await using var output = new FileStream(storedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        try
-        {
-            await output.WriteAsync(encrypted);
-            output.Flush(flushToDisk: true);
-        }
-        catch
-        {
-            output.Close();
-            File.Delete(storedPath);
             throw;
         }
     }
@@ -374,24 +355,22 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         public long Started { get; } = Stopwatch.GetTimestamp();
         private ImportSource? source;
 
-        public ImportCatalogEntry? UncommittedEntry { get; private set; }
+        private StagedImport? staged;
+
+        public ImportCatalogEntry? UncommittedEntry => staged?.Entry;
         public ImageRecord? CommittedRecord { get; private set; }
         public Exception? Failure { get; set; }
 
         public ImportSource OpenSource(SourceRetention retention) =>
             source = new ImportSource(Path, retention == SourceRetention.DeleteAfterVerification);
 
-        public async Task StageAsync(PreparedImport prepared)
-        {
-            var entry = new ImportCatalogEntry(prepared.Record, prepared.EncryptedThumbnail);
-            await WriteImportedCiphertextAsync(entry.Record.StoredPath, prepared.EncryptedMedia);
-            UncommittedEntry = entry;
-        }
+        public async Task StageAsync(PreparedImport prepared) => staged = await StagedImport.WriteAsync(prepared);
 
         public void AcceptCommit(ImageRecord record)
         {
+            staged!.MarkCommitted();
+            staged = null;
             CommittedRecord = record;
-            UncommittedEntry = null;
         }
 
         public async Task DeleteVerifiedSourceAsync(string sha256, IngestionTimings? timings)
@@ -417,16 +396,9 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
 
         public Exception? RemoveUncommittedMedia()
         {
-            if (UncommittedEntry is not { } entry) return null;
-
-            // The caller reports deletion failures. Consume the entry so fallback cleanup cannot retry it.
-            UncommittedEntry = null;
-            try { File.Delete(entry.Record.StoredPath); }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                return exception;
-            }
-            return null;
+            var cleanupFailure = staged?.RemoveUncommitted();
+            staged = null;
+            return cleanupFailure;
         }
     }
 }
