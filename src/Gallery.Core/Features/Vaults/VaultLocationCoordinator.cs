@@ -119,27 +119,21 @@ internal sealed class VaultLocationCoordinator(
         CatalogDirectoryRules.RequireLocalCatalogDirectory(destination);
         await galleryLifetime.Gate.WaitAsync();
         byte[]? key = null;
-        VaultCheckout? destinationCheckout = null;
-        string? staging = null;
+        StagedLocation? stagedLocation = null;
         var published = false;
         var lockRequestsAtStart = 0L;
         try
         {
             galleryLifetime.EnsureCheckout();
-            RejectOverlappingDirectories(destination, VaultRoot);
-            RequireEmptyDestination(destination);
-            destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
-            RequireEmptyDestination(destination);
+            stagedLocation = AcquireStagedLocation(destination);
             lockRequestsAtStart = vaultAccess.ExplicitLockRequests;
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
             var sourceRoot = VaultRoot;
             await GalleryDriveQueue.ReconcileOutstandingDeletesAsync(galleryStore, key);
             var records = await galleryStore.ReadRecordsAsync(key);
-            staging = Path.Combine(destination, ".vault-stage-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(staging);
-            await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
-            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName), key);
+            var staging = stagedLocation.CreateStagingDirectory(".vault-stage-");
+            await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
             var stagedStore = galleryLifetime.StoreFactory.Create(staging);
             foreach (var record in records)
             {
@@ -155,9 +149,7 @@ internal sealed class VaultLocationCoordinator(
             await ClearLocationSettingsAsync(stagedStore, key);
             await PublishStagedVaultAsync(stagedStore, key, staging, destination);
             published = true;
-            var sourceCheckout = galleryLifetime.PublishLocation(
-                galleryLifetime.StoreFactory.Create(destination), new VaultStore(destination), destinationCheckout);
-            destinationCheckout = null;
+            var sourceCheckout = stagedLocation.Activate();
             try
             {
                 history?.Save(destination);
@@ -173,13 +165,7 @@ internal sealed class VaultLocationCoordinator(
             vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
-        finally
-        {
-            if (key is not null) CryptographicOperations.ZeroMemory(key);
-            destinationCheckout?.Dispose();
-            try { if (staging is not null && Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
-            finally { galleryLifetime.Gate.Release(); }
-        }
+        finally { FinishStagedLocation(stagedLocation, key); }
     }
 
     public async Task PurgeVaultAsync(string confirmation)
@@ -212,26 +198,20 @@ internal sealed class VaultLocationCoordinator(
         CatalogDirectoryRules.RequireLocalCatalogDirectory(destination);
         await galleryLifetime.Gate.WaitAsync();
         byte[]? key = null;
-        VaultCheckout? destinationCheckout = null;
-        string? staging = null;
+        StagedLocation? stagedLocation = null;
         var published = false;
         var lockRequestsAtStart = 0L;
         try
         {
             galleryLifetime.EnsureCheckout();
-            RejectOverlappingDirectories(destination, VaultRoot);
-            RequireEmptyDestination(destination);
-            destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
-            RequireEmptyDestination(destination);
+            stagedLocation = AcquireStagedLocation(destination);
             lockRequestsAtStart = vaultAccess.ExplicitLockRequests;
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
             var mediaDirectory = await GallerySettings.ReadMediaDirectoryAsync(galleryLifetime.Current, key);
             var sourceRoot = VaultRoot;
-            staging = Path.Combine(destination, ".catalog-stage-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(staging);
-            await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
-            await galleryStore.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName), key);
+            var staging = stagedLocation.CreateStagingDirectory(".catalog-stage-");
+            await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
             var stagedStore = galleryLifetime.StoreFactory.Create(staging);
             await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
                 MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose, key);
@@ -242,9 +222,7 @@ internal sealed class VaultLocationCoordinator(
                 throw new IOException("The copied catalog did not match the original; relocation was stopped.");
             await PublishStagedVaultAsync(stagedStore, key, staging, destination);
             published = true;
-            var sourceCheckout = galleryLifetime.PublishLocation(
-                galleryLifetime.StoreFactory.Create(destination), new VaultStore(destination), destinationCheckout);
-            destinationCheckout = null;
+            var sourceCheckout = stagedLocation.Activate();
             try
             {
                 history?.Save(destination);
@@ -261,13 +239,7 @@ internal sealed class VaultLocationCoordinator(
             vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
-        finally
-        {
-            if (key is not null) CryptographicOperations.ZeroMemory(key);
-            destinationCheckout?.Dispose();
-            try { if (staging is not null && Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
-            finally { galleryLifetime.Gate.Release(); }
-        }
+        finally { FinishStagedLocation(stagedLocation, key); }
     }
 
     private static bool CatalogRecordsMatch(List<ImageRecord> copied, List<ImageRecord> source) =>
@@ -284,20 +256,13 @@ internal sealed class VaultLocationCoordinator(
         var destination = CatalogDirectoryRules.NormalizeVaultDirectory(destinationDirectory);
         CatalogDirectoryRules.RequireLocalCatalogDirectory(destination);
         await galleryLifetime.Gate.WaitAsync();
-        VaultCheckout? destinationCheckout = null;
+        StagedLocation? stagedLocation = null;
         byte[]? key = null;
-        string? staging = null;
         try
         {
             EnsureActive();
-            RejectOverlappingDirectories(destination, VaultRoot);
-            if (sourceDirectory is not null)
-                RejectOverlappingDirectories(destination, Path.GetFullPath(sourceDirectory.Trim()));
-            RequireEmptyDestination(destination);
-            destinationCheckout = galleryLifetime.AcquireLocationCheckout(destination);
-            RequireEmptyDestination(destination);
-            staging = Path.Combine(destination, ".vault-stage-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(staging);
+            stagedLocation = AcquireStagedLocation(destination, sourceDirectory);
+            var staging = stagedLocation.CreateStagingDirectory(".vault-stage-");
             IGalleryStore store;
             (store, key) = await BackupArchive.StageRestoreAsync(
                 galleryLifetime.StoreFactory, target, latestBackupName, staging, destination, credential, useRecovery);
@@ -305,19 +270,48 @@ internal sealed class VaultLocationCoordinator(
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
             await StopDriveAndDrainSessionAsync();
             await PublishStagedVaultAsync(store, key, staging, destination);
-            galleryLifetime.PublishLocation(galleryLifetime.StoreFactory.Create(destination),
-                new VaultStore(destination), destinationCheckout)?.Dispose();
-            destinationCheckout = null;
+            stagedLocation.Activate()?.Dispose();
             history?.Save(destination);
             // Restore returns to regular sign-in; credentials and plaintext never survive the operation.
         }
-        finally
+        finally { FinishStagedLocation(stagedLocation, key); }
+    }
+
+    private static async Task CopyCatalogToStageAsync(
+        VaultStore header, IGalleryCatalogSnapshots snapshots, string staging, byte[] key)
+    {
+        await header.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
+        await snapshots.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName), key);
+    }
+
+    private StagedLocation AcquireStagedLocation(string destination, string? sourceDirectory = null)
+    {
+        RejectOverlappingDirectories(destination, VaultRoot);
+        if (sourceDirectory is not null)
+            RejectOverlappingDirectories(destination, Path.GetFullPath(sourceDirectory.Trim()));
+
+        RequireEmptyDestination(destination);
+        var checkout = galleryLifetime.AcquireLocationCheckout(destination);
+        try
+        {
+            RequireEmptyDestination(destination);
+            return new StagedLocation(galleryLifetime, destination, checkout);
+        }
+        catch
+        {
+            checkout.Dispose();
+            throw;
+        }
+    }
+
+    private void FinishStagedLocation(StagedLocation? stagedLocation, byte[]? key)
+    {
+        try
         {
             if (key is not null) CryptographicOperations.ZeroMemory(key);
-            destinationCheckout?.Dispose();
-            try { if (staging is not null && Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
-            finally { galleryLifetime.Gate.Release(); }
+            stagedLocation?.Dispose();
         }
+        finally { galleryLifetime.Gate.Release(); }
     }
 
     private static void RejectOverlappingDirectories(string destination, string source)
@@ -407,5 +401,35 @@ internal sealed class VaultLocationCoordinator(
         if (settings is not null)
             await store.SaveSettingsAsync(settings with { LastBackupName = null, LastBackupType = null },
                 StoredBackupSettings.SettingId, StoredBackupSettings.SettingPurpose, key);
+    }
+
+    private sealed class StagedLocation(GalleryLifetime lifetime, string destination, VaultCheckout destinationCheckout) : IDisposable
+    {
+        private VaultCheckout? checkout = destinationCheckout;
+        private string? stagingDirectory;
+
+        public string CreateStagingDirectory(string prefix)
+        {
+            stagingDirectory = Path.Combine(destination, prefix + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stagingDirectory);
+            return stagingDirectory;
+        }
+
+        public VaultCheckout? Activate()
+        {
+            var retired = lifetime.PublishLocation(lifetime.StoreFactory.Create(destination), new VaultStore(destination), checkout);
+            checkout = null;
+            return retired;
+        }
+
+        public void Dispose()
+        {
+            try { checkout?.Dispose(); }
+            finally
+            {
+                if (stagingDirectory is not null && Directory.Exists(stagingDirectory))
+                    Directory.Delete(stagingDirectory, recursive: true);
+            }
+        }
     }
 }

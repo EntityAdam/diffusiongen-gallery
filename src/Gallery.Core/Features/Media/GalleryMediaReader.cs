@@ -17,13 +17,15 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
 {
     private const string PngDataUrlPrefix = "data:image/png;base64,";
 
+    private IGalleryMediaStoreReader MediaStore => galleryLifetime.Current.GalleryStore;
+
     public async Task<string> ThumbnailAsync(string id)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        return await ReadThumbnailAsync(galleryLifetime.Current.GalleryStore, id, key.Bytes);
+        return await ReadThumbnailAsync(MediaStore, id, key.Bytes);
     }
 
-    private static async Task<string> ReadThumbnailAsync(IGalleryStore store, string id, byte[] key)
+    private static async Task<string> ReadThumbnailAsync(IGalleryMediaStoreReader store, string id, byte[] key)
     {
         using var thumbnail = await store.ReadThumbnailAsync(id, key);
         return PngDataUrlPrefix + Convert.ToBase64String(thumbnail.Content.Span);
@@ -33,13 +35,13 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
     {
         OperationChoiceValidator.Validate(resolution);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var store = galleryLifetime.Current.GalleryStore;
+        var store = MediaStore;
         var record = await store.ReadRecordAsync(id, key.Bytes);
         return await ReadPreviewAsync(store, record, key.Bytes, resolution);
     }
 
     internal static async Task<string> ReadPreviewAsync(
-        IGalleryStore store, ImageRecord record, byte[] key, ImageResolution resolution)
+        IGalleryMediaStoreReader store, ImageRecord record, byte[] key, ImageResolution resolution)
     {
         if (record.IsVideo) return await ReadThumbnailAsync(store, record.Id, key);
         return await CreatePreviewAsync(await StoredMediaProcessor.ReadAsync(record, key), resolution);
@@ -49,7 +51,7 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
     {
         OperationChoiceValidator.Validate(resolution);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var store = galleryLifetime.Current.GalleryStore;
+        var store = MediaStore;
         var record = await store.ReadRecordAsync(id, key.Bytes);
         if (record.IsVideo) return await ReadThumbnailAsync(store, id, key.Bytes);
         return await CreateViewerImageAsync(record,
@@ -59,7 +61,7 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
     public async Task<(Stream Content, string ContentType)> OpenMediaAsync(string id)
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var record = await galleryLifetime.Current.GalleryStore.ReadRecordAsync(id, keyLease.Bytes);
+        var record = await MediaStore.ReadRecordAsync(id, keyLease.Bytes);
         var plaintext = await StoredMediaProcessor.ReadAsync(record, keyLease.Bytes);
         return (new MemoryStream(plaintext, writable: false), record.ContentType);
     }
@@ -67,17 +69,17 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
     public async Task<ExportFile> ExportAsync(string id)
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var record = await galleryLifetime.Current.GalleryStore.ReadRecordAsync(id, keyLease.Bytes);
+        var record = await MediaStore.ReadRecordAsync(id, keyLease.Bytes);
         return await ExportRecordAsync(record, keyLease.Bytes);
     }
 
     public async Task<ExportFile> ExportZipAsync(IEnumerable<string> ids)
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        return await ExportComposer.ComposeZipAsync(ExportSelectionAsync(galleryLifetime.Current.GalleryStore, ids, keyLease.Bytes));
+        return await ExportComposer.ComposeZipAsync(ExportSelectionAsync(MediaStore, ids, keyLease.Bytes));
     }
 
-    private static async IAsyncEnumerable<ExportFile> ExportSelectionAsync(IGalleryStore store, IEnumerable<string> ids, byte[] key)
+    private static async IAsyncEnumerable<ExportFile> ExportSelectionAsync(IGalleryMediaStoreReader store, IEnumerable<string> ids, byte[] key)
     {
         foreach (var id in ids.Distinct(StringComparer.Ordinal))
             yield return await ExportRecordAsync(await store.ReadRecordAsync(id, key), key);
@@ -93,7 +95,7 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
     public async Task<ExportFile?> WorkflowAsync(string id)
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var record = await galleryLifetime.Current.GalleryStore.ReadRecordAsync(id, keyLease.Bytes);
+        var record = await MediaStore.ReadRecordAsync(id, keyLease.Bytes);
         var workflow = ComfyMetadata.WorkflowForExport(record.Metadata);
         return ExportComposer.ComposeWorkflow(record, workflow);
     }

@@ -8,7 +8,7 @@ namespace Gallery.Core.Infrastructure.Persistence;
 /// Catalog persistence and atomic catalog/drive-work boundaries. No database-provider types cross this port.
 /// Callers supply their generation-bound leased key, including for operations the SQLite adapter can do while locked.
 /// </summary>
-internal interface IGalleryStore : IGalleryBrowseReader
+internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReader, IGalleryCatalogSnapshots
 {
     SemaphoreSlim Gate { get; }
     SemaphoreSlim BackupGate { get; }
@@ -18,18 +18,14 @@ internal interface IGalleryStore : IGalleryBrowseReader
     Task InitializeAsync(byte[] key);
     Task PrepareForPublicationAsync(byte[] key);
     Task DeleteSettingsAsync(byte[] key, params string[] ids);
-    Task<string> ComputeSnapshotFingerprintAsync(string snapshotPath, string excludedSettingId, byte[] key);
     Task<long> ReadStorageRevisionAsync(byte[] key);
-    Task CreateSnapshotAsync(string destinationPath, byte[] key);
     async Task<List<CatalogImportSource>> ReadImportSourcesAsync(byte[] key) => (await ReadRecordsAsync(key))
         .Select(record => new CatalogImportSource(record.Id, record.SourcePath, record.Sha256, record.OriginalBytes)).ToList();
-    Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key);
     Task InsertAsync(ImageRecord imageRecord, ImageThumbnail imageThumbnail, byte[] key);
     Task<ImportCommitResult> CommitImportsAsync(IReadOnlyList<ImportCatalogEntry> importCatalogEntries, byte[] key);
     Task<(ImageRecord Record, ImageThumbnail Thumbnail)> ReadVerificationAsync(string id, byte[] key);
     Task BackfillFingerprintsAsync(byte[] key);
     Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key);
-    Task<ImageRecord> ReadRecordAsync(string id, byte[] key);
     Task UpdateAsync(ImageRecord imageRecord, byte[] key, bool preserveBrowseIndex = true);
     Task DeleteAsync(string id, byte[] key);
     Task CommitCollectionCatalogAsync(IReadOnlyList<ImageRecord> records, CollectionCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);

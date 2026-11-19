@@ -27,9 +27,9 @@ internal static class StoredMediaProcessor
         return VaultCrypto.Decrypt(envelope, key, $"image:{imageId}");
     }
 
-    public static (ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb) EncryptImport(
+    public static (byte[] EncryptedMedia, byte[] EncryptedThumbnail) EncryptImport(
         ImageRecord record, ReadOnlySpan<byte> content, ReadOnlySpan<byte> thumbnail, byte[] key) =>
-        (record, VaultCrypto.Encrypt(content, key, $"image:{record.Id}"),
+        (VaultCrypto.Encrypt(content, key, $"image:{record.Id}"),
             VaultCrypto.Encrypt(thumbnail, key, $"thumbnail:{record.Id}"));
 
     internal static async Task VerifyCiphertextAsync(string path, string imageId, byte[] key)

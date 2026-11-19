@@ -23,7 +23,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
     public const long MaxVideoBytes = 256 * 1024 * 1024;
     public bool VideoToolsAvailable => videoTools?.IsAvailable == true;
 
-    public static async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareImageAsync(
+    public static async Task<PreparedImport> PrepareImageAsync(
         MemoryStream original, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key,
         IngestionTimings? timings, string mediaRoot)
     {
@@ -67,7 +67,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
             var encrypted = StoredMediaProcessor.EncryptImport(record,
                 original.GetBuffer().AsSpan(0, (int)original.Length), thumbnailBytes, key);
             timings?.Record(IngestionStage.Encrypt, stageStart);
-            return encrypted;
+            return new PreparedImport(record, encrypted.EncryptedMedia, encrypted.EncryptedThumbnail);
         }
 
         finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
@@ -101,7 +101,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
     /// ffprobe/ffmpeg need a file, so the plaintext MP4 is written briefly to a randomly named temp file
     /// that is deleted as soon as the metadata and first frame are read.
     /// </summary>
-    public async Task<(ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb)> PrepareVideoAsync(
+    public async Task<PreparedImport> PrepareVideoAsync(
         ReadOnlyMemory<byte> bytes, string name, string sourceFolder, string sourcePath, string sourceHash, byte[] key,
         IngestionTimings? timings, string mediaRoot)
     {
@@ -116,9 +116,9 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
         {
             var record = CreateVideoRecord(video.Probe, bytes.Length, name, sourceFolder, sourcePath, sourceHash, mediaRoot);
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            var encrypted = EncryptPreparedVideo(record, bytes, thumbnailBytes, key);
+            var encrypted = StoredMediaProcessor.EncryptImport(record, bytes.Span, thumbnailBytes, key);
             timings?.Record(IngestionStage.Encrypt, stageStart);
-            return encrypted;
+            return new PreparedImport(record, encrypted.EncryptedMedia, encrypted.EncryptedThumbnail);
         }
         finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
     }
@@ -206,16 +206,6 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
             StoredPath = Path.Combine(mediaRoot, "images", record.Id[..2], record.Id[2..4], record.Id + StoredMediaProcessor.EncryptedMp4Extension)
         };
         return record;
-    }
-
-    private static (ImageRecord Record, byte[] Encrypted, byte[] EncryptedThumb) EncryptPreparedVideo(
-        ImageRecord record, ReadOnlyMemory<byte> bytes, byte[] thumbnailBytes, byte[] key)
-    {
-        try
-        {
-            return StoredMediaProcessor.EncryptImport(record, bytes.Span, thumbnailBytes, key);
-        }
-        finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
     }
 
     private static async Task<byte[]> CreateThumbnailAsync(Image image)
