@@ -307,8 +307,8 @@ public sealed class UiComponentTests
         using var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(fixture.Service), new(), new(fixture.Service.Scope.Collections), null!,
             NullLogger.Instance, action => action(), () => { });
         ComponentTestAccess.Set(home.Navigation, "Section", "ingest");
-        home.Browser.ToolboxVisible = false;
-        home.Browser.ActiveTool = "filters";
+        ComponentTestAccess.Set(home.Browser, "ToolboxVisible", false);
+        ComponentTestAccess.Set(home.Browser, "ActiveTool", "filters");
         home.Activity.Busy = true;
         home.Activity.Ingestion.IsRunning = true;
 

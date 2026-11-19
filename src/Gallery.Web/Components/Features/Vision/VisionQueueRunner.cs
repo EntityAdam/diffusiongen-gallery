@@ -14,7 +14,7 @@ internal sealed class VisionQueueRunner(IGalleryCatalog galleryCatalog, IGallery
         && image.VisionFacts is null && !(checkpoint?.Drafts.Any(draft => draft.Id == image.Id && !draft.TagsOnly) ?? false);
 
     public async Task<Result> RunAsync(VisionCheckpointSession checkpoint, VisionQueueItem[] items, bool useSavedQueue,
-        CancellationToken lifetime, Func<bool> stopRequested, Func<VisionDraft, Task<ImageRecord?>> approveDraftAsync,
+        CancellationToken lifetime, Func<bool> stopRequested,
         Func<int, int, Task> reportProgressAsync, Func<Task> draftsChangedAsync, Func<Task> recordsChangedAsync)
     {
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime, checkpoint.RevocationToken);
@@ -127,7 +127,7 @@ internal sealed class VisionQueueRunner(IGalleryCatalog galleryCatalog, IGallery
                 {
                     try
                     {
-                        if (await approveDraftAsync(draft) is not null) accepted++;
+                        if (await checkpoint.ApproveDraftAsync(draft) is not null) accepted++;
                     }
                     catch (Exception exception) when (!token.IsCancellationRequested)
                     {

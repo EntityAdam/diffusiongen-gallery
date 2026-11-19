@@ -15,6 +15,34 @@ public sealed class VisionCheckpointTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task A_replacement_draft_survives_in_flight_approval_and_rejects_stale_decisions(bool tagsOnly)
+    {
+        var draft = new VisionDraft("image", "Image", "Description", "old", "model", TagsOnly: tagsOnly);
+        var replacement = draft with { Tags = "new" };
+        var record = new ImageRecord { Id = draft.Id, Tags = draft.Tags };
+        var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishApproval = new TaskCompletionSource<ImageRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new VisionCheckpointSession(new() { Drafts = [draft] }, CancellationToken.None,
+            _ => Task.CompletedTask, _ =>
+            {
+                approvalStarted.SetResult();
+                return finishApproval.Task;
+            });
+
+        var approval = session.ApproveDraftAsync(draft);
+        await approvalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await session.StageAsync(replacement);
+        finishApproval.SetResult(record);
+
+        Assert.Equal(record, await approval);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.ApproveDraftAsync(draft));
+        Assert.False(await session.DismissDraftAsync(draft));
+        Assert.Equal(replacement, Assert.Single(session.State.Drafts));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Whole_library_start_rechecks_remaining_media_after_stop_or_failure_without_a_queue(bool failSecond)
     {
         using var handler = new InterruptibleVisionHandler { FailSecond = failSecond };

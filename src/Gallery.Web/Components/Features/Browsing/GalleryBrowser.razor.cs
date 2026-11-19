@@ -63,25 +63,18 @@ public partial class GalleryBrowser
     private Task DeleteAsync() => Removal.PrepareAsync(State.RemovalSelection);
     private Task RestoreAsync() => Curation.RestoreAsync(State.RemovalSelection.ToArray());
 
-    private Task FilterChangedAsync() => Commands.RunAsync("Filtering...", State.FilterChangedAsync);
+    private Task SetGroupingAsync(string value) => Commands.RunAsync("Filtering...", () => State.SetGroupingAsync(value));
     private Task ResetFilters() => Commands.RunAsync("Filtering...", State.ResetFiltersAsync);
     private Task ApplyFilterPanelAsync(GalleryFilter value) => Commands.RunAsync("Filtering...", () => State.ApplyFilterAsync(value));
     private Task SetSort(string? value) => Commands.RunAsync("Filtering...", () => State.SetSortAsync(value));
     private Task SetDensityAsync(string value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetDensityAsync(value));
-    private Task PreviousAsync() => Commands.RunAsync("Loading previews...", async () => { State.Page--; await State.LoadThumbnailsAsync(); });
-    private Task NextAsync() => Commands.RunAsync("Loading previews...", async () => { State.Page++; await State.LoadThumbnailsAsync(); });
-    private async Task ToolboxMovedAsync((double? X, double? Y) position)
-    {
-        if ((State.ToolboxX, State.ToolboxY) == position) return;
-        (State.ToolboxX, State.ToolboxY) = position;
-        await State.SaveToolboxStateAsync();
-    }
+    private Task PreviousAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page - 1));
+    private Task NextAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page + 1));
+    private Task ToolboxMovedAsync((double? X, double? Y) position) => State.SetToolboxPositionAsync(position);
 
     internal async Task ResetToolboxPositionAsync()
     {
-        State.ToolboxVisible = true;
-        (State.ToolboxX, State.ToolboxY) = (null, null);
+        await State.ResetToolboxPositionAsync();
         if (toolbox is not null) await toolbox.ResetPositionAsync();
-        await State.SaveToolboxStateAsync();
     }
 }

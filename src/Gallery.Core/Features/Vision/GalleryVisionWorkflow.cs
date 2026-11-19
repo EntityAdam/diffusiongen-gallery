@@ -104,7 +104,8 @@ internal sealed class GalleryVisionWorkflow(
                 await store.SaveSettingsAsync(checkpoint, VisionCheckpointId, VisionCheckpointPurpose, key.Bytes);
             }
             finally { store.Gate.Release(); }
-        });
+        }, draft => ApproveVisionAsync(generation, store, draft.Id, draft.Description, draft.Tags, draft.Model,
+            draft.Analysis, draft.TagsOnly, draft.UseExistingTags, draft.SuggestNewTags));
     }
 
     public async Task<VisionAnalysisResult> AnalyzeForDraftAsync(string id, VisionSettings settings, CancellationToken token = default)
@@ -150,7 +151,14 @@ internal sealed class GalleryVisionWorkflow(
         VisionAnalysis? analysis, bool tagsOnly = false, bool useExistingTags = true, bool suggestNewTags = true)
     {
         var generation = vaultSession.AcquireUnlockedSession();
-        var store = galleryStore;
+        return await ApproveVisionAsync(generation, galleryStore, id, description, tags, model,
+            analysis, tagsOnly, useExistingTags, suggestNewTags);
+    }
+
+    private static async Task<ImageRecord> ApproveVisionAsync(UnlockedVaultSession generation, IGalleryStore store,
+        string id, string description, string tags, string model, VisionAnalysis? analysis,
+        bool tagsOnly, bool useExistingTags, bool suggestNewTags)
+    {
         using var key = generation.Borrow();
         await store.Gate.WaitAsync(generation.RevocationToken);
         try
