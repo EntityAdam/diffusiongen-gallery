@@ -104,11 +104,18 @@ public partial class Home
 
         session = new(WorkspaceServices, activity, OrganizationHistory, JS, Logger, action => InvokeAsync(action),
             FlushSavedFeedback, lifetime.Token);
+        session.Analysis.Feedback += ShowAnalysisFeedback;
         return session.InitializeAsync(() =>
         {
             Lock();
             return Task.CompletedTask;
         });
+    }
+
+    private void ShowAnalysisFeedback(string error, string notice)
+    {
+        if (error.Length > 0) Toasts.Show("Something went wrong", error, ShadCn.Blazor.Components.SonnerToastVariant.Destructive, 8000);
+        if (notice.Length > 0) Toasts.Show(notice, "", ShadCn.Blazor.Components.SonnerToastVariant.Default, 4000);
     }
 
     private void FlushSavedFeedback()

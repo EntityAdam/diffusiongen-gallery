@@ -12,4 +12,5 @@ internal sealed record WorkspaceGalleryServices(
     IGalleryMedia Media,
     IGalleryMediaMaintenance MediaMaintenance,
     IGalleryRecordEditor Records,
-    IGalleryDuplicates Duplicates);
+    IGalleryDuplicates Duplicates,
+    IGalleryVision Vision);

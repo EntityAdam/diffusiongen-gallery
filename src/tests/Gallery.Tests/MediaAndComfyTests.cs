@@ -74,7 +74,7 @@ public sealed class MediaAndComfyTests
         };
 
         // Act
-        var groups = fixture.Service.GroupByPrompt(ordered);
+        var groups = fixture.Scope.Catalog.GroupByPrompt(ordered);
 
         // Assert
         Assert.Equal(["shared:dog", "shared:cat", "unique:", "none:"], groups.Select(group => $"{group.Kind}:{group.Prompt}"));
@@ -98,7 +98,7 @@ public sealed class MediaAndComfyTests
         var filter = new GalleryFilter { Media = media, Prompt = prompt };
 
         // Act
-        var records = fixture.Service.Filter(new[] { image, video }, filter).ToArray();
+        var records = fixture.Scope.Catalog.Filter(new[] { image, video }, filter).ToArray();
 
         // Assert
         Assert.Equal(expectedRecords, records);
@@ -114,7 +114,7 @@ public sealed class MediaAndComfyTests
         var record = new ImageRecord { DurationSeconds = duration };
 
         // Act
-        var text = GalleryService.FormatDuration(record);
+        var text = GalleryDisplay.FormatDuration(record);
 
         // Assert
         Assert.Equal(expectedText, text);
@@ -133,7 +133,7 @@ public sealed class MediaAndComfyTests
         await fixture.InitializeAsync();
 
         // Act
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
 
         // Assert
         Assert.Equal("a lighthouse on a cliff at dawn, volumetric light", record.Generation!.Prompt);
@@ -146,10 +146,10 @@ public sealed class MediaAndComfyTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
 
         // Act
-        var export = await fixture.Service.ExportAsync(record.Id);
+        var export = await fixture.Scope.Media.ExportAsync(record.Id);
 
         // Assert
         Assert.Equal("comfy.png", export.FileName);
@@ -165,10 +165,10 @@ public sealed class MediaAndComfyTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
 
         // Act
-        var workflow = await fixture.Service.WorkflowAsync(record.Id);
+        var workflow = await fixture.Scope.Media.WorkflowAsync(record.Id);
 
         // Assert
         Assert.Equal("comfy.workflow.json", workflow!.FileName);
@@ -181,10 +181,10 @@ public sealed class MediaAndComfyTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var plain = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "plain.png", "folder");
+        var plain = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "plain.png", "folder");
 
         // Act
-        var workflow = await fixture.Service.WorkflowAsync(plain.Id);
+        var workflow = await fixture.Scope.Media.WorkflowAsync(plain.Id);
 
         // Assert
         Assert.Null(plain.Generation);
@@ -197,11 +197,11 @@ public sealed class MediaAndComfyTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
-        var plain = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "plain.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+        var plain = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(40, 30)), "plain.png", "folder");
 
         // Act
-        var zip = await fixture.Service.ExportZipAsync([record.Id, plain.Id]);
+        var zip = await fixture.Scope.Media.ExportZipAsync([record.Id, plain.Id]);
 
         // Assert
         using var archive = new ZipArchive(new MemoryStream(zip.CopyContentBytes()));
@@ -227,15 +227,15 @@ public sealed class MediaAndComfyTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "original.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakeComfyPng()), "original.png", "folder");
         var key = fixture.Session.Key;
         try { await fixture.Store.UpdateAsync(record with { Name = name }, key); }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
         var extraction = Path.Combine(fixture.Root, "extracted");
 
-        var media = await fixture.Service.ExportAsync(record.Id);
-        var workflow = await fixture.Service.WorkflowAsync(record.Id);
-        var zip = await fixture.Service.ExportZipAsync([record.Id]);
+        var media = await fixture.Scope.Media.ExportAsync(record.Id);
+        var workflow = await fixture.Scope.Media.WorkflowAsync(record.Id);
+        var zip = await fixture.Scope.Media.ExportZipAsync([record.Id]);
 
         Assert.Equal(expectedStem + ".png", media.FileName);
         Assert.Equal(expectedStem + ".workflow.json", workflow!.FileName);
@@ -258,7 +258,7 @@ public sealed class MediaAndComfyTests
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var record = await fixture.Service.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
         var legacy = record with
         {
             Generation = metadataVersion == 0 ? null : record.Generation! with { Sampler = "", Scheduler = "" },
@@ -268,7 +268,7 @@ public sealed class MediaAndComfyTests
             System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(legacy), fixture.Session.Key, $"record:{record.Id}"));
 
         // Act
-        var records = await fixture.Service.LoadAsync();
+        var records = await fixture.Scope.Catalog.LoadAsync();
 
         // Assert
         var listed = Assert.Single(records);
@@ -289,7 +289,7 @@ public sealed class MediaAndComfyTests
 
         // Act
         var error = await Assert.ThrowsAsync<VideoToolUnavailableException>(() =>
-            fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder"));
+            fixture.Scope.Ingestion.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder"));
 
         // Assert
         var expectedFailure = ExpectedExceptionContract.Create(typeof(VideoToolUnavailableException),
@@ -298,7 +298,7 @@ public sealed class MediaAndComfyTests
             new Dictionary<string, object?> { ["Video.RequiredTools"] = "ffmpeg, ffprobe" });
         AsserterExceptionContract.AssertMatches(expectedFailure, error);
         Assert.Contains("MP4", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
     }
 
     [InstalledVideoToolsFact]
@@ -308,7 +308,7 @@ public sealed class MediaAndComfyTests
         using var arrangement = await RealVideoArrangement.CreateSourceAsync();
 
         // Act
-        var record = await arrangement.TestVault.Service.ImportAsync(new MemoryStream(arrangement.Bytes), "clip.mp4", "folder");
+        var record = await arrangement.TestVault.Scope.Ingestion.ImportAsync(new MemoryStream(arrangement.Bytes), "clip.mp4", "folder");
 
         // Assert - real media decoding preserves the video and Comfy metadata contract
         Assert.True(record.IsVideo);
@@ -326,7 +326,7 @@ public sealed class MediaAndComfyTests
         using var arrangement = await RealVideoArrangement.CreateImportedAsync();
 
         // Act
-        var export = await arrangement.TestVault.Service.ExportAsync(arrangement.ImageRecord!.Id);
+        var export = await arrangement.TestVault.Scope.Media.ExportAsync(arrangement.ImageRecord!.Id);
 
         // Assert - the encrypted video exports as its original MP4 without transcoding
         Assert.Equal(("clip.mp4", "video/mp4"), (export.FileName, export.ContentType));
@@ -340,7 +340,7 @@ public sealed class MediaAndComfyTests
         using var arrangement = await RealVideoArrangement.CreateImportedAsync();
 
         // Act
-        var error = await Record.ExceptionAsync(() => arrangement.TestVault.Service.VerifyImportedAsync(arrangement.ImageRecord!.Id));
+        var error = await Record.ExceptionAsync(() => arrangement.TestVault.Scope.Ingestion.VerifyImportedAsync(arrangement.ImageRecord!.Id));
 
         // Assert - real MP4 verification validates encrypted source content
         Assert.Null(error);
@@ -353,7 +353,7 @@ public sealed class MediaAndComfyTests
         using var arrangement = await RealVideoArrangement.CreateImportedAsync();
 
         // Act
-        var thumbnail = await arrangement.TestVault.Service.ThumbnailAsync(arrangement.ImageRecord!.Id);
+        var thumbnail = await arrangement.TestVault.Scope.Media.ThumbnailAsync(arrangement.ImageRecord!.Id);
 
         // Assert - video thumbnails expose the decoded PNG frame
         AsserterPngFrame.AssertMatches(new(384, 216), thumbnail);
@@ -366,7 +366,7 @@ public sealed class MediaAndComfyTests
         using var arrangement = await RealVideoArrangement.CreateImportedAsync();
 
         // Act
-        var preview = await arrangement.TestVault.Service.PreviewAsync(arrangement.ImageRecord!.Id);
+        var preview = await arrangement.TestVault.Scope.Media.PreviewAsync(arrangement.ImageRecord!.Id);
 
         // Assert - preview exposes a PNG representation of the decoded frame
         AsserterPngFrame.AssertMatches(new(384, 216), preview);
@@ -379,7 +379,7 @@ public sealed class MediaAndComfyTests
         using var arrangement = await RealVideoArrangement.CreateImportedAsync();
 
         // Act
-        var (media, type) = await arrangement.TestVault.Service.OpenMediaAsync(arrangement.ImageRecord!.Id);
+        var (media, type) = await arrangement.TestVault.Scope.Media.OpenMediaAsync(arrangement.ImageRecord!.Id);
 
         // Assert - the streamed representation has complete original MP4 bytes
         await using (media)
@@ -398,13 +398,13 @@ public sealed class MediaAndComfyTests
         using var transport = new MediaProcessTransport(MakeProbeMetadata().ToJsonString());
         using var fixture = new TestVault(transport.VideoTools);
         await fixture.InitializeAsync();
-        var image = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
-        var video = await fixture.Service.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder");
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var video = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "clip.mp4", "folder");
         var migratedVideo = video with { ContentSha256 = image.ContentSha256 };
         await DuplicateCacheArrangement.ArrangeAsync(fixture, [(image, 0UL), (migratedVideo, 0UL)]);
 
         // Act
-        var scan = await fixture.Service.ScanDuplicatesAsync();
+        var scan = await fixture.Scope.Duplicates.ScanDuplicatesAsync();
 
         // Assert - even matching migrated pixel/hash values cannot cross media families
         Assert.Empty(scan.Groups);
@@ -422,7 +422,7 @@ public sealed class MediaAndComfyTests
 
     internal static async Task<ImageRecord> ArrangeStoredMetadataAsync(TestVault fixture, string metadata)
     {
-        var record = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy-metadata.png", "folder");
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy-metadata.png", "folder");
         var legacy = record with { Metadata = metadata, MetadataVersion = 0, Generation = null };
         await fixture.RawStore.UpdateAsync(record.Id, VaultCrypto.Encrypt(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(legacy), fixture.Session.Key, $"record:{record.Id}"));
         return legacy;

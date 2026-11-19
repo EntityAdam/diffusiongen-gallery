@@ -91,15 +91,8 @@ internal sealed class GalleryCatalogLoader(
         try
         {
             if (await store.ReadStorageRevisionAsync(key) != snapshot.Revision) return snapshot with { IsCurrent = false };
-            var changed = snapshot.Records.Count(record => record.MetadataVersion < ComfyMetadata.Version);
             await store.BackfillFingerprintsAsync(key);
-            await BackfillGenerationAsync(store, snapshot.Records, key, token);
-            if (changed > 0)
-            {
-                var revision = await store.ReadStorageRevisionAsync(key);
-                var current = await store.SaveBrowseIndexAsync(snapshot.Records, revision, key, token);
-                snapshot = snapshot with { Revision = revision, IsCurrent = current };
-            }
+            snapshot = await BackfillGenerationAsync(store, snapshot, key, token);
         }
         finally { store.Gate.Release(); }
         token.ThrowIfCancellationRequested();
@@ -145,12 +138,14 @@ internal sealed class GalleryCatalogLoader(
             VaultOpenTelemetry.Record(activity, "gallery.load.gate_wait_ms", started);
             try
             {
+                var revision = await store.ReadStorageRevisionAsync(key);
                 records = await store.ReadRecordsAsync(key);
                 var backfillStarted = VaultOpenTelemetry.Start(activity);
                 await store.BackfillFingerprintsAsync(key);
                 VaultOpenTelemetry.Record(activity, "gallery.load.backfill_fingerprint_ms", backfillStarted);
                 backfillStarted = VaultOpenTelemetry.Start(activity);
-                await BackfillGenerationAsync(store, records, key);
+                var snapshot = new GalleryCatalog(records, revision, records.Count, IsComplete: true, IsCurrent: true, CacheHit: false);
+                records = (await BackfillGenerationAsync(store, snapshot, key, CancellationToken.None)).Records;
                 VaultOpenTelemetry.Record(activity, "gallery.load.backfill_generation_ms", backfillStarted);
             }
             finally { store.Gate.Release(); }
@@ -164,34 +159,40 @@ internal sealed class GalleryCatalogLoader(
     }
 
     /// <summary>Parses ComfyUI metadata once for records imported before (or with an older) parser.</summary>
-    private static async Task BackfillGenerationAsync(IGalleryStore store, List<ImageRecord> records, byte[] key, CancellationToken cancellationToken = default)
+    private static async Task<GalleryCatalog> BackfillGenerationAsync(IGalleryStore store, GalleryCatalog snapshot,
+        byte[] key, CancellationToken token)
     {
-        var staleRecordIndices = records.Select((record, index) => (record, index))
-            .Where(item => item.record.MetadataVersion < ComfyMetadata.Version).ToList();
+        var staleRecords = snapshot.Records.Select((record, index) => (Record: record, Index: index))
+            .Where(item => item.Record.MetadataVersion < ComfyMetadata.Version).ToList();
         if (Activity.Current is { OperationName: "gallery.load" } activity)
-            activity.SetTag("gallery.load.backfill_generation_count", staleRecordIndices.Count);
-        foreach (var staleRecordIndex in staleRecordIndices)
+            activity.SetTag("gallery.load.backfill_generation_count", staleRecords.Count);
+        if (staleRecords.Count == 0) return snapshot;
+
+        var records = snapshot.Records.ToList();
+        var refreshed = new List<ImageRecord>(staleRecords.Count);
+        foreach (var (record, index) in staleRecords)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            ImageRecord record;
-            int index;
-            (record, index) = staleRecordIndex;
+            token.ThrowIfCancellationRequested();
             try
             {
-                var refreshedImageRecord = record with
+                var updated = record with
                 {
                     Generation = ComfyMetadata.Extract(record.Metadata),
                     MetadataVersion = ComfyMetadata.Version
                 };
-                // The browse opener rebuilds once after the batch; rewriting its index per legacy row is wasteful.
-                await store.UpdateAsync(refreshedImageRecord, key, preserveBrowseIndex: false);
-                records[index] = refreshedImageRecord;
+                records[index] = updated;
+                refreshed.Add(updated);
             }
             catch (Exception exception) when (exception is InvalidOperationException or CryptographicException or StoredMetadataFormatException)
             {
                 throw new InvalidOperationException($"Could not backfill generation metadata for media item '{record.Id}'.", exception);
             }
         }
+
+        var revision = await store.RefreshGenerationMetadataAsync(snapshot, refreshed, key, token);
+        return revision is long committedRevision
+            ? snapshot with { Records = records, Revision = committedRevision }
+            : snapshot with { IsCurrent = false };
     }
 
     public List<ImageRecord> Filter(IEnumerable<ImageRecord> records, GalleryFilter filter,
