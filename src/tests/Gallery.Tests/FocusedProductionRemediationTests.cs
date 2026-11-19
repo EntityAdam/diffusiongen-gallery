@@ -4,6 +4,7 @@ using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Ingestion.Metadata;
 using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Web.Composition;
 using Microsoft.Extensions.Configuration;
 
 namespace Gallery.Tests;
@@ -82,10 +83,10 @@ public sealed class FocusedProductionRemediationTests
             ["Gallery:FFmpegPath"] = "  \"" + firstPath + "\"  ",
             ["PATH"] = string.Join(Path.PathSeparator, " ", "  \"" + firstPath + "\"  ", secondPath)
         }).Build();
-        var configurationProvider = new Gallery.Core.Composition.Configuration.ConfigurationProvider(configuration);
+        var runtimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Act
-        var videoToolsOptions = configurationProvider.GetVideoToolsOptions();
+        var videoToolsOptions = VideoToolsOptionsNormalizer.Normalize(runtimeOptions.FFmpegPath, runtimeOptions.ToolSearchPaths);
 
         // Assert
         Assert.Equal(firstPath, videoToolsOptions.ConfiguredPath);

@@ -8,7 +8,6 @@ using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Gallery.Core.Features.Settings;
-using ConfigurationProvider = Gallery.Core.Composition.Configuration.ConfigurationProvider;
 
 namespace Gallery.Tests;
 
@@ -156,19 +155,6 @@ public sealed class DomainCompositionTests
 
         vault.LockVault();
         await Assert.ThrowsAsync<VaultLockedException>(() => catalog.ListAsync());
-    }
-
-    [Fact]
-    public void DomainConfiguration_WhenItsVisibilityIsInspected_ThenTheProviderIsInternal()
-    {
-        // Arrange
-        const bool ExpectedIsPublic = false;
-
-        // Act
-        var actualIsPublic = typeof(ConfigurationProvider).IsVisible;
-
-        // Assert
-        Assert.Equal(ExpectedIsPublic, actualIsPublic);
     }
 
     [Fact]

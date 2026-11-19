@@ -45,6 +45,6 @@ internal static class ImageRecordEditValidator
                 System.Globalization.CultureInfo.InvariantCulture, "Rating {0} must be between 0 and 5.", rating));
     }
 
-    public static bool IsInvalidCollectionName(string? name) =>
+    private static bool IsInvalidCollectionName(string? name) =>
         string.IsNullOrWhiteSpace(name) || name.Trim().Length > 80;
 }

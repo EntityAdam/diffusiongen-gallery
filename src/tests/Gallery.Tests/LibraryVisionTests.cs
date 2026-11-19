@@ -21,7 +21,7 @@ public sealed class LibraryVisionTests
         using var vault = new TestVault(vision: new VisionManager(client));
         await vault.InitializeAsync();
         var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => vault.Scope.Records.AddCollection(edit, "Existing collection sentinel"));
+        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Collections = ["Existing collection sentinel"] });
         var settings = new VisionSettings
         {
             Model = "vision", SystemPrompt = "Image description and tags only. Return JSON with description and tags."

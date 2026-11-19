@@ -24,24 +24,6 @@ internal static class LibraryRules
         string.Join(", ", existing.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Where(item => !item.Equals(tag.Trim(), StringComparison.OrdinalIgnoreCase)));
 
-    public static ImageRecordEdit SetOrganization(ImageRecordEdit imageRecordEdit, int rating, bool imageIsReviewed, string? collection)
-    {
-        var organized = collection is null ? imageRecordEdit : AddCollection(imageRecordEdit, collection);
-        return organized with { Rating = rating, IsReviewed = imageIsReviewed };
-    }
-
-    public static ImageRecordEdit AddCollection(ImageRecordEdit imageRecordEdit, string collection) =>
-        imageRecordEdit.Collections.Contains(collection.Trim(), StringComparer.OrdinalIgnoreCase)
-            ? imageRecordEdit
-            : imageRecordEdit with { Collections = imageRecordEdit.Collections.Add(collection.Trim()) };
-
-    public static ImageRecordEdit RemoveCollection(ImageRecordEdit imageRecordEdit, string collection) =>
-        imageRecordEdit with
-        {
-            Collections = imageRecordEdit.Collections.RemoveAll(name =>
-                name.Equals(collection.Trim(), StringComparison.OrdinalIgnoreCase))
-        };
-
     public static ImageRecordEdit SetCuration(ImageRecordEdit imageRecordEdit, int? rating, bool? imageIsReviewed) =>
         imageRecordEdit with { Rating = rating ?? imageRecordEdit.Rating,
             IsReviewed = (rating is > 0) || (imageIsReviewed ?? imageRecordEdit.IsReviewed) };

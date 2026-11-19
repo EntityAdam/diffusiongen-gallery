@@ -1,8 +1,8 @@
 // Class tests pin raw configuration snapshots and source precedence that cannot be observed through HTTP.
 using System.Security.Cryptography;
+using Gallery.Core.Features.Ingestion.Video;
 using Gallery.Web.Composition;
 using Microsoft.Extensions.Configuration;
-using ConfigurationProvider = Gallery.Core.Composition.Configuration.ConfigurationProvider;
 
 namespace Gallery.Tests;
 
@@ -163,10 +163,10 @@ public sealed class ConfigurationTests
             ["Gallery:FFmpegPath"] = configuredPath,
             ["PATH"] = ""
         }).Build();
-        var configurationProvider = new ConfigurationProvider(configuration);
+        var runtimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Act
-        var actualVideoToolsOptions = configurationProvider.GetVideoToolsOptions();
+        var actualVideoToolsOptions = VideoToolsOptionsNormalizer.Normalize(runtimeOptions.FFmpegPath, runtimeOptions.ToolSearchPaths);
 
         // Assert
         Assert.Equal(expectedPath, actualVideoToolsOptions.ConfiguredPath);
@@ -182,10 +182,10 @@ public sealed class ConfigurationTests
             ["Gallery:FFmpegPath"] = $"  \"{expectedPath}\"  ",
             ["PATH"] = ""
         }).Build();
-        var configurationProvider = new ConfigurationProvider(configuration);
+        var runtimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Act
-        var actualVideoToolsOptions = configurationProvider.GetVideoToolsOptions();
+        var actualVideoToolsOptions = VideoToolsOptionsNormalizer.Normalize(runtimeOptions.FFmpegPath, runtimeOptions.ToolSearchPaths);
 
         // Assert
         Assert.Equal(expectedPath, actualVideoToolsOptions.ConfiguredPath);
@@ -204,13 +204,12 @@ public sealed class ConfigurationTests
         {
             ["PATH"] = string.Join(Path.PathSeparator, expectedPaths)
         }).Build();
-        var configurationProvider = new ConfigurationProvider(configuration);
 
         // Act
-        var actualVideoToolsOptions = configurationProvider.GetVideoToolsOptions();
+        var actualRuntimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Assert
-        Assert.Equal(expectedPaths, actualVideoToolsOptions.SearchPaths.Take(expectedPaths.Length));
+        Assert.Equal(expectedPaths, actualRuntimeOptions.ToolSearchPaths.Take(expectedPaths.Length));
     }
 
     [Fact]
@@ -220,15 +219,12 @@ public sealed class ConfigurationTests
         var configuration = new ConfigurationBuilder().Build();
         string[] expectedPaths = (Environment.GetEnvironmentVariable("PATH") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Select(path => path.Trim('"'))
-            .Where(path => !string.IsNullOrWhiteSpace(path))
             .ToArray();
-        var configurationProvider = new ConfigurationProvider(configuration);
 
         // Act
-        var actualVideoToolsOptions = configurationProvider.GetVideoToolsOptions();
+        var actualRuntimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
 
         // Assert
-        Assert.Equal(expectedPaths, actualVideoToolsOptions.SearchPaths.Take(expectedPaths.Length));
+        Assert.Equal(expectedPaths, actualRuntimeOptions.ToolSearchPaths.Take(expectedPaths.Length));
     }
 }

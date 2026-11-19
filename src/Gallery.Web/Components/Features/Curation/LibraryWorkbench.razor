@@ -277,7 +277,7 @@
 
     private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
     {
-        var updated = await GalleryRecords.UpdateAsync(image.Id, current => GalleryRecords.SetOrganization(current, value, true, null));
+        var updated = await GalleryRecords.UpdateAsync(image.Id, current => GalleryRecords.SetCuration(current, value, true));
         var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);
         if (comparisonIndex >= 0) compareImages[comparisonIndex] = updated;
         await Changed.InvokeAsync();

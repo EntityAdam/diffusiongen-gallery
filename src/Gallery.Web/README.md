@@ -689,9 +689,8 @@ own transactions or change journal mode.
 Run `dotnet test src\Gallery.slnx` from the repository root after adding a migration.
 
 `GalleryServiceRegistration` captures runtime settings once at the host
-composition boundary. Core's `ConfigurationProvider` and `SettingsSource`
-remain internal. `Gallery:StateDirectory` selects
-the last-opened-gallery history directory. Tool search paths retain their order:
+composition boundary. `Gallery:StateDirectory` selects the last-opened-gallery
+history directory. Tool search paths retain their order:
 configured `PATH` (or process `PATH` when absent), followed by user and machine
 `PATH` on Windows. The snapshot keeps raw tool paths. `GalleryScope.Create` normalizes them
 once when constructing each scope. Restart the host to apply
