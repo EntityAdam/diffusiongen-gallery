@@ -168,19 +168,20 @@ public sealed class ReviewTests
     [Fact]
     public async Task Viewer_ProgressCountsSkippedImagesAndOnlyCompletesWhenTheGoalIsReached()
     {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var last = await fixture.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "last.png", "folder");
         var viewer = new Gallery.Web.Components.Features.Media.FullscreenViewer();
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var type = viewer.GetType();
-        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord>
-        {
-            new() { Id = "first" }, new() { Id = "last" }
-        });
+        type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new[] { first, last });
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Service);
+        type.GetProperty("JS", flags)!.SetValue(viewer, new ComponentRenderFixture.NoOpJsRuntime());
         type.GetField("index", flags)!.SetValue(viewer, 1);
-        var cache = (Dictionary<string, (string Url, long Bytes)>)type.GetField("fitCache", flags)!.GetValue(viewer)!;
-        cache["first"] = ("first-url", 0);
-        cache["last"] = ("last-url", 0);
         Task Skip() => (Task)type.GetMethod("SkipAsync", flags)!.Invoke(viewer, null)!;
 
+        await using var viewerLifetime = viewer;
         await Skip();
 
         Assert.False((bool)type.GetField("reviewComplete", flags)!.GetValue(viewer)!);
@@ -207,13 +208,13 @@ public sealed class ReviewTests
         var type = viewer.GetType();
         type.GetProperty(nameof(viewer.Images))!.SetValue(viewer, new List<ImageRecord> { stale });
         GalleryCapabilityTestSetup.InjectGalleryCapabilities(viewer, fixture.Service);
+        type.GetProperty("JS", flags)!.SetValue(viewer, new ComponentRenderFixture.NoOpJsRuntime());
         type.GetProperty("Logger", flags)!.SetValue(viewer,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<Gallery.Web.Components.Features.Media.FullscreenViewer>.Instance);
-        var cache = (Dictionary<string, (string Url, long Bytes)>)type.GetField("fitCache", flags)!.GetValue(viewer)!;
-        cache[stale.Id] = ("cached-url", 0);
         Task Invoke(string method, params object[] args) => (Task)type.GetMethod(method, flags)!.Invoke(viewer, args)!;
         ImageRecord Current() => (ImageRecord)type.GetProperty("Current", flags)!.GetValue(viewer)!;
 
+        await using var viewerLifetime = viewer;
         await Invoke("FavoriteAsync");
 
         Assert.False(Current().IsFavorite);

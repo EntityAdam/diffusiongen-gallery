@@ -26,17 +26,8 @@ internal sealed class GalleryCatalogLoader(
         var store = galleryLifetime.Current.GalleryStore;
         try
         {
-            var snapshot = await Task.Run(async () =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var page = await store.ReadInitialPageAsync(pageSize, markedOnly, lease.Bytes, cancellationToken);
-                if (page is not null) return page;
-                // A missing/invalidated index is rebuilt from one consistent snapshot, never from guessed row order.
-                using var activity = VaultOpenTelemetry.Source.StartActivity("gallery.load");
-                var started = VaultOpenTelemetry.Start(activity);
-                try { return await store.ReadCatalogSnapshotAsync(lease.Bytes, cancellationToken); }
-                finally { VaultOpenTelemetry.Record(activity, "gallery.load.elapsed_ms", started); }
-            }, cancellationToken);
+            var snapshot = await Task.Run(
+                () => ReadInitialSnapshotAsync(store, pageSize, markedOnly, lease.Bytes, cancellationToken), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (snapshot.IsComplete && snapshot.IsCurrent)
                 snapshot = await Task.Run(() => CompleteBrowseCatalogAsync(store, snapshot, lease.Bytes, cancellationToken), cancellationToken);
@@ -54,13 +45,7 @@ internal sealed class GalleryCatalogLoader(
         var store = galleryLifetime.Current.GalleryStore;
         try
         {
-            var snapshot = await Task.Run(async () =>
-            {
-                using var activity = VaultOpenTelemetry.Source.StartActivity("gallery.load");
-                var started = VaultOpenTelemetry.Start(activity);
-                try { return await store.ReadCatalogSnapshotAsync(lease.Bytes, cancellationToken); }
-                finally { VaultOpenTelemetry.Record(activity, "gallery.load.elapsed_ms", started); }
-            }, cancellationToken);
+            var snapshot = await Task.Run(() => ReadSnapshotAsync(store, lease.Bytes, cancellationToken), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (generation.IsRevoked) throw new OperationCanceledException("The gallery session ended.");
             if (snapshot.IsCurrent)
@@ -77,8 +62,25 @@ internal sealed class GalleryCatalogLoader(
         using var lease = generation.Borrow();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, generation.RevocationToken);
         cancellationToken = linked.Token;
-        var store = galleryLifetime.Current.GalleryStore;
-        return await Task.Run(() => store.ReadBrowseRecordsAsync(capturedIds, lease.Bytes, cancellationToken), cancellationToken);
+        IGalleryBrowseReader reader = galleryLifetime.Current.GalleryStore;
+        return await Task.Run(() => reader.ReadBrowseRecordsAsync(capturedIds, lease.Bytes, cancellationToken), cancellationToken);
+    }
+
+    private static async Task<GalleryCatalog> ReadInitialSnapshotAsync(
+        IGalleryBrowseReader reader, int pageSize, bool markedOnly, byte[] key, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var page = await reader.ReadInitialPageAsync(pageSize, markedOnly, key, token);
+        // An invalidated index is rebuilt from one consistent snapshot.
+        return page ?? await ReadSnapshotAsync(reader, key, token);
+    }
+
+    private static async Task<GalleryCatalog> ReadSnapshotAsync(IGalleryBrowseReader reader, byte[] key, CancellationToken token)
+    {
+        using var activity = VaultOpenTelemetry.Source.StartActivity("gallery.load");
+        var started = VaultOpenTelemetry.Start(activity);
+        try { return await reader.ReadCatalogSnapshotAsync(key, token); }
+        finally { VaultOpenTelemetry.Record(activity, "gallery.load.elapsed_ms", started); }
     }
 
     private async Task<GalleryCatalog> CompleteBrowseCatalogAsync(IGalleryStore store, GalleryCatalog snapshot, byte[] key, CancellationToken token)
@@ -113,7 +115,8 @@ internal sealed class GalleryCatalogLoader(
         var generation = vaultSession.AcquireUnlockedSession();
         using var key = generation.Borrow();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, generation.RevocationToken);
-        var count = await galleryLifetime.Current.GalleryStore.CountRecordsAsync(key.Bytes, linked.Token);
+        IGalleryBrowseReader reader = galleryLifetime.Current.GalleryStore;
+        var count = await reader.CountRecordsAsync(key.Bytes, linked.Token);
         linked.Token.ThrowIfCancellationRequested();
         return count;
     }
@@ -121,7 +124,8 @@ internal sealed class GalleryCatalogLoader(
     public async Task<List<ImageRecord>> ListAsync()
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        return await galleryLifetime.Current.GalleryStore.ReadRecordsAsync(key.Bytes);
+        IGalleryBrowseReader reader = galleryLifetime.Current.GalleryStore;
+        return await reader.ReadRecordsAsync(key.Bytes);
     }
 
     public async Task<List<ImageRecord>> LoadAsync()

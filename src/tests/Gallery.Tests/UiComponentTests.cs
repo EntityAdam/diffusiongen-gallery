@@ -580,11 +580,6 @@ public sealed class UiComponentTests
                 [nameof(FullscreenViewerTestHost.Capture)] = (Action<FullscreenViewer>)(value => viewer = value),
                 [nameof(FullscreenViewerTestHost.Changed)] = (Action<ImageRecord>)(value => changed = value)
             })));
-        var cache = (Dictionary<string, (string Url, long Bytes)>)typeof(FullscreenViewer)
-            .GetField("fitCache", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(viewer)!;
-        cache[first.Id] = ("blob:first", 0);
-        cache[second.Id] = ("blob:second", 0);
-
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(rating.ToString()));
 
         var saved = Assert.Single(await vault.Service.ListAsync(), image => image.Id == first.Id);

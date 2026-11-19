@@ -274,46 +274,36 @@
         StateHasChanged();
     }
 
-    private async Task ApplyBulkAsync(Func<ImageRecordEdit, ImageRecordEdit> change)
+    private async Task ApplyBulkAsync(string[] ids, Func<ImageRecordEdit, ImageRecordEdit> change,
+        string operation, Func<int, string> successMessage)
     {
         var failures = new List<string>();
-        var ids = SelectedIds.ToArray();
         foreach (var id in ids)
         {
             try { await GalleryRecords.UpdateAsync(id, change); }
             catch (Exception exception)
             {
-                Logger.LogError(exception, "Bulk organization failed for {ImageId}", id);
+                Logger.LogError(exception, "{Operation} failed for {ImageId}", operation, id);
                 failures.Add($"{id}: {exception.Message}");
             }
         }
         await Changed.InvokeAsync();
-        notice = $"Updated {ids.Length - failures.Count} media item(s).";
+        notice = successMessage(ids.Length - failures.Count);
         error = string.Join(" / ", failures);
     }
 
-    private Task RemoveTagAsync(string tag) => RunAsync($"Removing tag {tag}...", async () =>
+    private Task RemoveTagAsync(string tag) => RunAsync($"Removing tag {tag}...", () =>
     {
-        var failures = new List<string>();
         var ids = Images.Where(image => SelectedIds.Contains(image.Id) && TagsOf(image).Contains(tag, StringComparer.OrdinalIgnoreCase))
             .Select(image => image.Id).ToArray();
-        foreach (var id in ids)
-        {
-            try { await GalleryRecords.UpdateAsync(id, image => image with { Tags = GalleryRecords.RemoveTag(image.Tags, tag) }); }
-            catch (Exception exception)
-            {
-                Logger.LogError(exception, "Tag removal failed for {ImageId}", id);
-                failures.Add($"{id}: {exception.Message}");
-            }
-        }
-        await Changed.InvokeAsync();
-        notice = $"Removed \"{tag}\" from {ids.Length - failures.Count} media item(s).";
-        error = string.Join(" / ", failures);
+        return ApplyBulkAsync(ids, image => image with { Tags = GalleryRecords.RemoveTag(image.Tags, tag) },
+            "Tag removal", count => $"Removed \"{tag}\" from {count} media item(s).");
     });
 
-    private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(image =>
-        GalleryRecords.SetCuration(image, rating == -1 ? null : rating,
-            reviewStatus == "unchanged" ? null : reviewStatus == "reviewed")));
+    private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(SelectedIds.ToArray(),
+        image => GalleryRecords.SetCuration(image, rating == -1 ? null : rating,
+            reviewStatus == "unchanged" ? null : reviewStatus == "reviewed"),
+        "Bulk organization", count => $"Updated {count} media item(s)."));
 
     private Task SaveViewAsync() => RunAsync("Saving view...", async () =>
     {
@@ -340,7 +330,8 @@
     private Task ApplyTagsAsync() => RunAsync("Applying tags...", async () =>
     {
         if (string.IsNullOrWhiteSpace(tags) || tags.Length > 4000) throw new InvalidOperationException("Enter tags of up to 4000 characters.");
-        await ApplyBulkAsync(image => image with { Tags = GalleryRecords.MergeTags(image.Tags, tags) });
+        await ApplyBulkAsync(SelectedIds.ToArray(), image => image with { Tags = GalleryRecords.MergeTags(image.Tags, tags) },
+            "Bulk organization", count => $"Updated {count} media item(s).");
     });
 
     private Task ApplyTagSuggestionAsync(OrganizationSuggestion suggestion) => RunAsync("Saving approved tags...", async () =>

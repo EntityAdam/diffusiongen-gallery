@@ -145,21 +145,51 @@ public sealed class CollectionBrowsingTests
     {
         // No unlocked vault: loading the original would fail. The supplied preview should suffice.
         using var vault = new TestVault();
+        var js = new PreviewJsRuntime();
         FullscreenViewer? viewer = null;
-        await using var fixture = ComponentRenderFixture.Create(vault.Service);
+        await using var fixture = ComponentRenderFixture.Create(vault.Service, js);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
             await fixture.HtmlRenderer.RenderComponentAsync<ViewerHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
             {
                 [nameof(ViewerHost.Capture)] = (Action<FullscreenViewer>)(value => viewer = value)
             }));
-            typeof(FullscreenViewer).GetProperty("JS", Private)!.SetValue(viewer, new PreviewJsRuntime());
             await (Task)typeof(FullscreenViewer).GetMethod("OnAfterRenderAsync", Private)!.Invoke(viewer, [true])!;
         });
         Assert.Equal("blob:detail-preview", typeof(FullscreenViewer).GetField("imageData", Private)!.GetValue(viewer));
         Assert.Equal("", typeof(FullscreenViewer).GetField("error", Private)!.GetValue(viewer));
-        var cache = (Dictionary<string, (string Url, long Bytes)>)typeof(FullscreenViewer).GetField("fitCache", Private)!.GetValue(viewer)!;
-        Assert.Equal("blob:detail-preview", cache["image"].Url);
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await viewer!.HandleKey("escape");
+            await viewer.DisposeAsync();
+        });
+        Assert.Equal("blob:detail-preview", Assert.Single(js.Released));
+    }
+
+    [Fact]
+    public async Task ViewerCacheReleasesAUrlCreatedDuringPrefetchShutdown()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "prefetch.png", "folder");
+        var url = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var js = new PreviewJsRuntime(url.Task);
+        var cache = new ViewerMediaCache(vault.Service.Scope.Media, js);
+        var prefetch = cache.PrefetchAsync(image);
+        Task? shutdown = null;
+        try
+        {
+            await js.Creating.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            shutdown = cache.DisposeAsync().AsTask();
+            Assert.False(shutdown.IsCompleted);
+        }
+        finally { url.SetResult("blob:prefetched"); }
+
+        Assert.False(await prefetch.WaitAsync(TimeSpan.FromSeconds(5)));
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+        await cache.DisposeAsync();
+        Assert.Equal("blob:prefetched", Assert.Single(js.Released));
+        Assert.Equal("", await cache.LoadAsync(image, full: false));
     }
 
     private static IReadOnlyList<ImageRecord> Media(CollectionsWorkspace workspace) =>
@@ -216,10 +246,20 @@ public sealed class CollectionBrowsingTests
         }
     }
 
-    private sealed class PreviewJsRuntime : IJSRuntime
+    private sealed class PreviewJsRuntime(Task<string>? pendingUrl = null) : IJSRuntime
     {
-        public ValueTask<T> InvokeAsync<T>(string identifier, object?[]? args) =>
-            ValueTask.FromResult(identifier == "galleryViewer.createImageUrl" ? (T)(object)"blob:detail-preview" : default!);
+        public TaskCompletionSource Creating { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public List<string> Released { get; } = [];
+        public async ValueTask<T> InvokeAsync<T>(string identifier, object?[]? args)
+        {
+            if (identifier == "galleryViewer.createImageUrl")
+            {
+                Creating.TrySetResult();
+                return (T)(object)(pendingUrl is null ? "blob:detail-preview" : await pendingUrl);
+            }
+            if (identifier == "galleryViewer.releaseImageUrls") Released.AddRange((string[])args![0]!);
+            return default!;
+        }
         public ValueTask<T> InvokeAsync<T>(string identifier, CancellationToken cancellationToken, object?[]? args) => InvokeAsync<T>(identifier, args);
     }
 }

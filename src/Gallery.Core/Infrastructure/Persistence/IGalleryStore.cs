@@ -8,7 +8,7 @@ namespace Gallery.Core.Infrastructure.Persistence;
 /// Catalog persistence and atomic catalog/drive-work boundaries. No database-provider types cross this port.
 /// Callers supply their generation-bound leased key, including for operations the SQLite adapter can do while locked.
 /// </summary>
-internal interface IGalleryStore
+internal interface IGalleryStore : IGalleryBrowseReader
 {
     SemaphoreSlim Gate { get; }
     SemaphoreSlim BackupGate { get; }
@@ -21,8 +21,6 @@ internal interface IGalleryStore
     Task<string> ComputeSnapshotFingerprintAsync(string snapshotPath, string excludedSettingId, byte[] key);
     Task<long> ReadStorageRevisionAsync(byte[] key);
     Task CreateSnapshotAsync(string destinationPath, byte[] key);
-    Task<long> CountRecordsAsync(byte[] key, CancellationToken token = default);
-    Task<List<ImageRecord>> ReadRecordsAsync(byte[] key);
     async Task<List<CatalogImportSource>> ReadImportSourcesAsync(byte[] key) => (await ReadRecordsAsync(key))
         .Select(record => new CatalogImportSource(record.Id, record.SourcePath, record.Sha256, record.OriginalBytes)).ToList();
     Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key);
@@ -43,9 +41,6 @@ internal interface IGalleryStore
     Task<List<SavedView>> LoadViewsAsync(byte[] key);
     Task SaveViewAsync(string name, GalleryFilter galleryFilter, byte[] key);
     Task DeleteViewAsync(string name, byte[] key);
-    Task<GalleryCatalog?> ReadInitialPageAsync(int pageSize, bool markedOnly, byte[] key, CancellationToken token);
-    Task<GalleryCatalog> ReadCatalogSnapshotAsync(byte[] key, CancellationToken token);
-    Task<List<ImageRecord>> ReadBrowseRecordsAsync(IEnumerable<string> ids, byte[] key, CancellationToken token);
     Task<bool> SaveBrowseIndexAsync(List<ImageRecord> records, long revision, byte[] key, CancellationToken token);
     Task EnqueueDriveOperationsAsync(IReadOnlyCollection<NewDriveOperation> operations, byte[] key);
     Task DeleteImageAndEnqueueAsync(string id, NewDriveOperation newDriveOperation, byte[] key);
