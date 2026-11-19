@@ -90,7 +90,7 @@ public sealed class LibraryTests
     }
 
     [Fact]
-    public async Task Organization_WhenAppliedToImage_PersistsEncryptedWithoutMovingFiles()
+    public async Task CurationAndTags_WhenAppliedToImage_PersistEncryptedWithoutMovingFiles()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -99,23 +99,21 @@ public sealed class LibraryTests
         // Act
         await fixture.Scope.Records.UpdateAsync(image.Id, current =>
         {
-            current = fixture.Scope.Records.SetOrganization(current, 4, true, "Private collection");
-            current = fixture.Scope.Records.SetOrganization(current, 4, true, "private collection");
+            current = fixture.Scope.Records.SetCuration(current, 4, true);
             return current with { Tags = fixture.Scope.Records.MergeTags("green, landscape", "GREEN, cinema") };
         });
         var storedRecords = await fixture.Scope.Catalog.ListAsync();
         var encryptedRecord = await fixture.RawStore.ReadRecordAsync(image.Id);
         var ratingError = Assert.Throws<InvalidOperationException>(() =>
-            fixture.Scope.Records.SetOrganization(new ImageRecordEdit(image), 6, true, null));
+            fixture.Scope.Records.SetCuration(new ImageRecordEdit(image), 6, true));
 
         // Assert
         var stored = Assert.Single(storedRecords);
         Assert.Equal(4, stored.Rating);
         Assert.True(stored.IsReviewed);
-        Assert.Equal("Private collection", Assert.Single(stored.Collections));
         Assert.Equal("green, landscape, cinema", stored.Tags);
         Assert.Equal(image.StoredPath, stored.StoredPath);
-        Assert.DoesNotContain("Private collection", Encoding.UTF8.GetString(encryptedRecord));
+        Assert.DoesNotContain("green, landscape, cinema", Encoding.UTF8.GetString(encryptedRecord));
         Assert.IsType<InvalidOperationException>(ratingError);
         Assert.Contains("6", ratingError.Message, StringComparison.Ordinal);
         Assert.Contains("between 0 and 5", ratingError.Message, StringComparison.OrdinalIgnoreCase);

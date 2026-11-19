@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Gallery.Core.Features.Ingestion.Video;
 using Gallery.Core.Models;
+using Gallery.Web.Composition;
 using Microsoft.Extensions.Configuration;
 
 namespace Gallery.Tests;
@@ -18,8 +19,9 @@ internal sealed class RealVideoArrangement : IDisposable
     public static VideoTools InstalledTools()
     {
         var configuration = new ConfigurationBuilder().AddEnvironmentVariables().Build();
-        var options = new Gallery.Core.Composition.Configuration.ConfigurationProvider(configuration).GetVideoToolsOptions();
-        return new VideoTools(options.ConfiguredPath, options.SearchPaths);
+        var runtimeOptions = GalleryServiceRegistration.CaptureGalleryRuntimeOptions(configuration);
+        var toolOptions = VideoToolsOptionsNormalizer.Normalize(runtimeOptions.FFmpegPath, runtimeOptions.ToolSearchPaths);
+        return new VideoTools(toolOptions.ConfiguredPath, toolOptions.SearchPaths);
     }
 
     public static async Task<RealVideoArrangement> CreateSourceAsync()

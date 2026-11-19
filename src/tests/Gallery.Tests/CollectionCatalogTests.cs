@@ -190,9 +190,9 @@ public sealed class CollectionCatalogTests
         using var fixture = new ServiceFixture(backend);await fixture.InitializeAsync();
         var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "one.png", "folder");
         var collection = await fixture.Scope.Collections.CreateCollectionAsync("Collection");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Records.UpdateAsync(image.Id, edit => fixture.Scope.Records.AddCollection(edit, "Other")));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Collections = ["Other"] }));
         var set = await fixture.Scope.Collections.CreateSetAsync(collection.Id, "Set");await fixture.Scope.Collections.MoveMediaToSetAsync([image.Id], set.Id);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Records.UpdateAsync(image.Id, edit => fixture.Scope.Records.AddCollection(edit, "Other")));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Collections = ["Other"] }));
         Assert.Equal(set.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).SetId);
     }
 

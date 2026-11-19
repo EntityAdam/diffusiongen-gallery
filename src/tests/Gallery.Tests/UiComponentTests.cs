@@ -634,7 +634,7 @@ public sealed class UiComponentTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
-        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => vault.Scope.Records.AddCollection(edit with { Tags = "existing" }, "Existing"));
+        image = await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "existing", Collections = ["Existing"] });
         var collection = await vault.Scope.Collections.CreateCollectionAsync("Destination");
         var destinationSet = await vault.Scope.Collections.CreateSetAsync(collection.Id, "New set");
         image = (await vault.Scope.Catalog.ListAsync()).Single();

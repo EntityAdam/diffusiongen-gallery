@@ -313,8 +313,7 @@ public sealed class ReviewTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "projection.png", "folder");
-        ImageRecordEdit Edit(ImageRecordEdit edit) => fixture.Scope.Records.AddCollection(
-            edit with { Rating = 4, IsFavorite = true }, " collection ");
+        ImageRecordEdit Edit(ImageRecordEdit edit) => edit with { Rating = 4, IsFavorite = true, Collections = ["collection"] };
 
         var projected = fixture.Scope.Records.ApplyEdit(image, Edit);
         await fixture.Scope.Records.UpdateAsync(image.Id, Edit);
@@ -337,14 +336,13 @@ public sealed class ReviewTests
     public void CollectionChanges_RejectInvalidBoundaryValuesWithoutAccessingTheVault(string collection)
     {
         using var fixture = new TestVault();
-        var edit = new ImageRecordEdit(new ImageRecord());
+        var image = new ImageRecord();
 
         var expectedPhrases = new[] { $"'{collection}'", "collection", "1", "80" };
-        var invalidAddition = Assert.Throws<InvalidOperationException>(() => fixture.Scope.Records.AddCollection(edit, collection));
-        var invalidRemoval = Assert.Throws<InvalidOperationException>(() => fixture.Scope.Records.RemoveCollection(edit, collection));
-        AsserterExceptionContract.AssertMessageContains(expectedPhrases, invalidAddition.Message);
-        AsserterExceptionContract.AssertMessageContains(expectedPhrases, invalidRemoval.Message);
-        Assert.Empty(edit.Collections);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Scope.Records.ApplyEdit(image, edit => edit with { Collections = [collection] }));
+        AsserterExceptionContract.AssertMessageContains(expectedPhrases, error.Message);
+        Assert.Empty(image.Collections);
         Assert.False(Directory.Exists(fixture.Root));
     }
 

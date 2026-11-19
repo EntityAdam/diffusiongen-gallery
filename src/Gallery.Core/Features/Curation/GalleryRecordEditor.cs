@@ -63,36 +63,6 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
         return LibraryRules.SetDeletionMark(image, markedForDeletion);
     }
 
-    public ImageRecordEdit SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection)
-    {
-        ArgumentNullException.ThrowIfNull(image);
-        ImageRecordEditValidator.ValidateRating(rating);
-        if (collection is not null && ImageRecordEditValidator.IsInvalidCollectionName(collection))
-            throw new InvalidOperationException($"Collection name '{collection}' is invalid; collection names must have 1 to 80 characters.");
-        return LibraryRules.SetOrganization(image, rating, reviewed, collection);
-    }
-
-    public ImageRecordEdit AddCollection(ImageRecordEdit image, string collection)
-    {
-        ArgumentNullException.ThrowIfNull(image);
-        ValidateCollectionName(collection);
-        return LibraryRules.AddCollection(image, collection);
-    }
-
-    public ImageRecordEdit RemoveCollection(ImageRecordEdit image, string collection)
-    {
-        ArgumentNullException.ThrowIfNull(image);
-        ValidateCollectionName(collection);
-        return LibraryRules.RemoveCollection(image, collection);
-    }
-
-    private static void ValidateCollectionName(string collection)
-    {
-        ArgumentNullException.ThrowIfNull(collection);
-        if (ImageRecordEditValidator.IsInvalidCollectionName(collection))
-            throw new InvalidOperationException($"Collection name '{collection}' is invalid; collection names must have 1 to 80 characters.");
-    }
-
     public ImageRecord ApplyEdit(ImageRecord image, Func<ImageRecordEdit, ImageRecordEdit> update)
     {
         ArgumentNullException.ThrowIfNull(image);

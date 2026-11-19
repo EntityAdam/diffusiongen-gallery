@@ -35,8 +35,6 @@ public sealed class CoreRulesTests
         var favorite = ReviewDecision.Apply(edit, ReviewAction.Favorite);
         var marked = LibraryRules.SetDeletionMark(favorite, true);
         var rated = LibraryRules.SetCuration(edit, 4, false);
-        var organized = LibraryRules.SetOrganization(rated, 5, true, " collection ");
-        var repeated = LibraryRules.SetOrganization(organized, 5, true, "COLLECTION");
         var restored = ReviewDecision.Restore(marked, ReviewDecision.Capture(original));
 
         Assert.True(favorite.IsReviewed);
@@ -44,8 +42,6 @@ public sealed class CoreRulesTests
         Assert.True(marked.IsMarkedForDeletion);
         Assert.True(rated.IsReviewed);
         Assert.Equal(4, rated.Rating);
-        Assert.Equal(["collection"], repeated.Collections.ToArray());
-        Assert.Empty(LibraryRules.RemoveCollection(repeated, " COLLECTION ").Collections);
         Assert.Equal(edit, restored);
         Assert.Equal("first, Second", LibraryRules.MergeTags("first", "Second, FIRST"));
         Assert.Equal("first, third", LibraryRules.RemoveTag("first, SECOND ,third", " second "));

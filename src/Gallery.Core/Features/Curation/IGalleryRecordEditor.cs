@@ -11,9 +11,6 @@ public interface IGalleryRecordEditor
     Task<ImageRecord> RestoreReviewStateAsync(string id, ReviewState state);
     ImageRecordEdit SetCuration(ImageRecordEdit image, int? rating, bool? reviewed);
     ImageRecordEdit SetDeletionMark(ImageRecordEdit image, bool markedForDeletion);
-    ImageRecordEdit SetOrganization(ImageRecordEdit image, int rating, bool reviewed, string? collection);
-    ImageRecordEdit AddCollection(ImageRecordEdit image, string collection);
-    ImageRecordEdit RemoveCollection(ImageRecordEdit image, string collection);
     ImageRecord ApplyEdit(ImageRecord image, Func<ImageRecordEdit, ImageRecordEdit> update);
     string MergeTags(string existing, string additions);
     string RemoveTag(string existing, string tag);

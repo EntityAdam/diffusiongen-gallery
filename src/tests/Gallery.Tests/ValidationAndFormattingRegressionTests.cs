@@ -35,7 +35,7 @@ public sealed class ValidationAndFormattingRegressionTests
     }
 
     [Fact]
-    public async Task Update_WhenCollectionsRepeatIgnoringCase_RejectsButAddAndRemoveKeepCanonicalIdentity()
+    public async Task Update_WhenCollectionsRepeatIgnoringCase_RejectsWithoutChangingRecord()
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
@@ -43,13 +43,7 @@ public sealed class ValidationAndFormattingRegressionTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             fixture.Scope.Records.UpdateAsync(original.Id, edit => edit with { Collections = ["Cats", "cats"] }));
-        var added = await fixture.Scope.Records.UpdateAsync(original.Id, edit =>
-            fixture.Scope.Records.AddCollection(fixture.Scope.Records.AddCollection(edit, " Cats "), "cATS"));
-        var removed = await fixture.Scope.Records.UpdateAsync(original.Id, edit =>
-            fixture.Scope.Records.RemoveCollection(edit, " cats "));
 
-        Assert.Equal(["Cats"], added.Collections.ToArray());
-        Assert.Empty(removed.Collections);
         Assert.Empty(Assert.Single(await fixture.Scope.Catalog.ListAsync()).Collections);
     }
 
