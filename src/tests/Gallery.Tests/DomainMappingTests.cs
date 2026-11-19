@@ -36,11 +36,11 @@ public sealed class DomainMappingTests
     }
 
     [Fact]
-    public void PublicEntry_UsesTheSameCanonicalContractsForEditingAndReview()
+    public void RecordEditor_UsesCanonicalContractsForEditingAndReview()
     {
-        var service = typeof(GalleryService);
-        var applyEdit = service.GetMethod(nameof(GalleryService.ApplyEdit))!;
-        var captureReview = service.GetMethod(nameof(GalleryService.CaptureReviewState), [typeof(ImageRecord)])!;
+        var recordEditor = typeof(IGalleryRecordEditor);
+        var applyEdit = recordEditor.GetMethod(nameof(IGalleryRecordEditor.ApplyEdit))!;
+        var captureReview = recordEditor.GetMethod(nameof(IGalleryRecordEditor.CaptureReviewState), [typeof(ImageRecord)])!;
 
         Assert.Equal(typeof(ImageRecord), applyEdit.ReturnType);
         Assert.Equal(typeof(Func<ImageRecordEdit, ImageRecordEdit>), applyEdit.GetParameters()[1].ParameterType);

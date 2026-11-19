@@ -700,8 +700,7 @@ runtime-setting changes.
 Web components inject feature contracts such as `IGalleryCatalog`, `IGalleryMedia`,
 and `IGalleryVault`. The host resolves each contract from the same scoped
 `GalleryScope`, which owns the vault session and checkout, the drive queue, and
-the HTTP client. The original `GalleryService` API delegates to those contracts
-for compatibility. Standalone tools can create and dispose a `GalleryScope`
+the HTTP client. Standalone tools can create and dispose a `GalleryScope`
 directly.
 
 ### Source organization
@@ -717,8 +716,7 @@ to Backups, removal and moves belong to Media, and the drive queue belongs to
 Storage. The Settings UI hosts tabs whose content is owned by the corresponding
 feature.
 
-Core `Composition` owns gallery setup, `Compatibility` holds the original
-`GalleryService` adapter, and `Infrastructure/Persistence` owns the catalog port
+Core `Composition` owns gallery setup. `Infrastructure/Persistence` owns the catalog port
 and both database adapters. Web `Components/Workspace` coordinates features,
 `Components/Pages` owns routes, and `Components/Shared` holds reusable controls.
 Internal namespaces follow their folders. Public Core types retain their

@@ -1,6 +1,6 @@
 using System.Reflection;
+using Gallery.Core.Features.Backups;
 using Gallery.Core.Features.Backups.Targets;
-using Gallery.Core.Services;
 
 namespace Gallery.Tests;
 
@@ -8,10 +8,10 @@ namespace Gallery.Tests;
 public sealed class BackupTargetBoundaryTests
 {
     [Fact]
-    public void GalleryEntryManager_DoesNotRetainOrPassAzureProviderTypes()
+    public void BackupAndRestoreWorkflows_DoNotRetainOrPassAzureProviderTypes()
     {
-        var types = typeof(GalleryService).GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
-            .Append(typeof(GalleryService)).ToArray();
+        var types = new[] { typeof(GalleryBackupWriter), typeof(GalleryRestore) }
+            .SelectMany(type => type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic).Append(type));
         var exposedTypes = types.SelectMany(type =>
             type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
                 .Select(field => field.FieldType)
@@ -24,7 +24,7 @@ public sealed class BackupTargetBoundaryTests
             .Select(type => type.FullName).Distinct().ToArray();
 
         Assert.True(providerTypes.Length == 0,
-            $"Expected Azure SDK types in the gallery entry manager: none. Actual: [{string.Join(", ", providerTypes)}].");
+            $"Expected Azure SDK types in the backup and restore workflows: none. Actual: [{string.Join(", ", providerTypes)}].");
     }
 
     [Fact]
