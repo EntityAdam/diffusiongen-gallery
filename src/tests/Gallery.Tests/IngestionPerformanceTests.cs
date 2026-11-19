@@ -27,15 +27,15 @@ public sealed class IngestionPerformanceTests
         await File.WriteAllBytesAsync(sourcePath, GalleryTests.MakePng());
         var sourceCreatedAt = File.GetCreationTimeUtc(sourcePath);
 
-        await fixture.Service.ImportFolderAsync(sourceRoot, FolderSearchScope.Descendants,
+        await fixture.Scope.Ingestion.ImportFolderAsync(sourceRoot, FolderSearchScope.Descendants,
             sourceRetention: sourceRetention);
-        await fixture.Service.CloseVaultAsync();
+        await fixture.Scope.Vault.CloseVaultAsync();
         using var reopenedSession = new VaultSession();
-        using var reopened = new GalleryService(new GalleryStore(Path.Combine(fixture.Root, "gallery.db")),
+        using var reopened = new GalleryScope(new GalleryStore(Path.Combine(fixture.Root, "gallery.db")),
             new VaultStore(fixture.Root), reopenedSession);
-        await reopened.OpenExistingVaultAsync(fixture.Root);
-        await reopened.UnlockWithPassphraseAsync(TestVault.Passphrase);
-        var record = Assert.Single(await reopened.ListAsync());
+        await reopened.Vault.OpenExistingVaultAsync(fixture.Root);
+        await reopened.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        var record = Assert.Single(await reopened.Catalog.ListAsync());
 
         Assert.Equal(sourcePath, record.SourcePath);
         Assert.Equal(new DateTimeOffset(sourceCreatedAt), record.SourceCreatedAt);
@@ -52,11 +52,11 @@ public sealed class IngestionPerformanceTests
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var folder = await CreateSourcesAsync(fixture, 5);
-        await fixture.Service.SaveIngestionOptionsAsync(new() { Workers = 3, CatalogBatchSize = 2 });
+        await fixture.Scope.Settings.SaveIngestionOptionsAsync(new() { Workers = 3, CatalogBatchSize = 2 });
         IngestionTimingReport? completedTimingReport = null;
         ImportProgress? final = null;
 
-        await fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
             sourceRetention: SourceRetention.DeleteAfterVerification, reportTimings: report => completedTimingReport = report,
             reportProgress: update => { final = update; return Task.CompletedTask; });
 
@@ -75,7 +75,7 @@ public sealed class IngestionPerformanceTests
         Assert.NotEqual("Unknown", report.CatalogDrive);
         Assert.Equal(new ImportProgress(5, 5, 5, 0, "Ingestion complete."), final);
         Assert.Empty(Directory.EnumerateFiles(folder));
-        Assert.Equal(5, (await fixture.Service.ListAsync()).Count);
+        Assert.Equal(5, (await fixture.Scope.Catalog.ListAsync()).Count);
     }
 
     [Fact]
@@ -98,13 +98,13 @@ public sealed class IngestionPerformanceTests
             "One or more files could not be imported.", "FolderImport.Failed",
             new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 3 });
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
                 sourceRetention: SourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 3, CatalogBatchSize = 3 }));
         AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
         Assert.Equal(3, failure.Failures.InnerExceptions.Count);
-        Assert.Empty(await fixture.Service.ListAsync());
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
         Assert.Equal(3, Directory.EnumerateFiles(folder).Count());
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories));
     }
@@ -129,13 +129,13 @@ public sealed class IngestionPerformanceTests
             "One or more files could not be imported.", "FolderImport.Failed",
             new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 2 });
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
                 sourceRetention: SourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 2, CatalogBatchSize = 2 }));
         AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
         Assert.Equal(2, failure.Failures.InnerExceptions.Count);
-        Assert.Equal(2, (await fixture.Service.ListAsync()).Count);
+        Assert.Equal(2, (await fixture.Scope.Catalog.ListAsync()).Count);
         Assert.Equal(2, Directory.EnumerateFiles(folder).Count());
         Assert.Equal(2, Directory.EnumerateFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories).Count());
     }
@@ -160,13 +160,13 @@ public sealed class IngestionPerformanceTests
             "One or more files could not be imported.", "FolderImport.Failed",
             new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 1 });
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
                 sourceRetention: SourceRetention.DeleteAfterVerification,
                 reportProgress: update => { final = update; return Task.CompletedTask; }));
         AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
         Assert.Single(Directory.EnumerateFiles(folder));
-        Assert.Single(await fixture.Service.ListAsync());
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Equal(1, final!.Imported);
         Assert.Equal(1, final.Failed);
     }
@@ -187,12 +187,12 @@ public sealed class IngestionPerformanceTests
             "One or more files could not be imported.", "FolderImport.Failed",
             new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 1 });
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Service.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
                 sourceRetention: SourceRetention.DeleteAfterVerification,
                 options: new() { Workers = 2, CatalogBatchSize = 2 }));
         AsserterExceptionContract.AssertMatches(expectedFailure, failure);
 
-        var imported = Assert.Single(await fixture.Service.ListAsync());
+        var imported = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.False(File.Exists(imported.SourcePath));
         var retained = Assert.Single(Directory.EnumerateFiles(folder));
         Assert.Equal(bytes, await File.ReadAllBytesAsync(retained));
@@ -231,7 +231,7 @@ public sealed class IngestionPerformanceTests
             ? new[] { workers.ToString(System.Globalization.CultureInfo.InvariantCulture), "1", "32", "workers" }
             : new[] { batchSize.ToString(System.Globalization.CultureInfo.InvariantCulture), "1", "64", "batch" };
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Service.SaveIngestionOptionsAsync(new() { Workers = workers, CatalogBatchSize = batchSize }));
+            fixture.Scope.Settings.SaveIngestionOptionsAsync(new() { Workers = workers, CatalogBatchSize = batchSize }));
         AsserterExceptionContract.AssertMessageContains(expectedPhrases, error.Message);
     }
 

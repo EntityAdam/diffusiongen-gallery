@@ -9,9 +9,12 @@ namespace Gallery.Tests;
 
 internal static class GalleryCapabilityTestSetup
 {
-    public static IServiceCollection AddGalleryCapabilities(this IServiceCollection services, GalleryService gallery)
+    public static IServiceCollection AddGalleryCapabilities(this IServiceCollection services, GalleryService gallery) =>
+        services.AddGalleryCapabilities(gallery.Scope);
+
+    public static IServiceCollection AddGalleryCapabilities(this IServiceCollection services, GalleryScope gallery)
     {
-        services.AddSingleton(gallery.Scope);
+        services.AddSingleton(gallery);
         GalleryServiceRegistration.RegisterCapabilities(services);
         return services;
     }
