@@ -196,15 +196,11 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
         Action<string>? progress, Func<ImportProgress, Task>? reportProgress,
         IngestionTimings? timings, IngestionOptions options, string mediaRoot)
     {
-        using var progressGate = new SemaphoreSlim(1);
-        int completedCount = 0;
-        int importedCount = 0;
-        int failedCount = 0;
+        using var folderProgress = new FolderImportProgress(mediaPaths.Length, progress, reportProgress, timings);
         var failuresByPathIndex = new Exception?[mediaPaths.Length];
         var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
-        var lastReport = Stopwatch.StartNew();
         timings?.SetFiles(mediaPaths.Length, options.Workers);
-        await ReportAsync("Importing media...", force: true);
+        await folderProgress.ReportAsync("Importing media...", force: true);
         foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
         {
             var pending = indices.Select(index => new PendingImport(index, mediaPaths[index])).ToArray();
@@ -215,7 +211,7 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
                 {
                     try
                     {
-                        await ReportAsync($"Importing {item.Name}...", name: item.Name);
+                        await folderProgress.ReportAsync($"Importing {item.Name}...", name: item.Name);
                         await PrepareBatchItemAsync(item, sourceRetention, key, timings, mediaRoot);
                     }
                     catch (Exception exception) when (IsImportFailure(exception))
@@ -229,19 +225,10 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
                 await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
                 {
                     await FinalizeBatchItemAsync(item, sourceRetention, key, timings);
-                    await progressGate.WaitAsync();
-                    try
-                    {
-                        completedCount++;
-                        if (item.Committed) importedCount++;
-                        if (item.Failure is not null)
-                        {
-                            failedCount++;
-                            failuresByPathIndex[item.Index] = new IOException($"Failed to import '{item.Path}'.", item.Failure);
-                        }
-                    }
-                    finally { progressGate.Release(); }
-                    await ReportAsync($"Processed {item.Name}", force: item.Failure is not null);
+                    if (item.Failure is not null)
+                        failuresByPathIndex[item.Index] = new IOException($"Failed to import '{item.Path}'.", item.Failure);
+                    await folderProgress.RecordCompletionAsync(item.Committed, item.Failure is not null);
+                    await folderProgress.ReportAsync($"Processed {item.Name}", force: item.Failure is not null);
                     timings?.Record(IngestionStage.File, item.Started);
                 });
             }
@@ -260,29 +247,9 @@ internal sealed class MediaImporter(IGalleryStore galleryStore, ImportMediaPrepa
                 }
             }
         }
-        timings?.SetOutcome(importedCount, failedCount);
-        await ReportAsync(mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.", force: true);
+        folderProgress.RecordOutcome();
+        await folderProgress.ReportAsync(mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.", force: true);
         ThrowImportFailures(folder, failuresByPathIndex);
-
-        async Task ReportAsync(string status, bool force = false, string? name = null)
-        {
-            var start = Stopwatch.GetTimestamp();
-            await progressGate.WaitAsync();
-            try
-            {
-                if (name is not null) progress?.Invoke(name);
-                if (reportProgress is not null && (force || lastReport.ElapsedMilliseconds >= 100))
-                {
-                    await reportProgress(new ImportProgress(mediaPaths.Length, completedCount, importedCount, failedCount, status));
-                    lastReport.Restart();
-                }
-            }
-            finally
-            {
-                progressGate.Release();
-                timings?.Record(IngestionStage.ReportProgress, start);
-            }
-        }
     }
 
     private async Task PrepareBatchItemAsync(PendingImport item, SourceRetention sourceRetention, byte[] key,

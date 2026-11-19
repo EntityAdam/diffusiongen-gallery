@@ -77,9 +77,12 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
         }
     }
 
-    private sealed class NoOpJsRuntime : IJSRuntime
+    internal sealed class NoOpJsRuntime : IJSRuntime
     {
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => ValueTask.FromResult(default(TValue)!);
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) => ValueTask.FromResult(default(TValue)!);
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
+            ValueTask.FromResult(identifier is "galleryViewer.createImageUrl" or "galleryMedia.createStreamUrl"
+                ? (TValue)(object)"blob:test-media" : default!);
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args) =>
+            InvokeAsync<TValue>(identifier, args);
     }
 }

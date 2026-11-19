@@ -126,12 +126,11 @@
         .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
     private string imageData = "", error = "";
     private readonly Dictionary<string, ImageRecord> latestImagesById = [];
-    private readonly Dictionary<string, (string Url, long Bytes)> fitCache = [];
-    private readonly Dictionary<string, (string Url, long Bytes)> fullCache = [];
-    private readonly SemaphoreSlim cacheGate = new(1);
-    private const long CacheBudget = 64 * 1024 * 1024;
+    private ViewerMediaCache? mediaCache;
+    private ViewerMediaCache MediaCache => mediaCache ??= new(GalleryMedia, JS);
     private bool disposed;
     private Task? preload;
+    private Task? shutdown;
     private ImageRecord Current => LatestSnapshot(Images[index]);
     private ImageRecord LatestSnapshot(ImageRecord image) => latestImagesById.GetValueOrDefault(image.Id, image);
     private bool reviewComplete;
@@ -154,68 +153,14 @@
             celebrated = true;
             await JS.InvokeVoidAsync("galleryViewer.celebrate", element);
         }
-        if (!firstRender) return;
+        if (!firstRender || disposed) return;
         reference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("galleryViewer.attach", element, reference);
-        await RunAsync(async () =>
-        {
-            if (!Current.IsVideo && InitialPreview.Length > 0)
-            {
-                var url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", InitialPreview);
-                fitCache[Current.Id] = (url, InitialPreview.Length * 3L / 4);
-            }
-            imageData = await LoadImageAsync(Current.Id, false);
-        });
+        if (disposed) return;
+        await RunAsync(async () => imageData = await MediaCache.LoadAsync(Current, full: false, InitialPreview));
+        if (disposed) return;
         StateHasChanged();
         preload = PreloadPageAsync();
-    }
-
-    private async Task<string> LoadImageAsync(string id, bool full, bool prefetch = false)
-    {
-        await cacheGate.WaitAsync();
-        try
-        {
-            if (disposed) return "";
-            var isVideo = Images.FirstOrDefault(image => image.Id == id)?.IsVideo == true;
-            // Videos are large: never prefetch them, and keep one decrypted copy regardless of the size mode.
-            if (isVideo && prefetch) return "";
-            full = full && !isVideo;
-            var cache = full ? fullCache : fitCache;
-            if (cache.TryGetValue(id, out var cached)) return cached.Url;
-            string data = "";
-            Stream? media = null;
-            string mediaType = "";
-            long bytes;
-            if (isVideo)
-            {
-                (media, mediaType) = await GalleryMedia.OpenMediaAsync(id);
-                bytes = media.Length;
-            }
-            else
-            {
-                data = await GalleryMedia.ViewerImageAsync(id, full ? ImageResolution.Original : ImageResolution.Fit);
-                bytes = data.Length * 3L / 4;
-            }
-            if (disposed) { media?.Dispose(); return ""; }
-            if (prefetch && fitCache.Values.Sum(entry => entry.Bytes) + bytes > CacheBudget) return "";
-            while (cache.Count > 0 && (cache.Values.Sum(entry => entry.Bytes) + bytes > CacheBudget
-                || full && cache.Count >= 2))
-            {
-                var victim = cache.First();
-                await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls", (object)new[] { victim.Value.Url });
-                cache.Remove(victim.Key);
-            }
-            string url;
-            if (media is not null)
-            {
-                using var reference = new DotNetStreamReference(media);
-                url = await JS.InvokeAsync<string>("galleryMedia.createStreamUrl", reference, mediaType);
-            }
-            else url = await JS.InvokeAsync<string>("galleryViewer.createImageUrl", data);
-            cache[id] = (url, bytes);
-            return url;
-        }
-        finally { cacheGate.Release(); }
     }
 
     private async Task PreloadPageAsync()
@@ -224,8 +169,10 @@
         foreach (var image in Images.Skip(index).Take(24))
         {
             if (disposed) return;
-            if (fitCache.Values.Sum(entry => entry.Bytes) >= CacheBudget) return;
-            try { await LoadImageAsync(image.Id, false, prefetch: true); }
+            try
+            {
+                if (!await MediaCache.PrefetchAsync(image)) return;
+            }
             catch (Exception exception)
             {
                 if (disposed) return;
@@ -241,7 +188,7 @@
 
     private Task SetSizeAsync(bool original) => RunAsync(async () =>
     {
-        var data = await LoadImageAsync(Current.Id, original);
+        var data = await MediaCache.LoadAsync(Current, original);
         originalSize = original;
         imageData = data;
     });
@@ -267,7 +214,7 @@
     {
         var next = index + direction;
         if (next < 0 || next >= Images.Count) return;
-        var data = await LoadImageAsync(Images[next].Id, originalSize);
+        var data = await MediaCache.LoadAsync(Images[next], originalSize);
         index = next;
         imageData = data;
         reviewComplete = false;
@@ -299,7 +246,7 @@
     {
         if (!undo.TryPeek(out var previous)) return;
         var image = LatestSnapshot(Images[previous.Index]);
-        var data = await LoadImageAsync(image.Id, originalSize);
+        var data = await MediaCache.LoadAsync(image, originalSize);
         latestImagesById[image.Id] = await GalleryRecords.RestoreReviewStateAsync(image.Id, previous.State);
         undo.Pop();
         if (previous.Decided) decisions.Add(image.Id); else decisions.Remove(image.Id);
@@ -327,7 +274,7 @@
         }
         var next = index + 1 < Images.Count ? index + 1
             : Images.ToList().FindIndex(image => !decisions.Contains(image.Id) && !skipped.Contains(image.Id));
-        var data = await LoadImageAsync(Images[next].Id, originalSize);
+        var data = await MediaCache.LoadAsync(Images[next], originalSize);
         index = next;
         imageData = data;
         // Warm only a small forward window for long review queues.
@@ -409,24 +356,33 @@
 
     private async Task CloseAsync()
     {
+        if (disposed) return;
+        await StopAsync();
+        await OnClose.InvokeAsync();
+    }
+
+    private Task StopAsync()
+    {
         disposed = true;
-        await JS.InvokeVoidAsync("galleryViewer.detach", element);
-        await cacheGate.WaitAsync();
+        return shutdown ??= DetachAndReleaseMediaAsync();
+    }
+
+    private async Task DetachAndReleaseMediaAsync()
+    {
         try
         {
-            await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls",
-                (object)fitCache.Values.Concat(fullCache.Values).Select(entry => entry.Url).ToArray());
-            fitCache.Clear();
-            fullCache.Clear();
+            if (reference is not null) await JS.InvokeVoidAsync("galleryViewer.detach", element);
         }
-        finally { cacheGate.Release(); }
-        await OnClose.InvokeAsync();
+        finally
+        {
+            if (mediaCache is not null) await mediaCache.DisposeAsync();
+        }
     }
 
     [JSInvokable]
     public async Task HandleKey(string key)
     {
-        if (busy || quickEdit is not null) return;
+        if (disposed || busy || quickEdit is not null) return;
         switch (key)
         {
             case "arrowleft": await NavigateAsync(-1); break;
@@ -449,16 +405,13 @@
 
     public async ValueTask DisposeAsync()
     {
-        disposed = true;
-        if (preload is not null) await preload;
-        imageData = "";
-        try
-        {
-            await JS.InvokeVoidAsync("galleryViewer.releaseImageUrls",
-                (object)fitCache.Values.Concat(fullCache.Values).Select(entry => entry.Url).ToArray());
-            await JS.InvokeVoidAsync("galleryViewer.detach", element);
-        }
+        try { await StopAsync(); }
         catch (JSDisconnectedException) { }
-        finally { fitCache.Clear(); fullCache.Clear(); reference?.Dispose(); }
+        finally
+        {
+            imageData = "";
+            reference?.Dispose();
+        }
+        if (preload is not null) await preload;
     }
 }
