@@ -21,7 +21,7 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
         var location = galleryLifetime.Current;
         var store = location.GalleryStore;
         await using var catalogOperation = await store.OpenOperationAsync(key.Bytes);
-        var importer = new MediaImporter(store, importMediaPreparer);
+        var importer = new MediaImporter(store, store.Gate, importMediaPreparer);
         await importer.PrepareFingerprintIndexAsync(key.Bytes);
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
         return await importer.ImportAsync(input, name, sourceFolder, sourcePath, key.Bytes, mediaRoot);
@@ -42,7 +42,7 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
             ?? new IngestionOptions();
         IngestionOptionsValidator.Validate(options);
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
-        var importer = new MediaImporter(store, importMediaPreparer);
+        var importer = new MediaImporter(store, store.Gate, importMediaPreparer);
         await importer.ImportFolderAsync(folder, searchScope, progress, sourceRetention, reportProgress, reportTimings,
             options, scan, includeImages, includeVideos, location.VaultStore.Root, mediaRoot, key.Bytes);
     }
@@ -50,7 +50,8 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
     public async Task VerifyImportedAsync(string id)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        var importer = new MediaImporter(galleryLifetime.Current.GalleryStore, importMediaPreparer);
+        var store = galleryLifetime.Current.GalleryStore;
+        var importer = new MediaImporter(store, store.Gate, importMediaPreparer);
         await importer.VerifyImportedAsync(id, key.Bytes);
     }
 

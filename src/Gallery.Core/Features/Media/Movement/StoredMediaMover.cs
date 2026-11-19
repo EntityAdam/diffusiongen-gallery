@@ -46,11 +46,8 @@ internal sealed class StoredMediaMover(GalleryLifetime galleryLifetime, VaultSes
                     deleteOldCopy, queuedDelete.Sequence);
                 return;
             }
-            if (await GalleryDriveQueue.CanDeleteQueuedFileAsync(store, queuedDelete.ImageId, target, key))
-            {
-                await GalleryDriveQueue.DeleteQueuedFileAsync(store, queuedDelete, target, key);
+            if (await QueuedFileDeletion.DeleteIfUnownedAsync(store, queuedDelete, target, key))
                 await store.RemoveDriveOperationAsync(queuedDelete.Sequence, key);
-            }
         }
 
         var movedRecord = StoredImageMover.CopyToDestination(record, target, newName);

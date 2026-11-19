@@ -118,64 +118,6 @@ internal sealed class GalleryDriveQueue : IDisposable
 
     private static long NowMilliseconds() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    internal static async Task ReconcileOutstandingDeletesAsync(IGalleryStore galleryStore, byte[] key)
-    {
-        await galleryStore.Gate.WaitAsync();
-        try
-        {
-            var ownedPaths = (await galleryStore.ReadRecordsAsync(key))
-                .Select(record => Path.GetFullPath(record.StoredPath))
-                .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-            foreach (var operation in await galleryStore.ReadOutstandingDeletesAsync(key))
-            {
-                var payload = DriveOperationProcessor.Read(operation, key);
-                var path = Path.GetFullPath(payload.Path);
-                if (!DriveOperationProcessor.PathFingerprint(key, path).AsSpan().SequenceEqual(operation.Target.AsSpan()))
-                    throw new InvalidOperationException("Queued deletion path does not match its authenticated target.");
-                if (!ownedPaths.Contains(path))
-                    await DeleteObsoleteCiphertextAsync(galleryStore, operation, path, key);
-                await galleryStore.CompleteDriveOperationsAsync(
-                    [new DriveOperationResult(operation.Sequence, operation.Revision, DriveOperationOutcome.Done)], key);
-            }
-        }
-        finally { galleryStore.Gate.Release(); }
-    }
-
-    private static async Task DeleteObsoleteCiphertextAsync(
-        IGalleryStore store, DriveOperation operation, string path, byte[] key)
-    {
-        if (Directory.Exists(path)) throw new IOException("Queued ciphertext deletion points to a directory.");
-        if (File.Exists(path))
-        {
-            if (operation.ImageId is null || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
-                throw new InvalidOperationException("Queued ciphertext ownership cannot be verified.");
-            await StoredMediaProcessor.VerifyCiphertextAsync(path, operation.ImageId, key);
-            try { File.Delete(path); }
-            catch (DirectoryNotFoundException) { }
-        }
-        await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path), key);
-    }
-
-    /// <summary>
-    /// Deletes a file queued for deletion unless its image was moved back to that path. Caller holds Gate.
-    /// An operation whose path is owned again is obsolete and completes without deleting that path.
-    /// </summary>
-    internal static async Task DeleteQueuedFileAsync(
-        IGalleryStore galleryStore, DriveOperation driveOperation, string path, byte[] key)
-    {
-        if (!await CanDeleteQueuedFileAsync(galleryStore, driveOperation.ImageId, path, key)) return;
-        try { await DeleteObsoleteCiphertextAsync(galleryStore, driveOperation, path, key); }
-        catch (Exception exception) when (exception is CryptographicException or InvalidOperationException)
-        {
-            throw new DriveOperationConflictException("Queued file is not the expected ciphertext.", exception);
-        }
-    }
-
-    internal static async Task<bool> CanDeleteQueuedFileAsync(
-        IGalleryStore galleryStore, string? imageId, string path, byte[] key) =>
-        imageId is null || await galleryStore.TryReadRecordAsync(imageId, key) is not { } owner
-        || !StorageFileSystem.PathEquals(owner.StoredPath, path);
-
     private static bool IsRemovalStagingFile(string path)
     {
         var markerIndex = path.LastIndexOf(RemovalStagingMarker, StringComparison.Ordinal);
@@ -305,7 +247,7 @@ internal sealed class GalleryDriveQueue : IDisposable
         private async Task DeleteFileAsync(DriveOperation driveOperation, string path)
         {
             await galleryStore.Gate.WaitAsync();
-            try { await DeleteQueuedFileAsync(galleryStore, driveOperation, path, Key); }
+            try { await QueuedFileDeletion.DeleteIfUnownedAsync(galleryStore, driveOperation, path, Key); }
             finally { galleryStore.Gate.Release(); }
         }
 

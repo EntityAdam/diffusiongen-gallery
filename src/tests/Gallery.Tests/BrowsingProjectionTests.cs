@@ -9,12 +9,10 @@ using Gallery.Core.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using ShadCn.Blazor.Components;
-using Microsoft.JSInterop;
-using Gallery.Core.Features.Ingestion;
 using Gallery.Web.Components.Features.Browsing;
 using Gallery.Web.Components.Features.Curation;
-using Gallery.Web.Components.Features.Ingestion;
 using Gallery.Web.Components.Features.Vision;
+using static Gallery.Tests.BrowsingWorkspaceFixture;
 
 namespace Gallery.Tests;
 
@@ -39,11 +37,11 @@ public sealed class BrowsingProjectionTests
         var filter = new GalleryFilter { Analysis = GalleryFilter.AwaitingApproval, IncludesFavoritesOnly = true };
         var draftIds = new HashSet<string> { "new-draft", "reanalyzed", "not-favorite", "deleted", "missing" };
 
-        var projection = GalleryBrowsingProjector.Create(vault.Service.Scope.Catalog, images, filter, grouping, draftIds);
+        var projection = GalleryBrowsingProjector.Create(vault.Scope.Catalog, images, filter, grouping, draftIds);
 
         Assert.Equal(new[] { "new-draft", "reanalyzed" }, projection.Images.Select(image => image.Id).Order());
-        Assert.Empty(vault.Service.Filter(images, filter));
-        Assert.Empty(GalleryBrowsingProjector.Create(vault.Service.Scope.Catalog, images, filter, grouping, new HashSet<string>()).Images);
+        Assert.Empty(vault.Scope.Catalog.Filter(images, filter));
+        Assert.Empty(GalleryBrowsingProjector.Create(vault.Scope.Catalog, images, filter, grouping, new HashSet<string>()).Images);
     }
 
     [Fact]
@@ -70,148 +68,6 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public void IngestionDefaults_WhenSessionIsCreated_ThenUsesTheSafeHddSettings()
-    {
-        // Arrange
-        var expectedScenario = ExpectedScenario.CreateFrom("Ingestion starts recursively with safe HDD settings and no source deletion.", new
-        {
-            Recursive = true, DeleteSources = false, RecordTimings = false, Profile = "hdd",
-            Workers = IngestionOptions.Hdd.Workers, BatchSize = IngestionOptions.Hdd.CatalogBatchSize
-        });
-
-        // Act
-        var session = new IngestionSession();
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            Recursive = session.Recursive, DeleteSources = session.DeleteSources,
-            RecordTimings = session.RecordTimings, Profile = session.Profile,
-            Workers = session.Workers, BatchSize = session.BatchSize
-        });
-    }
-
-    // Applying a profile copies its worker and batch settings and identifies the selected profile.
-    [Theory]
-    [InlineData("ssd")]
-    [InlineData("hdd")]
-    [InlineData("custom")]
-    public void IngestionProfile_WhenApplied_ThenCopiesTheSettingsAndProfileName(string expectedProfile)
-    {
-        // Arrange
-        var session = new IngestionSession();
-        var ingestionOptions = expectedProfile switch
-        {
-            "ssd" => IngestionOptions.Ssd,
-            "hdd" => IngestionOptions.Hdd,
-            _ => new IngestionOptions { Workers = 7, CatalogBatchSize = 21 }
-        };
-        var expectedScenario = ExpectedScenario.CreateFrom("Selecting an ingestion profile copies its worker and batch settings.", new
-        {
-            Profile = expectedProfile, ingestionOptions.Workers, BatchSize = ingestionOptions.CatalogBatchSize
-        });
-        var profileOverride = expectedProfile == "ssd" ? expectedProfile : null;
-
-        // Act
-        session.ApplyProfile(ingestionOptions, profileOverride);
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            Profile = session.Profile,
-            Workers = session.Workers, BatchSize = session.BatchSize
-        });
-    }
-
-    // Ingestion requires a completed, nonempty, affordable scan while the component is idle.
-    [Theory]
-    [InlineData(false, false, long.MaxValue, 1, false, false)]
-    [InlineData(true, false, long.MaxValue, 1, false, true)]
-    [InlineData(true, true, long.MaxValue, 1, false, false)]
-    [InlineData(true, false, long.MaxValue, 1, true, true)]
-    [InlineData(true, false, 0, 1, false, false)]
-    [InlineData(true, false, 0, 1, true, false)]
-    [InlineData(true, false, long.MaxValue, 0, true, false)]
-    public void IngestionGate_WhenScanConditionsVary_ThenRequiresAllPrerequisites(
-        bool hasScan, bool isBusy, long mediaAvailableBytes, int fileCount, bool deletesSources, bool expectedCanIngest)
-    {
-        // Arrange
-        var session = new IngestionSession();
-        var ingestionScan = new IngestionScan(
-            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), FolderSearchScope.Descendants,
-            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
-            [new IngestionScanFile(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + ".png", 100, DateTime.UtcNow, false)]);
-        var ingestionSpaceEstimate = IngestionSourceScanner.CalculateIngestionSpace(1, 100,
-            long.MaxValue, long.MaxValue, true) with { MediaAvailableBytes = mediaAvailableBytes, FileCount = fileCount };
-        if (hasScan) session.Scan = ingestionScan;
-        session.Space = ingestionSpaceEstimate;
-        session.DeleteSources = deletesSources;
-
-        // Act
-        var actualCanIngest = session.CanIngest(isBusy);
-
-        // Assert
-        Assert.Equal(expectedCanIngest, actualCanIngest);
-    }
-
-    // Toggling source deletion adds or removes the selected source bytes from the estimated change.
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void IngestionEstimate_WhenSourceDeletionIsToggled_ThenReflectsTheSelectedSourceBytes(bool initiallyDeletesSources)
-    {
-        // Arrange
-        var session = new IngestionSession();
-        var ingestionSpaceEstimate = IngestionSourceScanner.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
-        session.Space = ingestionSpaceEstimate;
-        session.DeleteSources = initiallyDeletesSources;
-        var expectedScenario = ExpectedScenario.CreateFrom("Source deletion subtracts selected source bytes from the estimated storage change.", new
-        {
-            DeletesSources = !initiallyDeletesSources,
-            ChangeBytes = initiallyDeletesSources
-                ? ingestionSpaceEstimate.EstimatedBytes
-                : ingestionSpaceEstimate.EstimatedBytes - ingestionSpaceEstimate.SelectedSourceBytes
-        });
-
-        // Act
-        session.DeleteSources = !session.DeleteSources;
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            DeletesSources = session.DeleteSources,
-            ChangeBytes = session.EstimatedChangeBytes
-        });
-    }
-
-    [Fact]
-    public void IngestionScan_WhenRecursionChanges_ThenDisablesRecursionAndIngestionAndClearsTheScanAndSpaceEstimate()
-    {
-        // Arrange
-        var session = new IngestionSession();
-        session.Scan = new IngestionScan(
-            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), FolderSearchScope.Descendants,
-            Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), []);
-        session.Space = IngestionSourceScanner.CalculateIngestionSpace(1, 100, long.MaxValue, long.MaxValue, true);
-        var expectedScenario = ExpectedScenario.CreateFrom("Changing recursion invalidates the scan and estimate and disables ingestion.", new
-        {
-            Recursive = false, HasScan = false, HasSpaceEstimate = false, CanIngest = false
-        });
-
-        // Act
-        session.ToggleRecursion();
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            Recursive = session.Recursive,
-            HasScan = session.Scan is not null,
-            HasSpaceEstimate = session.Space is not null,
-            CanIngest = session.CanIngest(false)
-        });
-    }
-
-    [Fact]
     public void Projection_WhenAnotherSnapshotIsCreated_ThenKeepsTheOriginalImmutableAndIndependent()
     {
         // Arrange
@@ -226,7 +82,7 @@ public sealed class BrowsingProjectionTests
         ]);
         var countingImagesIndependent = new CountingImages([new() { Id = imageIdIndependent, Rating = 5 }]);
         var actualGalleryBrowsingProjectionOriginal = GalleryBrowsingProjector.CreateGroupedByPrompt(
-            testVault.Service.Scope.Catalog, countingImagesOriginal, new GalleryFilter());
+            testVault.Scope.Catalog, countingImagesOriginal, new GalleryFilter());
         countingImagesOriginal[0] = countingImagesOriginal[0] with { Id = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) };
         var expectedScenario = ExpectedScenario.CreateFrom("Independent projections enumerate each source once and preserve immutable images and group identity.", new
         {
@@ -237,7 +93,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjectionIndependent = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Service.Scope.Catalog, countingImagesIndependent, new GalleryFilter { MinRating = 3 });
+            testVault.Scope.Catalog, countingImagesIndependent, new GalleryFilter { MinRating = 3 });
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -299,7 +155,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -320,7 +176,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating", MinRating = 3 });
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating", MinRating = 3 });
 
         // Assert
         Assert.Equal(expectedImageIds, actualGalleryBrowsingProjection.Images.Select(imageRecord => imageRecord.Id));
@@ -341,7 +197,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateGroupedByPrompt(
-            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -373,7 +229,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "model");
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "model");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -399,7 +255,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { MinRating = 5 }, grouping);
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { MinRating = 5 }, grouping);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -424,7 +280,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Service.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, invalidGrouping);
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, invalidGrouping);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -642,8 +498,8 @@ public sealed class BrowsingProjectionTests
         var sourceFileName = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + ".png";
         var sourceFolder = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         var expectedDescription = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var staleImageRecord = await testVault.Service.ImportAsync(new MemoryStream(GalleryTests.MakePng()), sourceFileName, sourceFolder);
-        await testVault.Service.UpdateAsync(staleImageRecord.Id, imageRecordEdit => imageRecordEdit with { Description = expectedDescription });
+        var staleImageRecord = await testVault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), sourceFileName, sourceFolder);
+        await testVault.Scope.Records.UpdateAsync(staleImageRecord.Id, imageRecordEdit => imageRecordEdit with { Description = expectedDescription });
         using var home = CreateSession(testVault, [staleImageRecord]);
         SetField(home, "Browser.Filter", new GalleryFilter { MinRating = 5 });
         var actualEditInvocationCount = 0;
@@ -659,7 +515,7 @@ public sealed class BrowsingProjectionTests
         await home.Curation.CurateAsync([staleImageRecord.Id, staleImageRecord.Id], Edit, "saved");
 
         // Assert - gather the persisted and displayed records
-        var actualImageRecordsStored = await testVault.Service.ListAsync();
+        var actualImageRecordsStored = await testVault.Scope.Catalog.ListAsync();
         var actualImageRecordsDisplayed = GetField<IReadOnlyList<ImageRecord>>(home, "Catalog.Images");
 
         // Assert
@@ -671,140 +527,6 @@ public sealed class BrowsingProjectionTests
             IsFavorite = actualImageRecordsDisplayed.FirstOrDefault()?.IsFavorite,
             StoredMatchesDisplayed = JsonSerializer.Serialize(actualImageRecordsStored) == JsonSerializer.Serialize(actualImageRecordsDisplayed)
         });
-    }
-
-    [Fact]
-    public void GuidedReview_WhenStartedWithTheDefaultGoal_ThenOpensADetachedReviewOfTenEligibleImagesAcrossPagesInSortOrder()
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateImages(30);
-        imageRecords[0] = imageRecords[0] with { IsReviewed = true };
-        imageRecords[1] = imageRecords[1] with { IsMarkedForDeletion = true };
-        using var home = CreateSession(testVault, imageRecords);
-        SetField(home, "Browser.Filter", new GalleryFilter { Sort = "name" });
-        SetField(home, "Browser.Density", "detail");
-        SetField(home, "Browser.Page", 1);
-        const int ExpectedReviewGoal = 10;
-        var expectedImageIds = imageRecords.Skip(2).Take(ExpectedReviewGoal).Select(imageRecord => imageRecord.Id).ToArray();
-        var expectedScenario = ExpectedScenario.CreateFrom("Default review selects ten eligible images in library sort order, independent of pagination, in a detached session.", new
-        {
-            Goal = ExpectedReviewGoal, ImageIds = expectedImageIds, InitialId = expectedImageIds[0], ReviewMode = true, IsDetachedSnapshot = true
-        });
-
-        // Act
-        home.Presentation.StartReview(home.Browser.ReviewPool, home.Browser.ReviewGoal, home.Browser.ReviewRandomOrder);
-
-        // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            Goal = GetProperty<int>(home, "Browser.ReviewGoal"), ImageIds = actualImageRecords.Select(imageRecord => imageRecord.Id).ToArray(),
-            InitialId = GetField<string>(home, "Presentation.ViewerInitialId"), ReviewMode = GetField<bool>(home, "Presentation.ReviewMode"),
-            IsDetachedSnapshot = actualImageRecords.Count > 0 && !ReferenceEquals(imageRecords[2], actualImageRecords[0])
-        });
-    }
-
-    // Review goals are clamped to at least one and at most the eligible filtered pool.
-    [Theory]
-    [InlineData(100, 6)]
-    [InlineData(3, 3)]
-    [InlineData(0, 1)]
-    [InlineData(-5, 1)]
-    public void GuidedReview_WhenTheGoalIsOutsideThePoolBounds_ThenClampsTheGoalAndSession(int requestedGoal, int expectedGoal)
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateImages(20);
-        for (var index = 0; index < imageRecords.Count; index++)
-            imageRecords[index] = imageRecords[index] with
-            {
-                IsFavorite = index < 8, IsReviewed = index == 0, IsMarkedForDeletion = index == 1
-            };
-        using var home = CreateSession(testVault, imageRecords);
-        SetField(home, "Browser.Filter", new GalleryFilter { IncludesFavoritesOnly = true });
-        ComponentTestAccess.Set(home, "Browser.ReviewGoal", requestedGoal);
-        var expectedScenario = ExpectedScenario.CreateFrom("Review goals and session sizes stay within the eligible filtered pool.",
-            new { Goal = expectedGoal, SessionCount = expectedGoal, AllEligible = true });
-
-        // Act
-        home.Presentation.StartReview(home.Browser.ReviewPool, home.Browser.ReviewGoal, home.Browser.ReviewRandomOrder);
-
-        // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            Goal = GetProperty<int>(home, "Browser.ReviewGoal"), SessionCount = actualImageRecords.Count,
-            AllEligible = actualImageRecords.All(imageRecord => imageRecord.IsFavorite && !imageRecord.IsReviewed && !imageRecord.IsMarkedForDeletion)
-        });
-    }
-
-    [Fact]
-    public void GuidedReview_WhenRandomOrderIsSelected_ThenChoosesUniqueEligibleImagesWithoutChangingTheLibrary()
-    {
-        // Arrange
-        const int ExpectedReviewGoal = 7;
-        using var testVault = new TestVault();
-        var imageRecords = CreateImages(80);
-        for (var index = 0; index < imageRecords.Count; index++)
-            imageRecords[index] = imageRecords[index] with
-            {
-                IsFavorite = index % 2 == 0, IsReviewed = index < 10, IsMarkedForDeletion = index > 70
-            };
-        using var home = CreateSession(testVault, imageRecords);
-        SetField(home, "Browser.Filter", new GalleryFilter { IncludesFavoritesOnly = true });
-        SetField(home, "Browser.ReviewRandomOrder", true);
-        SetField(home, "Browser.ReviewGoal", ExpectedReviewGoal);
-        var eligibleImageIds = imageRecords.Where(imageRecord => imageRecord.IsFavorite && !imageRecord.IsReviewed && !imageRecord.IsMarkedForDeletion)
-            .Select(imageRecord => imageRecord.Id).ToHashSet(StringComparer.Ordinal);
-        var expectedScenario = ExpectedScenario.CreateFrom("Random review selects unique eligible images without reordering the library.", new
-        {
-            SessionCount = ExpectedReviewGoal, UniqueCount = ExpectedReviewGoal, AllEligible = true,
-            LibraryOrder = imageRecords.Select(imageRecord => imageRecord.Id).ToArray()
-        });
-
-        // Act
-        home.Presentation.StartReview(home.Browser.ReviewPool, home.Browser.ReviewGoal, home.Browser.ReviewRandomOrder);
-
-        // Assert - gather the review session
-        var actualImageRecords = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages");
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            SessionCount = actualImageRecords.Count, UniqueCount = actualImageRecords.Select(imageRecord => imageRecord.Id).Distinct().Count(),
-            AllEligible = actualImageRecords.All(imageRecord => eligibleImageIds.Contains(imageRecord.Id)),
-            LibraryOrder = imageRecords.Select(imageRecord => imageRecord.Id).ToArray()
-        });
-    }
-
-    // The displayed goal and a new session both shrink to the remaining eligible pool, including zero.
-    [Theory]
-    [InlineData(true, 3)]
-    [InlineData(false, 0)]
-    public void GuidedReview_WhenTheEligiblePoolShrinks_ThenCapsTheDisplayedGoalAndSession(bool includesFavorites, int expectedCount)
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateImages(20);
-        for (var index = 0; index < 3; index++) imageRecords[index] = imageRecords[index] with { IsFavorite = true };
-        using var home = CreateSession(testVault, imageRecords);
-        SetField(home, "Browser.Filter", includesFavorites
-            ? new GalleryFilter { IncludesFavoritesOnly = true }
-            : new GalleryFilter { MinRating = 5 });
-        var expectedScenario = ExpectedScenario.CreateFrom("A reduced eligible pool caps both the displayed goal and the next review session.",
-            new { Goal = expectedCount, SessionCount = expectedCount });
-
-        // Act
-        home.Presentation.StartReview(home.Browser.ReviewPool, home.Browser.ReviewGoal, home.Browser.ReviewRandomOrder);
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario,
-            new { Goal = GetProperty<int>(home, "Browser.ReviewGoal"), SessionCount = GetField<List<ImageRecord>>(home, "Presentation.ViewerImages").Count });
     }
 
     [Fact]
@@ -866,7 +588,7 @@ public sealed class BrowsingProjectionTests
         services.AddShadCnBlazorComponents();
         using var provider = services.BuildServiceProvider();
         typeof(LibraryWorkbench).GetProperty("Toasts", InstanceMembers)!.SetValue(libraryWorkbench, provider.GetRequiredService<ISonnerService>());
-        GalleryCapabilityTestSetup.InjectGalleryCapabilities(libraryWorkbench, testVault.Service);
+        GalleryCapabilityTestSetup.InjectGalleryCapabilities(libraryWorkbench, testVault.Scope);
         typeof(LibraryWorkbench).GetProperty("Logger", InstanceMembers)!
             .SetValue(libraryWorkbench, NullLogger<LibraryWorkbench>.Instance);
         string[] expectedMessagePhrases = ["Saved view name", "''", "1 to 80 characters"];
@@ -957,20 +679,6 @@ public sealed class BrowsingProjectionTests
         ];
     }
 
-    private static List<ImageRecord> CreateImages(int count) =>
-        Enumerable.Range(0, count).Select(index => new ImageRecord
-        {
-            Id = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)), Name = index.ToString("D2")
-        }).ToList();
-
-    private static WorkspaceSession CreateSession(TestVault testVault, List<ImageRecord> imageRecords)
-    {
-        var home = new WorkspaceSession(GalleryCapabilityTestSetup.Workspace(testVault.Service), new(), new(testVault.Service.Scope.Collections),
-            new NoOpJsRuntime(), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, action => action(), () => { });
-        SetField(home, "Catalog.Images", imageRecords);
-        SetField(home, "Catalog.ImagesById", imageRecords.ToDictionary(imageRecord => imageRecord.Id));
-        return home;
-    }
 
     private static void SetField(WorkspaceSession home, string name, object value) =>
         ComponentTestAccess.Set(home, name, value);
@@ -984,14 +692,6 @@ public sealed class BrowsingProjectionTests
     private static object? Invoke(WorkspaceSession home, string name, params object?[] arguments) =>
         ComponentTestAccess.Call(home, name, arguments);
 
-    private sealed class NoOpJsRuntime : IJSRuntime
-    {
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? arguments) =>
-            ValueTask.FromResult(default(TValue)!);
-
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? arguments) =>
-            InvokeAsync<TValue>(identifier, arguments);
-    }
 
     private sealed class CountingImages(List<ImageRecord> imageRecords) : IReadOnlyList<ImageRecord>
     {

@@ -119,7 +119,7 @@ internal sealed class VaultLocationCoordinator(
     private async Task<(IGalleryStore Store, Action CleanSource)> StageVaultMoveAsync(StagedLocation location, byte[] key)
     {
         var sourceRoot = VaultRoot;
-        await GalleryDriveQueue.ReconcileOutstandingDeletesAsync(galleryStore, key);
+        await QueuedFileDeletion.ReconcileOutstandingDeletesAsync(galleryStore, key);
         var records = await galleryStore.ReadRecordsAsync(key);
         var staging = location.CreateStagingDirectory(".vault-stage-");
         await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
@@ -150,7 +150,7 @@ internal sealed class VaultLocationCoordinator(
             galleryLifetime.EnsureCheckout();
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
-            await GalleryDriveQueue.ReconcileOutstandingDeletesAsync(galleryStore, key);
+            await QueuedFileDeletion.ReconcileOutstandingDeletesAsync(galleryStore, key);
             var records = await galleryStore.ReadRecordsAsync(key);
             foreach (var record in records) ValidateMediaPath(record);
             DeleteVaultData(VaultRoot, records);
@@ -238,7 +238,7 @@ internal sealed class VaultLocationCoordinator(
             stagedLocation = AcquireStagedLocation(destination, sourceDirectory);
             var staging = stagedLocation.CreateStagingDirectory(".vault-stage-");
             IGalleryStore store;
-            (store, key) = await BackupArchive.StageRestoreAsync(
+            (store, key) = await BackupRestoreStaging.StageRestoreAsync(
                 galleryLifetime.StoreFactory, target, latestBackupName, staging, destination, credential, useRecovery);
             await ClearLocationSettingsAsync(store, key);
             if (name is not null) await new VaultStore(staging).RenameAsync(name);
