@@ -28,10 +28,10 @@ public sealed class WorkspacePreferences(IGalleryVault vault, IGallerySettings s
         return current;
     }
 
-    internal Task SaveBrowserAsync(string density, bool visible, double? x, double? y, string tool) =>
+    internal Task SaveBrowserAsync(string density, string activeTool) =>
         SaveAsync(value => value with
         {
-            GridDensity = density, ToolboxVisible = visible, ToolboxX = x, ToolboxY = y, ToolboxTool = tool
+            GridDensity = density, ActiveTool = activeTool
         });
 
     internal Task UpdateAutoLockAsync(string? value, WorkspaceCommands commands)

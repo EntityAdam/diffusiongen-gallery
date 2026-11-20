@@ -6,7 +6,7 @@ const vm = require("node:vm");
 
 function loadGalleryScripts(globals) {
     const context = vm.createContext(globals);
-    const scripts = ["gallery-dom.js", "gallery-grid.js", "gallery-toolbox.js", "gallery-security.js", "viewer.js"];
+    const scripts = ["gallery-dom.js", "gallery-grid.js", "gallery-security.js", "viewer.js"];
     for (const script of scripts) {
         const source = readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", script), "utf8");
         vm.runInContext(source, context, { filename: script });
@@ -167,51 +167,22 @@ test("detaching a retired grid leaves the replacement listener attached", async 
     window.galleryGrid.attach(reference, doc, 1);
     window.galleryGrid.attach(reference, doc, 2);
     window.galleryGrid.detach(1);
-    key("`", {});
+    const card = { dataset: { imageId: "a" }, closest(selector) { return selector.startsWith(".image-card") ? this : null; } };
+    doc.activeElement = card;
+    key("5", card);
     await flush();
-    assert.deepEqual(calls, [["HandleGridKey", "`", "", false]]);
+    assert.deepEqual(calls, [["HandleGridKey", "5", "a", false]]);
     window.galleryGrid.detach(2);
     assert.equal(listeners.size, 0);
 });
 
-test("backtick toggles the toolbox without a card and Shift+backtick is forwarded by physical key", async () => {
+test("backtick is no longer a gallery shortcut", async () => {
     const { calls, key, input } = setup();
-    assert.equal(key("`", {}, { code: "Backquote" }).defaultPrevented, true);
-    assert.equal(key("~", {}, { code: "Backquote", shiftKey: true }).defaultPrevented, true);
+    assert.equal(key("`", {}, { code: "Backquote" }).defaultPrevented, false);
+    assert.equal(key("~", {}, { code: "Backquote", shiftKey: true }).defaultPrevented, false);
     assert.equal(key("`", input, { code: "Backquote" }).defaultPrevented, false);
     await flush();
-    assert.deepEqual(calls, [["HandleGridKey", "`", "", false], ["HandleGridKey", "`", "", true]]);
-});
-
-test("toolbox stays inside the viewport and can be reset to its default position", async () => {
-    const handlers = new Map();
-    const element = {
-        style: {}, offsetLeft: 0, offsetTop: 0, offsetWidth: 300, offsetHeight: 60,
-        querySelector: () => handle
-    };
-    const handle = {
-        addEventListener(name, handler) { handlers.set(name, handler); },
-        removeEventListener(name) { handlers.delete(name); }
-    };
-    const window = { innerWidth: 800, innerHeight: 600, addEventListener() {}, removeEventListener() {} };
-    loadGalleryScripts({
-        window, Element: class { },
-        document: { addEventListener() { }, querySelector: () => ({ getBoundingClientRect: () => ({ left: 250, top: 0 }) }) }
-    });
-    const calls = [];
-    const reference = { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } };
-    const sync = () => { element.offsetLeft = parseFloat(element.style.left); element.offsetTop = parseFloat(element.style.top); };
-    window.galleryToolbox.attach(element, reference, 4000, 3000);
-    sync();
-    assert.ok(element.offsetLeft + element.offsetWidth <= 800 && element.offsetTop + element.offsetHeight <= 600);
-    window.galleryToolbox.reset(element);
-    sync();
-    assert.deepEqual([element.offsetLeft, element.offsetTop], [266, 16]);
-    await flush();
-    assert.deepEqual(calls.at(-1), ["ToolboxReset"]);
-    assert.ok(handlers.has("dblclick"));
-    window.galleryToolbox.detach(element);
-    assert.equal(handlers.size, 0);
+    assert.deepEqual(calls, []);
 });
 
 test("full screen viewer forwards declared extra keys only", async () => {

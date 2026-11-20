@@ -25,7 +25,6 @@ public partial class GalleryBrowser
 
     private GalleryActivity Activity => Commands.Activity;
     private bool OverlayOpen => Presentation.DetailsOpen || Removal.IsOpen;
-    private GalleryToolbox? toolbox;
     private VirtualGalleryGrid? virtualGrid;
 
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
@@ -46,8 +45,6 @@ public partial class GalleryBrowser
         await Navigation.SetActiveToolAsync(value);
         await Refreshed.InvokeAsync();
     }
-
-    private Task ToggleToolboxAsync() => Navigation.ToggleToolboxAsync();
 
     private async Task OpenViewerAsync(string? initialId)
     {
@@ -74,11 +71,4 @@ public partial class GalleryBrowser
     private Task SetThumbnailScaleAsync(int value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetThumbnailScaleAsync(value));
     private Task PreviousAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page - 1));
     private Task NextAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page + 1));
-    private Task ToolboxMovedAsync((double? X, double? Y) position) => State.SetToolboxPositionAsync(position);
-
-    internal async Task ResetToolboxPositionAsync()
-    {
-        await State.ResetToolboxPositionAsync();
-        if (toolbox is not null) await toolbox.ResetPositionAsync();
-    }
 }

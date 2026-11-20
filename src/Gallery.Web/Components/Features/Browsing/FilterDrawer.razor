@@ -4,7 +4,7 @@
 @inject IGallerySettings GallerySettings
 @inject IGalleryVault GalleryVault
 
-<aside id="@GalleryToolbox.FilterDrawerId" class="gallery-filter-drawer" aria-labelledby="gallery-filter-drawer-title">
+<aside id="gallery-filter-drawer" class="gallery-filter-drawer" aria-labelledby="gallery-filter-drawer-title">
     <div class="gallery-filter-drawer-header">
         <h2 id="gallery-filter-drawer-title" class="sr-only">Filters</h2>
         <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Busy" OnClick='() => Close.InvokeAsync()' aria-label="Close filters"><XIcon aria-hidden="true" /></Button>

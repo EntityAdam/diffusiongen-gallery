@@ -44,6 +44,7 @@ public sealed class WorkspaceNavigationState(
     {
         if (SidebarItemDisabled(id)) return Task.CompletedTask;
         if (id == "gallery") return InGalleryAsync(() => SetActiveToolAsync(""));
+        if (id == "trash") return OpenTrashAsync();
         return id is "views" or "filters" or "organize" or "review" or "intelligence"
             ? InGalleryAsync(() => SetActiveToolAsync(browser.ActiveTool == id ? "" : id))
             : SwitchWorkflowAsync(id);
@@ -51,9 +52,6 @@ public sealed class WorkspaceNavigationState(
 
     internal Task SetActiveToolAsync(string tool) =>
         Activity.Busy ? Task.CompletedTask : browser.SetActiveToolAsync(tool);
-
-    internal Task ToggleToolboxAsync() => Activity.Busy ? Task.CompletedTask
-        : Section == "gallery" ? browser.ToggleToolboxAsync() : InGalleryAsync(browser.ShowToolboxAsync);
 
     internal Task OpenTrashAsync() => InGalleryAsync(() =>
         Activity.Busy ? Task.CompletedTask : browser.OpenTrashAsync());

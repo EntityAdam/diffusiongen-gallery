@@ -41,7 +41,7 @@ public static class OpenOnceCommand
         UiPreferences? preferences = null;
         await Step("preferences", async () => { preferences = await service.Settings.LoadPreferencesAsync(); service.Vault.ConfigureAutoLock(preferences.AutoLockMinutes); });
         var pageSize = requestedPageSize ?? (preferences!.GridDensity == "compact" ? 49 : 12);
-        var markedOnly = preferences!.ToolboxTool == "trash";
+        var markedOnly = preferences!.ActiveTool == "trash";
         List<ImageRecord> records = [];
         Dictionary<string, ImageRecord>? byId = null;
         GalleryCatalog? initial = null;

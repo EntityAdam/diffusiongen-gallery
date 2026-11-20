@@ -234,29 +234,19 @@ Unsaved LLM, backup destination, and ingestion settings offer **Save changes**,
 draft open; a failed save preserves the draft and pending navigation.
 
 The sidebar includes **Gallery**, **Change view**, **Filters**, **Organize**, **Review**,
-**AI analysis**, **Collections**, **Tags**, **Duplicates**, and **Import media**. Collapse it to an icon rail when you need
-more space.
+**AI analysis**, **Collections**, **Tags**, **Duplicates**, **Import media**, and **Trash**.
+Collapse it to an icon rail when you need more space.
 
 **Change view**, between Gallery and Filters, opens a drawer with thumbnail size,
-grouping, sorting, full-screen view, and toolbox-position reset controls.
+grouping, sorting, and full-screen view.
 
 **Organize**, directly below Filters, opens a right-side drawer for moving selected
 media into collection sets and adding or removing tags.
 
-### Gallery toolbox
+### Trash
 
-The floating toolbox contains:
-
-| Tool | Purpose |
-|---|---|
-| Filter media | Text, model, organization, media/dimensions, vision, and import-date filters. Text applies after a short typing pause; other controls apply immediately. **Reset filters** clears them. |
-| Trash | Restore marked items or permanently remove them. |
-
-Click a tool to expand its panel; click it again to collapse it. Toggle the toolbox
-with the sidebar button or the backtick key. Drag its grip to reposition it, or
-focus the grip and use arrow keys. Double-click the grip, press Shift+backtick, or
-choose **Reset toolbox position** to return it to the top-left. Shift+backtick also
-shows a hidden toolbox. Position, visibility, and active tool are saved per gallery.
+Open **Trash** below Import media in the sidebar to review marked items. Select
+items with the check mark or `X`, then restore them or permanently delete them.
 
 ### Compact and Detail cards
 
@@ -842,9 +832,8 @@ current criteria without deleting saved quick filters.
 
 ### Sidebar navigation
 
-The main sidebar is ordered as Gallery, Filters; Collections, Tags, Duplicates;
-Review, AI analysis; Import media. Horizontal separators divide these
-four groups. Settings stays anchored above Panic lock at the bottom. There is no
-Unorganized or Trash sidebar entry. Filters opens its drawer independently of
-whether the floating toolbox is visible; AI analysis opens its existing panel.
-The toolbox remains available during the gradual navigation migration.
+The main sidebar is ordered as Gallery, Change view, Filters, Organize, Review,
+and AI analysis; Collections, Tags, and Duplicates; Import media and Trash.
+Horizontal separators divide these groups. Settings stays anchored above Panic
+lock at the bottom. Unorganized remains available within collection navigation.
+Filters and AI analysis open their respective drawers.

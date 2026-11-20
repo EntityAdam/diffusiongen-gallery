@@ -96,7 +96,7 @@
                                Removal="Session.Removal" Changed="RefreshWorkspace" />
         <RemovalWorkflow State="Session.Removal" Activity="Activity" Changed="RefreshWorkspace" />
         <UnsavedChangesGuard State="Session.Guard" Error="@Activity.Error" Changed="RefreshWorkspace" />
-        <GalleryGridShortcuts Blocked="GridBlocked" Toolbox="HandleToolboxShortcutAsync" Grid="HandleGridShortcutAsync" />
+        <GalleryGridShortcuts Blocked="GridBlocked" Grid="HandleGridShortcutAsync" />
     </CascadingValue>
     </CascadingValue>
     </CascadingValue>

@@ -63,9 +63,6 @@ public sealed class GalleryBrowserState : IDisposable
     public IReadOnlyDictionary<string, OrganizationSuggestion> Suggestions { get; private set; } = new Dictionary<string, OrganizationSuggestion>();
     public string ActiveTool { get; private set; } = "";
     public bool TrashActive => ActiveTool == "trash";
-    public bool ToolboxVisible { get; private set; } = true;
-    public double? ToolboxX { get; private set; }
-    public double? ToolboxY { get; private set; }
     public bool ReviewRandomOrder { get; set; }
     private int reviewGoal = 10;
     public IEnumerable<ImageRecord> ReviewPool => Filtered.Where(image => !image.IsReviewed && !image.IsMarkedForDeletion);
@@ -103,9 +100,7 @@ public sealed class GalleryBrowserState : IDisposable
     {
         Density = preferences.GridDensity;
         SetGalleryActive(true);
-        ToolboxVisible = preferences.ToolboxVisible;
-        (ToolboxX, ToolboxY) = (preferences.ToolboxX, preferences.ToolboxY);
-        ActiveTool = preferences.ToolboxTool;
+        ActiveTool = preferences.ActiveTool;
         BrowsingFilter = TrashActive ? new() : null;
         FilterInputRevision++;
         Filter = TrashActive ? new() { Deletion = "marked" } : new();
@@ -169,21 +164,8 @@ public sealed class GalleryBrowserState : IDisposable
         Filter = new() { Tag = tag };
         BrowsingFilter = null;
         ActiveTool = "filters";
-        ToolboxVisible = true;
         await ResetPageAndSelectionAsync();
-        await SaveToolboxStateAsync();
-    }
-
-    internal Task ToggleToolboxAsync()
-    {
-        ToolboxVisible = !ToolboxVisible;
-        return SaveToolboxStateAsync();
-    }
-
-    internal Task ShowToolboxAsync()
-    {
-        ToolboxVisible = true;
-        return SaveToolboxStateAsync();
+        await SaveBrowserStateAsync();
     }
 
     internal Task ResetPageAndSelectionAsync()
@@ -218,20 +200,6 @@ public sealed class GalleryBrowserState : IDisposable
 
     internal void SetQuickFilters(IReadOnlyList<SavedView> views) => QuickFilters = views;
 
-    internal Task SetToolboxPositionAsync((double? X, double? Y) position)
-    {
-        if ((ToolboxX, ToolboxY) == position) return Task.CompletedTask;
-        (ToolboxX, ToolboxY) = position;
-        return SaveToolboxStateAsync();
-    }
-
-    internal Task ResetToolboxPositionAsync()
-    {
-        ToolboxVisible = true;
-        (ToolboxX, ToolboxY) = (null, null);
-        return SaveToolboxStateAsync();
-    }
-
     public Task ResetFiltersAsync()
     {
         FilterInputRevision++;
@@ -249,19 +217,18 @@ public sealed class GalleryBrowserState : IDisposable
 
     internal Task OpenTrashAsync()
     {
-        ToolboxVisible = true;
         return SetActiveToolAsync("trash");
     }
 
     public async Task SetActiveToolAsync(string value)
     {
         if (catalog.IsPartial && value is not ("" or "views")) return;
-        if (await ChangeActiveToolAsync(value)) await SaveToolboxStateAsync();
+        if (await ChangeActiveToolAsync(value)) await SaveBrowserStateAsync();
     }
 
     private async Task<bool> ChangeActiveToolAsync(string value, bool resetView = false)
     {
-        value = UiPreferences.ToolboxTools.Contains(value) ? value : "";
+        value = UiPreferences.ActiveTools.Contains(value) ? value : "";
         var changed = ActiveTool != value;
         var wasTrash = TrashActive;
         ActiveTool = value;
@@ -299,17 +266,17 @@ public sealed class GalleryBrowserState : IDisposable
         await LoadThumbnailsAsync();
         await SavePreferencesAsync();
     }
-    private async Task SaveToolboxStateAsync()
+    private async Task SaveBrowserStateAsync()
     {
         if (disposed || !vault.IsUnlocked) return;
         try { await SavePreferencesAsync(); }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
         {
-            logger.LogWarning(exception, "Toolbox preferences were not saved");
+            logger.LogWarning(exception, "Browser preferences were not saved");
         }
     }
     private Task SavePreferencesAsync() =>
-        preferences.SaveBrowserAsync(Density, ToolboxVisible, ToolboxX, ToolboxY, ActiveTool);
+        preferences.SaveBrowserAsync(Density, ActiveTool);
 
     public Task SuggestionsChangedAsync(IReadOnlyList<OrganizationSuggestion> suggestions)
     {

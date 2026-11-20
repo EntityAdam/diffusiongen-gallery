@@ -202,7 +202,7 @@ public sealed class CurationTests
     }
 
     [Fact]
-    public async Task Preferences_ToolboxState_RoundTripsAndNormalizesUnknownToolsAndPositions()
+    public async Task Preferences_ActiveTool_RoundTripsAndNormalizesUnknownValues()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -210,22 +210,15 @@ public sealed class CurationTests
 
         // Act
         var initial = await fixture.Scope.Settings.LoadPreferencesAsync();
-        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { ToolboxVisible = false, ToolboxX = 120.5, ToolboxY = 64, ToolboxTool = "trash" });
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { ActiveTool = "trash" });
         var saved = await fixture.Scope.Settings.LoadPreferencesAsync();
-        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { ToolboxX = double.NaN, ToolboxY = -10, ToolboxTool = "explore" });
+        await fixture.Scope.Settings.SavePreferencesAsync(new UiPreferences { ActiveTool = "explore" });
         var normalized = await fixture.Scope.Settings.LoadPreferencesAsync();
 
         // Assert
-        Assert.True(initial.ToolboxVisible);
-        Assert.Null(initial.ToolboxX);
-        Assert.Equal("", initial.ToolboxTool);
-        Assert.False(saved.ToolboxVisible);
-        Assert.Equal(120.5, saved.ToolboxX);
-        Assert.Equal(64, saved.ToolboxY);
-        Assert.Equal("trash", saved.ToolboxTool);
-        Assert.Null(normalized.ToolboxX);
-        Assert.Equal(0, normalized.ToolboxY);
-        Assert.Equal("", normalized.ToolboxTool);
+        Assert.Equal("", initial.ActiveTool);
+        Assert.Equal("trash", saved.ActiveTool);
+        Assert.Equal("", normalized.ActiveTool);
     }
 
     [Fact]
