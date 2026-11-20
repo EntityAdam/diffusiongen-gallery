@@ -1,0 +1,31 @@
+@using Gallery.Web.Components.Workspace
+
+@if (State.Filtered.Count == 0) { return; }
+@if (State.InfiniteScroll)
+{
+    <VirtualGalleryGrid @ref="virtualGrid" State="State" ChildContent="ChildContent" Busy="@(Busy || OverlayOpen)" ShowPrompt="ShowPrompt" />
+}
+else
+{
+    <GroupedImageGrid Images="State.PageImages" Density="@State.Density" Grouping="@State.Grouping" Busy="Busy"
+                      PromptGroups="State.Browsing.PromptGroupsByImageId" ModelGroups="State.Browsing.DiffusionModelGroupsByImageId"
+                      ShowPrompt="ShowPrompt" ChildContent="ChildContent" />
+    <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
+        <Button Variant="ButtonVariant.Outline" Disabled="@(State.Page == 0 || Busy)" data-gallery-page-navigation OnClick="() => GoToPageAsync(State.Page - 1)"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
+        <span>@(CatalogPartial ? "Initial page · library loading" : $"Page {State.Page + 1} of {State.PageCount}")</span>
+        <Button Variant="ButtonVariant.Outline" Disabled="@(CatalogPartial || State.Page + 1 >= State.PageCount || Busy)" data-gallery-page-navigation OnClick="() => GoToPageAsync(State.Page + 1)">Next <ArrowRightIcon aria-hidden="true" /></Button>
+    </div>
+}
+
+@code {
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    [Parameter, EditorRequired] public GalleryBrowserState State { get; set; } = default!;
+    [Parameter] public bool CatalogPartial { get; set; }
+    [Parameter] public bool OverlayOpen { get; set; }
+    [Parameter] public EventCallback<string> ShowPrompt { get; set; }
+    [Parameter, EditorRequired] public RenderFragment<ImageRecord> ChildContent { get; set; } = default!;
+    private VirtualGalleryGrid? virtualGrid;
+    internal string? PreferredViewerId => virtualGrid?.PreferredViewerId;
+    private bool Busy => Commands.Activity.Busy;
+    private Task GoToPageAsync(int page) => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(page));
+}

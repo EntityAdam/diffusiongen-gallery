@@ -26,27 +26,22 @@ public partial class GalleryBrowser
 
     private GalleryActivity Activity => Commands.Activity;
     private bool OverlayOpen => Presentation.DetailsOpen || Removal.IsOpen;
-    private VirtualGalleryGrid? virtualGrid;
-    private sealed record QuickTagEdit(string[] Ids, string OriginalTags)
-    {
-        public bool AddOnly => Ids.Length > 1;
-    }
-
-    private QuickTagEdit? quickTags;
-    private string quickTagError = "";
-    internal bool QuickTagsOpen => quickTags is not null;
-    private bool CanOpenQuickTags => Active && !State.TrashActive && !Catalog.IsPartial && !Activity.Busy
+    private GalleryResults? results;
+    private ImageRecord[]? taggingImages;
+    private string tagError = "";
+    internal bool TaggingOpen => taggingImages is not null;
+    private bool CanEditTags => !TaggingOpen && Active && !State.TrashActive && !Catalog.IsPartial && !Activity.Busy
         && !Presentation.IsOpen && !OverlayOpen && State.LibrarySelection.Count > 0;
 
     protected override void OnParametersSet()
     {
-        if (!Active || State.TrashActive) CloseQuickTags();
+        if (!Active || State.TrashActive) CloseTagging();
     }
 
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
     {
-        if (QuickTagsOpen) return;
-        if (key == "t") OpenQuickTags();
+        if (TaggingOpen) return;
+        if (key == "t") OpenTagging();
         else if (key == "escape") State.ClearSelection();
         else if (Catalog.ImagesById.TryGetValue(id, out var image))
         {
@@ -57,41 +52,33 @@ public partial class GalleryBrowser
         StateHasChanged();
     }
 
-    private void OpenQuickTags()
+    private void OpenTagging()
     {
-        if (QuickTagsOpen || !CanOpenQuickTags) return;
-        var ids = State.LibrarySelection.ToArray();
-        quickTagError = "";
-        quickTags = new(ids, ids.Length == 1 ? Catalog.ImagesById[ids[0]].Tags : "");
+        if (!CanEditTags) return;
+        tagError = "";
+        taggingImages = State.LibrarySelection.Select(id => Catalog.ImagesById[id]).ToArray();
     }
 
-    private void CloseQuickTags() => quickTags = null;
+    private void CloseTagging() => taggingImages = null;
 
-    private async Task SaveQuickTagsAsync(string tags)
+    private async Task SaveTagsAsync(TagEdit edit)
     {
-        if (quickTags is not { } edit || Activity.Busy) return;
-        quickTagError = "";
-        await Curation.CurateAsync(edit.Ids, image => image with
-        {
-            Tags = edit.AddOnly
-                ? TagSelection.AddMissing(Gallery, image.Tags, tags)
-                : TagSelection.Apply(Gallery, image.Tags, edit.OriginalTags, tags)
-        }, "");
-        if (Activity.Error.Length == 0) CloseQuickTags();
-        else quickTagError = Activity.Error;
+        tagError = "";
+        await Curation.EditTagsAsync(edit);
+        tagError = Activity.Error;
     }
 
-    private Task RetryCatalogLoadAsync() { Catalog.RetryLoad(); return Task.CompletedTask; }
-    private async Task SetActiveToolAsync(string value)
+    private async Task SaveDialogTagsAsync(TagEdit edit)
     {
-        await Navigation.SetActiveToolAsync(value);
-        await Refreshed.InvokeAsync();
+        if (!TaggingOpen || Activity.Busy) return;
+        await SaveTagsAsync(edit);
+        if (tagError.Length == 0) CloseTagging();
     }
 
     private async Task OpenViewerAsync(string? initialId)
     {
         if (State.InfiniteScroll)
-            Presentation.OpenOrderedViewer(State.Filtered, initialId ?? virtualGrid?.PreferredViewerId);
+            Presentation.OpenOrderedViewer(State.Filtered, initialId ?? results?.PreferredViewerId);
         else Presentation.OpenViewer(State.PageImages, initialId);
         await Refreshed.InvokeAsync();
     }
@@ -105,12 +92,4 @@ public partial class GalleryBrowser
     private Task DeleteAsync() => Removal.PrepareAsync(State.RemovalSelection);
     private Task RestoreAsync() => Curation.RestoreAsync(State.RemovalSelection.ToArray());
 
-    private Task SetGroupingAsync(string value) => Commands.RunAsync("Filtering...", () => State.SetGroupingAsync(value));
-    private Task ResetFilters() => Commands.RunAsync("Filtering...", State.ResetFiltersAsync);
-    private Task ApplyFilterPanelAsync(GalleryFilter value) => Commands.RunAsync("Filtering...", () => State.ApplyFilterAsync(value));
-    private Task SetSort(string? value) => Commands.RunAsync("Filtering...", () => State.SetSortAsync(value));
-    private Task SetDensityAsync(string value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetDensityAsync(value));
-    private Task SetThumbnailScaleAsync(int value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetThumbnailScaleAsync(value));
-    private Task PreviousAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page - 1));
-    private Task NextAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page + 1));
 }

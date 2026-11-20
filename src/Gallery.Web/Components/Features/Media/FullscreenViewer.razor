@@ -28,7 +28,7 @@
         <ImageRating Image="@Current" Disabled="@(Busy || review.IsComplete)" ClearOnRepeat="@(!ReviewMode)" Rate="RateAsync" />
         <Button Variant="@(Current.IsFavorite ? ButtonVariant.Secondary : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@(Busy || review.IsComplete)" OnClick="FavoriteAsync" aria-pressed="@Current.IsFavorite"><HeartIcon Fill="@(Current.IsFavorite ? "currentColor" : "none")" aria-hidden="true" />@(ReviewMode ? "Favorite" : Current.IsFavorite ? "Remove favorite" : "Favorite") (F)</Button>
         <Button Variant="@(Current.IsMarkedForDeletion ? ButtonVariant.Destructive : ButtonVariant.Outline)" Size="ButtonSize.Sm" Disabled="@(Busy || review.IsComplete)" OnClick="MarkAsync" aria-pressed="@Current.IsMarkedForDeletion"><TrashIcon aria-hidden="true" />@(ReviewMode ? "Move to Trash" : Current.IsMarkedForDeletion ? "Restore from Trash" : "Move to Trash") (D)</Button>
-        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(Busy || review.IsComplete)" OnClick='() => OpenQuickEdit("tag")'>Quick tag (T)</Button>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(Busy || review.IsComplete)" OnClick='() => OpenQuickEdit("tag")'>Edit tags (T)</Button>
         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(Busy || review.IsComplete)" OnClick='() => OpenQuickEdit("collection")'>Quick collection (C)</Button>
     </div>
     @if (ReviewMode)
@@ -90,7 +90,7 @@
     @if (quickEdit is not null)
     {
         @if (quickEdit == "collection") { <CollectionDestinationDialog Images="@(new[] { Current })" Saved="CollectionMovedAsync" Cancel="CancelQuickEdit" /> }
-        else { <QuickOrganizationDialog ImageName="@Current.Name" Tags="@Current.Tags" Options="@TagOptions" Counts="@QuickEditCounts"
+        else { <TaggingDialog Images="@(new[] { Current })" Options="@TagOptions" Counts="@QuickEditCounts"
                                  Busy="@Busy" Error="@error" Save="SaveQuickEditAsync" Cancel="CancelQuickEdit" /> }
     }
     @if (OrganizationHistory.Current is not null && quickEdit is null) { <div class="viewer-collection-notice"><Button Variant="ButtonVariant.Outline" Disabled="@(Busy || OrganizationHistory.IsBusy)" OnClick="UndoCollectionAsync">Undo organization change</Button></div> }
@@ -381,11 +381,11 @@
             await OnImageChanged.InvokeAsync(updated);
         }
     });
-    private Task SaveQuickEditAsync(string value) => RunAsync(async () =>
+    private Task SaveQuickEditAsync(TagEdit edit) => RunAsync(async () =>
     {
         if (quickEdit != "tag") return;
         var id = Current.Id;
-        latestImagesById[id] = await GalleryRecords.UpdateAsync(id, image => image with { Tags = TagSelection.Apply(GalleryRecords, image.Tags, Current.Tags, value) });
+        latestImagesById[id] = await GalleryRecords.UpdateAsync(id, image => edit.Apply(GalleryRecords, image));
         orderedTagCounts = null;
         orderedTagOptions = null;
         await OnImageChanged.InvokeAsync(Current);

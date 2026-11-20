@@ -1,0 +1,18 @@
+<aside class="gallery-filter-drawer @Class" aria-labelledby="@TitleId" hidden="@Hidden">
+    <div class="gallery-filter-drawer-header">
+        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Disabled="Busy" OnClick="Close" aria-label="@($"Close {Title.ToLowerInvariant()}")"><XIcon aria-hidden="true" /></Button>
+        <h2 id="@TitleId">@Title</h2>
+    </div>
+    <div class="@BodyClass">@ChildContent</div>
+</aside>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter, EditorRequired] public string TitleId { get; set; } = "";
+    [Parameter] public string Class { get; set; } = "";
+    [Parameter] public string BodyClass { get; set; } = "";
+    [Parameter] public bool Hidden { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback Close { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

@@ -13,7 +13,7 @@ function loadGalleryScripts(globals) {
     }
 }
 
-function setup({ dialog = false, selection = false, quickTag = false } = {}) {
+function setup({ dialog = false, selection = false, canEditTags = false } = {}) {
     const listeners = new Map();
     const calls = [];
     const card = id => {
@@ -33,7 +33,7 @@ function setup({ dialog = false, selection = false, quickTag = false } = {}) {
         removeEventListener(name) { listeners.delete(name); },
         querySelector(selector) {
             return (selector.startsWith("[role=dialog]") && dialog) || (selector === "[data-has-selection=true]" && selection)
-                || (selector === "button[aria-keyshortcuts=T]:not(:disabled)" && quickTag) ? {} : null;
+                || (selector === "[data-can-edit-tags=true]" && canEditTags) ? {} : null;
         },
         querySelectorAll() { return []; }
     };
@@ -54,10 +54,10 @@ function setup({ dialog = false, selection = false, quickTag = false } = {}) {
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-test("quick tag targets the gallery selection without needing a hovered or focused card", async () => {
-    const available = setup({ quickTag: true });
+test("T edits the gallery selection without needing a toolbar, hovered or focused card", async () => {
+    const available = setup({ canEditTags: true });
     const unavailable = setup({ selection: true });
-    const modal = setup({ quickTag: true, dialog: true });
+    const modal = setup({ canEditTags: true, dialog: true });
     assert.equal(available.key("t", {}).defaultPrevented, true);
     assert.equal(available.key("t", available.input).defaultPrevented, false);
     assert.equal(unavailable.key("t", {}).defaultPrevented, false);

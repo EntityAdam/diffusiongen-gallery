@@ -1,0 +1,60 @@
+@using Gallery.Web.Components.Workspace
+@using Microsoft.AspNetCore.Components.Sections
+
+@switch (State.ActiveTool)
+{
+    case "organize":
+    case "intelligence":
+        var organize = State.ActiveTool == "organize";
+        var title = organize ? "Organize" : "AI analysis";
+        <ToolDrawer Title="@title" TitleId="gallery-workbench-drawer-title" Class="@(organize ? "gallery-organize-drawer" : "gallery-analysis-drawer")"
+                    BodyClass="gallery-analysis-drawer-body" Busy="Busy" Close="CloseAsync" Hidden="@(!Visible)">
+            @if (Catalog.IsPartial)
+            {
+                <p class="text-muted-foreground" role="status">@title will be available when the full library finishes loading.</p>
+            }
+            <SectionOutlet SectionName="gallery-workbench" />
+        </ToolDrawer>
+        break;
+    case "review" when Visible:
+        <ToolDrawer Title="Guided review" TitleId="gallery-review-drawer-title" Class="gallery-review-drawer" BodyClass="gallery-review-drawer-body" Busy="Busy" Close="CloseAsync">
+            <GalleryReviewOptions State="State" CatalogPartial="Catalog.IsPartial" Busy="Busy" StartReview="StartReview" />
+        </ToolDrawer>
+        break;
+    case "views" when Visible:
+        <ToolDrawer Title="Change view" TitleId="gallery-view-drawer-title" Class="gallery-view-drawer" BodyClass="gallery-view-drawer-body" Busy="Busy" Close="CloseAsync">
+            <GalleryViewOptions Density="@State.Density" DensityChanged="SetDensityAsync" Grouping="@State.Grouping" GroupingChanged="SetGroupingAsync"
+                                Sort="@State.Filter.Sort" SortChanged="SetSortAsync" Busy="Busy" CatalogPartial="Catalog.IsPartial" HasImages="State.Filtered.Count > 0"
+                                InfiniteScroll="State.InfiniteScroll" ThumbnailScale="State.ThumbnailScale" ScaleChanged="SetScaleAsync" Fullscreen="Fullscreen" />
+        </ToolDrawer>
+        break;
+    case "filters" when Visible:
+        <FilterDrawer Filter="State.Filter" KnownTags="Catalog.AllTags" Images="Catalog.Images" ResultCount="State.Filtered.Count"
+                      QuickFilters="State.QuickFilters" Saved="State.SetQuickFilters" Busy="Busy" CatalogPartial="Catalog.IsPartial"
+                      ResetVersion="State.FilterInputRevision" Close="CloseAsync" Reset="ResetFiltersAsync" Changed="ApplyFilterAsync" />
+        break;
+}
+
+@code {
+    [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
+    [CascadingParameter] public WorkspaceNavigationState Navigation { get; set; } = default!;
+    [Parameter, EditorRequired] public GalleryBrowserState State { get; set; } = default!;
+    [Parameter, EditorRequired] public WorkspaceCatalog Catalog { get; set; } = default!;
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback Fullscreen { get; set; }
+    [Parameter] public EventCallback StartReview { get; set; }
+    [Parameter] public EventCallback Refreshed { get; set; }
+    private bool Busy => Commands.Activity.Busy;
+    private async Task CloseAsync()
+    {
+        await Navigation.SetActiveToolAsync("");
+        await Refreshed.InvokeAsync();
+    }
+
+    private Task SetGroupingAsync(string value) => Commands.RunAsync("Filtering...", () => State.SetGroupingAsync(value));
+    private Task ResetFiltersAsync() => Commands.RunAsync("Filtering...", State.ResetFiltersAsync);
+    private Task ApplyFilterAsync(GalleryFilter filter) => Commands.RunAsync("Filtering...", () => State.ApplyFilterAsync(filter));
+    private Task SetSortAsync(string? value) => Commands.RunAsync("Filtering...", () => State.SetSortAsync(value));
+    private Task SetDensityAsync(string value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetDensityAsync(value));
+    private Task SetScaleAsync(int value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetThumbnailScaleAsync(value));
+}

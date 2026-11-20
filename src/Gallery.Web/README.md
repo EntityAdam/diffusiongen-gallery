@@ -387,15 +387,16 @@ In ordinary fullscreen browsing, clicking the current star clears the rating;
 rating decisions and advances after each decision. Rating, favorite, and deletion
 mark changes save immediately; the viewing sequence stays fixed until closing.
 
-Quick tag stages additions and removals until **Save changes**; **Cancel** discards
-both. In Gallery, select media and choose **Quick tag** or press **T**. For one
-selected item, add or remove tags just like in fullscreen. For multiple items,
-the picker starts empty and adds tags to all selected items, skipping tags they
-already have. Existing tags are never removed. In Collections, bulk tag edits
-show each tag's assignment count (for example, **2 of 5 selected**)
-and preserve mixed assignments for tags you leave unchanged. New tags apply to all selected
-media; removing a tag removes it from all selected media. A successful save confirms the
-number of affected media items.
+In Gallery, select media and press **T** to edit tags in a dialog, or use the same
+editor in the **Organize** drawer. The dialog edits the selection captured when it
+opened. The drawer follows the current selection; changing the selection discards
+its unsaved draft. Both stage edits until **Save changes**. Cancel the dialog or
+choose **Discard changes** in the drawer to leave the media untouched.
+
+The editor shows how many selected items have each tag (for example, **2 of 5 selected**).
+New tags apply to all selected items; removing a tag removes it from all of them.
+Unchanged tags retain their original assignments. Collections and fullscreen use
+the same editor.
 The move dialog stages new collections and sets until **Move**. Cancel discards
 the destination draft. Creation and placement commit together; a failed move leaves
 no new destinations. Undo restores both the placement and destination catalog.

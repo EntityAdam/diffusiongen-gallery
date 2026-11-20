@@ -576,14 +576,14 @@ public sealed class UiComponentTests
             })));
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         Task<string> Html() => fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => WebUtility.HtmlDecode(root.ToHtmlString()));
-        Task Save(string value) => fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        Task Save() => fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await (Task)typeof(FullscreenViewer).GetMethod("SaveQuickEditAsync", flags)!.Invoke(viewer, [value])!;
-            typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
+            await fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["EXISTING", "new tag"]);
+            await (Task)typeof(Tagging).GetMethod("SaveAsync", flags)!.Invoke(fixture.LatestComponent<Tagging>(), null)!;
         });
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(key));
         Assert.Contains("<dialog", await Html());
-        Assert.Contains(key == "c" ? "Move 1 media to a set" : "Quick tag", await Html());
+        Assert.Contains(key == "c" ? "Move 1 media to a set" : "Edit tags", await Html());
         Assert.Contains(key == "c" ? "Existing / Imported media" : ">existing</span>", await Html());
         foreach (var shortcut in new[] { "arrowright", "1", "f", "d", "escape" })
             await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => viewer!.HandleKey(shortcut));
@@ -599,7 +599,7 @@ public sealed class UiComponentTests
                 typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
             });
         }
-        else await Save("EXISTING, new tag");
+        else await Save();
 
         var saved = Assert.Single(await vault.Scope.Catalog.ListAsync());
         Assert.Equal(key == "c" ? "existing" : "existing, new tag", saved.Tags);
@@ -654,8 +654,8 @@ public sealed class UiComponentTests
 
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
         {
-            await (Task)typeof(FullscreenViewer).GetMethod("SaveQuickEditAsync", flags)!.Invoke(viewer, [""])!;
-            typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(viewer, null);
+            await fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync([]);
+            await (Task)typeof(Tagging).GetMethod("SaveAsync", flags)!.Invoke(fixture.LatestComponent<Tagging>(), null)!;
         });
         Assert.Equal("", Assert.Single(await vault.Scope.Catalog.ListAsync()).Tags);
         Assert.NotNull(changed);

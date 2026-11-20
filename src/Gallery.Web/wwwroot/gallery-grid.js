@@ -47,7 +47,7 @@ window.galleryGrid = {
                 next.scrollIntoView?.({ block: "nearest" });
                 return;
             }
-            if (key === "t" ? !doc.querySelector("button[aria-keyshortcuts=T]:not(:disabled)")
+            if (key === "t" ? !doc.querySelector("[data-can-edit-tags=true]")
                 : key === "escape" ? !doc.querySelector("[data-has-selection=true]") : !id) return;
             event.preventDefault();
             const invocation = queue.then(() => reference.invokeMethodAsync("HandleGridKey", key, id ?? "", event.shiftKey === true));

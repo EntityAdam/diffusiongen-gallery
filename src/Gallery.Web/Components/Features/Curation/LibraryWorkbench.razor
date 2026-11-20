@@ -20,29 +20,11 @@
         <Separator />
         <section class="space-y-2" aria-labelledby="selected-tags-heading">
             <h4 id="selected-tags-heading">Tags</h4>
-            @if (SelectedTags.Count == 0)
-            {
-                <p class="text-muted-foreground text-sm">@(SelectedIds.Count == 0 ? "Select media to see their tags." : "The selected media have no tags.")</p>
-            }
-            else
-            {
-                <ul class="tag-chips" aria-label="Tags on selected media">
-                    @foreach (var (tag, count) in SelectedTags)
-                    {
-                        <li class="tag-chip" title="@($"On {count} of {SelectedIds.Count} selected")">
-                            <span>@tag</span>
-                            @if (count < SelectedIds.Count) { <span class="tag-chip-count">@count</span> }
-                            <button type="button" aria-label="@($"Remove tag {tag} from selected media")" disabled="@IsBusy" @onclick="() => RemoveTagAsync(tag)">
-                                <XIcon Size="12" aria-hidden="true" />
-                            </button>
-                        </li>
-                    }
-                </ul>
-            }
+            <Tagging Images="@(Images.Where(image => SelectedIds.Contains(image.Id)).ToArray())" Options="KnownTags"
+                     Busy="IsBusy" Error="@TagError" Save="SaveTags" />
         </section>
         <Separator />
         <div class="flex flex-wrap items-center gap-3">
-            <strong>@SelectedIds.Count selected</strong>
             <Button Variant="ButtonVariant.Ghost" Disabled="@(IsBusy || SelectedIds.Count == 0)" OnClick="ClearSelection">Clear selection <kbd>ESC</kbd></Button>
         </div>
         <div class="grid grid-cols-1 items-start gap-6 md:grid-cols-2 [&>div]:min-w-0 [&>div]:space-y-3">
@@ -53,13 +35,8 @@
                 <Button Variant="ButtonVariant.Ghost" Disabled="@(IsBusy || SelectedIds.Count == 0)" OnClick="RemoveFromSetAsync">Remove from set</Button>
             </div>
             <div>
-                <h4>Tags</h4>
-                <Label For="bulk-tags" Class="mt-4 mb-2 block">Add tags</Label>
-                <AdvancedSelect Id="bulk-tags" Label="Tags" ItemLabel="tag" Placeholder="Select tags…" Multiple="true" MaxLength="4000"
-                                Options="@Tags" Counts="@TagCounts" Values="@TagValues" ValuesChanged="SetTagValues" Disabled="@IsBusy" />
+                <h4>Tag suggestions</h4>
                 <div class="flex flex-wrap items-center gap-2">
-                    <Button Variant="ButtonVariant.Outline" Disabled="@(IsBusy || SelectedIds.Count == 0 || string.IsNullOrWhiteSpace(tags))" OnClick="ApplyTagsAsync">Apply</Button>
-                    <Button Variant="ButtonVariant.Outline" Disabled="@IsBusy" OnClick='() => tags = ""'>Clear</Button>
                     <Button Variant="ButtonVariant.Outline" Disabled="@(IsBusy || SelectedIds.Count is 0 or > 24)" OnClick="() => AnalyzeSelectionAsync(tagsOnly: true)">Suggest (AI Vision)</Button>
                 </div>
                 @foreach (var suggestion in Analysis.TagSuggestions)
@@ -108,7 +85,7 @@
             <Button Variant="ButtonVariant.Ghost" OnClick="Analysis.DiscardQueueAsync">Discard selected queue</Button>
         </div>
     }
-    @if (IsBusy) { <p class="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm break-words" role="status">@(editing ? status : Analysis.Progress)</p> }
+    @if (editing || Analysis.IsBusy) { <p class="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm break-words" role="status">@(editing ? status : Analysis.Progress)</p> }
 
     @if (compareImages.Count == 2)
     {
@@ -148,32 +125,23 @@
     [Parameter] public EventCallback ClearSelection { get; set; }
     [Parameter, EditorRequired] public LibraryAnalysis Analysis { get; set; } = default!;
     [Parameter] public IEnumerable<string> KnownTags { get; set; } = [];
+    [Parameter] public EventCallback<TagEdit> SaveTags { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string TagError { get; set; } = "";
     private bool showDestination;
     private async Task DestinationSavedAsync(CollectionMutation result) { OrganizationHistory.Record(result.Undo);showDestination = false;notice = "Media moved to set.";await Changed.InvokeAsync(); }
     private async Task DestinationCanceledAsync() { showDestination = false;await Changed.InvokeAsync(); }
     private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await GalleryCollections.MoveMediaToSetAsync(SelectedIds, null);OrganizationHistory.Record(result.Undo);notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
-    private string tags = "", viewName = "", error = "", notice = "", status = "";
+    private string viewName = "", error = "", notice = "", status = "";
     private int rating = -1;
     private string reviewStatus = "unchanged";
     private bool editing, disposed;
-    private bool IsBusy => editing || Analysis.IsBusy;
+    private bool IsBusy => Busy || editing || Analysis.IsBusy;
     private List<SavedView> views = [];
     private List<ImageRecord> compareImages = [];
     private readonly Dictionary<string, string> comparison = [];
-    private IEnumerable<string> Tags => KnownTags.Concat(Images.SelectMany(image => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
-        .Distinct(StringComparer.OrdinalIgnoreCase).Order();
-    private static string[] TagsOf(ImageRecord image) => image.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    private IReadOnlyList<(string Tag, int Count)> SelectedTags => Images.Where(image => SelectedIds.Contains(image.Id))
-        .SelectMany(image => TagsOf(image).Distinct(StringComparer.OrdinalIgnoreCase))
-        .GroupBy(tag => tag, StringComparer.OrdinalIgnoreCase)
-        .Select(group => (group.First(), group.Count()))
-        .OrderBy(item => item.Item1, StringComparer.OrdinalIgnoreCase).ToList();
     private IEnumerable<ImageRecord> UnanalyzedImages => Images.Where(Analysis.NeedsVisionAnalysis);
     private int UnanalyzedCount => UnanalyzedImages.Count();
-    private IReadOnlyList<string> TagValues => tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    private void SetTagValues(IReadOnlyList<string> values) => tags = string.Join(", ", values);
-    private IReadOnlyDictionary<string, int> TagCounts => Images.SelectMany(image => TagsOf(image).Distinct(StringComparer.OrdinalIgnoreCase))
-        .GroupBy(value => value, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
     protected override void OnParametersSet()
     {
         var imagesById = Images.ToDictionary(image => image.Id);
@@ -225,14 +193,6 @@
         error = string.Join(" / ", failures);
     }
 
-    private Task RemoveTagAsync(string tag) => RunAsync($"Removing tag {tag}...", () =>
-    {
-        var ids = Images.Where(image => SelectedIds.Contains(image.Id) && TagsOf(image).Contains(tag, StringComparer.OrdinalIgnoreCase))
-            .Select(image => image.Id).ToArray();
-        return ApplyBulkAsync(ids, image => image with { Tags = GalleryRecords.RemoveTag(image.Tags, tag) },
-            "Tag removal", count => $"Removed \"{tag}\" from {count} media item(s).");
-    });
-
     private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(SelectedIds.ToArray(),
         image => GalleryRecords.SetCuration(image, rating == -1 ? null : rating,
             reviewStatus == "unchanged" ? null : reviewStatus == "reviewed"),
@@ -258,13 +218,6 @@
         var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToArray();
         return Analysis.AnalyzeSelectionAsync(selected, tagsOnly, Workflow);
     }
-
-    private Task ApplyTagsAsync() => RunAsync("Applying tags...", async () =>
-    {
-        if (string.IsNullOrWhiteSpace(tags) || tags.Length > 4000) throw new InvalidOperationException("Enter tags of up to 4000 characters.");
-        await ApplyBulkAsync(SelectedIds.ToArray(), image => image with { Tags = GalleryRecords.MergeTags(image.Tags, tags) },
-            "Bulk organization", count => $"Updated {count} media item(s).");
-    });
 
     private Task CompareAsync() => RunAsync("Preparing comparison...", async () =>
     {

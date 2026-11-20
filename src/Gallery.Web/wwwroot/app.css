@@ -359,6 +359,7 @@ input::placeholder, textarea::placeholder, .advanced-select-placeholder {
     color: inherit;
 }
 .workspace-modal::backdrop { background: rgb(0 0 0 / 90%); }
+.tagging-dialog[open] { display: flex; }
 @media (max-width: 767px) { .workspace-modal { padding: .75rem; } }
 
 .keyboard-shortcuts-dialog[open] { display: flex; padding: 1rem; }
