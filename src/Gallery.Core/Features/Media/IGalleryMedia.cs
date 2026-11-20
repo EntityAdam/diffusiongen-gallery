@@ -6,6 +6,7 @@ namespace Gallery.Core.Services;
 public interface IGalleryMedia
 {
     Task<string> ThumbnailAsync(string id);
+    Task<Stream> OpenThumbnailAsync(string id);
     Task<string> PreviewAsync(string id, ImageResolution resolution = ImageResolution.Fit);
     Task<string> ViewerImageAsync(string id, ImageResolution resolution);
     Task<(Stream Content, string ContentType)> OpenMediaAsync(string id);

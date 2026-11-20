@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Components.Web.HtmlRendering;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using ShadCn.Blazor.Components;
@@ -37,6 +38,7 @@ internal sealed class ComponentRenderFixture : IAsyncDisposable
     {
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddLogging();
+        serviceCollection.AddSingleton<IConfiguration>(new ConfigurationManager());
         serviceCollection.AddSingleton<ComponentActivator>();
         serviceCollection.AddSingleton<IComponentActivator>(provider => provider.GetRequiredService<ComponentActivator>());
         serviceCollection.AddShadCnBlazorComponents();

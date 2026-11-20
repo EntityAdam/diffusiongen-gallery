@@ -26,6 +26,7 @@ public partial class GalleryBrowser
     private GalleryActivity Activity => Commands.Activity;
     private bool OverlayOpen => Presentation.DetailsOpen || Removal.IsOpen;
     private GalleryToolbox? toolbox;
+    private VirtualGalleryGrid? virtualGrid;
 
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
     {
@@ -50,7 +51,9 @@ public partial class GalleryBrowser
 
     private async Task OpenViewerAsync(string? initialId)
     {
-        Presentation.OpenViewer(State.PageImages, initialId);
+        if (State.InfiniteScroll)
+            Presentation.OpenOrderedViewer(State.Filtered, initialId ?? virtualGrid?.PreferredViewerId);
+        else Presentation.OpenViewer(State.PageImages, initialId);
         await Refreshed.InvokeAsync();
     }
 
@@ -68,6 +71,7 @@ public partial class GalleryBrowser
     private Task ApplyFilterPanelAsync(GalleryFilter value) => Commands.RunAsync("Filtering...", () => State.ApplyFilterAsync(value));
     private Task SetSort(string? value) => Commands.RunAsync("Filtering...", () => State.SetSortAsync(value));
     private Task SetDensityAsync(string value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetDensityAsync(value));
+    private Task SetThumbnailScaleAsync(int value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetThumbnailScaleAsync(value));
     private Task PreviousAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page - 1));
     private Task NextAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page + 1));
     private Task ToolboxMovedAsync((double? X, double? Y) position) => State.SetToolboxPositionAsync(position);

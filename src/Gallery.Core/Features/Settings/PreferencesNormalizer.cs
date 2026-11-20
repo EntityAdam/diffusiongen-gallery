@@ -9,6 +9,8 @@ internal static class PreferencesNormalizer
     public static UiPreferences Normalize(UiPreferences uiPreferences) => uiPreferences with
     {
         GridDensity = NormalizeDensity(uiPreferences.GridDensity),
+        ThumbnailScale = Math.Clamp(uiPreferences.ThumbnailScale, UiPreferences.MinThumbnailScale, UiPreferences.MaxThumbnailScale),
+        ExperimentalFeatures = uiPreferences.ExperimentalFeatures ?? System.Collections.Immutable.ImmutableDictionary<string, bool>.Empty,
         AutoLockMinutes = NormalizeAutoLockMinutes(uiPreferences.AutoLockMinutes),
         ToolboxTool = NormalizeToolboxTool(uiPreferences.ToolboxTool),
         ToolboxX = Coordinate(uiPreferences.ToolboxX), ToolboxY = Coordinate(uiPreferences.ToolboxY)

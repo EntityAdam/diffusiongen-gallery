@@ -11,6 +11,16 @@ public sealed class WorkspacePreferences(IGalleryVault vault, IGallerySettings s
     private UiPreferences current = new();
 
     public int AutoLockMinutes => current.AutoLockMinutes;
+    internal int ThumbnailScale => current.ThumbnailScale;
+    internal bool IsEnabled(ExperimentalFeature feature) =>
+        current.ExperimentalFeatures.GetValueOrDefault(feature.Id, feature.EnabledByDefault);
+
+    internal Task SetExperimentAsync(ExperimentalFeature feature, bool enabled) => SaveAsync(value => value with
+    {
+        ExperimentalFeatures = value.ExperimentalFeatures.SetItem(feature.Id, enabled)
+    });
+
+    internal Task SetThumbnailScaleAsync(int scale) => SaveAsync(value => value with { ThumbnailScale = scale });
 
     internal async Task<UiPreferences> LoadAsync()
     {

@@ -1,4 +1,5 @@
 @using Microsoft.AspNetCore.Components.Sections
+@inject IConfiguration Configuration
 @using Gallery.Web.Components.Features.Curation
 @using Gallery.Web.Components.Features.Media
 @using Gallery.Web.Components.Features.Media.Removal
@@ -7,12 +8,16 @@
     @if (Active)
     {
     <div class="gallery-layout grid min-w-0 grid-cols-1" data-has-selection="@((State.LibrarySelection.Count > 0 || State.RemovalSelection.Count > 0) ? "true" : "false")">
+        @if (Configuration.GetValue<bool>("Gallery:BrowsingDiagnostics"))
+        {
+            <GalleryBrowsingCapture InfiniteScroll="State.InfiniteScroll" />
+        }
         <section aria-label="@(State.TrashActive ? "Trash" : "Gallery")">
             @if (Catalog.IsPartial)
             {
                 <div class="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground" role="status" data-testid="catalog-loading">
                     @if (Catalog.IsLoading) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
-                    <span>Showing the initial page. Full-library search, filters and counts are @(Catalog.IsLoading ? "loading in the background" : "not ready yet").</span>
+                    <span>Showing @(State.InfiniteScroll ? "the first results" : "the initial page"). Full-library search, filters and counts are @(Catalog.IsLoading ? "loading in the background" : "not ready yet").</span>
                     @if (Catalog.LoadError.Length > 0)
                     {
                         <span>@Catalog.LoadError</span>
@@ -22,21 +27,22 @@
             }
             @if (State.Filtered.Count > 0)
             {
-                <GroupedImageGrid Images="State.PageImages" Density="@State.Density" Grouping="@State.Grouping" Busy="Activity.Busy" Context="image"
-                                  PromptGroups="State.Browsing.PromptGroupsByImageId" ModelGroups="State.Browsing.DiffusionModelGroupsByImageId" ShowPrompt="Navigation.ShowPromptAsync">
-                    @{ var isSelected = (State.TrashActive ? State.RemovalSelection : State.LibrarySelection).Contains(image.Id); }
-                    <GalleryImageCard @key="image.Id" Image="image" Thumbnail="@State.Thumbnails.Get(image.Id)" ThumbnailFailed="@State.Thumbnails.Failed(image.Id)"
-                                      Busy="Activity.Busy" Selected="isSelected" ShowSelection="true"
-                                      Select="args => State.SelectCard(image.Id, args.ShiftKey)" Open="() => Presentation.OpenAsync(image)"
-                                      Rate="value => Curation.ToggleRatingAsync(image, value)" Favorite="() => Curation.ToggleFavoriteAsync(image)"
-                                      Mark="() => Curation.ToggleMarkAsync(image)"
-                                      HasSuggestion="@State.Suggestions.ContainsKey(image.Id)" ReviewSuggestion="() => OpenViewerAsync(image.Id)" />
-                </GroupedImageGrid>
+                @if (State.InfiniteScroll)
+                {
+                    <VirtualGalleryGrid @ref="virtualGrid" State="State" ChildContent="RenderCard" Busy="@(Activity.Busy || OverlayOpen)"
+                                        ShowPrompt="Navigation.ShowPromptAsync" />
+                }
+                else
+                {
+                <GroupedImageGrid Images="State.PageImages" Density="@State.Density" Grouping="@State.Grouping" Busy="Activity.Busy"
+                                  PromptGroups="State.Browsing.PromptGroupsByImageId" ModelGroups="State.Browsing.DiffusionModelGroupsByImageId"
+                                  ShowPrompt="Navigation.ShowPromptAsync" ChildContent="RenderCard" />
                 <div class="mt-6 flex items-center justify-between gap-3 text-sm text-muted-foreground">
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(State.Page == 0 || Activity.Busy)" OnClick="PreviousAsync"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(State.Page == 0 || Activity.Busy)" data-gallery-page-navigation OnClick="PreviousAsync"><ChevronLeftIcon aria-hidden="true" />Previous</Button>
                     <span>@if (Catalog.IsPartial) { <text>Initial page · library loading</text> } else { <text>Page @(State.Page + 1) of @State.PageCount</text> }</span>
-                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(Catalog.IsPartial || State.Page + 1 >= State.PageCount || Activity.Busy)" OnClick="NextAsync">Next <ArrowRightIcon aria-hidden="true" /></Button>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@(Catalog.IsPartial || State.Page + 1 >= State.PageCount || Activity.Busy)" data-gallery-page-navigation OnClick="NextAsync">Next <ArrowRightIcon aria-hidden="true" /></Button>
                 </div>
+                }
             }
         </section>
     </div>
@@ -118,7 +124,8 @@
         <div class="gallery-view-drawer-body">
             <GalleryViewOptions Density="@State.Density" DensityChanged="SetDensityAsync"
                                 Grouping="@State.Grouping" GroupingChanged="SetGroupingAsync" Sort="@State.Filter.Sort" SortChanged="SetSort"
-                                Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" HasImages="State.PageImages.Any()"
+                                Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" HasImages="State.Filtered.Count > 0"
+                                InfiniteScroll="State.InfiniteScroll" ThumbnailScale="State.ThumbnailScale" ScaleChanged="SetThumbnailScaleAsync"
                                 Fullscreen="() => OpenViewerAsync(null)" ResetPosition="ResetToolboxPositionAsync" />
         </div>
     </aside>
@@ -130,4 +137,15 @@
                   QuickFilters="State.QuickFilters" Saved="State.SetQuickFilters" Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial"
                   ResetVersion="State.FilterInputRevision" Close='() => SetActiveToolAsync("")' Reset="ResetFilters"
                   Changed="ApplyFilterPanelAsync" />
+}
+
+
+@code {
+    private RenderFragment<ImageRecord> RenderCard => image =>
+        @<GalleryImageCard @key="image.Id" Image="image" Thumbnail="@State.Thumbnails.Get(image.Id)" ThumbnailFailed="@State.Thumbnails.Failed(image.Id)"
+                           Busy="Activity.Busy" Selected="@((State.TrashActive ? State.RemovalSelection : State.LibrarySelection).Contains(image.Id))"
+                           ShowSelection="true" Select="args => State.SelectCard(image.Id, args.ShiftKey)" Open="() => Presentation.OpenAsync(image)"
+                           Rate="value => Curation.ToggleRatingAsync(image, value)" Favorite="() => Curation.ToggleFavoriteAsync(image)"
+                           Mark="() => Curation.ToggleMarkAsync(image)"
+                           HasSuggestion="@State.Suggestions.ContainsKey(image.Id)" ReviewSuggestion="() => OpenViewerAsync(image.Id)" />;
 }

@@ -15,6 +15,7 @@ public sealed class MediaPresentationState(IGalleryVault vault, IGalleryMedia me
     public string ViewerInitialId { get; private set; } = "";
     public string ViewerInitialPreview { get; private set; } = "";
     public bool ReviewMode { get; private set; }
+    public bool OrderedGalleryViewer { get; private set; }
     public bool CanPresent => !disposed && vault.IsUnlocked;
     public bool IsOpen => Selected is not null || ViewerImages.Count > 0;
     public bool DetailsOpen => Selected is not null;
@@ -91,11 +92,29 @@ public sealed class MediaPresentationState(IGalleryVault vault, IGalleryMedia me
     {
         if (disposed) return;
         ReviewMode = false;
+        OrderedGalleryViewer = false;
         var images = (DetailViewerImages ?? pageImages).Select(image => image with { }).ToList();
         if (initialId is not null && !images.Any(image => image.Id == initialId) && Selected is not null)
             images.Add(Selected with { });
         ViewerImages = images;
         ViewerInitialId = initialId ?? images.FirstOrDefault()?.Id ?? "";
+        ViewerInitialPreview = Selected?.Id == ViewerInitialId && !Selected.IsVideo ? Preview : "";
+        CloseDetail();
+    }
+
+    internal void OpenOrderedViewer(IReadOnlyList<ImageRecord> ordered, string? initialId)
+    {
+        if (disposed || DetailViewerImages is not null)
+        {
+            OpenViewer(ordered, initialId);
+            return;
+        }
+
+        ReviewMode = false;
+        OrderedGalleryViewer = true;
+        ViewerImages = Selected is { } selected && selected.Id == initialId && !ordered.Any(image => image.Id == initialId)
+            ? [selected] : ordered;
+        ViewerInitialId = initialId ?? ViewerImages.FirstOrDefault()?.Id ?? "";
         ViewerInitialPreview = Selected?.Id == ViewerInitialId && !Selected.IsVideo ? Preview : "";
         CloseDetail();
     }
@@ -109,6 +128,7 @@ public sealed class MediaPresentationState(IGalleryVault vault, IGalleryMedia me
         ViewerInitialId = ViewerImages.FirstOrDefault()?.Id ?? "";
         ViewerInitialPreview = "";
         ReviewMode = true;
+        OrderedGalleryViewer = false;
         CloseDetail();
     }
 
@@ -117,6 +137,7 @@ public sealed class MediaPresentationState(IGalleryVault vault, IGalleryMedia me
         ViewerImages = new List<ImageRecord>();
         ViewerInitialId = ViewerInitialPreview = "";
         ReviewMode = false;
+        OrderedGalleryViewer = false;
     }
 
     public void Dispose()

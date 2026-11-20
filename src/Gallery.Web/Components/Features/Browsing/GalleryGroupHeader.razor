@@ -1,0 +1,37 @@
+<div class="col-span-full rounded-md border-l-2 border-primary bg-primary/5 px-4 py-3">
+    @if (Prompt is { Kind: PromptGroup.Shared } group)
+    {
+        var sample = group.Images[0].Generation;
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+            <strong>@(group.Images.Length == 1 ? "1 item with this prompt" : $"{group.Images.Length} share this prompt")@Continuation</strong>
+            @if (sample is not null) { <span class="text-muted-foreground">@GenerationSummary(sample)</span> }
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Default" Type="button" Class="h-auto px-0" Disabled="@Busy" OnClick="() => ShowPrompt.InvokeAsync(group.Prompt)">Show only these</Button>
+        </div>
+        <p class="max-h-40 overflow-auto text-sm whitespace-pre-wrap break-words" title="@group.Prompt">@group.Prompt</p>
+    }
+    else if (Prompt is { } other)
+    {
+        <div class="flex flex-wrap items-center gap-3 text-sm"><strong>@(other.Kind == PromptGroup.Unique ? "Unique prompts" : "No ComfyUI prompt found") (@other.Images.Length)@Continuation</strong></div>
+    }
+    else if (Model is { } model)
+    {
+        <strong>@(model.Model.Length == 0 ? "No diffusion model recorded" : model.Model) (@model.Images.Length)@Continuation</strong>
+    }
+</div>
+
+@code {
+    [Parameter] public PromptGroup? Prompt { get; set; }
+    [Parameter] public DiffusionModelGroup? Model { get; set; }
+    [Parameter] public bool Continued { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<string> ShowPrompt { get; set; }
+
+    private string Continuation => Continued ? " (continued)" : "";
+
+    private static string GenerationSummary(GenerationInfo info) => string.Join(" · ", new[]
+    {
+        info.Model,
+        info.Steps is int steps ? $"{steps} steps" : "",
+        info.Cfg is double cfg ? $"CFG {cfg.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}" : ""
+    }.Where(part => part.Length > 0));
+}

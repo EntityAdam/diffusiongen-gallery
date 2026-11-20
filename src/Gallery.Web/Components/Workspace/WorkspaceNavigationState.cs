@@ -83,6 +83,7 @@ public sealed class WorkspaceNavigationState(
     {
         collections.Navigate(location);
         Section = location.Unorganized ? "unorganized" : "collections";
+        browser.SetGalleryActive(false);
         duplicates.Active = false;
         PublishRoute();
         return Task.CompletedTask;
@@ -105,12 +106,14 @@ public sealed class WorkspaceNavigationState(
     {
         if (section == "review")
         {
+            if (Section != "gallery") browser.SetGalleryActive(true);
             Section = "gallery";
             duplicates.Active = false;
             return commands.RunAsync("Filtering...", browser.OpenReviewAsync);
         }
 
         Section = section;
+        browser.SetGalleryActive(section == "gallery");
         duplicates.Active = section == "duplicates";
         if (section == "collections") collections.Navigate(new());
         if (section == "unorganized") collections.Navigate(new(Unorganized: true));
@@ -129,6 +132,7 @@ public sealed class WorkspaceNavigationState(
         if (Activity.Ingestion.IsRunning)
         {
             Section = "ingest";
+            browser.SetGalleryActive(false);
             duplicates.Active = false;
             PublishRoute();
             return;

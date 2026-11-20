@@ -4,6 +4,7 @@ using Gallery.Web.Components.Features.Settings;
 using Gallery.Web.Components.Features.Tags;
 using Gallery.Web.Components.Features.Vision;
 using Gallery.Web.Components.Workspace;
+using Microsoft.JSInterop;
 
 namespace Gallery.Web.Components.Features.Browsing;
 
@@ -20,7 +21,7 @@ public sealed class GalleryBrowserState : IDisposable
     private bool disposed;
     internal ThumbnailCache Thumbnails { get; }
     public GalleryBrowserState(IGalleryVault vault, IGalleryCatalog galleryCatalog, IGallerySettings settings, IGalleryMedia media,
-        WorkspaceCatalog catalog, ILogger logger, Action changed, WorkspacePreferences preferences)
+        WorkspaceCatalog catalog, ILogger logger, Action changed, WorkspacePreferences preferences, IJSRuntime js)
     {
         this.vault = vault;
         this.galleryCatalog = galleryCatalog;
@@ -28,7 +29,11 @@ public sealed class GalleryBrowserState : IDisposable
         this.catalog = catalog;
         this.preferences = preferences;
         this.logger = logger;
-        Thumbnails = new(vault, media, logger, changed);
+        Thumbnails = new(vault, media, logger, () =>
+        {
+            if (InfiniteScroll) ViewportThumbnailsChanged?.Invoke();
+            else changed();
+        }, js);
     }
 
     public GalleryFilter Filter { get; private set; } = new();
@@ -38,6 +43,14 @@ public sealed class GalleryBrowserState : IDisposable
     public string Density { get; private set; } = UiPreferences.DetailDensity;
     public int Page { get; private set; }
     public int PageSize => Density == "compact" ? 49 : 12;
+    internal int InitialFetchSize => InfiniteScroll ? 49 : PageSize;
+    internal bool InfiniteScroll { get; private set; }
+    internal int ThumbnailScale => preferences.ThumbnailScale;
+    internal long ViewReset { get; private set; }
+    private bool galleryActive = true;
+    private (string Id, int Index)? viewerReturn;
+    private long viewportOwner;
+    internal event Action? ViewportThumbnailsChanged;
     public int PageCount => Math.Max(1, (Filtered.Count + PageSize - 1) / PageSize);
     public IReadOnlyList<ImageRecord> Filtered => Browsing.Images;
     public IEnumerable<ImageRecord> PageImages => Filtered.Skip(Page * PageSize).Take(PageSize);
@@ -89,6 +102,7 @@ public sealed class GalleryBrowserState : IDisposable
     public async Task InitializeAsync(UiPreferences preferences)
     {
         Density = preferences.GridDensity;
+        SetGalleryActive(true);
         ToolboxVisible = preferences.ToolboxVisible;
         (ToolboxX, ToolboxY) = (preferences.ToolboxX, preferences.ToolboxY);
         ActiveTool = preferences.ToolboxTool;
@@ -132,10 +146,12 @@ public sealed class GalleryBrowserState : IDisposable
         return current is null ? filter : filter with { Collection = current.Name };
     }
 
-    internal Task RecordsChangedAsync(bool reloadThumbnails)
+    internal Task RecordsChangedAsync(IReadOnlyList<ImageRecord> records, bool reloadThumbnails)
     {
         Page = Math.Min(Page, PageCount - 1);
-        return reloadThumbnails ? LoadThumbnailsAsync() : LoadMissingThumbnailsAsync();
+        LoadMissingThumbnailsAsync();
+        if (reloadThumbnails) Thumbnails.Invalidate(records.Select(image => image.Id));
+        return Task.CompletedTask;
     }
 
     internal void RenameTag(TagCatalogChange change)
@@ -179,6 +195,8 @@ public sealed class GalleryBrowserState : IDisposable
     private void ResetPageAndSelection()
     {
         Page = 0;
+        ViewReset++;
+        if (InfiniteScroll) Thumbnails.Clear();
         ClearSelection();
     }
 
@@ -266,7 +284,7 @@ public sealed class GalleryBrowserState : IDisposable
         if (!resetView && !trashChanged) return changed;
 
         ResetPageAndSelection();
-        if (trashChanged && catalog.IsPartial) await catalog.OpenAsync(PageSize, TrashActive);
+        if (trashChanged && catalog.IsPartial) await catalog.OpenAsync(InitialFetchSize, TrashActive);
         await LoadThumbnailsAsync();
         return changed;
     }
@@ -308,10 +326,68 @@ public sealed class GalleryBrowserState : IDisposable
         "intelligence" when Suggestions.Count > 0 => Suggestions.Count.ToString(),
         _ => ""
     };
-    public Task LoadThumbnailsAsync() => Thumbnails.ReloadAsync(PageImages);
-    public Task LoadMissingThumbnailsAsync() => Thumbnails.LoadMissingAsync(PageImages);
+    internal void SetGalleryActive(bool active)
+    {
+        galleryActive = active;
+        if (!active)
+        {
+            viewportOwner++;
+            Thumbnails.Clear();
+            viewerReturn = null;
+            return;
+        }
+        InfiniteScroll = preferences.IsEnabled(ExperimentalFeatures.InfiniteScroll);
+    }
+
+    internal void RestoreViewerPosition((string Id, int Index) position)
+    {
+        if (!disposed && galleryActive && InfiniteScroll && Filtered.Count > 0) viewerReturn = position;
+    }
+
+    internal (string Id, int Index)? TakeViewerReturn()
+    {
+        var position = viewerReturn;
+        viewerReturn = null;
+        return position;
+    }
+
+    internal Task SetThumbnailScaleAsync(int scale) =>
+        preferences.SetThumbnailScaleAsync(Math.Clamp(scale, UiPreferences.MinThumbnailScale, UiPreferences.MaxThumbnailScale));
+
+    internal long AcquireViewport() => ++viewportOwner;
+
+    internal void ReleaseViewport(long owner)
+    {
+        if (owner != viewportOwner) return;
+        viewportOwner++;
+        Thumbnails.Clear();
+    }
+
+    internal void SetViewport(long owner, string[] ids, int visibleCount, bool immediate)
+    {
+        if (!disposed && galleryActive && InfiniteScroll && owner == viewportOwner)
+            Thumbnails.SetWindow(ids, visibleCount, immediate, virtualized: true);
+    }
+
+    public Task LoadThumbnailsAsync()
+    {
+        if (InfiniteScroll) return Task.CompletedTask;
+        LoadMissingThumbnailsAsync();
+        Thumbnails.Invalidate(PageImages.Select(image => image.Id));
+        return Task.CompletedTask;
+    }
+
+    public Task LoadMissingThumbnailsAsync()
+    {
+        if (galleryActive && !InfiniteScroll)
+        {
+            var ids = PageImages.Select(image => image.Id).ToArray();
+            Thumbnails.SetWindow(ids, ids.Length, immediate: true, virtualized: false);
+        }
+        return Task.CompletedTask;
+    }
     public Task PauseAsync() => Thumbnails.PauseAsync();
-    public void Resume() => Thumbnails.Resume(PageImages);
+    public void Resume() => Thumbnails.Resume();
     public void Dispose()
     {
         disposed = true;

@@ -4,17 +4,16 @@ window.galleryGrid = {
         const grid = window.galleryGrid;
         grid.detach();
         doc = doc ?? document;
-        let hoveredId = null;
+        let hoveredCard = null;
         let queue = Promise.resolve();
         const cardOf = target => typeof target?.closest === "function" ? target.closest(".image-card[data-image-id]") : null;
         const columnsOf = element => {
             const style = element && typeof window.getComputedStyle === "function" ? window.getComputedStyle(element) : null;
             return Math.max(1, (style?.gridTemplateColumns ?? "").split(" ").filter(Boolean).length);
         };
-        const onHover = event => { hoveredId = cardOf(event.target)?.dataset.imageId ?? null; };
+        const onHover = event => { hoveredCard = cardOf(event.target); };
         const onLeave = event => {
-            if (cardOf(event.target)?.dataset.imageId === hoveredId)
-                hoveredId = cardOf(event.relatedTarget)?.dataset.imageId ?? null;
+            if (cardOf(event.target) === hoveredCard) hoveredCard = cardOf(event.relatedTarget);
         };
         const onKey = event => {
             if (event.ctrlKey || event.altKey || event.metaKey || event.defaultPrevented) return;
@@ -25,9 +24,17 @@ window.galleryGrid = {
             if (editing && !(editing.type === "checkbox" && cardOf(editing))) return;
             if (doc.querySelector("[role=dialog][aria-modal=true], dialog[open]")) return;
             const focusedId = cardOf(doc.activeElement)?.dataset.imageId;
+            const hoveredId = hoveredCard?.isConnected !== false && hoveredCard?.matches?.(":hover") !== false
+                ? hoveredCard?.dataset.imageId : null;
             // Pointer curation follows the hovered card even when a previous card retains focus.
             const id = hoveredId ?? focusedId;
             if (key.startsWith("arrow")) {
+                const virtual = doc.querySelector("[data-virtual-gallery]");
+                if (virtual) {
+                    event.preventDefault();
+                    window.galleryVirtualGrid.arrow(virtual, key, focusedId ?? hoveredId ?? null);
+                    return;
+                }
                 const cards = Array.from(doc.querySelectorAll(".image-card[data-image-id]"));
                 if (cards.length === 0) return;
                 // Arrow navigation continues from keyboard focus while the pointer stays parked.
