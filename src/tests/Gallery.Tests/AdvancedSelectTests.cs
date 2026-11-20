@@ -11,6 +11,27 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class AdvancedSelectTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TogglingMenu_KeepsTheSameChevronImage(bool multiple)
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        AdvancedSelect? select = null;
+        var root = await Render(fixture, multiple, false, false, value => select = value, _ => { });
+        const string chevron = "<img class=\"advanced-select-chevron\" src=\"images/advanced-select/chevron-down.svg\"";
+
+        for (var toggle = 0; toggle < 4; toggle++)
+        {
+            var html = await Html(fixture, root);
+            Assert.Contains(chevron, html);
+            Assert.DoesNotContain("chevron-up.svg", html);
+            Assert.Equal(toggle % 2 == 1, html.Contains(" is-open", StringComparison.Ordinal));
+            Assert.Contains($"aria-expanded=\"{(toggle % 2 == 1 ? "true" : "false")}\"", html);
+            await Invoke(fixture, select!, "ToggleAsync");
+        }
+    }
+
     [Fact]
     public async Task RequiredSelection_OpensItsMenu_AndCannotBeCleared()
     {

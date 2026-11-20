@@ -782,6 +782,9 @@ npm run build:css
 `npm run watch:css` supports active styling work. Theme and gallery-specific
 rules live in `wwwroot/app.css`.
 
+`AdvancedSelect` keeps one chevron image mounted and rotates it with CSS when
+open, avoiding repeat icon downloads under the app's `no-store` cache policy.
+
 ImageSharp 4 requires a valid Six Labors license for Release builds. Obtain a
 license from [Six Labors](https://sixlabors.com/pricing/) and place it in
 `sixlabors.lic` at the repository root, or pass

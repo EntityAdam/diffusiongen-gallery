@@ -43,7 +43,7 @@
         }
         <span class="advanced-select-divider"></span>
         <button type="button" class="advanced-select-icon-button" disabled="@Disabled" aria-label="@($"{(open ? "Close" : "Open")} {Label}")" @onclick="ToggleAsync" aria-expanded="@open.ToString().ToLowerInvariant()">
-            <img src="@(open ? "images/advanced-select/chevron-up.svg" : "images/advanced-select/chevron-down.svg")" alt="" width="14" height="14" />
+            <img class="advanced-select-chevron" src="images/advanced-select/chevron-down.svg" alt="" width="14" height="14" />
         </button>
     </div>
     <div class="advanced-select-menu" popover="manual" @ref="menu" hidden="@(!open)">

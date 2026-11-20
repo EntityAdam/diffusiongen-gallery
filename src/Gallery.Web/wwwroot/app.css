@@ -245,6 +245,7 @@ input::placeholder, textarea::placeholder, .advanced-select-placeholder {
 .advanced-select-single { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .advanced-select-selected-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .advanced-select-icon-button { position: relative; z-index: 1; display: grid; place-items: center; flex-shrink: 0; width: 16px; height: 28px; padding: 0; border: 0; background: transparent; }
+.advanced-select.is-open .advanced-select-chevron { transform: rotate(180deg); }
 .advanced-select button:focus-visible { outline: 2px solid var(--as-primary); outline-offset: 2px; }
 .advanced-select-divider { width: 1px; height: 16px; background: var(--as-divider); flex-shrink: 0; }
 .advanced-select-chips { position: relative; display: flex; flex: 1; flex-wrap: wrap; gap: 4px; min-width: 0; padding: 7px 0; margin-left: -5px; pointer-events: none; }
