@@ -28,7 +28,8 @@ public partial class SettingsWorkspace
     internal static readonly (string Id, string Name)[] Tabs =
     [
         ("overview", "Overview"), ("gallery", "Manage gallery"), ("backups", "Backups"),
-        ("endpoints", "LLM endpoints"), ("tags", "Tag import/export"), ("security", "Gallery security")
+        ("endpoints", "LLM endpoints"), ("tags", "Tag import/export"), ("security", "Gallery security"),
+        ("experimental", "Experimental features")
     ];
     private LlmEndpointSettings? llmEndpointSettings;
     private readonly BackupDraft backup = new();
@@ -45,6 +46,9 @@ public partial class SettingsWorkspace
     private UnsavedChangesSource? GetDraft() => Active ? Draft : null;
 
     private Task UpdateTimerAsync(string? value) => Preferences.UpdateAutoLockAsync(value, Commands);
+
+    private Task SetExperimentAsync(ExperimentalFeature feature, bool enabled) =>
+        Commands.RunAsync("Saving experimental features...", () => Preferences.SetExperimentAsync(feature, enabled));
 
     protected override async Task OnParametersSetAsync()
     {

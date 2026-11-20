@@ -78,6 +78,7 @@ internal static class BrowsingWorkspaceFixture
     private sealed class ThumbnailMedia : IGalleryMedia
     {
         public Task<string> ThumbnailAsync(string id) => Task.FromResult("");
+        public Task<Stream> OpenThumbnailAsync(string id) => Task.FromResult<Stream>(new MemoryStream());
         public Task<string> PreviewAsync(string id, ImageResolution resolution) => throw new NotSupportedException();
         public Task<string> ViewerImageAsync(string id, ImageResolution resolution) => throw new NotSupportedException();
         public Task<(Stream Content, string ContentType)> OpenMediaAsync(string id) => throw new NotSupportedException();

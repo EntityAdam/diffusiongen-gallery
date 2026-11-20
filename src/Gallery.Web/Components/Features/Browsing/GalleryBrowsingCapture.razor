@@ -1,0 +1,36 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<span hidden @ref="marker"></span>
+
+@code {
+    [Parameter] public bool InfiniteScroll { get; set; }
+    private static int nextCaptureId;
+    private readonly int captureId = Interlocked.Increment(ref nextCaptureId);
+    private ElementReference marker;
+    private DotNetObjectReference<GalleryBrowsingCapture>? reference;
+    private bool disposed;
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || disposed) return Task.CompletedTask;
+        reference = DotNetObjectReference.Create(this);
+        return JS.InvokeVoidAsync("galleryBrowsingCapture.attach", captureId, marker, reference, InfiniteScroll).AsTask();
+    }
+
+    [JSInvokable]
+    public void Record(int mounted, double? firstMs, double? readyMs, int unavailable, bool initial)
+    {
+        if (!disposed) GalleryBrowsingMetrics.Viewport(InfiniteScroll, mounted, firstMs, readyMs, unavailable, initial);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        if (reference is null) return;
+        GalleryBrowsingMetrics.Detached(InfiniteScroll);
+        try { await JS.InvokeVoidAsync("galleryBrowsingCapture.detach", captureId); }
+        catch (Exception exception) when (exception is JSDisconnectedException or TaskCanceledException or ObjectDisposedException) { }
+        finally { reference.Dispose(); }
+    }
+}

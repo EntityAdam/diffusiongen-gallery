@@ -1,0 +1,34 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="virtual-gallery" @ref="element" tabindex="-1" aria-label="Gallery images" data-virtual-gallery
+     style="--gallery-card-width: @(ThumbnailWidth)px; --gallery-columns: @columns">
+    <div class="virtual-gallery-sizer" aria-hidden="true"></div>
+    <div class="virtual-gallery-canvas" style="height: @(PhysicalHeight)px">
+        <div class="virtual-gallery-mounts">
+            @if (layout is not null)
+            {
+                @for (var rowIndex = firstMounted; rowIndex < lastMounted; rowIndex++)
+                {
+                    var row = layout[rowIndex];
+                    var id = projection.Images[row.Start].Id;
+                    <div @key="(id, row.Count == 0)" class="@(row.Count == 0 ? "virtual-gallery-header" : "virtual-gallery-card-row image-grid density-compact")"
+                         data-virtual-row="@rowIndex">
+                        @if (row.Count == 0)
+                        {
+                            <GalleryGroupHeader Prompt="projection.PromptGroupsByImageId.GetValueOrDefault(id)" Model="projection.DiffusionModelGroupsByImageId.GetValueOrDefault(id)"
+                                                Busy="Busy" ShowPrompt="ShowPrompt" />
+                        }
+                        else
+                        {
+                            @for (var index = row.Start; index < row.Start + row.Count; index++)
+                            {
+                                @ChildContent(projection.Images[index])
+                            }
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>

@@ -91,7 +91,7 @@
         <GalleryBrowser @ref="galleryBrowser" State="Browser" Catalog="Catalog" Active='@(Section == "gallery")'
                         Presentation="Presentation" Removal="Session.Removal" Curation="Session.Curation"
                         Analysis="Session.Analysis" Refreshed="RefreshWorkspace" />
-        <MediaPresentationHost State="Presentation" Catalog="Catalog" Activity="Activity" PageImages="Browser.PageImages"
+        <MediaPresentationHost State="Presentation" Catalog="Catalog" Activity="Activity" Browser="Browser"
                                Suggestions="Browser.Suggestions" Curation="Session.Curation" Analysis="Session.Analysis"
                                Removal="Session.Removal" Changed="RefreshWorkspace" />
         <RemovalWorkflow State="Session.Removal" Activity="Activity" Changed="RefreshWorkspace" />

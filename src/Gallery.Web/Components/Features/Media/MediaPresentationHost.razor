@@ -2,6 +2,7 @@
 @using Gallery.Web.Components.Features.Curation
 @using Gallery.Web.Components.Features.Media.Removal
 @using Gallery.Web.Components.Features.Vision
+@using Gallery.Web.Components.Features.Browsing
 @implements IDisposable
 
 @if (State.CanPresent && State.Selected is { } selected)
@@ -17,7 +18,8 @@
 @if (State.CanPresent && State.ViewerImages.Count > 0)
 {
     <FullscreenViewer KnownTags="Catalog.AllTags" Images="State.ViewerImages" InitialId="@State.ViewerInitialId" InitialPreview="@State.ViewerInitialPreview"
-                      ReviewMode="State.ReviewMode" OnClose="CloseViewerAsync" OnImageChanged="Catalog.UpdateAsync"
+                      ReviewMode="State.ReviewMode" OrderedGallery="State.OrderedGalleryViewer" OnClose="CloseViewerAsync"
+                      OnImageChanged="Catalog.UpdateAsync" OnImagesChanged="UpdateImagesAsync"
                       Suggestions="Suggestions" ApproveSuggestion="Analysis.ApproveAsync" DismissSuggestion="Analysis.DismissAsync" />
 }
 
@@ -31,7 +33,7 @@
     [Parameter, EditorRequired] public MediaCurationCommands Curation { get; set; } = default!;
     [Parameter, EditorRequired] public LibraryAnalysis Analysis { get; set; } = default!;
     [Parameter, EditorRequired] public RemovalWorkflowState Removal { get; set; } = default!;
-    [Parameter] public IEnumerable<ImageRecord> PageImages { get; set; } = [];
+    [Parameter, EditorRequired] public GalleryBrowserState Browser { get; set; } = default!;
     [Parameter] public EventCallback Changed { get; set; }
     private MediaDetailDialog? detailDialog;
 
@@ -51,14 +53,22 @@
 
     private async Task OpenViewerAsync(string id)
     {
-        State.OpenViewer(PageImages, id);
+        if (Browser.InfiniteScroll && Navigation?.Section == "gallery") State.OpenOrderedViewer(Browser.Filtered, id);
+        else State.OpenViewer(Browser.PageImages, id);
         await Changed.InvokeAsync();
     }
 
     private async Task CloseDetail() { State.CloseDetail(); await Changed.InvokeAsync(); }
-    private Task CloseViewerAsync()
+    private Task UpdateImagesAsync(IReadOnlyList<ImageRecord> records) => Catalog.UpdateAsync(records, reloadThumbnails: false);
+
+    private Task CloseViewerAsync((string Id, int Index) position)
     {
+        var restore = State.OrderedGalleryViewer;
         State.CloseViewer();
-        return Commands.RunAsync("Refreshing gallery...", Catalog.ReloadAsync);
+        return Commands.RunAsync("Refreshing gallery...", async () =>
+        {
+            await Catalog.ReloadAsync();
+            if (restore) Browser.RestoreViewerPosition(position);
+        });
     }
 }

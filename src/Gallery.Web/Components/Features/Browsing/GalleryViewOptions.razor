@@ -1,14 +1,26 @@
 <div class="space-y-4">
     <div class="space-y-2">
-        <Label>Thumbnail size</Label>
-        <Tabs Value="@Density" ValueChanged="DensityChanged">
-            <TabsList aria-label="Thumbnail size">
-                @foreach (var option in UiPreferences.Densities)
-                {
-                    <TabsTrigger Value="@option" disabled="@Busy">@(char.ToUpperInvariant(option[0]) + option[1..])</TabsTrigger>
-                }
-            </TabsList>
-        </Tabs>
+        @if (InfiniteScroll)
+        {
+            <Label For="gallery-thumbnail-size">Thumbnail size</Label>
+            <div class="gallery-thumbnail-slider">
+                <input id="gallery-thumbnail-size" type="range" min="@UiPreferences.MinThumbnailScale" max="@UiPreferences.MaxThumbnailScale"
+                       step="5" value="@ThumbnailScale" aria-valuetext="@(ThumbnailScale)%" disabled="@Busy" @onchange="ChangeScaleAsync" />
+                <output for="gallery-thumbnail-size">@(ThumbnailScale)%</output>
+            </div>
+        }
+        else
+        {
+            <Label>Thumbnail size</Label>
+            <Tabs Value="@Density" ValueChanged="DensityChanged">
+                <TabsList aria-label="Thumbnail size">
+                    @foreach (var option in UiPreferences.Densities)
+                    {
+                        <TabsTrigger Value="@option" disabled="@Busy">@(char.ToUpperInvariant(option[0]) + option[1..])</TabsTrigger>
+                    }
+                </TabsList>
+            </Tabs>
+        }
     </div>
     <div class="grid grid-cols-2 gap-3">
         <div class="space-y-2">
@@ -31,6 +43,12 @@
 </div>
 
 @code {
+    [Parameter] public bool InfiniteScroll { get; set; }
+    [Parameter] public int ThumbnailScale { get; set; }
+    [Parameter] public EventCallback<int> ScaleChanged { get; set; }
+    private Task ChangeScaleAsync(ChangeEventArgs args) => int.TryParse(args.Value?.ToString(), out var scale)
+        ? ScaleChanged.InvokeAsync(scale) : Task.CompletedTask;
+
     [Parameter] public string Density { get; set; } = UiPreferences.DetailDensity;
     [Parameter] public EventCallback<string> DensityChanged { get; set; }
     [Parameter] public string Grouping { get; set; } = "none";

@@ -39,5 +39,23 @@
         case "security":
             <SecuritySettings AutoLockMinutes="Preferences.AutoLockMinutes" Busy="Activity.Busy" UpdateTimer="UpdateTimerAsync" Panic="Panic" />
             break;
+        case "experimental":
+            <section aria-labelledby="experimental-title" class="space-y-4">
+                <h2 id="experimental-title">Experimental features</h2>
+                @foreach (var feature in ExperimentalFeatures.All)
+                {
+                    var enabled = Preferences.IsEnabled(feature);
+                    <div @key="feature.Id" class="flex items-center gap-3 rounded-lg border p-4">
+                        <button type="button" role="switch" class="review-random-toggle" aria-checked="@(enabled ? "true" : "false")"
+                                aria-labelledby="@(feature.Id + "-label")" aria-describedby="@(feature.Id + "-description")"
+                                disabled="@Activity.Busy" @onclick="() => SetExperimentAsync(feature, !enabled)"><span></span></button>
+                        <div>
+                            <strong id="@(feature.Id + "-label")">@feature.Label</strong>
+                            <p id="@(feature.Id + "-description")" class="mb-0 text-sm text-muted-foreground">@feature.Description</p>
+                        </div>
+                    </div>
+                }
+            </section>
+            break;
     }
 }

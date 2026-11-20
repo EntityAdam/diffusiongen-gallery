@@ -130,6 +130,47 @@ completed catalog load rebuilds it. The index contains encrypted IDs and a catal
 revision; page items are read from authoritative records in a consistent snapshot.
 This improves opening time but still loads the full records into memory eventually.
 
+### Experimental infinite scroll
+
+Open **Settings → Experimental features** and switch on **Infinite scroll gallery**.
+The preference is saved in the current vault and takes effect when you return to
+the gallery. **Change view** contains the thumbnail-size slider. Switching off
+the experiment restores paging and your previous Compact or Detail setting.
+
+### Capturing local gallery performance
+
+Start the app with the `Gallery:BrowsingDiagnostics` configuration value set to
+`true` to enable browser timing for this run. For example, on macOS or Linux:
+
+```sh
+Gallery__BrowsingDiagnostics=true dotnet run --project src/Gallery.Web --no-launch-profile
+```
+
+Install the `dotnet-counters` .NET tool if needed. Run `dotnet-counters ps` to find
+the Gallery.Web process, then start a capture before entering the gallery.
+Browse in either mode and stop the capture with Ctrl+C. The command below
+explicitly saves a local JSON file.
+
+```sh
+dotnet-counters collect --process-id <PID> --format json --output gallery-browsing.json \
+  --counters Gallery.Web.Browsing,Gallery.Core.Catalog,System.Runtime
+```
+
+The browsing meter records retained thumbnail payload bytes, pending and active reads,
+discarded reads, mounted cards, and sampled browser preview readiness. Entry
+timing starts when the gallery mounts. Paged navigation starts at the page
+button, and infinite scrolling samples the final window after a scroll burst.
+The app reports unavailable previews separately. For browser process memory, use
+the browser's performance tools alongside the .NET capture.
+The experimental view uses revocable browser URLs for streamed thumbnails.
+
+Browser timing is off on a normal launch. The diagnostic payload uses counts,
+bytes, durations, and fixed labels. The app has no automatic upload or report
+file for this feature. The vault-open trace and storage meter remain available
+to local diagnostic tools. Ingestion's **Save performance information** switch
+continues to show a per-import summary in the app and write it to the configured
+application log. [Stress harness and existing diagnostic sources](../perf/Gallery.Stress/README.md).
+
 ## Importing media
 
 1. Open **Ingest media**, enter a source folder, and select **Scan**.

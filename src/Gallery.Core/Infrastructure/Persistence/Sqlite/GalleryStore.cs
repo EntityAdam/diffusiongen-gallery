@@ -13,6 +13,7 @@ namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
 
 internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
 {
+    private volatile bool catalogInitialized;
 
     private readonly string databasePath = Path.GetFullPath(databasePath);
     public SemaphoreSlim Gate { get; } = new(1);
@@ -64,7 +65,11 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
             await ConfigureJournalAsync(sqliteConnection);
             if (openStarted != 0) CatalogMetrics.ConnectionDuration.Record(Stopwatch.GetElapsedTime(openStarted).TotalMilliseconds);
             var migrationStarted = CatalogMetrics.MigrationDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
-            try { GalleryDatabase.Upgrade(sqliteConnection); }
+            try
+            {
+                GalleryDatabase.Upgrade(sqliteConnection);
+                catalogInitialized = true;
+            }
             finally
             {
                 if (migrationStarted != 0) CatalogMetrics.MigrationDuration.Record(Stopwatch.GetElapsedTime(migrationStarted).TotalMilliseconds);
@@ -207,12 +212,29 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     private static (string Id, byte[] Record) MapImageRecord(SqliteDataReader sqliteDataReader) =>
         (sqliteDataReader.GetString(0), sqliteDataReader.GetFieldValue<byte[]>(1));
 
-    public async Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key)
+    public Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key) =>
+        ReadThumbnailAsync(id, key, OpenAsync);
+
+    public Task<ImageThumbnail> ReadBrowsingThumbnailAsync(string id, byte[] key) =>
+        ReadThumbnailAsync(id, key, OpenThumbnailConnectionAsync);
+
+    private async Task<SqliteConnection> OpenThumbnailConnectionAsync()
+    {
+        // An initialized catalog already has its schema and journal mode. A thumbnail lookup only reads.
+        if (!catalogInitialized) return await OpenAsync();
+        var started = CatalogMetrics.ConnectionDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
+        var connection = await OpenConnectionAsync(databasePath, SqliteOpenMode.ReadOnly);
+        CatalogMetrics.ConnectionOpens.Add(1);
+        if (started != 0) CatalogMetrics.ConnectionDuration.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        return connection;
+    }
+
+    private async Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key, Func<Task<SqliteConnection>> open)
     {
         var started = CatalogMetrics.ThumbnailDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
         try
         {
-            await using var sqliteConnection = await OpenAsync();
+            await using var sqliteConnection = await open();
             using var sqliteCommand = GalleryStoreCommandFactory.CreateReadThumbnail(sqliteConnection, id);
             var encryptedThumbnail = await ReadRequiredEncryptedThumbnailAsync(sqliteCommand, id);
             CatalogMetrics.ThumbnailBytes.Add(encryptedThumbnail.Length);

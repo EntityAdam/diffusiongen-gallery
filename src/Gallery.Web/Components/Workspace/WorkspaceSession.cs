@@ -39,7 +39,7 @@ public sealed class WorkspaceSession : IDisposable
         {
             if (!disposed) _ = dispatch(NotifyChangedAsync);
         };
-        Browser = new(vault, services.Catalog, settings, services.Media, Catalog, logger, dispatchChanged, Preferences);
+        Browser = new(vault, services.Catalog, settings, services.Media, Catalog, logger, dispatchChanged, Preferences, js);
         Analysis = new(services.Catalog, services.Vision, logger);
         Commands = new(activity, (status, action) => RunAsync(status, action), Analysis.EnsureIdle);
         Presentation = new(vault, services.Media, js, Commands);
@@ -64,7 +64,7 @@ public sealed class WorkspaceSession : IDisposable
             foreach (var record in records) Presentation.Update(record);
             return Task.CompletedTask;
         };
-        Catalog.RecordsChanged += (_, reloadThumbnails) => Browser.RecordsChangedAsync(reloadThumbnails);
+        Catalog.RecordsChanged += Browser.RecordsChangedAsync;
         Catalog.RecordsChanged += (_, _) => NotifyChangedAsync();
         Analysis.Changed += NotifyChanged;
         Analysis.SuggestionsChanged += Browser.SuggestionsChangedAsync;
@@ -108,7 +108,7 @@ public sealed class WorkspaceSession : IDisposable
                 var ingestionOptions = await settings.LoadIngestionOptionsAsync();
                 if (disposed || !vault.IsUnlocked) return;
                 Activity.Ingestion.LoadOptions(ingestionOptions);
-                await Catalog.OpenAsync(Browser.PageSize, Browser.TrashActive);
+                await Catalog.OpenAsync(Browser.InitialFetchSize, Browser.TrashActive);
                 if (disposed || !vault.IsUnlocked) return;
                 await Analysis.InitializeAsync();
                 IsInitialized = !disposed && vault.IsUnlocked;

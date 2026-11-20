@@ -25,6 +25,13 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
         return await ReadThumbnailAsync(MediaStore, id, key.Bytes);
     }
 
+    public async Task<Stream> OpenThumbnailAsync(string id)
+    {
+        using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        using var thumbnail = await MediaStore.ReadBrowsingThumbnailAsync(id, key.Bytes);
+        return thumbnail.OpenStream();
+    }
+
     private static async Task<string> ReadThumbnailAsync(IGalleryMediaStoreReader store, string id, byte[] key)
     {
         using var thumbnail = await store.ReadThumbnailAsync(id, key);
