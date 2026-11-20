@@ -12,8 +12,7 @@ internal static class PreferencesNormalizer
         ThumbnailScale = Math.Clamp(uiPreferences.ThumbnailScale, UiPreferences.MinThumbnailScale, UiPreferences.MaxThumbnailScale),
         ExperimentalFeatures = uiPreferences.ExperimentalFeatures ?? System.Collections.Immutable.ImmutableDictionary<string, bool>.Empty,
         AutoLockMinutes = NormalizeAutoLockMinutes(uiPreferences.AutoLockMinutes),
-        ToolboxTool = NormalizeToolboxTool(uiPreferences.ToolboxTool),
-        ToolboxX = Coordinate(uiPreferences.ToolboxX), ToolboxY = Coordinate(uiPreferences.ToolboxY)
+        ActiveTool = NormalizeActiveTool(uiPreferences.ActiveTool)
     };
 
     private static string NormalizeDensity(string gridDensity) =>
@@ -26,9 +25,6 @@ internal static class PreferencesNormalizer
         _ => autoLockMinutes
     };
 
-    private static string NormalizeToolboxTool(string toolboxTool) =>
-        UiPreferences.ToolboxTools.Contains(toolboxTool) ? toolboxTool : "";
-
-    private static double? Coordinate(double? value) =>
-        value is double coordinate && double.IsFinite(coordinate) ? Math.Clamp(coordinate, 0, 100_000) : null;
+    private static string NormalizeActiveTool(string activeTool) =>
+        UiPreferences.ActiveTools.Contains(activeTool) ? activeTool : "";
 }

@@ -25,6 +25,13 @@
                     }
                 </div>
             }
+            @if (State.TrashActive && !OverlayOpen)
+            {
+                <div class="mb-6 max-w-xl">
+                    <TrashTool Busy="Activity.Busy" SelectedCount="State.RemovalSelection.Count" Results="Removal.Results"
+                               ClearSelection="State.ClearSelection" Delete="DeleteAsync" Restore="RestoreAsync" />
+                </div>
+            }
             @if (State.Filtered.Count > 0)
             {
                 @if (State.InfiniteScroll)
@@ -48,15 +55,6 @@
     </div>
     }
 </SectionContent>
-
-<GalleryToolbox @ref="toolbox" Visible="@(State.ToolboxVisible && Active && !OverlayOpen)" ActiveTool="@State.ActiveTool" ActiveToolChanged="SetActiveToolAsync"
-                CatalogLoading="Catalog.IsPartial" Close="ToggleToolboxAsync" Moved="ToolboxMovedAsync" X="State.ToolboxX" Y="State.ToolboxY" Badge="State.ToolBadge">
-    @if (State.ActiveTool == "trash")
-    {
-        <TrashTool Busy="Activity.Busy" SelectedCount="State.RemovalSelection.Count" Results="Removal.Results"
-                   ClearSelection="State.ClearSelection" Delete="DeleteAsync" Restore="RestoreAsync" />
-    }
-</GalleryToolbox>
 
 <LibraryWorkbench KnownTags="Catalog.AllTags" Analysis="Analysis" Visible="@(!Catalog.IsPartial && State.ActiveTool is "organize" or "intelligence")" Workflow="@State.ActiveTool" Images="Catalog.Images" SelectedIds="State.LibrarySelection"
                   Filter="State.Filter" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection" />
@@ -126,7 +124,7 @@
                                 Grouping="@State.Grouping" GroupingChanged="SetGroupingAsync" Sort="@State.Filter.Sort" SortChanged="SetSort"
                                 Busy="Activity.Busy" CatalogPartial="Catalog.IsPartial" HasImages="State.Filtered.Count > 0"
                                 InfiniteScroll="State.InfiniteScroll" ThumbnailScale="State.ThumbnailScale" ScaleChanged="SetThumbnailScaleAsync"
-                                Fullscreen="() => OpenViewerAsync(null)" ResetPosition="ResetToolboxPositionAsync" />
+                                Fullscreen="() => OpenViewerAsync(null)" />
         </div>
     </aside>
 }

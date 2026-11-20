@@ -45,10 +45,6 @@ public partial class GalleryWorkspace
     private bool GridBlocked() => !Presentation.CanPresent || Activity.Busy || Presentation.IsOpen
         || Session.Removal.IsOpen || Section == "duplicates" && duplicateFinder?.ReviewOpen == true;
 
-    private Task HandleToolboxShortcutAsync(bool reset) => reset
-        ? galleryBrowser?.ResetToolboxPositionAsync() ?? Task.CompletedTask
-        : Navigation.ToggleToolboxAsync();
-
     private Task HandleGridShortcutAsync((string Key, string Id, bool Shift) shortcut) => Section switch
     {
         "collections" or "unorganized" => collectionsWorkspace?.HandleGridKeyAsync(shortcut.Key, shortcut.Id, shortcut.Shift) ?? Task.CompletedTask,

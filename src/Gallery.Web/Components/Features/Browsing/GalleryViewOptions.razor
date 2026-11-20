@@ -38,7 +38,6 @@
     </div>
     <div class="flex flex-wrap items-center gap-2">
         <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(Busy || !HasImages)" OnClick="Fullscreen"><MaximizeIcon aria-hidden="true" />Full screen view</Button>
-        <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Sm" OnClick="ResetPosition" title="Move the toolbox back to its default place (Shift+`)"><LocateFixedIcon aria-hidden="true" />Reset toolbox position</Button>
     </div>
 </div>
 
@@ -59,5 +58,4 @@
     [Parameter] public bool CatalogPartial { get; set; }
     [Parameter] public bool HasImages { get; set; }
     [Parameter] public EventCallback Fullscreen { get; set; }
-    [Parameter] public EventCallback ResetPosition { get; set; }
 }

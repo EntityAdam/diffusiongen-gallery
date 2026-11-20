@@ -107,14 +107,11 @@ public sealed class UiConsistencyTests
             await session.Navigation.SwitchWorkflowAsync("duplicates");
             await session.Presentation.OpenAsync(image);
             ComponentTestAccess.Set(fixture.LatestComponent<MediaDetailDialog>(), "editUserDescription", "draft");
-            if (session.Browser.ToolboxVisible) await session.Browser.ToggleToolboxAsync();
-
             await session.Navigation.OpenTrashAsync();
             Assert.True(session.Guard.IsPending);
             session.Guard.KeepEditing();
 
             Assert.Equal("duplicates", session.Navigation.Section);
-            Assert.False(session.Browser.ToolboxVisible);
             Assert.False(session.Browser.TrashActive);
             Assert.Equal(image.Id, session.Presentation.Selected?.Id);
 
@@ -122,7 +119,6 @@ public sealed class UiConsistencyTests
             await session.Guard.DiscardAsync();
 
             Assert.Equal("gallery", session.Navigation.Section);
-            Assert.True(session.Browser.ToolboxVisible);
             Assert.True(session.Browser.TrashActive);
             Assert.Null(session.Presentation.Selected);
         });
@@ -138,18 +134,14 @@ public sealed class UiConsistencyTests
         var html = await Html(fixture, root);
         var navigation = Regex.Match(html, @"<nav class=""workspace-navigation""[^>]*>(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
         var labels = Regex.Matches(navigation, @"aria-label=""([^""]+)""").Select(match => match.Groups[1].Value).ToArray();
-        Assert.Equal(new[] { "Gallery", "Change view", "Filters", "Organize", "Review", "AI analysis", "Collections", "Tags", "Duplicates", "Import media" }, labels);
+        Assert.Equal(new[] { "Gallery", "Change view", "Filters", "Organize", "Review", "AI analysis", "Collections", "Tags", "Duplicates", "Import media", "Trash" }, labels);
         Assert.Equal(2, Regex.Matches(navigation, "role=\"separator\"").Count);
-        Assert.DoesNotContain("Trash", navigation);
         Assert.DoesNotContain("Unorganized", navigation);
-        ComponentTestAccess.Set(home, "Browser.ToolboxVisible", false);
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "views");
         Assert.Equal("views", Field<string>(home, "Browser.ActiveTool"));
         var viewHtml = await Html(fixture, root);
         Assert.Contains("gallery-view-drawer", viewHtml);
         Assert.Contains("Thumbnail size", viewHtml);
-        Assert.DoesNotContain("data-tool=\"views\"", viewHtml);
-        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "views");
         Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "filters");
@@ -168,8 +160,6 @@ public sealed class UiConsistencyTests
         Assert.Contains("review-random-order", reviewHtml);
         Assert.Contains("review-goal", reviewHtml);
         Assert.Contains("Start Review", reviewHtml);
-        Assert.DoesNotContain("data-tool=\"review\"", reviewHtml);
-        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "review");
         Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "intelligence");
@@ -178,8 +168,6 @@ public sealed class UiConsistencyTests
         var analysisHtml = await Html(fixture, root);
         Assert.Contains("gallery-analysis-drawer", analysisHtml);
         Assert.Contains("Start analyzing unanalyzed media", analysisHtml);
-        Assert.DoesNotContain("data-tool=\"intelligence\"", analysisHtml);
-        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
         var workbench = fixture.LatestComponent<LibraryWorkbench>();
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "intelligence");
         Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
@@ -192,11 +180,17 @@ public sealed class UiConsistencyTests
         Assert.Contains("gallery-organize-drawer", organizeHtml);
         Assert.Contains("Move to set", organizeHtml);
         Assert.Contains("bulk-tags", organizeHtml);
-        Assert.DoesNotContain("data-tool=\"organize\"", organizeHtml);
-        Assert.False(Field<bool>(home, "Browser.ToolboxVisible"));
         Assert.Same(workbench, fixture.LatestComponent<LibraryWorkbench>());
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "organize");
         Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
+        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "trash");
+        Assert.Equal("trash", Field<string>(home, "Browser.ActiveTool"));
+        var trashHtml = await Html(fixture, root);
+        Assert.Contains("Showing media marked for deletion.", trashHtml);
+        Assert.Contains("Delete Forever", trashHtml);
+        Assert.Contains("Restore", trashHtml);
+        var trashNavigation = Regex.Match(trashHtml, @"<nav class=""workspace-navigation""[^>]*>(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
+        Assert.Matches(@"aria-label=""Trash""[^>]*aria-current=""page""", trashNavigation);
     }
 
     [Fact]
@@ -643,9 +637,8 @@ public sealed class UiConsistencyTests
         Assert.Equal(new GalleryFilter { Tag = tag }, Field<GalleryFilter>(home, "Browser.Filter"));
         Assert.Equal("filters", Field<string>(home, "Browser.ActiveTool"));
         Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.BrowsingFilter"));
-        Assert.True(Field<bool>(home, "Browser.ToolboxVisible"));
         var galleryHtml = await Html(fixture, root);
-        Assert.Contains($"<aside id=\"{GalleryToolbox.FilterDrawerId}\" class=\"gallery-filter-drawer\"", galleryHtml);
+        Assert.Contains("<aside id=\"gallery-filter-drawer\" class=\"gallery-filter-drawer\"", galleryHtml);
         Assert.Contains("aria-label=\"Close filters\"", galleryHtml);
         Assert.Equal(0, Field<int>(home, "Browser.Page"));
         Assert.True(Field<long>(home, "Browser.FilterInputRevision") > revision);

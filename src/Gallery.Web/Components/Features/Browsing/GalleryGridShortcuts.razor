@@ -3,7 +3,6 @@
 
 @code {
     [Parameter, EditorRequired] public Func<bool> Blocked { get; set; } = default!;
-    [Parameter] public EventCallback<bool> Toolbox { get; set; }
     [Parameter] public EventCallback<(string Key, string Id, bool Shift)> Grid { get; set; }
 
     private static int nextOwner;
@@ -21,7 +20,7 @@
     public Task HandleGridKey(string key, string id, bool shift)
     {
         if (Blocked()) return Task.CompletedTask;
-        return key == "`" ? Toolbox.InvokeAsync(shift) : Grid.InvokeAsync((key, id, shift));
+        return Grid.InvokeAsync((key, id, shift));
     }
 
     public async ValueTask DisposeAsync()
