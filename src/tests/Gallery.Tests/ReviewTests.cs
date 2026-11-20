@@ -312,7 +312,8 @@ public sealed class ReviewTests
     {
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
-        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "projection.png", "folder");
+        await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "projection.png", "folder");
+        var image = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         ImageRecordEdit Edit(ImageRecordEdit edit) => edit with { Rating = 4, IsFavorite = true, Collections = ["collection"] };
 
         var projected = fixture.Scope.Records.ApplyEdit(image, Edit);

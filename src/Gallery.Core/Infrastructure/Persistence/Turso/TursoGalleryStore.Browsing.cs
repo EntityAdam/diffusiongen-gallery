@@ -14,7 +14,7 @@ internal sealed partial class TursoGalleryStore
             var complete = count <= pageSize;
             var records = await ReadRecordsAsync(connection,
                 (complete ? "" : "WHERE m.is_marked_for_deletion=$marked ") + "ORDER BY m.imported_ticks DESC,m.rowid LIMIT $limit",
-                token, transaction, complete
+                token, transaction, includeMetadata: false, complete
                     ? [("$limit", pageSize)]
                     : [("$marked", markedOnly ? 1L : 0L), ("$limit", pageSize)]);
             transaction.Commit();

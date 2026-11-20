@@ -160,17 +160,20 @@ public sealed class MediaAndComfyTests
     }
 
     [Fact]
-    public async Task WorkflowExport_WhenWorkflowExists_ThenReturnsItsDocument()
+    public async Task WorkflowExport_AfterEditingTheCatalogRecord_ReturnsTheOriginalDocument()
     {
         // Arrange
         using var fixture = new TestVault();
         await fixture.InitializeAsync();
         var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakeComfyPng()), "comfy.png", "folder");
+        var edited = await fixture.Scope.Records.UpdateAsync(record.Id, image => image with { Rating = 4, Tags = "edited" });
 
         // Act
         var workflow = await fixture.Scope.Media.WorkflowAsync(record.Id);
 
         // Assert
+        Assert.Empty(edited.Metadata);
+        Assert.True(edited.Generation?.HasWorkflow);
         Assert.Equal("comfy.workflow.json", workflow!.FileName);
         Assert.Equal(UiWorkflow, System.Text.Encoding.UTF8.GetString(workflow.CopyContentBytes()));
     }

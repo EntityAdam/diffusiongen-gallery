@@ -219,7 +219,7 @@ public sealed class UiComponentTests
         Assert.DoesNotContain("No collection", html);
         Assert.DoesNotContain("Download workflow", html);
         Assert.DoesNotContain("Negative prompt", html);
-        Assert.DoesNotContain("Embedded generation metadata", html);
+        Assert.DoesNotContain("Generation settings", html);
         Assert.DoesNotContain(">Generation</button>", html);
     }
 

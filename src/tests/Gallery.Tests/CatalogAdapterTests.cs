@@ -28,14 +28,22 @@ public sealed class CatalogAdapterTests
         await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
         Assert.Equal(1L, await fixture.Store.CountRecordsAsync(fixture.Key));
         AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(record),
-            await fixture.Store.ReadRecordAsync(record.Id, fixture.Key));
+            await fixture.Store.ReadRecordWithMetadataAsync(record.Id, fixture.Key));
+        var snapshot = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+        var brief = record with { Metadata = "" };
+        AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(brief), Assert.Single(snapshot.Records));
+        Assert.Empty(Assert.Single((await fixture.Store.ReadInitialPageAsync(12, false, fixture.Key, CancellationToken.None))!.Records).Metadata);
+        Assert.Empty(Assert.Single(await fixture.Store.ReadBrowseRecordsAsync([record.Id], fixture.Key, CancellationToken.None)).Metadata);
+        Assert.Empty(Assert.Single(await fixture.Store.ReadRecordsAsync(fixture.Key)).Metadata);
         using (var actual = await fixture.Store.ReadThumbnailAsync(record.Id, fixture.Key))
             Assert.Equal(thumbnail.Content.ToArray(), actual.Content.ToArray());
-        var update = record with { Rating = 5, UserDescription = "changed private notes", Collections = ["Other"], Generation = null };
+        var update = (await fixture.Store.ReadRecordAsync(record.Id, fixture.Key)) with
+            { Rating = 5, UserDescription = "changed private notes", Collections = ["Other"], Generation = null };
+        Assert.Empty(update.Metadata);
         var work = DriveOperationProcessor.Create(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, fixture.Key);
         await fixture.Store.UpdateImageAndEnqueueAsync(update, fixture.Key, work);
-        AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(update),
-            await fixture.Store.ReadRecordAsync(record.Id, fixture.Key));
+        AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(update with { Metadata = record.Metadata }),
+            await fixture.Store.ReadRecordWithMetadataAsync(record.Id, fixture.Key));
         Assert.Equal(1, (await fixture.Store.ReadDriveQueueCountsAsync(fixture.Key)).Pending);
         await fixture.Store.DeleteImageAndEnqueueAsync(record.Id, work, fixture.Key);
         Assert.Null(await fixture.Store.TryReadRecordAsync(record.Id, fixture.Key));
@@ -102,7 +110,7 @@ public sealed class CatalogAdapterTests
             record with { Rating = 5, UserDescription = "must roll back" }, fixture.Key, invalidWork));
         Assert.NotNull(error);
         AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(record),
-            await fixture.Store.ReadRecordAsync(record.Id, fixture.Key));
+            await fixture.Store.ReadRecordWithMetadataAsync(record.Id, fixture.Key));
         Assert.Equal(0, (await fixture.Store.ReadDriveQueueCountsAsync(fixture.Key)).Pending);
     }
 
@@ -245,7 +253,7 @@ public sealed class CatalogAdapterTests
 
         Assert.Equal(1, await fixture.Store.CountRecordsAsync(fixture.Key)); // Normal opens adopt it.
         AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(record),
-            await fixture.Store.ReadRecordAsync(record.Id, fixture.Key));
+            await fixture.Store.ReadRecordWithMetadataAsync(record.Id, fixture.Key));
         using var actual = await fixture.Store.ReadThumbnailAsync(record.Id, fixture.Key);
         Assert.Equal(thumbnail.Content.ToArray(), actual.Content.ToArray());
         await operation.DisposeAsync();

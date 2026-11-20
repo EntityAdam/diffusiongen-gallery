@@ -18,8 +18,7 @@ internal static class GalleryFilterProcessor
         (galleryFilter.Media == GalleryFilter.AnyValue || imageRecord.MediaType == galleryFilter.Media)
         && StructuredVision.Matches(imageRecord.VisionFacts, imageRecord.ContentSha256, galleryFilter.Vision)
         && (galleryFilter.Prompt.Length == 0 || imageRecord.Prompt == galleryFilter.Prompt)
-        && (galleryFilter.Search.Length == 0 || $"{imageRecord.Name} {imageRecord.OriginalName} {imageRecord.Metadata} {imageRecord.Description} {imageRecord.UserDescription} {imageRecord.Tags}"
-            .Contains(galleryFilter.Search, StringComparison.OrdinalIgnoreCase))
+        && (galleryFilter.Search.Length == 0 || MatchesSearch(imageRecord, galleryFilter.Search))
         && (galleryFilter.Folder.Length == 0 || imageRecord.SourceFolder.Contains(galleryFilter.Folder, StringComparison.OrdinalIgnoreCase)
             || Path.GetDirectoryName(imageRecord.StoredPath)?.Contains(galleryFilter.Folder, StringComparison.OrdinalIgnoreCase) == true)
         && (tags.Length == 0 || tags.All(imageRecord.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
@@ -44,6 +43,19 @@ internal static class GalleryFilterProcessor
         && imageRecord.Width >= galleryFilter.MinWidth && imageRecord.Height >= galleryFilter.MinHeight
         && (galleryFilter.From is null || imageRecord.ImportedAt.LocalDateTime.Date >= galleryFilter.From.Value.Date)
         && (galleryFilter.To is null || imageRecord.ImportedAt.LocalDateTime.Date <= galleryFilter.To.Value.Date);
+
+    private static bool MatchesSearch(ImageRecord image, string search) =>
+        image.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+        || image.OriginalName.Contains(search, StringComparison.OrdinalIgnoreCase)
+        || image.Description.Contains(search, StringComparison.OrdinalIgnoreCase)
+        || image.UserDescription.Contains(search, StringComparison.OrdinalIgnoreCase)
+        || image.Tags.Contains(search, StringComparison.OrdinalIgnoreCase)
+        || image.Generation is { } generation && (
+            generation.Prompt.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || generation.NegativePrompt.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || generation.Model.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || generation.Sampler.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || generation.Scheduler.Contains(search, StringComparison.OrdinalIgnoreCase));
 
     private static IEnumerable<ImageRecord> OrderImages(IEnumerable<ImageRecord> filteredImages, string sort) => sort switch
     {

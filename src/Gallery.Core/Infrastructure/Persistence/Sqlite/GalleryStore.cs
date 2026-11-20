@@ -200,7 +200,7 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         try
         {
             started = Stopwatch.GetTimestamp();
-            var record = JsonSerializer.Deserialize<ImageRecord>(plain)
+            var record = JsonSerializer.Deserialize<ImageRecord>(plain, CatalogRecordJson)
                 ?? throw new InvalidOperationException("Invalid media record.");
             deserializeMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             if (record.Id != id) throw new CryptographicException("Media record identity mismatch.");
@@ -392,12 +392,18 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync()) != 0;
     }
 
-    public async Task<ImageRecord> ReadRecordAsync(string id, byte[] key)
+    public Task<ImageRecord> ReadRecordAsync(string id, byte[] key) =>
+        ReadRecordAsync(id, key, includeMetadata: false);
+
+    public Task<ImageRecord> ReadRecordWithMetadataAsync(string id, byte[] key) =>
+        ReadRecordAsync(id, key, includeMetadata: true);
+
+    private async Task<ImageRecord> ReadRecordAsync(string id, byte[] key, bool includeMetadata)
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadRecord(sqliteConnection, id);
         var encryptedRecord = await ReadRequiredEncryptedRecordAsync(sqliteCommand, id);
-        return DecodeRecord(id, encryptedRecord, key);
+        return DecodeRecord(id, encryptedRecord, key, includeMetadata);
     }
 
     private static async Task<byte[]> ReadRequiredEncryptedRecordAsync(SqliteCommand sqliteCommand, string id) =>
@@ -410,17 +416,24 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         using var transaction = connection.BeginTransaction();
         using var read = GalleryStoreCommandFactory.CreateReadRecord(connection, imageRecord.Id);
         read.Transaction = transaction;
-        var previous = DecodeRecord(imageRecord.Id, await ReadRequiredEncryptedRecordAsync(read, imageRecord.Id), key);
-        await WriteUpdatedRecordAsync(connection, transaction, imageRecord, key, CancellationToken.None);
+        var encrypted = await ReadRequiredEncryptedRecordAsync(read, imageRecord.Id);
+        var previous = DecodeRecord(imageRecord.Id, encrypted, key);
+        await WriteUpdatedRecordAsync(connection, transaction, imageRecord, key, CancellationToken.None, encrypted);
         await PreserveBrowseIndexAsync(connection, transaction, previous, imageRecord, key, CancellationToken.None);
         transaction.Commit();
     }
 
     private static async Task WriteUpdatedRecordAsync(SqliteConnection connection, SqliteTransaction transaction,
-        ImageRecord record, byte[] key, CancellationToken token)
+        ImageRecord record, byte[] key, CancellationToken token, byte[]? previous = null)
     {
-        using var command = GalleryStoreCommandFactory.CreateUpdateImage(connection, record.Id, EncodeRecord(record, key));
-        command.Transaction = transaction;
+        if (previous is null)
+        {
+            using var read = GalleryStoreCommandFactory.CreateReadRecord(connection, record.Id);
+            read.Transaction = transaction;
+            previous = (byte[]?)await read.ExecuteScalarAsync(token);
+            if (previous is null) RequireSingleImageMutation(0, record.Id, UpdateAction, UpdatedOutcome);
+        }
+        using var command = GalleryStoreCommandFactory.CreateUpdateImage(connection, record.Id, EncodeUpdatedRecord(record, previous!, key), transaction);
         using var cancellation = token.Register(command.Cancel);
         var affectedRows = await command.ExecuteNonQueryAsync(token);
         RequireSingleImageMutation(affectedRows, record.Id, UpdateAction, UpdatedOutcome);
@@ -484,9 +497,9 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         finally { Gate.Release(); }
     }
 
-    private static ImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key)
+    private static ImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key, bool includeMetadata = false)
     {
-        var imageRecord = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key)
+        var imageRecord = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key, includeMetadata ? null : CatalogRecordJson)
             ?? throw new InvalidOperationException("Invalid media record.");
         if (imageRecord.Id != id) throw new CryptographicException("Media record identity mismatch.");
         return imageRecord;
@@ -495,11 +508,11 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     private static byte[] EncodeRecord(ImageRecord imageRecord, byte[] key) =>
         EncodeSetting(imageRecord, $"record:{imageRecord.Id}", key);
 
-    private static T? DecodeSetting<T>(byte[] encryptedSettings, string purpose, byte[] key)
+    private static T? DecodeSetting<T>(byte[] encryptedSettings, string purpose, byte[] key, JsonSerializerOptions? options = null)
     {
         VaultEnvelopeValidator.Validate(encryptedSettings, $"stored value '{purpose}'");
         var plain = VaultCrypto.Decrypt(encryptedSettings, key, purpose);
-        try { return JsonSerializer.Deserialize<T>(plain); }
+        try { return JsonSerializer.Deserialize<T>(plain, options); }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 

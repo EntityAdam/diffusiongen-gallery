@@ -173,13 +173,13 @@ internal sealed class VaultLocationCoordinator(
         var staging = location.CreateStagingDirectory(".catalog-stage-");
         await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
         var stagedStore = galleryLifetime.StoreFactory.Create(staging);
+        var original = await galleryStore.ComputeSnapshotFingerprintAsync(Path.Combine(sourceRoot, CatalogFileName), "", key);
+        var copied = await stagedStore.ComputeSnapshotFingerprintAsync(Path.Combine(staging, CatalogFileName), "", key);
+        if (!StringComparer.Ordinal.Equals(original, copied))
+            throw new IOException("The copied catalog did not match the original; relocation was stopped.");
         await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
             MediaStorageOptions.SettingId, MediaStorageOptions.SettingPurpose, key);
         await stagedStore.DeleteSettingsAsync(key, StorageOverview.SettingId);
-        var copiedRecords = await stagedStore.ReadRecordsAsync(key);
-        var sourceRecords = await galleryStore.ReadRecordsAsync(key);
-        if (!CatalogRecordsMatch(copiedRecords, sourceRecords))
-            throw new IOException("The copied catalog did not match the original; relocation was stopped.");
         return (stagedStore, () => DeleteCatalogFiles(sourceRoot));
     }
 
@@ -221,11 +221,6 @@ internal sealed class VaultLocationCoordinator(
         }
         finally { FinishStagedLocation(location, key); }
     }
-
-    private static bool CatalogRecordsMatch(List<ImageRecord> copied, List<ImageRecord> source) =>
-        copied.Count == source.Count && copied.OrderBy(record => record.Id).Zip(source.OrderBy(record => record.Id))
-            .All(pair => (pair.First with { Collections = [] }) == (pair.Second with { Collections = [] })
-                && pair.First.Collections.SequenceEqual(pair.Second.Collections));
 
     internal async Task RestoreVaultFromTargetAsync(
         IBackupTarget target, string latestBackupName, string destinationDirectory,

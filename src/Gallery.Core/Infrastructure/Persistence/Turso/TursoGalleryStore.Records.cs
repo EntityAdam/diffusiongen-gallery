@@ -42,24 +42,26 @@ internal sealed partial class TursoGalleryStore
         new("source_identity", r => NormalizeSourceHash(r.Sha256))
     ];
 
-    private static readonly string SelectRecordSql =
+    private static readonly string SelectRecordColumns =
         "SELECT m.id," + string.Join(',', MediaColumns.Select(c => "m." + c.Name)) +
-        ",d.document,d.parser_version,g.media_id AS generation_id," +
-        "g.prompt,g.negative_prompt,g.cfg,g.steps,g.model,g.model_kind,g.sampler,g.scheduler,g.has_workflow,g.has_api_prompt " +
-        "FROM media m JOIN media_metadata d ON d.media_id=m.id LEFT JOIN media_generation g ON g.media_id=m.id ";
+        ",d.parser_version,g.media_id AS generation_id," +
+        "g.prompt,g.negative_prompt,g.cfg,g.steps,g.model,g.model_kind,g.sampler,g.scheduler,g.has_workflow,g.has_api_prompt";
 
     private static async Task<List<ImageRecord>> ReadRecordsAsync(DbConnection connection, string suffix,
-        CancellationToken token, DbTransaction? transaction = null, params (string Name, object? Value)[] parameters)
+        CancellationToken token, DbTransaction? transaction = null, bool includeMetadata = false,
+        params (string Name, object? Value)[] parameters)
     {
         var records = new List<ImageRecord>();
-        using (var command = Command(connection, SelectRecordSql + suffix, transaction, parameters))
+        var columns = includeMetadata ? SelectRecordColumns + ",d.document" : SelectRecordColumns;
+        var sql = columns + " FROM media m JOIN media_metadata d ON d.media_id=m.id LEFT JOIN media_generation g ON g.media_id=m.id ";
+        using (var command = Command(connection, sql + suffix, transaction, parameters))
         {
             using var cancellation = token.Register(command.Cancel);
             await using var reader = await command.ExecuteReaderAsync(token);
             while (await reader.ReadAsync(token))
             {
                 token.ThrowIfCancellationRequested();
-                records.Add(MapRecord(reader));
+                records.Add(MapRecord(reader, includeMetadata));
             }
         }
         // Keep collection membership relational, without one query per item or unbounded IN lists.
@@ -80,7 +82,7 @@ internal sealed partial class TursoGalleryStore
         return records;
     }
 
-    private static ImageRecord MapRecord(DbDataReader reader)
+    private static ImageRecord MapRecord(DbDataReader reader, bool includeMetadata)
     {
         string Text(string name) => reader.GetString(reader.GetOrdinal(name));
         long Number(string name) => reader.GetInt64(reader.GetOrdinal(name));
@@ -116,7 +118,7 @@ internal sealed partial class TursoGalleryStore
             MediaType = Text("media_type"),
             ContentType = Text("content_type"),
             DurationSeconds = Real("duration_seconds"),
-            Metadata = Text("document"),
+            Metadata = includeMetadata ? Text("document") : "",
             MetadataVersion = checked((int)Number("parser_version")),
             Generation = Missing("generation_id") ? null : new GenerationInfo
             {
@@ -142,11 +144,12 @@ internal sealed partial class TursoGalleryStore
                 string.Join(',', MediaColumns.Select(c => "$" + c.Name)) + ")"
             : "UPDATE media SET " + string.Join(',', MediaColumns.Select(c => c.Name + "=$" + c.Name)) + " WHERE id=$id";
         RequireOne(await NonQueryAsync(connection, sql, transaction, parameters), record.Id);
-        await NonQueryAsync(connection, """
-            INSERT INTO media_metadata(media_id,document,parser_version) VALUES($id,$document,$version)
-            ON CONFLICT(media_id) DO UPDATE SET document=excluded.document,parser_version=excluded.parser_version
-            WHERE media_metadata.document IS NOT excluded.document OR media_metadata.parser_version<>excluded.parser_version
-            """, transaction, ("$id", record.Id), ("$document", record.Metadata), ("$version", record.MetadataVersion));
+        if (insert)
+            await NonQueryAsync(connection, "INSERT INTO media_metadata(media_id,document,parser_version) VALUES($id,$document,$version)",
+                transaction, ("$id", record.Id), ("$document", record.Metadata), ("$version", record.MetadataVersion));
+        else
+            await NonQueryAsync(connection, "UPDATE media_metadata SET parser_version=$version WHERE media_id=$id AND parser_version<>$version",
+                transaction, ("$id", record.Id), ("$version", record.MetadataVersion));
         await NonQueryAsync(connection, "DELETE FROM media_collections WHERE media_id=$id", transaction, ("$id", record.Id));
         for (var i = 0; i < record.Collections.Length; i++)
             await NonQueryAsync(connection, "INSERT INTO media_collections VALUES($id,$ordinal,$name)", transaction,

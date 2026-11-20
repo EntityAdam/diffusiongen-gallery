@@ -26,7 +26,7 @@ public sealed class TestRawStoreFingerprintConstraint
         Assert.Equal(19, exception.SqliteErrorCode);
         var survivors = await fixture.Scope.Catalog.ListAsync();
         Assert.True(survivors.Count == 1, $"Expected exactly 1 surviving record; Actual: {survivors.Count} records.");
-        AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(image), survivors[0]);
+        AsserterImageRecord.AssertValuesMatch(ExpectedImageRecord.CreateFrom(image with { Metadata = "" }), survivors[0]);
     }
 
 

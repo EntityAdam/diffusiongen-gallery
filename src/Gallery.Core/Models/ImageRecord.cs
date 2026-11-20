@@ -18,6 +18,7 @@ public sealed record ImageRecord
     public string Sha256 { get; init; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("PngSha256")]
     public string ContentSha256 { get; init; } = "";
+    // Raw embedded metadata is populated for import and explicit document reads.
     public string Metadata { get; init; } = "";
     public string Description { get; init; } = "";
     public string UserDescription { get; init; } = "";

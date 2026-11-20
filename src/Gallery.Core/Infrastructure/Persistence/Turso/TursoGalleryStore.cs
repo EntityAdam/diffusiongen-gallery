@@ -256,14 +256,20 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         return sources;
     });
 
-    public Task<ImageRecord> ReadRecordAsync(string id, byte[] key) => ExecuteAsync(key, async connection =>
-        await FindRecordAsync(connection, id) ?? throw new InvalidOperationException($"Expected media item '{id}', but found 0."));
+    public Task<ImageRecord> ReadRecordAsync(string id, byte[] key) => ReadRecordAsync(id, key, includeMetadata: false);
+
+    public Task<ImageRecord> ReadRecordWithMetadataAsync(string id, byte[] key) => ReadRecordAsync(id, key, includeMetadata: true);
+
+    private Task<ImageRecord> ReadRecordAsync(string id, byte[] key, bool includeMetadata) => ExecuteAsync(key, async connection =>
+        await FindRecordAsync(connection, id, includeMetadata: includeMetadata)
+            ?? throw new InvalidOperationException($"Expected media item '{id}', but found 0."));
 
     public Task<ImageRecord?> TryReadRecordAsync(string id, byte[] key) => ExecuteAsync(key, connection => FindRecordAsync(connection, id));
 
-    private static async Task<ImageRecord?> FindRecordAsync(DbConnection connection, string id, DbTransaction? transaction = null)
+    private static async Task<ImageRecord?> FindRecordAsync(DbConnection connection, string id, DbTransaction? transaction = null,
+        bool includeMetadata = false)
     {
-        var records = await ReadRecordsAsync(connection, "WHERE m.id=$id", default, transaction, ("$id", id));
+        var records = await ReadRecordsAsync(connection, "WHERE m.id=$id", default, transaction, includeMetadata, ("$id", id));
         return records.SingleOrDefault();
     }
 

@@ -102,7 +102,7 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
     public async Task<ExportFile?> WorkflowAsync(string id)
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        var record = await MediaStore.ReadRecordAsync(id, keyLease.Bytes);
+        var record = await MediaStore.ReadRecordWithMetadataAsync(id, keyLease.Bytes);
         var workflow = ComfyMetadata.WorkflowForExport(record.Metadata);
         return ExportComposer.ComposeWorkflow(record, workflow);
     }

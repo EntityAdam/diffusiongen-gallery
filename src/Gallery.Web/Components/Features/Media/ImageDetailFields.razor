@@ -27,7 +27,7 @@
     @if (Image.Generation is { } generation)
     {
         <Card Class="@($"detail-section p-4 space-y-3 {(section == "generation" ? "detail-section-active" : "")}")">
-            <h3>Embedded generation metadata</h3>
+            <h3>Generation settings</h3>
             <Badge Variant="BadgeVariant.Secondary">ComfyUI</Badge>
             <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 [&_dt]:text-muted-foreground [&_dd]:min-w-0 [&_dd]:break-words">
                 @if (generation.Model.Length > 0) { <dt>Model</dt><dd>@ModelFilename(generation.Model)</dd> }

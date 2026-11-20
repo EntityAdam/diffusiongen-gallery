@@ -175,9 +175,11 @@ internal sealed class GalleryCatalogLoader(
             token.ThrowIfCancellationRequested();
             try
             {
+                var original = await store.ReadRecordWithMetadataAsync(record.Id, key);
+                token.ThrowIfCancellationRequested();
                 var updated = record with
                 {
-                    Generation = ComfyMetadata.Extract(record.Metadata),
+                    Generation = ComfyMetadata.Extract(original.Metadata),
                     MetadataVersion = ComfyMetadata.Version
                 };
                 records[index] = updated;

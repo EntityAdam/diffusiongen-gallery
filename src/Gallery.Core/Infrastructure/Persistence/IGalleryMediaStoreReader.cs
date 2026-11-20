@@ -6,6 +6,7 @@ namespace Gallery.Core.Infrastructure.Persistence;
 internal interface IGalleryMediaStoreReader
 {
     Task<ImageRecord> ReadRecordAsync(string id, byte[] key);
+    Task<ImageRecord> ReadRecordWithMetadataAsync(string id, byte[] key);
     Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key);
     Task<ImageThumbnail> ReadBrowsingThumbnailAsync(string id, byte[] key) => ReadThumbnailAsync(id, key);
 }

@@ -32,7 +32,7 @@ internal sealed partial class GalleryStore
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
-        await UpdateImageAsync(sqliteConnection, sqliteTransaction, imageRecord, key);
+        await WriteUpdatedRecordAsync(sqliteConnection, sqliteTransaction, imageRecord, key, CancellationToken.None);
         if (supersededSequence is long sequence)
             await RemoveSupersededOperationAsync(sqliteConnection, sqliteTransaction, sequence);
         await EnqueueAsync(sqliteConnection, sqliteTransaction, [newDriveOperation]);
@@ -57,14 +57,6 @@ internal sealed partial class GalleryStore
         using var sqliteCommand = GalleryStoreCommandFactory.CreateDeleteImage(sqliteConnection, id, sqliteTransaction);
         var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
         RequireSingleImageMutation(affectedRows, id, DeleteAction, DeletedOutcome);
-    }
-
-    private static async Task UpdateImageAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction,
-        ImageRecord imageRecord, byte[] key)
-    {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateUpdateImage(sqliteConnection, imageRecord.Id, EncodeRecord(imageRecord, key), sqliteTransaction);
-        var affectedRows = await sqliteCommand.ExecuteNonQueryAsync();
-        RequireSingleImageMutation(affectedRows, imageRecord.Id, UpdateAction, UpdatedOutcome);
     }
 
     private static async Task RemoveSupersededOperationAsync(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction, long sequence)

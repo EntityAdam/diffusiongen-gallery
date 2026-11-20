@@ -733,18 +733,22 @@ public sealed class UiConsistencyTests
     }
 
     [Theory]
-    [InlineData("original-name")]
-    [InlineData("metadata-value")]
-    [InlineData("vision-notes")]
-    [InlineData("user-notes")]
-    [InlineData("shared-tag")]
-    public async Task CollectionSearchUsesGalleryMatchingWithinItsScope(string query)
+    [InlineData("original-name", true)]
+    [InlineData("metadata-value", false)]
+    [InlineData("extracted-prompt", true)]
+    [InlineData("extracted-model", true)]
+    [InlineData("extracted-sampler", true)]
+    [InlineData("vision-notes", true)]
+    [InlineData("user-notes", true)]
+    [InlineData("shared-tag", true)]
+    public async Task CollectionSearchUsesGalleryMatchingWithinItsScope(string query, bool matches)
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var collection = await vault.Scope.Collections.CreateCollectionAsync("Series");
         var set = await vault.Scope.Collections.CreateSetAsync(collection.Id, "Set");
         var image = new ImageRecord { Id = "in-scope", OriginalName = "original-name.png", Metadata = "metadata-value",
+            Generation = new() { Prompt = "extracted-prompt", Model = "extracted-model", Sampler = "extracted-sampler" },
             Description = "vision-notes", UserDescription = "user-notes", Tags = "shared-tag", SetId = set.Id };
         var outside = image with { Id = "out-of-scope", SetId = null };
         await using var fixture = ComponentRenderFixture.Create(vault.Scope);
@@ -756,7 +760,8 @@ public sealed class UiConsistencyTests
         });
         await Invoke(fixture, workspace, "SearchChanged", query.ToUpperInvariant());
         var media = (IReadOnlyList<ImageRecord>)typeof(CollectionsWorkspace).GetProperty("Media", Private)!.GetValue(workspace)!;
-        Assert.Equal("in-scope", Assert.Single(media).Id);
+        if (matches) Assert.Equal("in-scope", Assert.Single(media).Id);
+        else Assert.Empty(media);
         Assert.Contains("id=\"collection-search\"", await Html(fixture, root));
         var previousRevision = Field<long>(workspace, "searchResetVersion");
         await Invoke(fixture, workspace, "ClearFiltersAsync");
