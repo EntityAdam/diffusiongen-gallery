@@ -4,6 +4,12 @@ namespace Gallery.Web.Components.Features.Tags;
 
 internal static class TagSelection
 {
+    internal static string AddMissing(IGalleryRecordEditor gallery, string tags, string selected)
+    {
+        var missing = string.Join(", ", Split(selected).Except(Split(tags), StringComparer.OrdinalIgnoreCase));
+        return missing.Length == 0 ? tags : gallery.MergeTags(tags, missing);
+    }
+
     // Apply only the delta, preserving mixed assignments during a bulk edit.
     internal static string Apply(IGalleryRecordEditor gallery, string tags, string originalSelection, string selected)
     {

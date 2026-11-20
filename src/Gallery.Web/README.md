@@ -361,6 +361,9 @@ and move/rename controls are not exposed here.
 
 ### Keyboard shortcuts and full-screen viewing
 
+Open **Keyboard shortcuts** directly above **Settings** in the sidebar for an
+in-app reference covering gallery cards, fullscreen, review modes, and panic lock.
+
 Curation shortcuts target the card under the pointer, falling back to the focused
 card when no card is hovered. Arrow keys continue from keyboard focus:
 
@@ -385,7 +388,11 @@ rating decisions and advances after each decision. Rating, favorite, and deletio
 mark changes save immediately; the viewing sequence stays fixed until closing.
 
 Quick tag stages additions and removals until **Save changes**; **Cancel** discards
-both. Bulk tag edits show each tag's assignment count (for example, **2 of 5 selected**)
+both. In Gallery, select media and choose **Quick tag** or press **T**. For one
+selected item, add or remove tags just like in fullscreen. For multiple items,
+the picker starts empty and adds tags to all selected items, skipping tags they
+already have. Existing tags are never removed. In Collections, bulk tag edits
+show each tag's assignment count (for example, **2 of 5 selected**)
 and preserve mixed assignments for tags you leave unchanged. New tags apply to all selected
 media; removing a tag removes it from all selected media. A successful save confirms the
 number of affected media items.

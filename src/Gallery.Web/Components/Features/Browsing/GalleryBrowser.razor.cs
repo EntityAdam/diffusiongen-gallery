@@ -3,6 +3,7 @@ using Gallery.Core.Services;
 using Gallery.Web.Components.Features.Curation;
 using Gallery.Web.Components.Features.Media.Removal;
 using Gallery.Web.Components.Features.Media;
+using Gallery.Web.Components.Features.Tags;
 using Gallery.Web.Components.Features.Vision;
 using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components;
@@ -26,10 +27,27 @@ public partial class GalleryBrowser
     private GalleryActivity Activity => Commands.Activity;
     private bool OverlayOpen => Presentation.DetailsOpen || Removal.IsOpen;
     private VirtualGalleryGrid? virtualGrid;
+    private sealed record QuickTagEdit(string[] Ids, string OriginalTags)
+    {
+        public bool AddOnly => Ids.Length > 1;
+    }
+
+    private QuickTagEdit? quickTags;
+    private string quickTagError = "";
+    internal bool QuickTagsOpen => quickTags is not null;
+    private bool CanOpenQuickTags => Active && !State.TrashActive && !Catalog.IsPartial && !Activity.Busy
+        && !Presentation.IsOpen && !OverlayOpen && State.LibrarySelection.Count > 0;
+
+    protected override void OnParametersSet()
+    {
+        if (!Active || State.TrashActive) CloseQuickTags();
+    }
 
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
     {
-        if (key == "escape") State.ClearSelection();
+        if (QuickTagsOpen) return;
+        if (key == "t") OpenQuickTags();
+        else if (key == "escape") State.ClearSelection();
         else if (Catalog.ImagesById.TryGetValue(id, out var image))
         {
             if (key == "x") State.SelectCard(id, shift);
@@ -37,6 +55,30 @@ public partial class GalleryBrowser
                 await Curation.CurateAsync([id], update, $"{image.Name}: {GalleryKeyboardCuration.Message(key, image)}");
         }
         StateHasChanged();
+    }
+
+    private void OpenQuickTags()
+    {
+        if (QuickTagsOpen || !CanOpenQuickTags) return;
+        var ids = State.LibrarySelection.ToArray();
+        quickTagError = "";
+        quickTags = new(ids, ids.Length == 1 ? Catalog.ImagesById[ids[0]].Tags : "");
+    }
+
+    private void CloseQuickTags() => quickTags = null;
+
+    private async Task SaveQuickTagsAsync(string tags)
+    {
+        if (quickTags is not { } edit || Activity.Busy) return;
+        quickTagError = "";
+        await Curation.CurateAsync(edit.Ids, image => image with
+        {
+            Tags = edit.AddOnly
+                ? TagSelection.AddMissing(Gallery, image.Tags, tags)
+                : TagSelection.Apply(Gallery, image.Tags, edit.OriginalTags, tags)
+        }, "");
+        if (Activity.Error.Length == 0) CloseQuickTags();
+        else quickTagError = Activity.Error;
     }
 
     private Task RetryCatalogLoadAsync() { Catalog.RetryLoad(); return Task.CompletedTask; }

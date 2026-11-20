@@ -43,7 +43,8 @@ public partial class GalleryWorkspace
         Presentation.OpenAsync(request.Images.First(image => image.Id == request.InitialId), request.Images);
 
     private bool GridBlocked() => !Presentation.CanPresent || Activity.Busy || Presentation.IsOpen
-        || Session.Removal.IsOpen || Section == "duplicates" && duplicateFinder?.ReviewOpen == true;
+        || Session.Removal.IsOpen || galleryBrowser?.QuickTagsOpen == true
+        || Section == "duplicates" && duplicateFinder?.ReviewOpen == true;
 
     private Task HandleGridShortcutAsync((string Key, string Id, bool Shift) shortcut) => Section switch
     {

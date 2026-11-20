@@ -4,14 +4,18 @@
 <dialog @ref="element" class="viewer-quick-edit rounded-lg border border-border bg-background p-4 text-foreground" aria-labelledby="quick-organization-title" @oncancel="CancelAsync" @oncancel:preventDefault>
     <form @onsubmit="SaveAsync" @onsubmit:preventDefault>
         <h2 id="quick-organization-title" class="text-lg font-semibold">Quick tag</h2>
-        @if (!SelectedTags.Any())
+        @if (AddOnly)
+        {
+            <p class="text-sm text-muted-foreground">Add tags to all @MediaCount selected items. Existing tags are kept.</p>
+        }
+        else if (!SelectedTags.Any())
         {
             <p class="text-sm text-muted-foreground">No tags yet.</p>
         }
         <label for="quick-organization-value">Tags</label>
         <AdvancedSelect Id="quick-organization-value" Label="Tags" ItemLabel="tag" Placeholder="Select tags…" Multiple="true" MaxLength="4000"
-                            Options="@Options" Counts="@Counts" SelectionCounts="@AssignmentCounts" SelectionTotal="@MediaCount" Values="@SelectedTags" ValuesChanged="TagsChangedAsync" Disabled="@Busy" />
-        @if (MediaCount > 1)
+                            Options="@Options" Counts="@Counts" SelectionCounts="@(AddOnly ? null : AssignmentCounts)" SelectionTotal="@(AddOnly ? 0 : MediaCount)" Values="@SelectedTags" ValuesChanged="TagsChangedAsync" Disabled="@Busy" />
+        @if (MediaCount > 1 && !AddOnly)
         {
             <p class="text-sm text-muted-foreground">Counts show assignments on the selected media. Unchanged tags keep their existing assignments. Removing a tag removes it from all selected media; new tags apply to all.</p>
         }
@@ -29,6 +33,7 @@
     [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
     [Parameter] public IReadOnlyDictionary<string, int>? AssignmentCounts { get; set; }
     [Parameter] public int MediaCount { get; set; } = 1;
+    [Parameter] public bool AddOnly { get; set; }
     [Parameter] public IEnumerable<string> Options { get; set; } = [];
     [Parameter] public bool Busy { get; set; }
     [Parameter] public string Error { get; set; } = "";
@@ -44,7 +49,7 @@
         selectedTags = CurrentTags.ToArray();
         initialized = true;
     }
-    private IEnumerable<string> CurrentTags => Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    private IEnumerable<string> CurrentTags => AddOnly ? [] : Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Distinct(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

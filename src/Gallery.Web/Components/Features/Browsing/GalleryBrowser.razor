@@ -1,5 +1,6 @@
 @using Microsoft.AspNetCore.Components.Sections
 @inject IConfiguration Configuration
+@using Gallery.Web.Components.Features.Collections
 @using Gallery.Web.Components.Features.Curation
 @using Gallery.Web.Components.Features.Media
 @using Gallery.Web.Components.Features.Media.Removal
@@ -32,6 +33,14 @@
                                ClearSelection="State.ClearSelection" Delete="DeleteAsync" Restore="RestoreAsync" />
                 </div>
             }
+            @if (!State.TrashActive && State.LibrarySelection.Count > 0)
+            {
+                <div class="mb-4 flex flex-wrap items-center gap-2">
+                    <span class="text-sm text-muted-foreground">@State.LibrarySelection.Count selected</span>
+                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" Disabled="@(!CanOpenQuickTags)" OnClick="OpenQuickTags"
+                            aria-haspopup="dialog" aria-keyshortcuts="T"><TagsIcon aria-hidden="true" />Quick tag <kbd>T</kbd></Button>
+                </div>
+            }
             @if (State.Filtered.Count > 0)
             {
                 @if (State.InfiniteScroll)
@@ -55,6 +64,12 @@
     </div>
     }
 </SectionContent>
+
+@if (Active && !State.TrashActive && quickTags is { } edit)
+{
+    <QuickOrganizationDialog Tags="@edit.OriginalTags" Options="@Catalog.AllTags" MediaCount="@edit.Ids.Length" AddOnly="@edit.AddOnly"
+                             Busy="Activity.Busy" Error="@quickTagError" Save="SaveQuickTagsAsync" Cancel="CloseQuickTags" />
+}
 
 <LibraryWorkbench KnownTags="Catalog.AllTags" Analysis="Analysis" Visible="@(!Catalog.IsPartial && State.ActiveTool is "organize" or "intelligence")" Workflow="@State.ActiveTool" Images="Catalog.Images" SelectedIds="State.LibrarySelection"
                   Filter="State.Filter" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection" />

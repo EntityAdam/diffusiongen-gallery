@@ -99,6 +99,7 @@ internal sealed class GalleryRecordEditor(GalleryLifetime galleryLifetime, Vault
     {
         var record = await store.ReadRecordAsync(imageId, key);
         var updated = ApplyEdit(record, update);
+        if (updated == record) return record;
         // Placement is changed only by atomic hierarchy operations, never by legacy edit callbacks.
         if (!updated.Collections.SequenceEqual(record.Collections)
             && (record.SetId is not null || await store.ReadSettingsAsync<CollectionCatalog>(

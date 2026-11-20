@@ -1,0 +1,102 @@
+<ModalDialog Class="keyboard-shortcuts-dialog" LabelledBy="keyboard-shortcuts-title" Close="Close">
+    <div class="keyboard-shortcuts-card" @onkeydown="HandleKeyDownAsync">
+        <header class="keyboard-shortcuts-header">
+            <div>
+                <h2 id="keyboard-shortcuts-title">Keyboard shortcuts</h2>
+                <p>Shortcuts by workspace and viewing mode.</p>
+            </div>
+            <Button Variant="ButtonVariant.Ghost" Size="ButtonSize.Icon" Type="button" aria-label="Close keyboard shortcuts"
+                    autofocus OnClick="Close"><XIcon aria-hidden="true" /></Button>
+        </header>
+        <div class="keyboard-shortcuts-content" role="region" aria-label="Shortcut list" tabindex="0">
+            @foreach (var group in Groups)
+            {
+                <section class="keyboard-shortcuts-group">
+                    <h3>@group.Title</h3>
+                    @if (group.Note is not null)
+                    {
+                        <p>@group.Note</p>
+                    }
+                    <dl>
+                        @foreach (var (action, keys) in group.Shortcuts)
+                        {
+                            <div class="keyboard-shortcuts-row">
+                                <dt>@action</dt>
+                                <dd>
+                                    @foreach (var key in keys)
+                                    {
+                                        <kbd>@key</kbd>
+                                    }
+                                </dd>
+                            </div>
+                        }
+                    </dl>
+                </section>
+            }
+        </div>
+    </div>
+</ModalDialog>
+
+@code {
+    [Parameter] public EventCallback Close { get; set; }
+
+    private Task HandleKeyDownAsync(KeyboardEventArgs args) =>
+        args.Key == "Escape" && !args.ShiftKey && !args.CtrlKey && !args.AltKey && !args.MetaKey
+            ? Close.InvokeAsync()
+            : Task.CompletedTask;
+
+    private sealed record ShortcutGroup(string Title, string? Note, (string Action, string[] Keys)[] Shortcuts);
+
+    private static readonly ShortcutGroup[] Groups =
+    [
+        new("Gallery, Collections, and Trash", "Media actions use the hovered card, or the focused card if none is hovered.",
+        [
+            ("Move card focus", ["Arrow keys"]),
+            ("Set rating", ["1–5"]),
+            ("Clear rating", ["0"]),
+            ("Toggle favorite", ["F"]),
+            ("Move to Trash or restore", ["D"]),
+            ("Toggle selection", ["X"]),
+            ("Select a range", ["Shift+X"]),
+            ("Quick tag selection (Gallery only)", ["T"]),
+            ("Clear selection", ["Esc"])
+        ]),
+        new("Fullscreen viewer", null,
+        [
+            ("Previous or next item", ["Left", "Right"]),
+            ("Set rating", ["1–5"]),
+            ("Clear rating", ["0"]),
+            ("Toggle favorite", ["F"]),
+            ("Move to Trash or restore", ["D"]),
+            ("Edit tags", ["T"]),
+            ("Choose a collection and set", ["C"]),
+            ("Show original size", ["O"]),
+            ("Fit to window", ["P"]),
+            ("Close viewer", ["Esc"])
+        ]),
+        new("Guided review", "Viewer navigation, tag, collection, and sizing shortcuts also work here. Rating, favorite, and Trash decisions advance the review.",
+        [
+            ("Keep item", ["K"]),
+            ("Skip item", ["S"]),
+            ("Favorite item", ["F"]),
+            ("Move to Trash", ["D"]),
+            ("Rate item", ["1–5"]),
+            ("Close review", ["Esc"])
+        ]),
+        new("Duplicate review", null,
+        [
+            ("Previous or next copy", ["Left", "Right"]),
+            ("Previous or next group", ["Up", "Down"]),
+            ("Toggle keeping this copy", ["K"]),
+            ("Apply keep choices", ["A"]),
+            ("Skip group", ["S"]),
+            ("Show original size", ["O"]),
+            ("Fit to window", ["P"]),
+            ("Close review", ["Esc"])
+        ]),
+        new("Security", "Works throughout the app, even with a dialog open.",
+        [
+            ("Panic lock gallery", ["Ctrl+Shift+L", "Alt+Shift+L", "Shift+Esc"])
+        ])
+    ];
+}
