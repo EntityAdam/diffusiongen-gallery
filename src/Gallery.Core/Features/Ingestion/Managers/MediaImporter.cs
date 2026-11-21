@@ -148,8 +148,68 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
             var stageStart = Stopwatch.GetTimestamp();
             await PrepareFingerprintIndexAsync(key);
             timings?.Record(IngestionStage.Backfill, stageStart);
-            await ImportFolderBatchAsync(
-                folder, mediaPaths, key, sourceRetention, progress, reportProgress, timings, options, mediaRoot);
+
+            using var progressGate = new SemaphoreSlim(1);
+            var progressSnapshot = FolderImportProgress.CreateSnapshot(mediaPaths.Length);
+            async Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name)
+            {
+                var start = Stopwatch.GetTimestamp();
+                await progressGate.WaitAsync();
+                try
+                {
+                    progressSnapshot = await FolderImportProgress.ReportAsync(
+                        progressSnapshot, progress, reportProgress, status, reportMode, name);
+                }
+                finally
+                {
+                    progressGate.Release();
+                    timings?.Record(IngestionStage.ReportProgress, start);
+                }
+            }
+
+            async Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed)
+            {
+                await progressGate.WaitAsync();
+                try
+                {
+                    progressSnapshot = FolderImportProgress.RecordCompletion(
+                        progressSnapshot, fileImportWasCommitted, fileImportFailed);
+                }
+                finally { progressGate.Release(); }
+            }
+
+            var failuresByPathIndex = new Exception?[mediaPaths.Length];
+            var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
+            timings?.SetFiles(mediaPaths.Length, options.Workers);
+            await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
+            foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
+            {
+                var pending = indices.Select((index, batchSlot) =>
+                    new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
+                Exception? interruption = null;
+                try
+                {
+                    await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
+                        ReportFolderProgressAsync);
+                    await CommitBatchAsync(pending, key, timings);
+                    await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
+                        RecordCompletionAsync, ReportFolderProgressAsync, failuresByPathIndex);
+                }
+                catch (Exception exception)
+                {
+                    interruption = exception;
+                    throw;
+                }
+                finally
+                {
+                    await CleanupBatchAsync(pending, timings, interruption);
+                }
+            }
+            FolderImportProgress.RecordOutcome(progressSnapshot, timings);
+            await ReportFolderProgressAsync(
+                mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.",
+                ProgressReportMode.Immediate, null);
+            ThrowImportFailures(folder, failuresByPathIndex);
         }
         finally
         {
@@ -239,73 +299,6 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
                 .Add("Folder", folder).Add("FailureCount", failures.Count)), new AggregateException(failures));
     }
 
-    private async Task ImportFolderBatchAsync(string folder, string[] mediaPaths, byte[] key, SourceRetention sourceRetention,
-        Action<string>? progress, Func<ImportProgress, Task>? reportProgress,
-        IngestionTimings? timings, IngestionOptions options, string mediaRoot)
-    {
-        using var progressGate = new SemaphoreSlim(1);
-        var progressSnapshot = FolderImportProgress.CreateSnapshot(mediaPaths.Length);
-        async Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name)
-        {
-            var start = Stopwatch.GetTimestamp();
-            await progressGate.WaitAsync();
-            try
-            {
-                progressSnapshot = await FolderImportProgress.ReportAsync(
-                    progressSnapshot, progress, reportProgress, status, reportMode, name);
-            }
-            finally
-            {
-                progressGate.Release();
-                timings?.Record(IngestionStage.ReportProgress, start);
-            }
-        }
-
-        async Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed)
-        {
-            await progressGate.WaitAsync();
-            try
-            {
-                progressSnapshot = FolderImportProgress.RecordCompletion(
-                    progressSnapshot, fileImportWasCommitted, fileImportFailed);
-            }
-            finally { progressGate.Release(); }
-        }
-
-        var failuresByPathIndex = new Exception?[mediaPaths.Length];
-        var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
-        timings?.SetFiles(mediaPaths.Length, options.Workers);
-        await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
-        foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
-        {
-            var pending = indices.Select((index, batchSlot) =>
-                new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
-            Exception? interruption = null;
-            try
-            {
-                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
-                    ReportFolderProgressAsync);
-                await CommitBatchAsync(pending, key, timings);
-                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
-                    RecordCompletionAsync, ReportFolderProgressAsync, failuresByPathIndex);
-            }
-            catch (Exception exception)
-            {
-                interruption = exception;
-                throw;
-            }
-            finally
-            {
-                await CleanupBatchAsync(pending, timings, interruption);
-            }
-        }
-        FolderImportProgress.RecordOutcome(progressSnapshot, timings);
-        await ReportFolderProgressAsync(
-            mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.",
-            ProgressReportMode.Immediate, null);
-        ThrowImportFailures(folder, failuresByPathIndex);
-    }
-
     private async Task PrepareBatchAsync(PendingImport[] pending, ParallelOptions parallelism,
         SourceRetention sourceRetention, byte[] key, string mediaRoot, IngestionTimings? timings,
         Func<string, ProgressReportMode, string?, Task> reportFolderProgress)
@@ -341,14 +334,55 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         Func<string, ProgressReportMode, string?, Task> reportFolderProgress, Exception?[] failuresByPathIndex) =>
         await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
         {
-            var finalized = await FinalizeBatchItemAsync(pending, item, sourceRetention, key, timings);
-            pending[finalized.BatchSlot] = finalized;
-            if (finalized.Failure is not null)
-                failuresByPathIndex[finalized.Index] = new IOException($"Failed to import '{finalized.Path}'.", finalized.Failure);
-            await recordCompletion(finalized.CommittedRecord is not null, finalized.Failure is not null);
-            await reportFolderProgress($"Processed {finalized.Name}",
-                finalized.Failure is not null ? ProgressReportMode.Immediate : ProgressReportMode.Throttled, null);
-            timings?.Record(IngestionStage.File, finalized.Started);
+            var current = item;
+            void Update(PendingImport updated)
+            {
+                current = updated;
+                pending[updated.BatchSlot] = updated;
+            }
+
+            try
+            {
+                if (current.CommittedRecord is { } record && sourceRetention == SourceRetention.DeleteAfterVerification)
+                {
+                    var start = Stopwatch.GetTimestamp();
+                    await VerifyImportedAsync(record.Id, key);
+                    timings?.Record(IngestionStage.Verify, start);
+
+                    start = Stopwatch.GetTimestamp();
+                    current = await PendingImportOperations.DeleteVerifiedSourceAsync(
+                        current, Update, record.Sha256, timings);
+                    timings?.Record(IngestionStage.DeleteSource, start);
+                }
+            }
+            catch (Exception exception) when (IsImportFailure(exception))
+            {
+                current = current with { Failure = exception };
+                pending[current.BatchSlot] = current;
+            }
+            finally
+            {
+                try { current = await PendingImportOperations.CloseSourceAsync(current, Update, timings); }
+                catch (IOException exception) { Update(current with { Failure = exception }); }
+            }
+
+            try { current = PendingImportOperations.RemoveUncommittedMedia(current, Update); }
+            catch (Exception cleanupFailure) when (cleanupFailure is IOException or UnauthorizedAccessException)
+            {
+                Update(current with
+                {
+                    Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
+                        current.Failure ?? new IOException("Catalog commit failed."), cleanupFailure)
+                });
+            }
+
+            pending[current.BatchSlot] = current;
+            if (current.Failure is not null)
+                failuresByPathIndex[current.Index] = new IOException($"Failed to import '{current.Path}'.", current.Failure);
+            await recordCompletion(current.CommittedRecord is not null, current.Failure is not null);
+            await reportFolderProgress($"Processed {current.Name}",
+                current.Failure is not null ? ProgressReportMode.Immediate : ProgressReportMode.Throttled, null);
+            timings?.Record(IngestionStage.File, current.Started);
         });
 
     private async Task CommitBatchAsync(PendingImport[] pending, byte[] key, IngestionTimings? timings)
@@ -408,55 +442,6 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
             }
         }
         return committedCount;
-    }
-
-    private async Task<PendingImport> FinalizeBatchItemAsync(PendingImport[] pending, PendingImport item,
-        SourceRetention sourceRetention, byte[] key,
-        IngestionTimings? timings)
-    {
-        var current = item;
-        void Update(PendingImport updated)
-        {
-            current = updated;
-            pending[updated.BatchSlot] = updated;
-        }
-
-        try
-        {
-            if (current.CommittedRecord is { } record && sourceRetention == SourceRetention.DeleteAfterVerification)
-            {
-                var start = Stopwatch.GetTimestamp();
-                await VerifyImportedAsync(record.Id, key);
-                timings?.Record(IngestionStage.Verify, start);
-
-                start = Stopwatch.GetTimestamp();
-                current = await PendingImportOperations.DeleteVerifiedSourceAsync(
-                    current, Update, record.Sha256, timings);
-                timings?.Record(IngestionStage.DeleteSource, start);
-            }
-        }
-        catch (Exception exception) when (IsImportFailure(exception))
-        {
-            current = current with { Failure = exception };
-            pending[current.BatchSlot] = current;
-        }
-        finally
-        {
-            try { current = await PendingImportOperations.CloseSourceAsync(current, Update, timings); }
-            catch (IOException exception) { Update(current with { Failure = exception }); }
-        }
-
-        try { current = PendingImportOperations.RemoveUncommittedMedia(current, Update); }
-        catch (Exception cleanupFailure) when (cleanupFailure is IOException or UnauthorizedAccessException)
-        {
-            Update(current with
-            {
-                Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
-                    current.Failure ?? new IOException("Catalog commit failed."), cleanupFailure)
-            });
-        }
-
-        return current;
     }
 
     private static async Task CleanupBatchAsync(
