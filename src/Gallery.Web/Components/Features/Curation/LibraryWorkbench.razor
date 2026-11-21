@@ -1,12 +1,8 @@
 @using Gallery.Web.Components.Workspace
-@using Gallery.Core.Features.Settings
 @using Gallery.Web.Components.Features.Collections
 @using Gallery.Web.Components.Features.Tags
 @using Gallery.Web.Components.Features.Vision
 @inject IGalleryCollections GalleryCollections
-@inject IGalleryMedia GalleryMedia
-@inject IGalleryRecordEditor GalleryRecords
-@inject IGallerySettings GallerySettings
 @inject OrganizationHistory OrganizationHistory
 @inject ISonnerService Toasts
 @inject ILogger<LibraryWorkbench> Logger
@@ -87,30 +83,6 @@
     }
     @if (editing || Analysis.IsBusy) { <p class="flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm break-words" role="status">@(editing ? status : Analysis.Progress)</p> }
 
-    @if (compareImages.Count == 2)
-    {
-        <div class="fixed inset-0 z-40 overflow-y-auto bg-black/90 p-3 md:p-7">
-            <Card Class="mb-6 p-5 md:p-6" role="dialog" aria-modal="true" aria-label="Compare media">
-                <div class="mb-4 flex flex-wrap items-center justify-between gap-3"><h2>Choose what deserves to stay.</h2><Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@IsBusy" OnClick="CloseComparison">Close comparison</Button></div>
-                <div class="grid grid-cols-1 items-start gap-6 md:grid-cols-2 [&>div]:min-w-0 [&>div]:space-y-3">
-                    @foreach (var image in compareImages)
-                    {
-                        <article class="min-w-0 space-y-4 [&>img]:h-[55vh] [&>img]:w-full [&>img]:bg-black/40 [&>img]:object-contain"><h3>@image.Name</h3><img src="@comparison[image.Id]" alt="@image.Name" draggable="false" />
-                            <p>@image.Width &times; @image.Height / Rating: @image.Rating / @(image.IsReviewed ? "Reviewed" : "Pending review")</p>
-                            <div class="flex flex-wrap items-center gap-2">
-                                @for (var score = 1; score <= 5; score++)
-                                {
-                                    var value = score;
-                                    <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Default" Disabled="@IsBusy" OnClick="() => RateOneAsync(image, value)">@value / 5</Button>
-                                }
-                            </div>
-                        </article>
-                    }
-                </div>
-                @if (error.Length > 0) { <Alert Variant="AlertVariant.Destructive">@error</Alert> }
-            </Card>
-        </div>
-    }
 </div>
 
 </Microsoft.AspNetCore.Components.Sections.SectionContent>
@@ -120,7 +92,6 @@
     [Parameter] public bool Visible { get; set; } = true;
     [Parameter] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
     [Parameter] public IReadOnlyCollection<string> SelectedIds { get; set; } = [];
-    [Parameter, EditorRequired] public GalleryFilter Filter { get; set; } = new();
     [Parameter] public EventCallback Changed { get; set; }
     [Parameter] public EventCallback ClearSelection { get; set; }
     [Parameter, EditorRequired] public LibraryAnalysis Analysis { get; set; } = default!;
@@ -132,39 +103,25 @@
     private async Task DestinationSavedAsync(CollectionMutation result) { OrganizationHistory.Record(result.Undo);showDestination = false;notice = "Media moved to set.";await Changed.InvokeAsync(); }
     private async Task DestinationCanceledAsync() { showDestination = false;await Changed.InvokeAsync(); }
     private Task RemoveFromSetAsync() => RunAsync("Removing from set...", async () => { var result = await GalleryCollections.MoveMediaToSetAsync(SelectedIds, null);OrganizationHistory.Record(result.Undo);notice = "Media moved to Unorganized.";await Changed.InvokeAsync(); });
-    private string viewName = "", error = "", notice = "", status = "";
-    private int rating = -1;
-    private string reviewStatus = "unchanged";
+    private string notice = "", status = "";
     private bool editing, disposed;
     private bool IsBusy => Busy || editing || Analysis.IsBusy;
-    private List<SavedView> views = [];
-    private List<ImageRecord> compareImages = [];
-    private readonly Dictionary<string, string> comparison = [];
     private IEnumerable<ImageRecord> UnanalyzedImages => Images.Where(Analysis.NeedsVisionAnalysis);
     private int UnanalyzedCount => UnanalyzedImages.Count();
-    protected override void OnParametersSet()
-    {
-        var imagesById = Images.ToDictionary(image => image.Id);
-        for (var index = 0; index < compareImages.Count; index++)
-            if (imagesById.TryGetValue(compareImages[index].Id, out var image)) compareImages[index] = image;
-    }
-
-    // Saved views are an unexposed feature: the UI is hidden, but views stay loaded and encrypted for a future surface.
-    protected override Task OnInitializedAsync() =>
-        RunAsync("Loading saved views...", async () => views = await GallerySettings.LoadViewsAsync());
 
     private async Task RunAsync(string message, Func<Task> action)
     {
         if (editing) return;
         editing = true;
         status = message;
-        error = notice = "";
+        var error = "";
+        notice = "";
         try { await action(); }
         catch (Exception) when (disposed) { }
         catch (Exception exception)
         {
             Logger.LogError(exception, "Library workbench operation failed");
-            error = exception is InvalidSavedViewNameException or InvalidOperationException or IOException or System.Text.Json.JsonException
+            error = exception is InvalidOperationException or IOException or System.Text.Json.JsonException
                 ? exception.Message : "The operation failed. Check the application console.";
         }
         finally
@@ -175,42 +132,6 @@
         }
     }
 
-    private async Task ApplyBulkAsync(string[] ids, Func<ImageRecordEdit, ImageRecordEdit> change,
-        string operation, Func<int, string> successMessage)
-    {
-        var failures = new List<string>();
-        foreach (var id in ids)
-        {
-            try { await GalleryRecords.UpdateAsync(id, change); }
-            catch (Exception exception)
-            {
-                Logger.LogError(exception, "{Operation} failed for {ImageId}", operation, id);
-                failures.Add($"{id}: {exception.Message}");
-            }
-        }
-        await Changed.InvokeAsync();
-        notice = successMessage(ids.Length - failures.Count);
-        error = string.Join(" / ", failures);
-    }
-
-    private Task RateAsync() => RunAsync("Curating selection...", () => ApplyBulkAsync(SelectedIds.ToArray(),
-        image => GalleryRecords.SetCuration(image, rating == -1 ? null : rating,
-            reviewStatus == "unchanged" ? null : reviewStatus == "reviewed"),
-        "Bulk organization", count => $"Updated {count} media item(s)."));
-
-    private Task SaveViewAsync() => RunAsync("Saving view...", async () =>
-    {
-        await GallerySettings.SaveViewAsync(viewName, Filter);
-        views = await GallerySettings.LoadViewsAsync();
-        notice = "Saved view stored encrypted.";
-    });
-
-    private Task DeleteViewAsync(string name) => RunAsync("Deleting view...", async () =>
-    {
-        await GallerySettings.DeleteViewAsync(name);
-        views = await GallerySettings.LoadViewsAsync();
-    });
-
     private Task AnalyzeSelectionAsync(bool tagsOnly)
     {
         if (SelectedIds.Count is 0 or > 24)
@@ -219,29 +140,7 @@
         return Analysis.AnalyzeSelectionAsync(selected, tagsOnly, Workflow);
     }
 
-    private Task CompareAsync() => RunAsync("Preparing comparison...", async () =>
-    {
-        comparison.Clear();
-        var selected = Images.Where(image => SelectedIds.Contains(image.Id)).ToList();
-        if (selected.Count != 2) throw new InvalidOperationException("Select exactly two media items.");
-        foreach (var image in selected) comparison[image.Id] = await GalleryMedia.ViewerImageAsync(image.Id, ImageResolution.Fit);
-        compareImages = selected;
-    });
-
-    private Task RateOneAsync(ImageRecord image, int value) => RunAsync("Saving rating...", async () =>
-    {
-        var updated = await GalleryRecords.UpdateAsync(image.Id, current => GalleryRecords.SetCuration(current, value, true));
-        var comparisonIndex = compareImages.FindIndex(comparedImage => comparedImage.Id == image.Id);
-        if (comparisonIndex >= 0) compareImages[comparisonIndex] = updated;
-        await Changed.InvokeAsync();
-    });
-
-    private void CloseComparison() { compareImages.Clear(); comparison.Clear(); }
-    public void Dispose()
-    {
-        disposed = true;
-        CloseComparison();
-    }
+    public void Dispose() => disposed = true;
 }
 
 @if (showDestination) { <CollectionDestinationDialog Images="@Images.Where(image => SelectedIds.Contains(image.Id)).ToArray()" Saved="DestinationSavedAsync" Cancel="DestinationCanceledAsync" /> }

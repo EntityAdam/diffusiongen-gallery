@@ -1,10 +1,7 @@
 <Card Class="@($"image-card relative flex min-w-0 flex-col overflow-hidden {(Image.IsMarkedForDeletion ? "marked" : "")} {(Selected ? "selected" : "")}")" data-image-id="@Image.Id">
-    @if (ShowSelection)
-    {
-        <Button Variant="@(Selected ? ButtonVariant.Default : ButtonVariant.Outline)" Size="ButtonSize.Icon" Class="absolute top-2 left-2 z-10 h-7! w-7! rounded-full! shadow-sm" Disabled="@Busy" aria-pressed="@(Selected ? "true" : "false")"
-                aria-label="@($"Select {Image.Name}")" title="Select (Shift+click selects a range)"
-                OnClick="Select"><CheckIcon Size="16" ClassName="@(Selected ? "" : "opacity-40")" aria-hidden="true" /></Button>
-    }
+    <Button Variant="@(Selected ? ButtonVariant.Default : ButtonVariant.Outline)" Size="ButtonSize.Icon" Class="absolute top-2 left-2 z-10 h-7! w-7! rounded-full! shadow-sm" Disabled="@Busy" aria-pressed="@(Selected ? "true" : "false")"
+            aria-label="@($"Select {Image.Name}")" title="Select (Shift+click selects a range)"
+            OnClick="Select"><CheckIcon Size="16" ClassName="@(Selected ? "" : "opacity-40")" aria-hidden="true" /></Button>
     @if (HasSuggestion)
     {
         <Button Variant="ButtonVariant.Default" Size="ButtonSize.Icon" Class="absolute top-2 right-2 z-10 h-7! w-7! rounded-full! shadow-sm" Disabled="@Busy"
@@ -89,7 +86,6 @@
     [Parameter] public bool ThumbnailFailed { get; set; }
     [Parameter] public bool Busy { get; set; }
     [Parameter] public bool Selected { get; set; }
-    [Parameter] public bool ShowSelection { get; set; }
     [Parameter] public EventCallback<MouseEventArgs> Select { get; set; }
     [Parameter] public EventCallback Open { get; set; }
     [Parameter] public EventCallback<int> Rate { get; set; }

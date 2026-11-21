@@ -796,9 +796,8 @@ dotnet test .\src\Gallery.slnx
 node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
 
-Retained but unexposed code includes comparison of two media
-items, selection ZIP export, and additional bulk organization/review operations. These are not user-facing
-features. Explicit persisted vision-acceptance tracking is a future change;
+Selection ZIP export is retained in code but is not user-facing.
+Explicit persisted vision-acceptance tracking is a future change;
 the current card icon is inferred from saved analysis and pending suggestions.
 
 ## Experimental structured vision analysis
