@@ -114,7 +114,7 @@ internal sealed class DriveOperationPlayer : IDisposable
         ResetCompletedCount(playerRun);
     }
 
-    internal async Task RunWhileStartAdmissionBlockedAsync(Func<Task> action)
+    internal async Task RunWhileStartAdmissionBlockedAsync(Func<Task> action, Func<Task>? afterAction = null)
     {
         ArgumentNullException.ThrowIfNull(action);
         PlayerRun? playerRun = null;
@@ -134,6 +134,7 @@ internal sealed class DriveOperationPlayer : IDisposable
             if (playerRun is not null) await ObserveAsync(playerRun);
             await action();
             actionCompleted = true;
+            if (afterAction is not null) await afterAction();
         }
         finally
         {
@@ -171,9 +172,10 @@ internal sealed class DriveOperationPlayer : IDisposable
 
     public async Task RefreshAsync()
     {
-        var (playerRun, publicationGeneration) = ReadPublicationSnapshot();
+        var (playerRun, publicationGeneration, refreshSequence) = ReadPublicationSnapshot();
         var driveQueueCounts = await readCounts();
-        Publish(playerRun, driveQueueCounts, null, expectedPublicationGeneration: publicationGeneration);
+        Publish(playerRun, driveQueueCounts, null, expectedPublicationGeneration: publicationGeneration,
+            refreshSequence: refreshSequence);
     }
 
     public void Dispose() => CancelForDisposal();
@@ -191,10 +193,10 @@ internal sealed class DriveOperationPlayer : IDisposable
         lock (playerLifetime.Gate) return playerLifetime.PlayerRun;
     }
 
-    private (PlayerRun? PlayerRun, long PublicationGeneration) ReadPublicationSnapshot()
+    private (PlayerRun? PlayerRun, long PublicationGeneration, long RefreshSequence) ReadPublicationSnapshot()
     {
         lock (playerLifetime.Gate)
-            return (playerLifetime.PlayerRun, playerLifetime.StatusPublicationGeneration);
+            return (playerLifetime.PlayerRun, playerLifetime.StatusPublicationGeneration, ++playerLifetime.RefreshSequence);
     }
 
     private void CancelForDisposal()
@@ -361,7 +363,7 @@ internal sealed class DriveOperationPlayer : IDisposable
     }
 
     private void Publish(PlayerRun? playerRun, DriveQueueCounts driveQueueCounts, string? activity,
-        DriveQueueState? state = null, long? expectedPublicationGeneration = null)
+        DriveQueueState? state = null, long? expectedPublicationGeneration = null, long? refreshSequence = null)
     {
         Action? changed;
         lock (playerLifetime.Gate)
@@ -369,13 +371,17 @@ internal sealed class DriveOperationPlayer : IDisposable
             if (!ReferenceEquals(playerRun, playerLifetime.PlayerRun)) return;
             if (expectedPublicationGeneration is long expectedGeneration
                 && expectedGeneration != playerLifetime.StatusPublicationGeneration) return;
+            if (refreshSequence is long sequence && sequence <= playerLifetime.PublishedRefreshSequence) return;
             var effective = state ?? (playerRun?.Faulted == true ? DriveQueueState.Faulted
                 : playerLifetime.Paused ? DriveQueueState.Paused
                 : playerRun?.Running == true ? DriveQueueState.Running : DriveQueueState.Idle);
             var completed = playerRun?.Completed ?? 0;
             if (ShouldResetCompletedCount(driveQueueCounts, effective)) completed = 0;
             playerLifetime.driveQueueStatus = new(effective, driveQueueCounts.Pending, driveQueueCounts.Failed, completed, activity ?? "");
-            playerLifetime.StatusPublicationGeneration++;
+            if (refreshSequence is long publishedSequence)
+                playerLifetime.PublishedRefreshSequence = publishedSequence;
+            else
+                playerLifetime.StatusPublicationGeneration++;
             changed = playerLifetime.Changed;
         }
         changed?.Invoke();
@@ -410,6 +416,8 @@ internal sealed class DriveOperationPlayer : IDisposable
         internal bool StartAdmissionBlocked;
         internal bool StartRequestedWhileBlocked;
         internal long StatusPublicationGeneration;
+        internal long RefreshSequence;
+        internal long PublishedRefreshSequence;
         internal DriveQueueStatus driveQueueStatus = DriveQueueStatus.Empty;
         internal Action? Changed;
     }

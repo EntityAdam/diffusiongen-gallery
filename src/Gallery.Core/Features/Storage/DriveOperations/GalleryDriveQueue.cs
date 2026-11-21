@@ -67,11 +67,9 @@ internal sealed class GalleryDriveQueue : IDisposable
             using var keyLease = BorrowUnlockedKeyBeforeCheckout();
             galleryLifetime.EnsureCheckout();
             var galleryStore = galleryLifetime.Current.GalleryStore;
-            await driveOperationPlayer.RunWhileStartAdmissionBlockedAsync(async () =>
-            {
-                await galleryStore.CancelUnfinishedDriveOperationsAsync(keyLease.Bytes);
-                await driveOperationPlayer.RefreshAsync();
-            });
+            await driveOperationPlayer.RunWhileStartAdmissionBlockedAsync(
+                () => galleryStore.CancelUnfinishedDriveOperationsAsync(keyLease.Bytes),
+                driveOperationPlayer.RefreshAsync);
         }
         finally { galleryLifetime.Gate.Release(); }
     }

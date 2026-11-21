@@ -89,6 +89,36 @@ public sealed class DriveOperationPlayerLifetimeTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Refresh_WhenTwoCountReadsOverlap_ThenKeepsTheNewerRead(bool newerCompletesFirst)
+    {
+        var oldCounts = new TaskCompletionSource<DriveQueueCounts>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newCounts = new TaskCompletionSource<DriveQueueCounts>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        using var player = new DriveOperationPlayer(() => null, () =>
+            Interlocked.Increment(ref reads) == 1 ? oldCounts.Task : newCounts.Task);
+
+        var oldRefresh = player.RefreshAsync();
+        var newRefresh = player.RefreshAsync();
+        if (newerCompletesFirst)
+        {
+            newCounts.SetResult(new DriveQueueCounts(2, 0, null));
+            await newRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+            oldCounts.SetResult(new DriveQueueCounts(1, 0, null));
+        }
+        else
+        {
+            oldCounts.SetResult(new DriveQueueCounts(1, 0, null));
+            await oldRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+            newCounts.SetResult(new DriveQueueCounts(2, 0, null));
+        }
+        await Task.WhenAll(oldRefresh, newRefresh).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, player.Status.Pending);
+    }
+
     [Fact]
     public async Task Cancel_WhenTheRunFaultWasAlreadyObserved_ThenRunsTheDiscardAction()
     {
@@ -149,6 +179,61 @@ public sealed class DriveOperationPlayerLifetimeTests
 
         Assert.Equal(1, sessionsBeforeDiscardCompletes);
         Assert.Equal(2, sessions);
+    }
+
+    [Fact]
+    public async Task StartDuringPostDiscardRefresh_WhenRefreshFails_ThenStartsAfterDiscard()
+    {
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expectedFailure = new IOException("refresh failed");
+        var opened = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            Interlocked.Increment(ref opened);
+            return new Session(_ => Task.FromResult(new DriveBatchReport(0, 0, "")));
+        }, () => Task.FromResult(new DriveQueueCounts(0, 0, null)));
+
+        var discard = player.RunWhileStartAdmissionBlockedAsync(
+            () => Task.CompletedTask,
+            async () =>
+            {
+                refreshStarted.SetResult();
+                await releaseRefresh.Task;
+                throw expectedFailure;
+            });
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        player.Start();
+        Assert.Equal(0, opened);
+        releaseRefresh.SetResult();
+        Assert.Same(expectedFailure, await Assert.ThrowsAsync<IOException>(() => discard));
+        await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, opened);
+    }
+
+    [Fact]
+    public async Task StartDuringFailedDiscard_ThenDoesNotStartUncertainWork()
+    {
+        var discardStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDiscard = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var opened = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            Interlocked.Increment(ref opened);
+            return null;
+        }, () => Task.FromResult(new DriveQueueCounts(0, 0, null)));
+
+        var discard = player.RunWhileStartAdmissionBlockedAsync(async () =>
+        {
+            discardStarted.SetResult();
+            await releaseDiscard.Task;
+            throw new IOException("discard failed");
+        });
+        await discardStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        player.Start();
+        releaseDiscard.SetResult();
+        await Assert.ThrowsAsync<IOException>(() => discard);
+        Assert.Equal(0, opened);
     }
 
     [Fact]

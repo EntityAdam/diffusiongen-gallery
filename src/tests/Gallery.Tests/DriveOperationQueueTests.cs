@@ -1,6 +1,7 @@
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using Gallery.Core.Features.Storage;
 using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
@@ -340,6 +341,47 @@ public sealed class DriveOperationQueueTests
         await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
 
         Assert.False((await fixture.Scope.Storage.RefreshStorageOverviewAsync()).IsIndexPending);
+    }
+
+    [Fact]
+    public async Task IndexRebuild_WhenSchedulingOverlapsClear_ThenPreservesTheRebuiltIndex()
+    {
+        using var fixture = await LoadedVaultAsync();
+        var record = await fixture.Scope.Ingestion.ImportAsync(
+            new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        var lifetime = new GalleryLifetime(fixture.Store, fixture.Vault);
+        using var queue = new GalleryDriveQueue(lifetime, fixture.Session);
+        var index = new MediaStorageIndex(lifetime, fixture.Session, queue);
+        var clearStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseClear = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var key = fixture.Session.Key;
+        try
+        {
+            var rebuild = index.RebuildStorageIndexAsync(async (store, rebuildKey) =>
+            {
+                clearStarted.SetResult();
+                await releaseClear.Task;
+                await store.ClearMediaIndexAsync(rebuildKey);
+            });
+            await clearStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var schedule = index.ScheduleAsync([record], key);
+            Assert.Equal(0, fixture.Store.Gate.CurrentCount);
+            Assert.False(schedule.IsCompleted);
+            releaseClear.SetResult();
+            await Task.WhenAll(rebuild, schedule).WaitAsync(TimeSpan.FromSeconds(5));
+            await queue.WaitForDriveOperationsAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            var indexed = await fixture.Store.ReadMediaIndexAsync(key);
+            Assert.Contains(Convert.ToHexString(DriveOperationProcessor.PathFingerprint(key, record.StoredPath)),
+                indexed.Keys);
+            Assert.False(await index.IsPendingAsync(key));
+        }
+        finally
+        {
+            releaseClear.TrySetResult();
+            CryptographicOperations.ZeroMemory(key);
+        }
     }
 
     [Fact]

@@ -16,19 +16,35 @@ internal sealed class MediaStorageIndex(
 
     private sealed record MediaIndexMarker(DateTimeOffset ScheduledAt);
 
-    public async Task RebuildStorageIndexAsync()
+    public Task RebuildStorageIndexAsync() =>
+        RebuildStorageIndexAsync((store, key) => store.ClearMediaIndexAsync(key));
+
+    internal async Task RebuildStorageIndexAsync(Func<IGalleryStore, byte[], Task> clearIndexAsync)
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var store = galleryLifetime.Current.GalleryStore;
         var records = await store.ReadRecordsAsync(keyLease.Bytes);
-        await store.DeleteSettingsAsync(keyLease.Bytes, SettingId);
-        await store.ClearMediaIndexAsync(keyLease.Bytes);
-        await ScheduleAsync(records, keyLease.Bytes);
+        await store.Gate.WaitAsync();
+        try
+        {
+            await store.DeleteSettingsAsync(keyLease.Bytes, SettingId);
+            await clearIndexAsync(store, keyLease.Bytes);
+            await ScheduleUnderGateAsync(records, keyLease.Bytes);
+        }
+        finally { store.Gate.Release(); }
         galleryDriveQueue.Start();
     }
 
     /// <summary>Schedules the one-time scan that seeds the media index; later loads read the index instead of the drive.</summary>
     internal async Task ScheduleAsync(IReadOnlyCollection<ImageRecord> records, byte[] key)
+    {
+        var store = galleryLifetime.Current.GalleryStore;
+        await store.Gate.WaitAsync();
+        try { await ScheduleUnderGateAsync(records, key); }
+        finally { store.Gate.Release(); }
+    }
+
+    private async Task ScheduleUnderGateAsync(IReadOnlyCollection<ImageRecord> records, byte[] key)
     {
         var activity = System.Diagnostics.Activity.Current is { OperationName: "gallery.load" } load ? load : null;
         activity?.SetTag("gallery.load.media_index_scheduled", false);
