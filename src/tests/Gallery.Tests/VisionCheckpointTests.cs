@@ -22,8 +22,9 @@ public sealed class VisionCheckpointTests
         var record = new ImageRecord { Id = draft.Id, Tags = draft.Tags };
         var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishApproval = new TaskCompletionSource<ImageRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var persisted = new VisionCheckpoint { Drafts = [draft] };
         var session = new VisionCheckpointSession(new() { Drafts = [draft] }, CancellationToken.None,
-            _ => Task.CompletedTask, _ =>
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, (_, _) =>
             {
                 approvalStarted.SetResult();
                 return finishApproval.Task;
@@ -31,13 +32,19 @@ public sealed class VisionCheckpointTests
 
         var approval = session.ApproveDraftAsync(draft);
         await approvalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await session.StageAsync(replacement);
+        var staging = session.StageAsync(replacement);
+        Assert.False(staging.IsCompleted);
         finishApproval.SetResult(record);
 
         Assert.Equal(record, await approval);
+        await staging;
         await Assert.ThrowsAsync<InvalidOperationException>(() => session.ApproveDraftAsync(draft));
         Assert.False(await session.DismissDraftAsync(draft));
         Assert.Equal(replacement, Assert.Single(session.State.Drafts));
+        Assert.Equal(replacement, Assert.Single(persisted.Drafts));
+        var reopened = new VisionCheckpointSession(persisted, CancellationToken.None,
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, (_, _) => Task.FromResult(record));
+        Assert.Equal(replacement, Assert.Single(reopened.State.Drafts));
     }
 
     [Fact]

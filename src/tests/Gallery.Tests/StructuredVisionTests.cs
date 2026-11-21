@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
 using Gallery.Core.Features.Vaults;
@@ -7,6 +8,7 @@ using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
 using Gallery.Core.Services;
+using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;
 
@@ -246,9 +248,11 @@ public sealed class StructuredVisionTests
         await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { UserDescription = "Manual notes", Tags = "keep", Rating = 3 });
         var result = await fixture.Scope.Vision.AnalyzeForDraftAsync(image.Id, Settings());
         var checkpoint = await fixture.Scope.Vision.OpenVisionCheckpointAsync();
-        await checkpoint.StageAsync(new(image.Id, image.Name, result.Description, result.Tags, "", "vision", Analysis: result.Analysis));
+        var draft = new VisionDraft(image.Id, image.Name, result.Description, result.Tags, "vision", Analysis: result.Analysis);
+        await checkpoint.StageAsync(draft);
         Assert.Equal(result.Analysis!.Json, Assert.Single((await fixture.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts).Analysis!.Json);
-        var approved = await fixture.Scope.Vision.ApproveVisionAsync(image.Id, result.Description, result.Tags, "vision", result.Analysis);
+        var approved = await checkpoint.ApproveDraftAsync(draft);
+        Assert.NotNull(approved);
         Assert.Equal("Manual notes", approved.UserDescription);
         Assert.Equal(3, approved.Rating);
         Assert.Contains("keep", approved.Tags);
@@ -263,6 +267,7 @@ public sealed class StructuredVisionTests
         await fixture.Scope.Vault.CloseVaultAsync();
         await fixture.Scope.Vault.OpenExistingVaultAsync(fixture.VaultPath);
         await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        Assert.Empty((await fixture.Scope.Vision.OpenVisionCheckpointAsync()).State.Drafts);
         Assert.Equal(result.Analysis.Json, (await fixture.Scope.Vision.ReadVisionAnalysisAsync(image.Id))!.Json);
         using var exported = new ExportOwner(await fixture.Scope.Vision.ExportVisionAnalysisAsync(image.Id));
         Assert.Equal(result.Analysis.Json, Encoding.UTF8.GetString(exported.File.CopyContentBytes()));
@@ -281,6 +286,104 @@ public sealed class StructuredVisionTests
         var key = await new VaultStore(restored).UnlockWithRecoveryPhraseAsync(recovery);
         try { Assert.Null(await fixture.Store(restored).ReadVisionAnalysisAsync(image.Id, key)); }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task Approval_WhenCheckpointWriteFails_RollsBackAndCanBeRetriedAfterReopen(CatalogBackend backend)
+    {
+        using var fixture = new Fixture(backend);
+        await fixture.InitializeAsync();
+        var image = await fixture.ImportAsync();
+        var result = await fixture.Scope.Vision.AnalyzeForDraftAsync(image.Id, Settings());
+        var draft = new VisionDraft(image.Id, image.Name, result.Description, result.Tags, "vision", Analysis: result.Analysis);
+        await (await fixture.Scope.Vision.OpenVisionCheckpointAsync()).StageAsync(draft);
+        var databasePath = Path.Combine(fixture.VaultPath, "gallery.db");
+
+        await fixture.Scope.Vault.CloseVaultAsync();
+        await SetCheckpointWriteTriggerAsync(databasePath, backend, create: true);
+        await fixture.Scope.Vault.OpenExistingVaultAsync(fixture.VaultPath);
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+
+        var checkpoint = await fixture.Scope.Vision.OpenVisionCheckpointAsync();
+        var persistedDraft = Assert.Single(checkpoint.State.Drafts);
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() => checkpoint.ApproveDraftAsync(persistedDraft));
+        Assert.Contains("checkpoint-save-injected", GetExceptionMessages(failure), StringComparison.Ordinal);
+
+        await fixture.Scope.Vault.CloseVaultAsync();
+        await SetCheckpointWriteTriggerAsync(databasePath, backend, create: false);
+        await fixture.Scope.Vault.OpenExistingVaultAsync(fixture.VaultPath);
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        var reopened = await fixture.Scope.Vision.OpenVisionCheckpointAsync();
+        var stillPending = Assert.Single(reopened.State.Drafts);
+        Assert.Equal(persistedDraft.Description, stillPending.Description);
+        Assert.Equal(persistedDraft.Analysis!.Json, stillPending.Analysis!.Json);
+        var unchanged = Assert.Single(await fixture.Scope.Catalog.ListAsync());
+        Assert.Empty(unchanged.Description);
+        Assert.Null(unchanged.VisionFacts);
+        Assert.Empty(await fixture.Scope.Tags.LoadTagNamesAsync());
+        Assert.Null(await fixture.Scope.Vision.ReadVisionAnalysisAsync(image.Id));
+
+        var approved = await reopened.ApproveDraftAsync(stillPending);
+        Assert.NotNull(approved);
+        Assert.Empty(reopened.State.Drafts);
+        Assert.Equal(result.Description, approved.Description);
+        Assert.Equal(result.Analysis!.Json, (await fixture.Scope.Vision.ReadVisionAnalysisAsync(image.Id))!.Json);
+        Assert.Null(await reopened.ApproveDraftAsync(stillPending));
+    }
+
+    private static async Task SetCheckpointWriteTriggerAsync(string databasePath, CatalogBackend backend, bool create)
+    {
+        byte[]? vaultKey = null;
+        byte[]? catalogKey = null;
+        try
+        {
+            System.Data.Common.DbConnection connection;
+            if (backend == CatalogBackend.Turso)
+            {
+                vaultKey = await new VaultStore(Path.GetDirectoryName(databasePath)!).UnlockWithPassphraseAsync(TestVault.Passphrase);
+                catalogKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, vaultKey, 32,
+                    info: "DiffusionGenGallery/catalog/turso/v1"u8.ToArray());
+                var builder = new System.Data.Common.DbConnectionStringBuilder
+                {
+                    ["Data Source"] = databasePath,
+                    ["Pooling"] = false,
+                    ["Encryption Cipher"] = "aes256gcm",
+                    ["Encryption Key"] = Convert.ToHexString(catalogKey)
+                };
+                connection = new Turso.TursoConnection(builder.ConnectionString);
+            }
+            else connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+
+            await using (connection)
+            {
+                await connection.OpenAsync();
+                using var command = connection.CreateCommand();
+                command.CommandText = create
+                    ? """
+                        CREATE TRIGGER reject_vision_checkpoint_update BEFORE UPDATE OF payload ON settings
+                        WHEN OLD.id = 'vision-checkpoint'
+                        BEGIN SELECT RAISE(ABORT, 'checkpoint-save-injected'); END;
+                        """
+                    : "DROP TRIGGER reject_vision_checkpoint_update";
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+        finally
+        {
+            if (vaultKey is not null) CryptographicOperations.ZeroMemory(vaultKey);
+            if (catalogKey is not null) CryptographicOperations.ZeroMemory(catalogKey);
+        }
+    }
+
+    private static string GetExceptionMessages(Exception exception) =>
+        string.Join(" | ", EnumerateExceptions(exception).Select(error => error.Message));
+
+    private static IEnumerable<Exception> EnumerateExceptions(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException!)
+            yield return current;
     }
 
     [Fact]

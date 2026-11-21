@@ -15,15 +15,20 @@ internal sealed partial class GalleryStore
         return await command.ExecuteScalarAsync() is byte[] bytes ? DecodeSetting<VisionAnalysis>(bytes, $"vision-analysis:v1:{id}", key) : null;
     }
 
-    public async Task CommitVisionAnalysisAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis analysis, byte[] key)
+    public async Task CommitVisionApprovalAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis? analysis,
+        VisionCheckpoint? checkpoint, byte[] key)
     {
         await using var connection = await OpenAsync();
         using var transaction = connection.BeginTransaction();
         await WriteUpdatedRecordAsync(connection, transaction, record, key, CancellationToken.None);
         await SaveCatalogSettingAsync(connection, transaction, TagCatalog.SettingId,
             EncodeSetting(catalog, TagCatalog.SettingPurpose, key));
-        await SaveVisionAnalysisAsync(connection, transaction, record.Id,
-            EncodeSetting(analysis, $"vision-analysis:v1:{record.Id}", key));
+        if (analysis is not null)
+            await SaveVisionAnalysisAsync(connection, transaction, record.Id,
+                EncodeSetting(analysis, $"vision-analysis:v1:{record.Id}", key));
+        if (checkpoint is not null)
+            await SaveCatalogSettingAsync(connection, transaction, VisionCheckpoint.SettingId,
+                EncodeSetting(checkpoint, VisionCheckpoint.SettingPurpose, key));
         transaction.Commit();
     }
 

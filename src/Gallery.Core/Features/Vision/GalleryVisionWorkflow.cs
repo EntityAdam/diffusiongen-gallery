@@ -32,8 +32,6 @@ internal sealed class GalleryVisionWorkflow(
     }
 
     private const string VisionSettingsId = "vision-settings";
-    private const string VisionCheckpointId = "vision-checkpoint";
-    private const string VisionCheckpointPurpose = "vision-checkpoint:v1";
     private readonly SemaphoreSlim checkpointSessionGate = new(1, 1);
     private UnlockedVaultSession? checkpointGeneration;
     private VisionCheckpointSession? checkpointSession;
@@ -148,7 +146,7 @@ internal sealed class GalleryVisionWorkflow(
         try
         {
             using var keyLease = generation.Borrow();
-            return await store.ReadSettingsAsync<VisionCheckpoint>(VisionCheckpointId, VisionCheckpointPurpose, keyLease.Bytes) ?? new();
+            return await store.ReadSettingsAsync<VisionCheckpoint>(VisionCheckpoint.SettingId, VisionCheckpoint.SettingPurpose, keyLease.Bytes) ?? new();
         }
         finally { store.Gate.Release(); }
     }
@@ -156,9 +154,9 @@ internal sealed class GalleryVisionWorkflow(
     private VisionCheckpointSession CreateVisionCheckpointSession(UnlockedVaultSession generation, IGalleryStore store, VisionCheckpoint state) =>
         new(state, generation.RevocationToken,
             checkpoint => SaveVisionCheckpointAsync(generation, store, checkpoint),
-            draft => ApproveVisionAsync(generation, store, draft.Id, draft.Description, draft.Tags, draft.Model, draft.Analysis,
+            (draft, checkpoint) => ApproveVisionAsync(generation, store, draft.Id, draft.Description, draft.Tags, draft.Model, draft.Analysis,
                 draft.TagsOnly ? VisionApprovalMode.TagsOnly : VisionApprovalMode.Full,
-                TagSources(draft.UseExistingTags, draft.SuggestNewTags)));
+                TagSources(draft.UseExistingTags, draft.SuggestNewTags), checkpoint));
 
     private static async Task SaveVisionCheckpointAsync(UnlockedVaultSession generation, IGalleryStore store, VisionCheckpoint checkpoint)
     {
@@ -166,7 +164,7 @@ internal sealed class GalleryVisionWorkflow(
         try
         {
             using var keyLease = generation.Borrow();
-            await store.SaveSettingsAsync(checkpoint, VisionCheckpointId, VisionCheckpointPurpose, keyLease.Bytes);
+            await store.SaveSettingsAsync(checkpoint, VisionCheckpoint.SettingId, VisionCheckpoint.SettingPurpose, keyLease.Bytes);
         }
         finally { store.Gate.Release(); }
     }
@@ -238,12 +236,12 @@ internal sealed class GalleryVisionWorkflow(
     {
         var generation = vaultSession.AcquireUnlockedSession();
         return await ApproveVisionAsync(generation, galleryStore, id, description, tags, model, analysis,
-            tagsOnly ? VisionApprovalMode.TagsOnly : VisionApprovalMode.Full, TagSources(useExistingTags, suggestNewTags));
+            tagsOnly ? VisionApprovalMode.TagsOnly : VisionApprovalMode.Full, TagSources(useExistingTags, suggestNewTags), null);
     }
 
     private static async Task<ImageRecord> ApproveVisionAsync(UnlockedVaultSession generation, IGalleryStore store,
         string id, string description, string tags, string model, VisionAnalysis? analysis,
-        VisionApprovalMode approvalMode, VisionTagSources tagSources)
+        VisionApprovalMode approvalMode, VisionTagSources tagSources, VisionCheckpoint? checkpoint)
     {
         using var keyLease = generation.Borrow();
         await store.Gate.WaitAsync(generation.RevocationToken);
@@ -256,9 +254,8 @@ internal sealed class GalleryVisionWorkflow(
             var updated = BuildApprovedRecord(record, description, tags, model, analysis, approvalMode, tagSources, catalog.Names);
             var nextCatalog = BuildApprovedTagCatalog(catalog, updated);
             generation.RevocationToken.ThrowIfCancellationRequested();
-            if (approvalMode == VisionApprovalMode.Full && analysis is not null)
-                await store.CommitVisionAnalysisAsync(updated, nextCatalog, analysis, keyLease.Bytes);
-            else await store.CommitTagCatalogAsync([updated], nextCatalog, null, keyLease.Bytes);
+            await store.CommitVisionApprovalAsync(updated, nextCatalog,
+                approvalMode == VisionApprovalMode.Full ? analysis : null, checkpoint, keyLease.Bytes);
             return updated;
         }
         finally { store.Gate.Release(); }

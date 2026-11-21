@@ -5,7 +5,7 @@ using Gallery.Core.Models;
 namespace Gallery.Core.Infrastructure.Persistence;
 
 /// <summary>
-/// Catalog persistence and atomic catalog/drive-work boundaries. No database-provider types cross this port.
+/// Catalog persistence and atomic catalog, drive-work, and vision-approval boundaries. No database-provider types cross this port.
 /// Callers supply their generation-bound leased key, including for operations the SQLite adapter can do while locked.
 /// </summary>
 internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReader, IGalleryCatalogSnapshots, IGalleryImportStore
@@ -28,7 +28,7 @@ internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReade
     Task CommitCollectionCatalogAsync(IReadOnlyList<ImageRecord> records, CollectionCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);
     Task CommitTagCatalogAsync(IReadOnlyList<ImageRecord> records, TagCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);
     Task<VisionAnalysis?> ReadVisionAnalysisAsync(string id, byte[] key);
-    Task CommitVisionAnalysisAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis analysis, byte[] key);
+    Task CommitVisionApprovalAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis? analysis, VisionCheckpoint? checkpoint, byte[] key);
     Task<T?> ReadSettingsAsync<T>(string id, string purpose, byte[] key) where T : class;
     Task SaveSettingsAsync<T>(T value, string id, string purpose, byte[] key);
     Task<List<SavedView>> LoadViewsAsync(byte[] key);

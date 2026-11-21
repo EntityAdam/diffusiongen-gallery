@@ -8,12 +8,12 @@ public sealed class VisionCheckpointSession
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly SemaphoreSlim reviewGate = new(1, 1);
     private readonly Func<VisionCheckpoint, Task> save;
-    private readonly Func<VisionDraft, Task<ImageRecord>> approve;
+    private readonly Func<VisionDraft, VisionCheckpoint, Task<ImageRecord>> approve;
     public CancellationToken RevocationToken { get; }
     public VisionCheckpoint State { get; private set; }
 
     internal VisionCheckpointSession(VisionCheckpoint state, CancellationToken revocationToken,
-        Func<VisionCheckpoint, Task> save, Func<VisionDraft, Task<ImageRecord>> approve)
+        Func<VisionCheckpoint, Task> save, Func<VisionDraft, VisionCheckpoint, Task<ImageRecord>> approve)
     {
         State = state;
         RevocationToken = revocationToken;
@@ -50,15 +50,22 @@ public sealed class VisionCheckpointSession
 
     public Task<ImageRecord?> ApproveDraftAsync(VisionDraft expected) => ReviewAsync<ImageRecord?>(async () =>
     {
-        var draft = State.Drafts.FirstOrDefault(item => item.Id == expected.Id && item.TagsOnly == expected.TagsOnly);
-        if (draft is null) return null;
-        if (draft != expected)
-            throw new InvalidOperationException("This suggestion changed. Refresh it before accepting.");
+        await gate.WaitAsync(RevocationToken);
+        try
+        {
+            RevocationToken.ThrowIfCancellationRequested();
+            var draft = State.Drafts.FirstOrDefault(item => item.Id == expected.Id && item.TagsOnly == expected.TagsOnly);
+            if (draft is null) return null;
+            if (draft != expected)
+                throw new InvalidOperationException("This suggestion changed. Refresh it before accepting.");
 
-        var approved = await approve(draft);
-        // The analysis queue can stage a replacement while approval is saving the record.
-        await RemoveDraftAsync(draft);
-        return approved;
+            var next = State with { Drafts = [.. State.Drafts.Where(item => item != draft)] };
+            var approved = await approve(draft, next);
+            RevocationToken.ThrowIfCancellationRequested();
+            State = next;
+            return approved;
+        }
+        finally { gate.Release(); }
     });
 
     public Task<bool> DismissDraftAsync(VisionDraft expected) => ReviewAsync(async () =>

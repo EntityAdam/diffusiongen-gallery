@@ -11,6 +11,9 @@ public sealed record VisionQueueItem(string Id, bool TagsOnly = false, bool Fail
 
 public sealed record VisionCheckpoint
 {
+    internal const string SettingId = "vision-checkpoint";
+    internal const string SettingPurpose = "vision-checkpoint:v1";
+
     // Used to seed the primary lane when opening settings from an older vault.
     public bool AutoAcceptVisionAnalysis { get; init; }
     public ImmutableArray<VisionDraft> Drafts { get; init; } = [];
