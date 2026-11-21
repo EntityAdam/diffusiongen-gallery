@@ -103,6 +103,45 @@ public sealed class StructuredVisionTests
         Assert.Equal("blue", Assert.Single(analyzedEntity.Attributes).Value);
     }
 
+    [Fact]
+    public void Parse_WhenRepeatedWarningsPrecedeDistinctWarnings_ThenPreservesDistinctDiagnostics()
+    {
+        var content = JsonSerializer.Serialize(new
+        {
+            scene = new { description = "A scene." },
+            entities = Array.Empty<object>(),
+            relationships = Enumerable.Repeat<object?>(null, 150)
+        });
+        using var json = JsonDocument.Parse(content);
+
+        var warnings = StructuredVision.Parse(json.RootElement).Analysis!.Warnings;
+
+        Assert.Equal(3, warnings.Length);
+        Assert.Single(warnings, warning => warning.Contains("relationship", StringComparison.Ordinal));
+        Assert.Contains("'tags' is missing; no gallery tags were taken from it.", warnings);
+        Assert.Contains("'suggested_tags' is missing; no gallery tags were taken from it.", warnings);
+        Assert.DoesNotContain("Additional structured analysis warnings omitted.", warnings);
+    }
+
+    [Fact]
+    public void Parse_WhenDiagnosticIdCrossesSurrogateBoundary_ThenPreservesValidUnicode()
+    {
+        var id = new string('x', 79) + "\U0001F600" + "tail";
+        var content = JsonSerializer.Serialize(new
+        {
+            scene = new { description = "A scene." },
+            entities = new[] { new { id, kind = "", description = "", attributes = Array.Empty<object>() } },
+            tags = Array.Empty<string>(),
+            suggested_tags = Array.Empty<string>()
+        });
+        using var json = JsonDocument.Parse(content);
+
+        var warning = Assert.Single(StructuredVision.Parse(json.RootElement).Analysis!.Warnings);
+
+        Assert.DoesNotContain('\ud83d', warning);
+        Assert.Contains(new string('x', 79) + "…", warning);
+    }
+
     [Theory]
     [InlineData("{}", "'tags' is missing", "'suggested_tags' is missing")]
     [InlineData("{\"tags\":false,\"suggested_tags\":null}", "'tags' is not an array", "'suggested_tags' is not an array")]

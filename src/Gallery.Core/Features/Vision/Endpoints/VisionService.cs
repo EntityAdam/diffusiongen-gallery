@@ -1,7 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
@@ -343,10 +342,14 @@ internal sealed partial class VisionService
     private static async Task<JsonDocument> ReadCompletionAsync(HttpResponseMessage httpResponseMessage, CancellationToken cancellationToken)
     {
         using var responseBody = await ReadBoundedResponseAsync(httpResponseMessage.Content, cancellationToken);
-        if (IsWhitespaceOnly(responseBody))
+        using var boundedContent = new StreamContent(responseBody);
+        if (httpResponseMessage.Content.Headers.TryGetValues("Content-Type", out var contentTypes))
+            boundedContent.Headers.TryAddWithoutValidation("Content-Type", contentTypes);
+        var body = await boundedContent.ReadAsStringAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(body))
             throw new InvalidOperationException("The LLM endpoint returned an empty response. Check the model and server logs.");
         JsonDocument parsed;
-        try { parsed = JsonDocument.Parse(responseBody); }
+        try { parsed = JsonDocument.Parse(body); }
         catch (JsonException jsonException) { throw new InvalidOperationException("The LLM endpoint returned an invalid JSON response envelope. Check its server logs.", jsonException); }
         using var payload = parsed;
         if (payload.RootElement.ValueKind != JsonValueKind.Object)
@@ -408,17 +411,4 @@ internal sealed partial class VisionService
         }
     }
 
-    private static bool IsWhitespaceOnly(MemoryStream responseBody)
-    {
-        if (!responseBody.TryGetBuffer(out var buffer)) return responseBody.Length == 0;
-        var containsNonAscii = false;
-        foreach (var value in buffer.Array!.AsSpan(buffer.Offset, (int)responseBody.Length))
-        {
-            if (value == (byte)' ' || value == (byte)'\t' || value == (byte)'\r' || value == (byte)'\n') continue;
-            if (value < 0x80) return false;
-            containsNonAscii = true;
-        }
-        return !containsNonAscii || string.IsNullOrWhiteSpace(Encoding.UTF8.GetString(
-            buffer.Array!, buffer.Offset, (int)responseBody.Length));
-    }
 }

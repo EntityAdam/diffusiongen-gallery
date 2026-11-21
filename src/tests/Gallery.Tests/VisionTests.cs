@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
@@ -95,6 +96,48 @@ public static class VisionTests
 
         Assert.Contains("response size limit", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(StructuredVision.MaximumDocumentBytes * 8L + 1, content.BytesRead);
+    }
+
+    [Theory]
+    [InlineData("utf-8", false, true)]
+    [InlineData("utf-8", true, false)]
+    [InlineData("utf-16", false, true)]
+    [InlineData("utf-16", true, false)]
+    public static async Task Analysis_WhenResponseUsesDeclaredOrBomEncoding_ThenDecodesIt(
+        string encodingName, bool includeBom, bool declareCharset)
+    {
+        const string body = """{"choices":[{"message":{"content":"{\"description\":\"café\",\"tags\":[\"green\"]}"}}]}""";
+        var encoding = Encoding.GetEncoding(encodingName);
+        var bytes = (includeBom ? encoding.GetPreamble() : []).Concat(encoding.GetBytes(body)).ToArray();
+        using var client = new HttpClient(new FakeHandler(_ =>
+        {
+            var content = new ByteArrayContent(bytes);
+            if (declareCharset)
+                content.Headers.ContentType = new("application/json") { CharSet = encodingName };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }));
+        var service = new VisionService(client, new VisionSettings());
+
+        var result = await service.AnalyzeImageAsync("vision", 180, "image");
+
+        Assert.Equal("café", result.Description);
+        Assert.Equal("green", result.Tags);
+    }
+
+    [Fact]
+    public static async Task Analysis_WhenBodyReadIsCanceled_ThenStopsReading()
+    {
+        var stream = new BlockingResponseStream();
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(stream) })));
+        var service = new VisionService(client, new VisionSettings());
+        using var cancellation = new CancellationTokenSource();
+
+        var analysis = service.AnalyzeImageAsync("vision", 180, "image", cancellationToken: cancellation.Token);
+        await stream.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => analysis);
     }
 
     [Fact]
@@ -528,6 +571,18 @@ public static class VisionTests
 
         protected override Task<Stream> CreateContentReadStreamAsync() =>
             Task.FromResult<Stream>(new OversizedResponseStream(count => BytesRead += count));
+    }
+
+    private sealed class BlockingResponseStream : MemoryStream
+    {
+        public TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
     }
 
     private sealed class OversizedResponseStream(Action<int> recordRead) : Stream

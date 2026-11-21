@@ -207,9 +207,11 @@ public static class StructuredVision
 
     private static void AddWarning(List<string> warnings, string warning)
     {
+        warning = TruncateWarning(warning);
+        if (warnings.Contains(warning, StringComparer.Ordinal)) return;
         if (warnings.Count < MaximumWarnings)
         {
-            warnings.Add(TruncateWarning(warning));
+            warnings.Add(warning);
             return;
         }
         if (warnings[^1] != AdditionalWarningsOmitted) warnings[^1] = AdditionalWarningsOmitted;
@@ -223,8 +225,13 @@ public static class StructuredVision
         return warning[..length];
     }
 
-    private static string DiagnosticId(string id) =>
-        id.Length <= MaximumDiagnosticIdLength ? id : id[..MaximumDiagnosticIdLength] + "…";
+    private static string DiagnosticId(string id)
+    {
+        if (id.Length <= MaximumDiagnosticIdLength) return id;
+        var length = char.IsHighSurrogate(id[MaximumDiagnosticIdLength - 1]) && char.IsLowSurrogate(id[MaximumDiagnosticIdLength])
+            ? MaximumDiagnosticIdLength - 1 : MaximumDiagnosticIdLength;
+        return id[..length] + "…";
+    }
 
     public static string Text(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object
         && value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String ? property.GetString()! : "";
