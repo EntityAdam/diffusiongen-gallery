@@ -12,7 +12,7 @@ using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
-namespace Gallery.Core.Features.Vision;
+namespace Gallery.Core.Features.Vision.Workflows;
 
 internal sealed class GalleryVisionWorkflow(
     GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager, CollectionOrganizer collectionOrganizer) : IGalleryVision

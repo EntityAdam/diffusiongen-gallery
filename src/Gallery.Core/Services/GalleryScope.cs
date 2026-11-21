@@ -16,7 +16,7 @@ using Gallery.Core.Features.Tags.Managers;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;
-using Gallery.Core.Features.Vision;
+using Gallery.Core.Features.Vision.Workflows;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 
