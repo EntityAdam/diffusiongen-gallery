@@ -6,6 +6,15 @@ namespace Gallery.Tests;
 public sealed class GalleryFilterTests
 {
     [Fact]
+    public void AwaitingApproval_WithoutDraftIds_ReturnsNoImages()
+    {
+        using var vault = new TestVault();
+        ImageRecord[] images = [new() { Id = "new" }, new() { Id = "analyzed", Description = "Approved notes" }];
+
+        Assert.Empty(vault.Scope.Catalog.Filter(images, new() { Analysis = GalleryFilter.AwaitingApproval }));
+    }
+
+    [Fact]
     public void GalleryFilter_WhenMultipleCriteriaAreApplied_ComposesEveryCriterion()
     {
         // Arrange
