@@ -5,10 +5,6 @@ using System.Text.RegularExpressions;
 using Gallery.Core.Models;
 using Gallery.Web.Components.Features.Backups;
 using Gallery.Web.Components.Features.Browsing;
-using Gallery.Web.Components.Features.Curation;
-using Microsoft.Extensions.DependencyInjection;
-using ShadCn.Blazor.Components;
-
 using Gallery.Web.Components.Features.Duplicates;
 using Gallery.Web.Components.Features.Media;
 using Gallery.Web.Components.Features.Storage;
@@ -28,32 +24,6 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class UiComponentTests
 {
-    [Fact]
-    public async Task WorkbenchSavedView_WhenNameIsEmpty_ThenDisplaysTheNameValidationMessage()
-    {
-        // Arrange
-        const BindingFlags InstanceMembers = BindingFlags.Instance | BindingFlags.NonPublic;
-        using var testVault = new TestVault();
-        using var libraryWorkbench = new LibraryWorkbench();
-        var services = new ServiceCollection();
-        services.AddShadCnBlazorComponents();
-        using var provider = services.BuildServiceProvider();
-        typeof(LibraryWorkbench).GetProperty("Toasts", InstanceMembers)!.SetValue(libraryWorkbench, provider.GetRequiredService<ISonnerService>());
-        GalleryCapabilityTestSetup.InjectGalleryCapabilities(libraryWorkbench, testVault.Scope);
-        typeof(LibraryWorkbench).GetProperty("Logger", InstanceMembers)!
-            .SetValue(libraryWorkbench, NullLogger<LibraryWorkbench>.Instance);
-        string[] expectedMessagePhrases = ["Saved view name", "''", "1 to 80 characters"];
-
-        // Act
-        await (Task)typeof(LibraryWorkbench).GetMethod("SaveViewAsync", InstanceMembers)!.Invoke(libraryWorkbench, null)!;
-
-        // Assert - gather the caller-facing message
-        var actualErrorMessage = (string)typeof(LibraryWorkbench).GetField("error", InstanceMembers)!.GetValue(libraryWorkbench)!;
-
-        // Assert
-        AsserterExceptionContract.AssertMessageContains(expectedMessagePhrases, actualErrorMessage);
-    }
-
     [Fact]
     public async Task TagManagement_ShowsUnusedDefinitionsAndCascadingActions()
     {
@@ -306,7 +276,6 @@ public sealed class UiComponentTests
         ParameterView parameterView = ParameterView.FromDictionary(new Dictionary<string, object?>
         {
             [nameof(GalleryImageCard.Image)] = new ImageRecord { Id = "sample", Name = "Sample", Rating = 3, IsFavorite = true, Collections = ["Hidden collection"] },
-            [nameof(GalleryImageCard.ShowSelection)] = true,
             [nameof(GalleryImageCard.Selected)] = true
         });
 

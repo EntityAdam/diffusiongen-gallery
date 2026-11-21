@@ -286,13 +286,7 @@ public sealed class GalleryBrowserState : IDisposable
         Page = Math.Min(Page, PageCount - 1);
         return Filter.Analysis == GalleryFilter.AwaitingApproval ? LoadThumbnailsAsync() : Task.CompletedTask;
     }
-    public string ToolBadge(string tool) => tool switch
-    {
-        "filters" when !TrashActive && GalleryFilterPanel.CountChanged(Filter) is > 0 and var count => count.ToString(),
-        "trash" when !catalog.IsPartial && catalog.Images.Count(image => image.IsMarkedForDeletion) is > 0 and var count => count.ToString(),
-        "intelligence" when Suggestions.Count > 0 => Suggestions.Count.ToString(),
-        _ => ""
-    };
+
     internal void SetGalleryActive(bool active)
     {
         galleryActive = active;

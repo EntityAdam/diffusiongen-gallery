@@ -253,6 +253,8 @@ public sealed class UiConsistencyTests
         await Invoke(fixture, home, "Navigation.SetActiveToolAsync", "filters");
         var drawer = fixture.LatestComponent<FilterDrawer>();
         await Invoke(fixture, drawer, "BeginSaveQuickFilter");
+        await Invoke(fixture, drawer, "SaveQuickFilterAsync");
+        Assert.Empty(await vault.Scope.Settings.LoadViewsAsync());
         typeof(FilterDrawer).GetField("quickFilterName", Private)!.SetValue(drawer, "Portraits");
         ComponentTestAccess.Set(home, "Browser.Filter", new GalleryFilter());
         await Invoke(fixture, drawer, "SaveQuickFilterAsync");

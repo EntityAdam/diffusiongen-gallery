@@ -54,7 +54,7 @@
         <p class="collection-result-count">@Media.Count of @ScopedMedia.Count() media</p>
         <div class="image-grid density-detail">
         @foreach (var image in PageMedia)
-        { <div @key="image.Id" class="collection-media-wrap"><GalleryImageCard Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)" ThumbnailFailed="@thumbnailFailures.Contains(image.Id)" Busy="@ControlsDisabled" Selected="@selection.Contains(image.Id)" ShowSelection="true" Select="args => Select(image.Id, args.ShiftKey)" Open="() => OpenMediaAsync(image)" Rate="value => RateAsync(image, value)" Favorite="() => FavoriteAsync(image)" Mark="() => MarkAsync(image)" />
+        { <div @key="image.Id" class="collection-media-wrap"><GalleryImageCard Image="image" Thumbnail="@thumbnails.GetValueOrDefault(image.Id)" ThumbnailFailed="@thumbnailFailures.Contains(image.Id)" Busy="@ControlsDisabled" Selected="@selection.Contains(image.Id)" Select="args => Select(image.Id, args.ShiftKey)" Open="() => OpenMediaAsync(image)" Rate="value => RateAsync(image, value)" Favorite="() => FavoriteAsync(image)" Mark="() => MarkAsync(image)" />
             @if (choosingMedia || Location.AllMedia) { <small class="collection-media-path">@Catalog.PathOf(image)</small> }
             @if (!image.LegacyCollections.IsEmpty) { <small class="collection-media-path">Previous collections: @string.Join(", ", image.LegacyCollections)</small> }
             @if (Set is not null && !choosingMedia && sort == "sequence" && !HasFilters) { <div class="collection-order-actions"><button disabled="@ControlsDisabled" @onclick="() => ReorderMedia(image.Id, -1)">Move earlier</button><button disabled="@ControlsDisabled" @onclick="() => ReorderMedia(image.Id, 1)">Move later</button></div> }

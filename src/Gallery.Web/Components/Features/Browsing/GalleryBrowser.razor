@@ -42,7 +42,7 @@
 
 <LibraryWorkbench KnownTags="Catalog.AllTags" Analysis="Analysis" Visible="@(!Catalog.IsPartial && State.ActiveTool is "organize" or "intelligence")"
                   Workflow="@State.ActiveTool" Images="Catalog.Images" SelectedIds="State.LibrarySelection" Busy="Activity.Busy"
-                  SaveTags="SaveTagsAsync" TagError="@tagError" Filter="State.Filter" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection" />
+                  SaveTags="SaveTagsAsync" TagError="@tagError" Changed="Catalog.ReloadAsync" ClearSelection="State.ClearSelection" />
 
 <GalleryToolPanel State="State" Catalog="Catalog" Visible="@(Active && !OverlayOpen)"
                   Fullscreen="() => OpenViewerAsync(null)" StartReview="StartReviewAsync" Refreshed="Refreshed" />
@@ -51,7 +51,7 @@
     private RenderFragment<ImageRecord> RenderCard => image =>
         @<GalleryImageCard @key="image.Id" Image="image" Thumbnail="@State.Thumbnails.Get(image.Id)" ThumbnailFailed="@State.Thumbnails.Failed(image.Id)"
                            Busy="Activity.Busy" Selected="@((State.TrashActive ? State.RemovalSelection : State.LibrarySelection).Contains(image.Id))"
-                           ShowSelection="true" Select="args => State.SelectCard(image.Id, args.ShiftKey)" Open="() => Presentation.OpenAsync(image)"
+                           Select="args => State.SelectCard(image.Id, args.ShiftKey)" Open="() => Presentation.OpenAsync(image)"
                            Rate="value => Curation.ToggleRatingAsync(image, value)" Favorite="() => Curation.ToggleFavoriteAsync(image)"
                            Mark="() => Curation.ToggleMarkAsync(image)"
                            HasSuggestion="@State.Suggestions.ContainsKey(image.Id)" ReviewSuggestion="() => OpenViewerAsync(image.Id)" />;
