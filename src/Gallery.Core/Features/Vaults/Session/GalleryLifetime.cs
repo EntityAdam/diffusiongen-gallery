@@ -12,7 +12,9 @@ internal sealed record GalleryLocation(IGalleryStore GalleryStore, VaultStore Va
 /// Current publishes the paired stores and checkout atomically. Retired checkouts remain owned by the
 /// publishing operation until it finishes old-location cleanup. Disposal admission is thread safe.
 /// </summary>
-internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vaultStore, IGalleryStoreFactory? storeFactory = null)
+internal sealed class GalleryLifetime(
+    IGalleryStore galleryStore, VaultStore vaultStore, IGalleryStoreFactory? storeFactory = null,
+    Func<string, VaultCheckout>? acquireCheckout = null)
 {
     // Serializes disposal admission with checkout publication so disposal cleanup observes every published checkout.
     private readonly object publicationGate = new();
@@ -45,7 +47,7 @@ internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vau
         ObjectDisposedException.ThrowIf(IsDisposed, this);
         var location = Current;
         if (location.Checkout is not null) return;
-        var acquiredCheckout = VaultCheckout.Acquire(location.VaultStore.Root);
+        var acquiredCheckout = (acquireCheckout ?? VaultCheckout.Acquire)(location.VaultStore.Root);
         lock (publicationGate)
         {
             if (!IsDisposed)

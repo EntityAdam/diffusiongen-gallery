@@ -140,9 +140,11 @@ public sealed class StorageConfigurationTests
             }
         };
         var independentlyDeserialized = JsonSerializer.Deserialize<ImageRecord>(
-            JsonSerializer.Serialize(source))! with { StoredPath = "destination/image.dpng" };
+            JsonSerializer.Serialize(source))!;
 
         Assert.True(VaultLocationCoordinator.CatalogRecordsMatch([independentlyDeserialized], [source]));
+        Assert.False(VaultLocationCoordinator.CatalogRecordsMatch(
+            [independentlyDeserialized with { StoredPath = "destination/image.dpng" }], [source]));
 
         var changed = independentlyDeserialized with
         {

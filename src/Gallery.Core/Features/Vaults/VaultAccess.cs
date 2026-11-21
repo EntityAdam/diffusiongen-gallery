@@ -66,11 +66,14 @@ internal sealed class VaultAccess
         var lockRequestsAtAdmission = ExplicitLockRequests;
         await galleryLifetime.Gate.WaitAsync();
         VaultOpenTelemetry.Record(activity, "vault.unlock.gate_wait_ms", started);
+        VaultCheckout? acquiredCheckout = null;
         try
         {
             if (ExplicitLockRequests != lockRequestsAtAdmission)
                 throw new InvalidOperationException("Vault unlock was superseded by an explicit lock request.");
+            var checkoutWasMissing = galleryLifetime.Current.Checkout is null;
             galleryLifetime.EnsureCheckout();
+            if (checkoutWasMissing) acquiredCheckout = galleryLifetime.Current.Checkout;
             var store = galleryLifetime.Current.VaultStore;
             var key = credentialKind == VaultCredentialKind.RecoveryPhrase
                 ? await store.UnlockWithRecoveryPhraseAsync(credential)
@@ -91,7 +94,12 @@ internal sealed class VaultAccess
         }
         finally
         {
+            bool wasSuperseded;
+            lock (activationGate) wasSuperseded = explicitLockRequests != lockRequestsAtAdmission;
             galleryLifetime.Gate.Release();
+            // A lock during initial acquisition could not capture the unpublished checkout.
+            if (wasSuperseded && acquiredCheckout is not null)
+                _ = ReleaseCheckoutAfterOperationsAsync(acquiredCheckout);
             VaultOpenTelemetry.Record(activity, "vault.unlock.elapsed_ms", started);
         }
     }

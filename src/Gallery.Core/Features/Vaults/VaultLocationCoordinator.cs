@@ -241,7 +241,6 @@ internal sealed class VaultLocationCoordinator(
             if (copiedRecord.Id != sourceRecord.Id
                 || (copiedRecord with
                 {
-                    StoredPath = sourceRecord.StoredPath,
                     Collections = [],
                     LegacyCollections = [],
                     VisionFacts = null

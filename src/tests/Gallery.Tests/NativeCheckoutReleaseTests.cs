@@ -9,6 +9,79 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class NativeCheckoutReleaseTests
 {
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    public async Task Lock_WhenUnlockIsPublishingItsFirstCheckout_ThenReleasesThatCheckout(
+        bool invalidCredential, bool outstandingLease, bool newerUnlock)
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var previousKey = fixture.Session.Key;
+        await fixture.Scope.Vault.CloseVaultAsync();
+        KeyLease? lease = null;
+        if (outstandingLease)
+        {
+            fixture.Session.Unlock(previousKey);
+            lease = fixture.Session.AcquireUnlockedSession().Borrow();
+            fixture.Session.Lock();
+        }
+        System.Security.Cryptography.CryptographicOperations.ZeroMemory(previousKey);
+        var checkoutAcquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var publishCheckout = new ManualResetEventSlim();
+        var lifetime = new GalleryLifetime(fixture.Store, fixture.Vault, acquireCheckout: root =>
+        {
+            var checkout = VaultCheckout.Acquire(root);
+            checkoutAcquired.TrySetResult();
+            if (publishCheckout.Wait(TimeSpan.FromSeconds(10))) return checkout;
+            checkout.Dispose();
+            throw new TimeoutException("Checkout publication was not released.");
+        });
+        var access = new VaultAccess(lifetime, fixture.Session);
+        var unlock = Task.Run(() => access.UnlockWithPassphraseAsync(
+            invalidCredential ? "incorrect passphrase" : TestVault.Passphrase));
+        try
+        {
+            try
+            {
+                await checkoutAcquired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Null(lifetime.Current.Checkout);
+                access.LockVault();
+            }
+            finally { publishCheckout.Set(); }
+
+            if (invalidCredential)
+                await Assert.ThrowsAnyAsync<System.Security.Cryptography.CryptographicException>(() => unlock);
+            else
+                await Assert.ThrowsAsync<InvalidOperationException>(() => unlock);
+            Assert.False(fixture.Session.IsUnlocked);
+            if (lease is not null)
+            {
+                var checkout = lifetime.Current.Checkout;
+                Assert.NotNull(checkout);
+                Assert.Throws<IOException>(() => VaultCheckout.Acquire(fixture.Root));
+                if (newerUnlock)
+                {
+                    var cleanup = access.ReleaseCheckoutAfterOperationsAsync(checkout);
+                    Assert.False(cleanup.IsCompleted);
+                    await access.UnlockWithPassphraseAsync(TestVault.Passphrase);
+                    lease.Dispose();
+                    await cleanup.WaitAsync(TimeSpan.FromSeconds(5));
+                    Assert.True(fixture.Session.IsUnlocked);
+                    Assert.Same(checkout, lifetime.Current.Checkout);
+                    Assert.Throws<IOException>(() => VaultCheckout.Acquire(fixture.Root));
+                    access.LockVault();
+                }
+                lease.Dispose();
+            }
+            using var nextCheckout = await WaitForCheckoutReleaseAsync(fixture.Root);
+            Assert.Null(lifetime.Current.Checkout);
+        }
+        finally { lease?.Dispose(); }
+    }
+
     [Fact]
     public async Task CheckoutRelease_WhenInitialPublicationIsStillUnderTheGate_ThenObservesThePublishedCheckout()
     {
@@ -168,4 +241,14 @@ public sealed class NativeCheckoutReleaseTests
 
     private static VaultAccess Access(GalleryScope service) =>
         (VaultAccess)typeof(GalleryScope).GetField("vaultAccess", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
+
+    private static async Task<VaultCheckout> WaitForCheckoutReleaseAsync(string root)
+    {
+        var timeout = DateTime.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            try { return VaultCheckout.Acquire(root); }
+            catch (IOException) when (DateTime.UtcNow < timeout) { await Task.Delay(25); }
+        }
+    }
 }
