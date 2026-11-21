@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core.Exceptions;
@@ -126,7 +125,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
     private VideoTools RequiredVideoTools() =>
         videoTools is not null && videoTools.IsAvailable ? videoTools
             : throw new VideoToolUnavailableException(VideoTools.MissingMessage, GalleryLogEvent.PrepareVideo,
-                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Video.RequiredTools", "ffmpeg, ffprobe")));
+                new ContextualData().Add("Video.RequiredTools", "ffmpeg, ffprobe"));
 
     private static async Task<(VideoTools.ProbeResult Probe, byte[] FrameBytes)> ReadTemporaryVideoAsync(
         ReadOnlyMemory<byte> bytes, VideoTools tools)

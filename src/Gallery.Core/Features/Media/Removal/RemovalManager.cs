@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
@@ -78,8 +77,8 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         var imageRecord = await store.ReadRecordAsync(id, key);
         if (!RemovalRules.CanRemove(imageRecord))
             throw new ImageNotMarkedForDeletionException($"'{imageRecord.Name}' (media item '{imageRecord.Id}') must be marked for deletion first.",
-                GalleryLogEvent.PrepareRemoval, new ContextualData(ImmutableDictionary<string, object>.Empty
-                    .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false)));
+                GalleryLogEvent.PrepareRemoval, new ContextualData()
+                    .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false));
         var original = OriginalPath(imageRecord);
         return new(id, imageRecord.Name, original, SourceExists(original));
     }
@@ -161,8 +160,8 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
             var imageRecord = await store.ReadRecordAsync(removalItem.Id, key);
             if (!RemovalRules.CanRemove(imageRecord))
                 throw new ImageNotMarkedForDeletionException($"Media item '{imageRecord.Id}' is no longer marked for deletion.",
-                    GalleryLogEvent.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
-                        .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false)));
+                    GalleryLogEvent.RemoveImage, new ContextualData()
+                        .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false));
             var original = OriginalPath(imageRecord);
             if (RemovalPreviewHasChanged(removalItem, original))
                 throw new InvalidOperationException("Original file status changed. Review a new removal preview.");
@@ -197,9 +196,9 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
 
     private static GalleryRemovalException CreateRemovalFailure(string message, string imageId,
         bool catalogRemoved, string? restoredPath, bool originalDeleted, Exception cause) =>
-        new(message, new RemovalFailureLogEvent(), new ContextualData(ImmutableDictionary<string, object>.Empty
+        new(message, new RemovalFailureLogEvent(), new ContextualData()
             .Add("Image.Id", imageId).Add("Gallery.CatalogRemoved", catalogRemoved)
-            .Add("Gallery.RestoredPath", restoredPath ?? "").Add("Original.Deleted", originalDeleted)), cause);
+            .Add("Gallery.RestoredPath", restoredPath ?? "").Add("Original.Deleted", originalDeleted), cause);
 
     private static bool RemovalPreviewHasChanged(RemovalItem removalItem, string currentOriginalPath) =>
         !string.Equals(currentOriginalPath, removalItem.OriginalPath, StringComparison.Ordinal)

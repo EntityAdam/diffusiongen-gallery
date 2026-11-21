@@ -348,8 +348,7 @@ internal sealed class GalleryDriveQueue : IDisposable
             {
                 throw new DriveOperationConflictException("Staged media is not authentic ciphertext.",
                     GalleryLogEvent.DriveOperationConflict,
-                    new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty
-                        .Add("Image.Id", imageId)), exception);
+                    new ContextualData().Add("Image.Id", imageId), exception);
             }
         }
 

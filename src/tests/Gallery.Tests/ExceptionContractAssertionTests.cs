@@ -1,5 +1,5 @@
-using System.Collections.Immutable;
 using System.Net;
+using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Shared.Diagnostics;
 
@@ -9,14 +9,58 @@ namespace Gallery.Tests;
 public sealed class ExceptionContractAssertionTests
 {
     [Fact]
-    public void Contract_WhenIndependentExpectationsMatch_ThenAcceptsCauseStackAndNestedContext()
+    public void Context_WhenAddingSupportedScalars_ThenPreservesValuesAndExposesOnlyTypedAdditions()
     {
-        var nested = new Dictionary<string, object> { ["values"] = new[] { 1, 2 }, ["label"] = "original" };
+        var date = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        var context = new ContextualData()
+            .Add("String", "value").Add("Int", 1).Add("Long", 2L)
+            .Add("Float", 3.5f).Add("Double", 4.5d).Add("Decimal", 5.5m)
+            .Add("Bool", true).Add("DateTime", date);
+
+        Assert.Equal("value", context.ValuesByName["String"]);
+        Assert.Equal(1, context.ValuesByName["Int"]);
+        Assert.Equal(2L, context.ValuesByName["Long"]);
+        Assert.Equal(3.5f, context.ValuesByName["Float"]);
+        Assert.Equal(4.5d, context.ValuesByName["Double"]);
+        Assert.Equal(5.5m, context.ValuesByName["Decimal"]);
+        Assert.Equal(true, context.ValuesByName["Bool"]);
+        Assert.Equal(date, context.ValuesByName["DateTime"]);
+        var addTypes = typeof(ContextualData).GetMethods().Where(method => method.Name == "Add")
+            .Select(method => method.GetParameters()[1].ParameterType).ToHashSet();
+        Assert.True(addTypes.SetEquals([typeof(string), typeof(int), typeof(long), typeof(float),
+            typeof(double), typeof(decimal), typeof(bool), typeof(DateTime)]));
+        Assert.All(typeof(ContextualData).GetConstructors(), constructor => Assert.Empty(constructor.GetParameters()));
+        Assert.Throws<ArgumentNullException>(() => context.Add("Null", (string)null!));
+    }
+
+    [Fact]
+    public void Context_WhenReusedOrReplaced_ThenExceptionKeepsItsSnapshotAndDiagnosticRendering()
+    {
+        var context = new ContextualData().Add("Import.Detail", "original");
+        var exception = CaptureThrown(new ImportFolderException("Cannot import", new GalleryLogEvent("Gallery.ImportFolder"), context));
+        context.Add("Import.Detail", "changed");
+        var returned = exception.ContextualDataByName;
+        returned.Add("Import.Detail", "returned change");
+
+        Assert.Equal("original", exception.ContextualDataByName.ValuesByName["Import.Detail"]);
+        Assert.Equal("changed", context.ValuesByName["Import.Detail"]);
+        Assert.Equal("returned change", returned.ValuesByName["Import.Detail"]);
+        Assert.Equal(500, exception.ContextualDataByName.ValuesByName["HttpStatusCode"]);
+        Assert.Contains("HttpStatusCode: InternalServerError", exception.ToDiagnosticString(), StringComparison.Ordinal);
+        using var json = JsonDocument.Parse(exception.ToJson());
+        Assert.Equal(500, json.RootElement.GetProperty("HttpStatusCode").GetInt32());
+        Assert.Equal("original", json.RootElement.GetProperty("Import.Detail").GetString());
+    }
+
+    [Fact]
+    public void Contract_WhenIndependentExpectationsMatch_ThenAcceptsCauseStackAndSerializedContext()
+    {
+        var nested = "{\"values\":[1,2],\"label\":\"original\"}";
         var expected = ExpectedExceptionContract.Create(typeof(ImportFolderException), ["cannot", "import"],
             HttpStatusCode.InternalServerError, Severity.Error, "One or more files could not be imported.",
             "Gallery.ImportFolder", new Dictionary<string, object?> { ["Import.Detail"] = nested });
         var actual = CaptureThrown(new ImportFolderException("Cannot import this folder", new GalleryLogEvent("Gallery.ImportFolder"),
-            new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Import.Detail", nested)),
+            new ContextualData().Add("Import.Detail", nested),
             new AggregateException(new InvalidOperationException("provider failure"))));
 
         AsserterExceptionContract.AssertMatches(expected, actual);
