@@ -17,7 +17,7 @@ internal static class BrowsingWorkspaceFixture
     internal static Task<WorkspaceSession> OpenSessionAsync(TestVault testVault, List<ImageRecord> imageRecords) =>
         OpenSessionAsync(testVault, new BrowsingCatalogSource(testVault.Scope.Catalog, imageRecords));
 
-    internal static async Task<WorkspaceSession> OpenSessionAsync(TestVault testVault, BrowsingCatalogSource catalog)
+    internal static async Task<WorkspaceSession> OpenSessionAsync(TestVault testVault, BrowsingCatalogSource catalog, int? initialPageSize = null)
     {
         if (!testVault.Scope.Vault.IsUnlocked) await testVault.InitializeAsync();
         var services = GalleryCapabilityTestSetup.Workspace(testVault.Scope) with
@@ -29,7 +29,7 @@ internal static class BrowsingWorkspaceFixture
             new ComponentRenderFixture.NoOpJsRuntime(), NullLogger.Instance, action => action(), () => { });
         try
         {
-            await workspace.Catalog.OpenAsync(workspace.Browser.PageSize, trash: false);
+            await workspace.Catalog.OpenAsync(initialPageSize ?? workspace.Browser.PageSize, trash: false);
             return workspace;
         }
         catch

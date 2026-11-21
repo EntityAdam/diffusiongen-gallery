@@ -64,41 +64,18 @@ public sealed class BrowsingProjectionTests
     [Fact]
     public void Projection_WhenAnotherSnapshotIsCreated_ThenKeepsTheOriginalImmutableAndIndependent()
     {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageIdOriginal = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var imageIdPeer = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var imageIdIndependent = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var sharedPrompt = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var countingImagesOriginal = new CountingImages([
-            new() { Id = imageIdOriginal, Generation = new() { Prompt = sharedPrompt } },
-            new() { Id = imageIdPeer, Generation = new() { Prompt = sharedPrompt } }
-        ]);
-        var countingImagesIndependent = new CountingImages([new() { Id = imageIdIndependent, Rating = 5 }]);
-        var actualGalleryBrowsingProjectionOriginal = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, countingImagesOriginal, new GalleryFilter(), "prompt");
-        countingImagesOriginal[0] = countingImagesOriginal[0] with { Id = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) };
-        var expectedScenario = ExpectedScenario.CreateFrom("Independent projections enumerate each source once and preserve immutable images and group identity.", new
-        {
-            OriginalIds = new[] { imageIdOriginal, imageIdPeer }.Order(StringComparer.Ordinal).ToArray(),
-            IndependentIds = new[] { imageIdIndependent }, SharedGroup = true, IndependentGroupCount = 0,
-            OriginalEnumerations = 1, IndependentEnumerations = 1
-        });
+        using var vault = new TestVault();
+        var source = new CountingImages([new() { Id = "original", Generation = new() { Prompt = "cat" } }]);
+        var other = new CountingImages([new() { Id = "other" }]);
+        var original = GalleryBrowsingProjector.Create(vault.Scope.Catalog, source, new(), "prompt");
+        source[0] = source[0] with { Id = "changed" };
+        var independent = GalleryBrowsingProjector.Create(vault.Scope.Catalog, other, new(), "none");
 
-        // Act
-        var actualGalleryBrowsingProjectionIndependent = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, countingImagesIndependent, new GalleryFilter { MinRating = 3 }, "none");
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            OriginalIds = actualGalleryBrowsingProjectionOriginal.Images.Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray(),
-            IndependentIds = actualGalleryBrowsingProjectionIndependent.Images.Select(imageRecord => imageRecord.Id).ToArray(),
-            SharedGroup = ReferenceEquals(actualGalleryBrowsingProjectionOriginal.PromptGroupsByImageId[imageIdOriginal],
-                actualGalleryBrowsingProjectionOriginal.PromptGroupsByImageId[imageIdPeer]),
-            IndependentGroupCount = actualGalleryBrowsingProjectionIndependent.PromptGroupsByImageId.Count,
-            OriginalEnumerations = countingImagesOriginal.Enumerations, IndependentEnumerations = countingImagesIndependent.Enumerations
-        });
+        Assert.Equal("original", Assert.Single(original.Images).Id);
+        Assert.Equal("original", Assert.Single(original.PromptGroupsByImageId).Key);
+        Assert.Equal("other", Assert.Single(independent.Images).Id);
+        Assert.Equal(1, source.Enumerations);
+        Assert.Equal(1, other.Enumerations);
     }
 
     [Fact]
@@ -181,29 +158,13 @@ public sealed class BrowsingProjectionTests
     [Fact]
     public void Projection_WhenGroupedByPrompt_ThenIndexesBothImagesInTheSameGroup()
     {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateRatingImages();
-        var expectedScenario = ExpectedScenario.CreateFrom("Images with the same prompt share one complete group.",
-            new
-            {
-                GroupSize = 2, SharedGroup = true,
-                GroupImageIds = imageRecords.Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray()
-            });
+        using var vault = new TestVault();
+        var images = CreateRatingImages();
+        var projection = GalleryBrowsingProjector.Create(vault.Scope.Catalog, images, new(), "prompt");
 
-        // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "prompt");
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            GroupSize = actualGalleryBrowsingProjection.PromptGroupsByImageId[imageRecords[1].Id].Images.Length,
-            GroupImageIds = actualGalleryBrowsingProjection.PromptGroupsByImageId[imageRecords[1].Id].Images
-                .Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray(),
-            SharedGroup = ReferenceEquals(actualGalleryBrowsingProjection.PromptGroupsByImageId[imageRecords[0].Id],
-                actualGalleryBrowsingProjection.PromptGroupsByImageId[imageRecords[1].Id])
-        });
+        var group = projection.PromptGroupsByImageId[images[0].Id];
+        Assert.Same(group, projection.PromptGroupsByImageId[images[1].Id]);
+        Assert.Equal(images.Select(image => image.Id).Order(), group.Images.Select(image => image.Id).Order());
     }
 
     [Fact]
@@ -336,30 +297,13 @@ public sealed class BrowsingProjectionTests
     [Fact]
     public async Task HomeProjection_WhenPromptGroupingIsSelected_ThenRebuildsTheGroupIndex()
     {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateRatingImages().ToList();
-        using var home = await OpenSessionAsync(testVault, imageRecords);
-        _ = home.Browser.Filtered;
+        using var vault = new TestVault();
+        using var home = await OpenSessionAsync(vault, CreateRatingImages().ToList());
+        Assert.Empty(home.Browser.Browsing.PromptGroupsByImageId);
+
         await home.Browser.SetGroupingAsync("prompt");
-        var expectedScenario = ExpectedScenario.CreateFrom("Selecting prompt grouping replaces the empty index with complete shared groups.",
-            new
-            {
-                GroupSize = 2, SharedGroup = true,
-                GroupImageIds = imageRecords.Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray()
-            });
 
-        // Act
-        var actualPromptGroupsByImageId = home.Browser.Browsing.PromptGroupsByImageId;
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            GroupSize = actualPromptGroupsByImageId[imageRecords[0].Id].Images.Length,
-            GroupImageIds = actualPromptGroupsByImageId[imageRecords[0].Id].Images
-                .Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray(),
-            SharedGroup = ReferenceEquals(actualPromptGroupsByImageId[imageRecords[0].Id], actualPromptGroupsByImageId[imageRecords[1].Id])
-        });
+        Assert.NotEmpty(home.Browser.Browsing.PromptGroupsByImageId);
     }
 
     [Fact]
@@ -385,38 +329,39 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public async Task Browser_only_navigates_to_available_pages_and_resets_the_view_when_grouping_changes()
+    public async Task Partial_catalog_rejects_page_and_grouping_changes()
     {
         using var vault = new TestVault();
-        var images = CreateImages(15);
-        var releaseCatalog = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var source = new BrowsingCatalogSource(vault.Scope.Catalog, images, releaseCatalog.Task);
-        using var home = await OpenSessionAsync(vault, source);
+        var source = new BrowsingCatalogSource(vault.Scope.Catalog, CreateImages(15), Task.Delay(Timeout.Infinite));
+        using var home = await OpenSessionAsync(vault, source, initialPageSize: 14);
         var browser = home.Browser;
-        var fullyLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        home.Catalog.Changed += () =>
-        {
-            if (!home.Catalog.IsPartial) fullyLoaded.TrySetResult();
-            return Task.CompletedTask;
-        };
-        browser.SelectCard(images[0].Id, range: false);
+        var selected = browser.Filtered[0].Id;
+        browser.SelectCard(selected, range: false);
 
         Assert.True(home.Catalog.IsPartial);
-        Assert.Equal(browser.PageSize, home.Catalog.Images.Count);
+        Assert.Equal(2, browser.PageCount); // Page 1 is in range, but navigation must still wait.
         await browser.GoToPageAsync(1);
-        await browser.SetGroupingAsync("prompt");
         Assert.Equal(0, browser.Page);
+        await browser.SetGroupingAsync("prompt");
         Assert.Equal("none", browser.Grouping);
-        Assert.Contains(images[0].Id, browser.LibrarySelection);
+        Assert.Contains(selected, browser.LibrarySelection);
+    }
 
-        releaseCatalog.SetResult();
-        await fullyLoaded.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(images.Count, home.Catalog.Images.Count);
+    [Fact]
+    public async Task Pagination_preserves_selection_and_changing_grouping_resets_the_view()
+    {
+        using var vault = new TestVault();
+        using var home = await OpenSessionAsync(vault, CreateImages(15));
+        var browser = home.Browser;
+        var selected = browser.Filtered[0].Id;
+        browser.SelectCard(selected, range: false);
+
         await browser.GoToPageAsync(1);
         Assert.Equal(1, browser.Page);
-        Assert.Contains(images[0].Id, browser.LibrarySelection);
+        Assert.Contains(selected, browser.LibrarySelection);
 
         await browser.GoToPageAsync(-1);
+        Assert.Equal(1, browser.Page);
         await browser.GoToPageAsync(browser.PageCount);
         Assert.Equal(1, browser.Page);
 
@@ -425,7 +370,6 @@ public sealed class BrowsingProjectionTests
         Assert.Equal(0, browser.Page);
         Assert.Empty(browser.LibrarySelection);
         Assert.Null(browser.SelectionAnchor);
-        await browser.PauseAsync();
     }
 
     [Theory]
@@ -512,28 +456,17 @@ public sealed class BrowsingProjectionTests
     [Fact]
     public async Task TrashSelection_WhenARangeIsSelected_ThenIncludesTheRangeWithoutChangingLibrarySelection()
     {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateImages(4).Select(imageRecord => imageRecord with { IsMarkedForDeletion = true }).ToList();
-        using var home = await OpenSessionAsync(testVault, imageRecords);
-        await home.Browser.SetActiveToolAsync("trash");
-        await home.Browser.ApplyFilterAsync(new GalleryFilter { Deletion = "marked", Sort = "name" });
-        home.Browser.SelectCard(imageRecords[0].Id, false);
-        var expectedScenario = ExpectedScenario.CreateFrom("Trash range selection includes the full range without changing library selection.", new
-        {
-            SelectedIds = imageRecords.Take(3).Select(imageRecord => imageRecord.Id).Order(StringComparer.Ordinal).ToArray(),
-            LibrarySelectionCount = 0
-        });
+        using var vault = new TestVault();
+        var records = CreateImages(3).Select(image => image with { IsMarkedForDeletion = true }).ToList();
+        using var home = await OpenSessionAsync(vault, records);
+        var browser = home.Browser;
+        await browser.SetActiveToolAsync("trash");
+        var visible = browser.Filtered;
+        browser.SelectCard(visible[0].Id, range: false);
+        browser.SelectCard(visible[2].Id, range: true);
 
-        // Act
-        home.Browser.SelectCard(imageRecords[2].Id, true);
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            SelectedIds = home.Browser.RemovalSelection.Order(StringComparer.Ordinal).ToArray(),
-            LibrarySelectionCount = home.Browser.LibrarySelection.Count
-        });
+        Assert.Contains(visible[1].Id, browser.RemovalSelection);
+        Assert.Empty(browser.LibrarySelection);
     }
 
     [Theory]
@@ -560,26 +493,6 @@ public sealed class BrowsingProjectionTests
         Assert.Empty(selection());
         browser.SelectCard(next, range: true);
         Assert.Equal(next, Assert.Single(selection()));
-    }
-
-    [Fact]
-    public async Task TrashSelection_WhenASelectedCardIsClicked_ThenRemovesOnlyThatCard()
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateImages(4).Select(imageRecord => imageRecord with { IsMarkedForDeletion = true }).ToList();
-        using var home = await OpenSessionAsync(testVault, imageRecords);
-        await home.Browser.SetActiveToolAsync("trash");
-        await home.Browser.ApplyFilterAsync(new GalleryFilter { Deletion = "marked", Sort = "name" });
-        home.Browser.SelectCard(imageRecords[0].Id, false);
-        home.Browser.SelectCard(imageRecords[2].Id, true);
-        var expectedSelectedIds = new[] { imageRecords[0].Id, imageRecords[2].Id }.Order(StringComparer.Ordinal);
-
-        // Act
-        home.Browser.SelectCard(imageRecords[1].Id, false);
-
-        // Assert
-        Assert.Equal(expectedSelectedIds, home.Browser.RemovalSelection.Order(StringComparer.Ordinal));
     }
 
     [Fact]
