@@ -20,5 +20,6 @@ public sealed record ExportFile
     [JsonPropertyName("Content")]
     public ImmutableArray<byte> ContentBytes => ImmutableArray.CreateRange(contentBytes);
     public byte[] CopyContentBytes() => contentBytes.ToArray();
+    public Stream OpenRead() => new MemoryStream(contentBytes, writable: false);
     public void ClearContent() => CryptographicOperations.ZeroMemory(contentBytes);
 }

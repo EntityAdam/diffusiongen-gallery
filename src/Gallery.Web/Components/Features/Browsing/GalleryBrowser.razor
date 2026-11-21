@@ -10,7 +10,7 @@
     {
         <div class="gallery-layout grid min-w-0 grid-cols-1"
              data-has-selection="@((State.LibrarySelection.Count > 0 || State.RemovalSelection.Count > 0) ? "true" : "false")"
-             data-can-edit-tags="@(CanEditTags ? "true" : "false")">
+             data-can-use-gallery-selection="@(CanUseSelection ? "true" : "false")">
             @if (Configuration.GetValue<bool>("Gallery:BrowsingDiagnostics"))
             {
                 <GalleryBrowsingCapture InfiniteScroll="State.InfiniteScroll" />

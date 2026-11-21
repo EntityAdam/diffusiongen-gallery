@@ -7,12 +7,15 @@ using Gallery.Web.Components.Features.Tags;
 using Gallery.Web.Components.Features.Vision;
 using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
 
 namespace Gallery.Web.Components.Features.Browsing;
 
 public partial class GalleryBrowser
 {
     [Inject] private IGalleryRecordEditor Gallery { get; set; } = default!;
+    [Inject] private IGalleryMedia Media { get; set; } = default!;
+    [Inject] private IJSRuntime JS { get; set; } = default!;
     [CascadingParameter] public WorkspaceCommands Commands { get; set; } = default!;
     [Parameter, EditorRequired] public GalleryBrowserState State { get; set; } = default!;
     [Parameter, EditorRequired] public WorkspaceCatalog Catalog { get; set; } = default!;
@@ -30,8 +33,8 @@ public partial class GalleryBrowser
     private ImageRecord[]? taggingImages;
     private string tagError = "";
     internal bool TaggingOpen => taggingImages is not null;
-    private bool CanEditTags => !TaggingOpen && Active && !State.TrashActive && !Catalog.IsPartial && !Activity.Busy
-        && !Presentation.IsOpen && !OverlayOpen && State.LibrarySelection.Count > 0;
+    private bool CanUseSelection => Active && Presentation.CanPresent && !State.TrashActive && !Catalog.IsPartial
+        && !Activity.Busy && !Presentation.IsOpen && !Removal.IsOpen && !TaggingOpen && State.LibrarySelection.Count > 0;
 
     protected override void OnParametersSet()
     {
@@ -42,6 +45,7 @@ public partial class GalleryBrowser
     {
         if (TaggingOpen) return;
         if (key == "t") OpenTagging();
+        else if (key == "e") await ExportSelectionAsync();
         else if (key == "escape") State.ClearSelection();
         else if (Catalog.ImagesById.TryGetValue(id, out var image))
         {
@@ -54,12 +58,29 @@ public partial class GalleryBrowser
 
     private void OpenTagging()
     {
-        if (!CanEditTags) return;
+        if (!CanUseSelection) return;
         tagError = "";
         taggingImages = State.LibrarySelection.Select(id => Catalog.ImagesById[id]).ToArray();
     }
 
     private void CloseTagging() => taggingImages = null;
+
+    private Task ExportSelectionAsync()
+    {
+        if (!CanUseSelection) return Task.CompletedTask;
+        var ids = State.LibrarySelection.ToArray();
+        return Commands.RunAsync(ids.Length == 1 ? "Preparing media download..." : "Preparing ZIP download...", async () =>
+        {
+            var file = ids.Length == 1 ? await Media.ExportAsync(ids[0]) : await Media.ExportZipAsync(ids);
+            try
+            {
+                if (!Presentation.CanPresent) return;
+                await MediaDownload.SendAsync(JS, file);
+                Activity.Message = $"Download started: {file.FileName}. This copy is no longer protected by the gallery.";
+            }
+            finally { file.ClearContent(); }
+        });
+    }
 
     private async Task SaveTagsAsync(TagEdit edit)
     {
