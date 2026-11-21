@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Shared.Diagnostics;
 
@@ -83,7 +82,7 @@ internal sealed class VaultSession : IDisposable
             throw new VaultLockedException(timedOut
                     ? "The gallery locked automatically due to inactivity."
                     : UnlockRequiredMessage, GalleryLogEvent.AcquireVaultKey,
-                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", timedOut ? "timed_out" : "locked")));
+                new ContextualData().Add("Vault.State", timedOut ? "timed_out" : "locked"));
         }
     }
 
