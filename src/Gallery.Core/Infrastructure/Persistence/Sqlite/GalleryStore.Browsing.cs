@@ -19,6 +19,9 @@ internal sealed partial class GalleryStore
     private sealed record BrowseIndex(int Version, long Revision, int TotalRecords,
         ImmutableArray<string> All, ImmutableArray<string> Active, ImmutableArray<string> Marked);
 
+    private sealed class BrowseIndexRevisionConflictException(long expectedRevision, long actualRevision)
+        : InvalidOperationException($"Browse index revision changed from {expectedRevision} to {actualRevision} before it could be saved.");
+
     public async Task<GalleryCatalog?> ReadInitialPageAsync(int pageSize, InitialPageMode mode, byte[] key, CancellationToken token)
     {
         await using var connection = await OpenAsync();
@@ -48,7 +51,15 @@ internal sealed partial class GalleryStore
         var records = await ReadImageRecordsAsync(connection, key,
             Activity.Current is { OperationName: GalleryLoadOperationName, IsAllDataRequested: true } activity ? activity : null, token, transaction);
         transaction.Commit();
-        var current = await SaveBrowseIndexAsync(records, revision, key, token);
+        var current = true;
+        try
+        {
+            await SaveBrowseIndexAsync(records, revision, key, token);
+        }
+        catch (BrowseIndexRevisionConflictException)
+        {
+            current = false;
+        }
         return new(records, revision, records.Count, true, current, false);
     }
 
@@ -138,15 +149,16 @@ internal sealed partial class GalleryStore
         return revision;
     }
 
-    private async Task<bool> SaveBrowseIndexAsync(List<ImageRecord> records, long revision, byte[] key, CancellationToken token)
+    private async Task SaveBrowseIndexAsync(List<ImageRecord> records, long revision, byte[] key, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         await using var connection = await OpenAsync();
         using var transaction = connection.BeginTransaction();
-        if (await ReadBrowseRevisionAsync(connection, transaction, token) != revision) return false;
+        var currentRevision = await ReadBrowseRevisionAsync(connection, transaction, token);
+        if (currentRevision != revision)
+            throw new BrowseIndexRevisionConflictException(revision, currentRevision);
         await WriteBrowseIndexAsync(connection, transaction, records, revision, key, token);
         transaction.Commit();
-        return true;
     }
 
     private static async Task WriteRefreshedRecordsAsync(SqliteConnection connection, SqliteTransaction transaction,
