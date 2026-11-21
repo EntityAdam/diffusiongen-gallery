@@ -84,6 +84,28 @@ public sealed class GalleryIngestionTests
     }
 
     [Fact]
+    public async Task OpenThumbnailAsync_AfterImport_ReturnsReadablePngStreamOwnedByCaller()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng()), "thumbnail.png", "folder");
+
+        using var thumbnailStream = await fixture.Scope.Media.OpenThumbnailAsync(image.Id);
+        Assert.True(thumbnailStream.CanRead);
+        var signature = new byte[8];
+        Assert.Equal(signature.Length, await thumbnailStream.ReadAsync(signature));
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, signature);
+
+        thumbnailStream.Position = 0;
+        using var thumbnail = await Image.LoadAsync<Rgba32>(thumbnailStream);
+        Assert.True(thumbnail.Width > 0);
+        Assert.True(thumbnail.Height > 0);
+
+        thumbnailStream.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => thumbnailStream.ReadByte());
+    }
+
+    [Fact]
     public async Task Import_WhenImageIsDuplicateOrInvalid_ReportsExplicitErrors()
     {
         // Arrange
