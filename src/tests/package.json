@@ -1,0 +1,7 @@
+{
+  "name": "gallery-javascript-tests",
+  "private": true,
+  "devDependencies": {
+    "jsdom": "31.0.1"
+  }
+}

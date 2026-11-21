@@ -136,8 +136,10 @@ public sealed class BrowsingProjectionTests
         });
     }
 
-    [Fact]
-    public void Projection_WhenUngrouped_ThenPreservesRatingOrderWithoutGroupIndexes()
+    [Theory]
+    [InlineData("none")]
+    [InlineData("unsupported-grouping")]
+    public void Projection_WithoutARecognizedGroup_ThenPreservesRatingOrderWithoutGroupIndexes(string grouping)
     {
         // Arrange
         using var testVault = new TestVault();
@@ -149,7 +151,7 @@ public sealed class BrowsingProjectionTests
 
         // Act
         var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "none");
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, grouping);
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -255,31 +257,6 @@ public sealed class BrowsingProjectionTests
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
         {
             ImageCount = actualGalleryBrowsingProjection.Images.Count,
-            PromptGroupCount = actualGalleryBrowsingProjection.PromptGroupsByImageId.Count,
-            ModelGroupCount = actualGalleryBrowsingProjection.DiffusionModelGroupsByImageId.Count
-        });
-    }
-
-    [Fact]
-    public void Projection_WhenGroupingIsUnrecognized_ThenPreservesSortOrderWithoutGroupIndexes()
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateRatingImages();
-        var invalidGrouping = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var expectedScenario = ExpectedScenario.CreateFrom("Unknown grouping values retain ungrouped sort order without group indexes.", new
-        {
-            ImageIds = new[] { imageRecords[1].Id, imageRecords[0].Id }, PromptGroupCount = 0, ModelGroupCount = 0
-        });
-
-        // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, invalidGrouping);
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            ImageIds = actualGalleryBrowsingProjection.Images.Select(imageRecord => imageRecord.Id).ToArray(),
             PromptGroupCount = actualGalleryBrowsingProjection.PromptGroupsByImageId.Count,
             ModelGroupCount = actualGalleryBrowsingProjection.DiffusionModelGroupsByImageId.Count
         });
