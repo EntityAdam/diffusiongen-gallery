@@ -235,21 +235,35 @@ public sealed class GalleryIngestionTests
         await File.WriteAllTextAsync(Path.Combine(folder, "invalid.png"), "not an image");
         await File.WriteAllTextAsync(Path.Combine(folder, "ignored.txt"), "ignored");
         var updates = new List<ImportProgress>();
+        var fileUpdates = new List<string>();
         var activeCallbacks = 0;
         // Act
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder, reportProgress: async update =>
-        {
-            Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
-            try
-            {
-                await Task.Delay(1);
-                updates.Add(update);
-            }
-            finally { Interlocked.Decrement(ref activeCallbacks); }
-        }));
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                progress: name =>
+                {
+                    Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
+                    try
+                    {
+                        Thread.Sleep(1);
+                        fileUpdates.Add(name);
+                    }
+                    finally { Interlocked.Decrement(ref activeCallbacks); }
+                },
+                reportProgress: async update =>
+                {
+                    Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
+                    try
+                    {
+                        await Task.Delay(1);
+                        updates.Add(update);
+                    }
+                    finally { Interlocked.Decrement(ref activeCallbacks); }
+                }));
 
         // Assert
+        Assert.Equal(4, fileUpdates.Count);
+        Assert.All(fileUpdates, name => Assert.False(string.IsNullOrEmpty(name)));
         Assert.Null(updates[0].Total);
         Assert.Equal(0, updates[0].Completed);
         Assert.All(updates.Skip(1), update => Assert.Equal(4, update.Total));

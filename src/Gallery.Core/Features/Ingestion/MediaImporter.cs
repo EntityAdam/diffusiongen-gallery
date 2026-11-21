@@ -237,20 +237,50 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         Action<string>? progress, Func<ImportProgress, Task>? reportProgress,
         IngestionTimings? timings, IngestionOptions options, string mediaRoot)
     {
-        using var folderProgress = new FolderImportProgress(mediaPaths.Length, progress, reportProgress, timings);
+        using var progressGate = new SemaphoreSlim(1);
+        var progressSnapshot = FolderImportProgress.CreateSnapshot(mediaPaths.Length);
+        async Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name)
+        {
+            var start = Stopwatch.GetTimestamp();
+            await progressGate.WaitAsync();
+            try
+            {
+                progressSnapshot = await FolderImportProgress.ReportAsync(
+                    progressSnapshot, progress, reportProgress, status, reportMode, name);
+            }
+            finally
+            {
+                progressGate.Release();
+                timings?.Record(IngestionStage.ReportProgress, start);
+            }
+        }
+
+        async Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed)
+        {
+            await progressGate.WaitAsync();
+            try
+            {
+                progressSnapshot = FolderImportProgress.RecordCompletion(
+                    progressSnapshot, fileImportWasCommitted, fileImportFailed);
+            }
+            finally { progressGate.Release(); }
+        }
+
         var failuresByPathIndex = new Exception?[mediaPaths.Length];
         var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
         timings?.SetFiles(mediaPaths.Length, options.Workers);
-        await folderProgress.ReportAsync("Importing media...", ProgressReportMode.Immediate);
+        await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
         foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
         {
             var pending = indices.Select(index => new PendingImport(index, mediaPaths[index])).ToArray();
             Exception? interruption = null;
             try
             {
-                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings, folderProgress);
+                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
+                    ReportFolderProgressAsync);
                 await CommitBatchAsync(pending, key, timings);
-                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings, folderProgress, failuresByPathIndex);
+                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
+                    RecordCompletionAsync, ReportFolderProgressAsync, failuresByPathIndex);
             }
             catch (Exception exception)
             {
@@ -262,21 +292,22 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
                 await CleanupBatchAsync(pending, timings, interruption);
             }
         }
-        folderProgress.RecordOutcome();
-        await folderProgress.ReportAsync(mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.",
-            ProgressReportMode.Immediate);
+        FolderImportProgress.RecordOutcome(progressSnapshot, timings);
+        await ReportFolderProgressAsync(
+            mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.",
+            ProgressReportMode.Immediate, null);
         ThrowImportFailures(folder, failuresByPathIndex);
     }
 
     private async Task PrepareBatchAsync(PendingImport[] pending, ParallelOptions parallelism,
         SourceRetention sourceRetention, byte[] key, string mediaRoot, IngestionTimings? timings,
-        FolderImportProgress folderProgress)
+        Func<string, ProgressReportMode, string?, Task> reportFolderProgress)
     {
         await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
         {
             try
             {
-                await folderProgress.ReportAsync($"Importing {item.Name}...", name: item.Name);
+                await reportFolderProgress($"Importing {item.Name}...", ProgressReportMode.Throttled, item.Name);
                 var start = Stopwatch.GetTimestamp();
                 var source = item.OpenSource(sourceRetention);
                 timings?.Record(IngestionStage.OpenSource, start);
@@ -295,16 +326,17 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
     }
 
     private async Task FinalizeBatchAsync(PendingImport[] pending, ParallelOptions parallelism,
-        SourceRetention sourceRetention, byte[] key, IngestionTimings? timings, FolderImportProgress folderProgress,
-        Exception?[] failuresByPathIndex) =>
+        SourceRetention sourceRetention, byte[] key, IngestionTimings? timings,
+        Func<bool, bool, Task> recordCompletion,
+        Func<string, ProgressReportMode, string?, Task> reportFolderProgress, Exception?[] failuresByPathIndex) =>
         await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
         {
             await FinalizeBatchItemAsync(item, sourceRetention, key, timings);
             if (item.Failure is not null)
                 failuresByPathIndex[item.Index] = new IOException($"Failed to import '{item.Path}'.", item.Failure);
-            await folderProgress.RecordCompletionAsync(item.CommittedRecord is not null, item.Failure is not null);
-            await folderProgress.ReportAsync($"Processed {item.Name}",
-                item.Failure is not null ? ProgressReportMode.Immediate : ProgressReportMode.Throttled);
+            await recordCompletion(item.CommittedRecord is not null, item.Failure is not null);
+            await reportFolderProgress($"Processed {item.Name}",
+                item.Failure is not null ? ProgressReportMode.Immediate : ProgressReportMode.Throttled, null);
             timings?.Record(IngestionStage.File, item.Started);
         });
 

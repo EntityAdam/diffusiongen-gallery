@@ -10,54 +10,41 @@ internal enum ProgressReportMode
     Immediate
 }
 
-internal sealed class FolderImportProgress(
-    int total, Action<string>? reportFile, Func<ImportProgress, Task>? reportProgress, IngestionTimings? timings)
-    : IDisposable
+internal sealed record FolderImportProgressSnapshot(
+    int Total, int Completed, int Imported, int Failed, long LastReportTimestamp);
+
+internal static class FolderImportProgress
 {
-    private readonly SemaphoreSlim gate = new(1);
-    private readonly Stopwatch lastReport = Stopwatch.StartNew();
-    private int completedCount;
-    private int importedCount;
-    private int failedCount;
+    public static FolderImportProgressSnapshot CreateSnapshot(int total) =>
+        new(total, 0, 0, 0, Stopwatch.GetTimestamp());
 
-    public async Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed)
-    {
-        await gate.WaitAsync();
-        try
+    public static FolderImportProgressSnapshot RecordCompletion(
+        FolderImportProgressSnapshot snapshot, bool fileImportWasCommitted, bool fileImportFailed) =>
+        snapshot with
         {
-            completedCount++;
-            if (fileImportWasCommitted) importedCount++;
-            if (fileImportFailed) failedCount++;
-        }
-        finally { gate.Release(); }
+            Completed = snapshot.Completed + 1,
+            Imported = snapshot.Imported + (fileImportWasCommitted ? 1 : 0),
+            Failed = snapshot.Failed + (fileImportFailed ? 1 : 0)
+        };
+
+    public static async Task<FolderImportProgressSnapshot> ReportAsync(
+        FolderImportProgressSnapshot snapshot, Action<string>? reportFile,
+        Func<ImportProgress, Task>? reportProgress, string status, ProgressReportMode reportMode, string? name)
+    {
+        if (name is not null) reportFile?.Invoke(name);
+        var now = Stopwatch.GetTimestamp();
+        if (reportProgress is null || !ShouldEmitProgress(reportMode, snapshot.LastReportTimestamp, now))
+            return snapshot;
+
+        await reportProgress(new ImportProgress(snapshot.Total, snapshot.Completed, snapshot.Imported, snapshot.Failed, status));
+        return snapshot with { LastReportTimestamp = Stopwatch.GetTimestamp() };
     }
 
-    public async Task ReportAsync(
-        string status, ProgressReportMode reportMode = ProgressReportMode.Throttled, string? name = null)
-    {
-        var start = Stopwatch.GetTimestamp();
-        await gate.WaitAsync();
-        try
-        {
-            if (name is not null) reportFile?.Invoke(name);
-            if (reportProgress is not null && ShouldEmitProgress(reportMode, lastReport.ElapsedMilliseconds))
-            {
-                await reportProgress(new ImportProgress(total, completedCount, importedCount, failedCount, status));
-                lastReport.Restart();
-            }
-        }
-        finally
-        {
-            gate.Release();
-            timings?.Record(IngestionStage.ReportProgress, start);
-        }
-    }
+    public static void RecordOutcome(FolderImportProgressSnapshot snapshot, IngestionTimings? timings) =>
+        timings?.SetOutcome(snapshot.Imported, snapshot.Failed);
 
-    private static bool ShouldEmitProgress(ProgressReportMode reportMode, long elapsedMilliseconds) =>
-        reportMode == ProgressReportMode.Immediate || elapsedMilliseconds >= 100;
-
-    // The importer calls this after all workers have finished.
-    public void RecordOutcome() => timings?.SetOutcome(importedCount, failedCount);
-
-    public void Dispose() => gate.Dispose();
+    private static bool ShouldEmitProgress(
+        ProgressReportMode reportMode, long lastReportTimestamp, long nowTimestamp) =>
+        reportMode == ProgressReportMode.Immediate
+        || Stopwatch.GetElapsedTime(lastReportTimestamp, nowTimestamp).TotalMilliseconds >= 100;
 }
