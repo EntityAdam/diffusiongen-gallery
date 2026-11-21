@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
@@ -43,7 +44,7 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         var queueStartFailure = await CollectRemovalReceiptsAsync(store, orderedRemovalItems, keyLease.Bytes,
             existingAction, missingAction, normalizedRestoreFolder, failures, receipts);
         var observerFailures = DeliverRemovalReceipts(receipts, reportRemoval);
-        if (queueStartFailure is not null && HasNoRemovalOrObserverFailures(failures, observerFailures))
+        if (CanRethrowQueueStartFailure(queueStartFailure, failures, observerFailures))
             ExceptionDispatchInfo.Throw(queueStartFailure);
         ThrowCombinedRemovalFailures(failures, observerFailures, queueStartFailure);
     }
@@ -133,9 +134,10 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         return queueStartFailure;
     }
 
-    private static bool HasNoRemovalOrObserverFailures(
+    private static bool CanRethrowQueueStartFailure(
+        [NotNullWhen(true)] Exception? queueStartFailure,
         IReadOnlyCollection<Exception> failures, IReadOnlyCollection<Exception> observerFailures) =>
-        failures.Count == 0 && observerFailures.Count == 0;
+        queueStartFailure is not null && failures.Count == 0 && observerFailures.Count == 0;
 
     private static List<Exception> DeliverRemovalReceipts(
         IEnumerable<RemovalResult> removalResults, Action<RemovalResult>? reportRemoval)
