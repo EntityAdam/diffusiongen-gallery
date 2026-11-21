@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text;
 using Gallery.Core.Features.Vaults;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;

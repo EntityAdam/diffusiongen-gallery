@@ -1,9 +1,10 @@
 using System.Data.Common;
 using Gallery.Core.Features.Storage.DriveOperations;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
 using Gallery.Core.Models;
 using Microsoft.Data.Sqlite;
 
-namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
+namespace Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 
 // Queued drive operations and the cached media index. Catalog changes that imply drive work commit together
 // with the queued operation, so the catalog and the queue can never disagree after a crash.

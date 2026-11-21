@@ -1,6 +1,6 @@
 using System.Data.Common;
 using Gallery.Core.Features.Storage.DriveOperations;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
 using Gallery.Core.Models;
 
 namespace Gallery.Core.Infrastructure.Persistence.Turso;

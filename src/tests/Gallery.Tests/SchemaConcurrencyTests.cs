@@ -1,4 +1,4 @@
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;

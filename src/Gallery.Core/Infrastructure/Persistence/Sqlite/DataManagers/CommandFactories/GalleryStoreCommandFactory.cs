@@ -1,6 +1,6 @@
 using Microsoft.Data.Sqlite;
 
-namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
+namespace Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
 
 internal static class GalleryStoreCommandFactory
 {

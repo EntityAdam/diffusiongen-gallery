@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core.Features.Tags;
 using Gallery.Core.Features.Vaults;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Infrastructure.Persistence.Turso;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;

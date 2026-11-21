@@ -1,7 +1,7 @@
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Services;
 
 namespace Gallery.Tests;

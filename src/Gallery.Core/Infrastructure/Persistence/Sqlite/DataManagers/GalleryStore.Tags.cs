@@ -1,7 +1,7 @@
 using Gallery.Core.Features.Tags;
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
+namespace Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 
 internal sealed partial class GalleryStore
 {

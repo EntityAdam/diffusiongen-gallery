@@ -2,7 +2,7 @@ using System.Data.Common;
 using System.Data;
 using Gallery.Core.Features.Storage.DriveOperations;
 
-namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
+namespace Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
 
 internal static class DriveOperationCommandFactory
 {

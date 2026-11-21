@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using Gallery.Core.Features.Vaults.Security;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
 

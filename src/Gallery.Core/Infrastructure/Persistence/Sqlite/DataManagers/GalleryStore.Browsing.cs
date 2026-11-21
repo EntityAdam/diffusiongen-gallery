@@ -3,10 +3,11 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core.Features.Vaults;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
 using Gallery.Core.Models;
 using Microsoft.Data.Sqlite;
 
-namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
+namespace Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 
 internal sealed partial class GalleryStore
 {

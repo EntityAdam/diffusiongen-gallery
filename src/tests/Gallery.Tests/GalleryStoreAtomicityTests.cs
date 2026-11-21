@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using System.Security.Cryptography;
 using Gallery.Core.Features.Storage.DriveOperations;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Microsoft.Data.Sqlite;

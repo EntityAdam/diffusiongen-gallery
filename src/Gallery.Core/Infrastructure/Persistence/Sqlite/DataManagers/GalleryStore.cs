@@ -4,12 +4,13 @@ using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Features.Vaults;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
 using Gallery.Core.Models;
 using Gallery.Core.Shared.Diagnostics;
 using Gallery.Migrations;
 using Microsoft.Data.Sqlite;
 
-namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
+namespace Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 
 internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
 {

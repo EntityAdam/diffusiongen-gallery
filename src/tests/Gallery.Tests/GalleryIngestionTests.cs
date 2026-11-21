@@ -4,7 +4,7 @@ using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Features.Vaults.Session;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;

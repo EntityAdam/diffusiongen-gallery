@@ -3,7 +3,7 @@ using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Storage;
 using Gallery.Core.Features.Storage.DriveOperations;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using static Gallery.Tests.GalleryTests;

@@ -12,7 +12,7 @@ using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Web.Components;

@@ -1,5 +1,5 @@
 using Gallery.Core.Features.Vaults;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Infrastructure.Persistence.Turso;
 using Gallery.Core.Models;
 

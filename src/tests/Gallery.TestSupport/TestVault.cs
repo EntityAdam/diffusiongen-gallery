@@ -2,7 +2,7 @@ using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Services;
 using Microsoft.Extensions.Configuration;
 

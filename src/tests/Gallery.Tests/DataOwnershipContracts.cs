@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Gallery.Core.Features.Storage.DriveOperations;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Infrastructure.Persistence;
 
 namespace Gallery.Tests;
