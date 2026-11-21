@@ -1,4 +1,4 @@
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;

@@ -1,6 +1,6 @@
 // Class tests pin raw configuration snapshots and source precedence that cannot be observed through HTTP.
 using System.Security.Cryptography;
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Normalizers;
 using Gallery.Web.Composition;
 using Microsoft.Extensions.Configuration;
 

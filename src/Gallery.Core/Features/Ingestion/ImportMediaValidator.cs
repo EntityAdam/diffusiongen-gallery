@@ -1,4 +1,4 @@
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 using SixLabors.ImageSharp.Formats;
 
 namespace Gallery.Core.Features.Ingestion;

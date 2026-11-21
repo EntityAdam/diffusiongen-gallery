@@ -7,19 +7,7 @@ using System.Text.Json;
 using System.Text;
 using Gallery.Core.Exceptions;
 
-namespace Gallery.Core.Features.Ingestion.Video;
-
-internal sealed class VideoToolsOptions
-{
-    internal VideoToolsOptions(string? configuredPath = null, IEnumerable<string>? searchPaths = null)
-    {
-        ConfiguredPath = configuredPath;
-        SearchPaths = searchPaths?.ToImmutableArray() ?? ImmutableArray<string>.Empty;
-    }
-
-    internal string? ConfiguredPath { get; }
-    internal ImmutableArray<string> SearchPaths { get; }
-}
+namespace Gallery.Core.Features.Ingestion.Gateways;
 
 /// <summary>Runs ffprobe/ffmpeg (without a shell) to read MP4 metadata and decode a thumbnail frame.</summary>
 internal sealed class VideoTools

@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Ingestion.Metadata;
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Models;
 using Gallery.Core.Services;

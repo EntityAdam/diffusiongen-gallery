@@ -4,7 +4,7 @@ using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Ingestion;
 using Gallery.Core.Features.Ingestion.Metadata;
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Models;
 
 namespace Gallery.Tests;

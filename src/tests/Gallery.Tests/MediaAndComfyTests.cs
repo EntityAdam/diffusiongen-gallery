@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.Json.Nodes;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Ingestion.Metadata;
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
 using Gallery.Core.Services;

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
+using Gallery.Core.Features.Ingestion.Normalizers;
 using Gallery.Core.Models;
 using Gallery.Web.Composition;
 using Microsoft.Extensions.Configuration;

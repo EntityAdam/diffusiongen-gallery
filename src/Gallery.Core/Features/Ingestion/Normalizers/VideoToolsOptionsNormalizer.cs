@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 
-namespace Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Normalizers.SettingsModels;
+
+namespace Gallery.Core.Features.Ingestion.Normalizers;
 
 internal static class VideoToolsOptionsNormalizer
 {
