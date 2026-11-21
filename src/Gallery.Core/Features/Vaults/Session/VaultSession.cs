@@ -188,7 +188,7 @@ internal sealed class VaultSession : IDisposable
         lock (vaultLeaseState.SyncRoot)
         {
             if (vaultLeaseState.UnlockedVaultSession?.HasExpired() == true)
-                vaultLeaseState.UnlockedVaultSession.Expire();
+                vaultLeaseState.UnlockedVaultSession.Revoke(timedOut: true);
             shouldPublishTimeoutNotification = vaultLeaseState.UnlockedVaultSession?.HasPendingTimeoutNotification == true;
             if (shouldPublishTimeoutNotification) vaultLeaseState.UnlockedVaultSession!.AcknowledgeTimeout();
         }

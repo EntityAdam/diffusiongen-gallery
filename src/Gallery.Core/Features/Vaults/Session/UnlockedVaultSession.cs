@@ -59,7 +59,7 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
 
     private void RequireActive()
     {
-        if (HasExpired()) Expire();
+        if (HasExpired()) Revoke(timedOut: true);
         if (IsRevoked)
             throw new VaultLockedException(HasTimedOut
                     ? "The gallery locked automatically due to inactivity."
@@ -68,7 +68,7 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
                 new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", HasTimedOut ? "timed_out" : "revoked")));
     }
 
-    internal void Revoke()
+    internal void Revoke(bool timedOut = false)
     {
         lock (vaultLeaseState.SyncRoot)
         {
@@ -76,16 +76,11 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
             CryptographicOperations.ZeroMemory(key);
             // Signal immediately, but run cancellation callbacks outside the session's synchronization lock.
             _ = revocation.CancelAsync();
-        }
-    }
-
-    internal void Expire()
-    {
-        lock (vaultLeaseState.SyncRoot)
-        {
-            Revoke();
-            HasTimedOut = true;
-            HasPendingTimeoutNotification = true;
+            if (timedOut)
+            {
+                HasTimedOut = true;
+                HasPendingTimeoutNotification = true;
+            }
         }
     }
 

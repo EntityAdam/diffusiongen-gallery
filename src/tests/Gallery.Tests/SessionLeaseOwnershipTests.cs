@@ -70,7 +70,7 @@ public sealed class SessionLeaseOwnershipTests
         timeProvider.Advance(TimeSpan.FromSeconds(1));
         var atLimit = generation.HasExpired();
         var revokedBeforeCommand = generation.IsRevoked;
-        generation.Expire();
+        generation.Revoke(timedOut: true);
         var failure = Assert.Throws<VaultLockedException>(() => generation.Borrow());
 
         Assert.False(beforeLimit);
@@ -78,6 +78,31 @@ public sealed class SessionLeaseOwnershipTests
         Assert.False(revokedBeforeCommand);
         Assert.True(generation.IsRevoked);
         Assert.Equal("timed_out", failure.ContextualDataByName.ValuesByName["Vault.State"]);
+    }
+
+    [Fact]
+    public void ExpiredGenerationBorrow_RevokesAndLeavesExistingLeaseUntilDisposed()
+    {
+        var started = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(started);
+        var state = new VaultLeaseState(timeProvider) { LastAccessUtc = started, InactivityTimeout = TimeSpan.FromMinutes(1) };
+        var generation = new UnlockedVaultSession(Enumerable.Repeat((byte)3, 32).ToArray(), state);
+        using var lease = generation.Borrow();
+        var buffer = lease.Bytes;
+
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        var failure = Assert.Throws<VaultLockedException>(() => generation.Borrow());
+
+        Assert.Equal("timed_out", failure.ContextualDataByName.ValuesByName["Vault.State"]);
+        Assert.Equal("The gallery locked automatically due to inactivity.", failure.Message);
+        Assert.True(generation.IsRevoked);
+        Assert.True(generation.HasPendingTimeoutNotification);
+        Assert.True(generation.RevocationToken.IsCancellationRequested);
+        Assert.Equal(1, state.ActiveLeases);
+        Assert.Equal(Enumerable.Repeat((byte)3, 32), buffer);
+        lease.Dispose();
+        Assert.Equal(new byte[32], buffer);
+        Assert.Equal(0, state.ActiveLeases);
     }
 
     [Fact]
