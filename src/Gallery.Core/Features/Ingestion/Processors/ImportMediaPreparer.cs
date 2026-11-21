@@ -129,42 +129,16 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
     {
         var tools = RequiredVideoTools();
         var stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        var video = await ReadTemporaryVideoAsync(bytes, tools);
-        timings?.Record(IngestionStage.VideoProbe, stageStart);
-        stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        var thumbnailBytes = await CreateVideoThumbnailAsync(video.FrameBytes);
-        timings?.Record(IngestionStage.Thumbnail, stageStart);
-        try
-        {
-            var record = CreateVideoRecord(video.Probe, bytes.Length, name, sourceFolder, sourcePath, sourceHash, mediaRoot);
-            stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            var encrypted = StoredMediaProcessor.EncryptImport(record, bytes.Span, thumbnailBytes, key);
-            timings?.Record(IngestionStage.Encrypt, stageStart);
-            return new PreparedImport(record,
-                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedMedia),
-                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedThumbnail));
-        }
-        finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
-    }
-
-    private VideoTools RequiredVideoTools() =>
-        videoTools is not null && videoTools.IsAvailable ? videoTools
-            : throw new VideoToolUnavailableException(VideoTools.MissingMessage, LogEventGallery.PrepareVideo,
-                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Video.RequiredTools", "ffmpeg, ffprobe")));
-
-    private static async Task<(VideoTools.ProbeResult Probe, byte[] FrameBytes)> ReadTemporaryVideoAsync(
-        ReadOnlyMemory<byte> bytes, VideoTools tools)
-    {
         var temporaryDirectory = CreatePrivateTemporaryVideoDirectory();
         var temporaryVideoPath = Path.Combine(temporaryDirectory, "source" + IngestionSourceScanner.Mp4Extension);
         byte[]? videoFrameBytes = null;
+        VideoTools.ProbeResult probe;
         try
         {
             await WriteTemporaryVideoAsync(temporaryVideoPath, bytes);
-            var probe = await tools.ProbeAsync(temporaryVideoPath);
+            probe = await tools.ProbeAsync(temporaryVideoPath);
             ImportMediaValidator.ValidateVideo(probe);
             videoFrameBytes = await tools.FirstFrameAsync(temporaryVideoPath, probe.StreamIndex);
-            return (probe, videoFrameBytes);
         }
         finally
         {
@@ -179,7 +153,27 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
                 throw;
             }
         }
+        timings?.Record(IngestionStage.VideoProbe, stageStart);
+        stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        var thumbnailBytes = await CreateVideoThumbnailAsync(videoFrameBytes!);
+        timings?.Record(IngestionStage.Thumbnail, stageStart);
+        try
+        {
+            var record = CreateVideoRecord(probe, bytes.Length, name, sourceFolder, sourcePath, sourceHash, mediaRoot);
+            stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            var encrypted = StoredMediaProcessor.EncryptImport(record, bytes.Span, thumbnailBytes, key);
+            timings?.Record(IngestionStage.Encrypt, stageStart);
+            return new PreparedImport(record,
+                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedMedia),
+                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedThumbnail));
+        }
+        finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
     }
+
+    private VideoTools RequiredVideoTools() =>
+        videoTools is not null && videoTools.IsAvailable ? videoTools
+            : throw new VideoToolUnavailableException(VideoTools.MissingMessage, LogEventGallery.PrepareVideo,
+                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Video.RequiredTools", "ffmpeg, ffprobe")));
 
     internal static string CreatePrivateTemporaryVideoDirectory()
     {
