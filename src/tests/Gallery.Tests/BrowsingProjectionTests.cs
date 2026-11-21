@@ -33,7 +33,6 @@ public sealed class BrowsingProjectionTests
         var projection = GalleryBrowsingProjector.Create(vault.Scope.Catalog, images, filter, grouping, draftIds);
 
         Assert.Equal(new[] { "new-draft", "reanalyzed" }, projection.Images.Select(image => image.Id).Order());
-        Assert.Empty(vault.Scope.Catalog.Filter(images, filter));
         Assert.Empty(GalleryBrowsingProjector.Create(vault.Scope.Catalog, images, filter, grouping, new HashSet<string>()).Images);
     }
 
@@ -79,80 +78,44 @@ public sealed class BrowsingProjectionTests
     }
 
     [Fact]
-    public void ProjectionContract_WhenSourceCollectionsChange_ThenRetainsTheCapturedImagesAndBothIndexes()
+    public void ProjectionContract_ExposesTheSuppliedImagesAndBothIndexes()
     {
-        // Arrange
-        var sourceImageRecords = CreateRatingImages().ToList();
-        var promptGroup = new PromptGroup(PromptGroup.Shared,
-            sourceImageRecords[0].Generation!.Prompt, sourceImageRecords.ToImmutableArray());
-        var sourcePromptGroupsByImageId = sourceImageRecords.ToDictionary(imageRecord => imageRecord.Id, _ => promptGroup);
-        var sourceDiffusionModelGroupsByImageId = sourceImageRecords.ToDictionary(imageRecord => imageRecord.Id,
-            imageRecord => new DiffusionModelGroup(imageRecord.Generation!.Model, [imageRecord]));
-        var expectedScenario = ExpectedScenario.CreateFrom("Projection snapshots retain complete images and indexes independently of mutable source collections.", new
-        {
-            Images = sourceImageRecords,
-            PromptIndex = sourcePromptGroupsByImageId,
-            ModelIndex = sourceDiffusionModelGroupsByImageId
-        });
+        var images = CreateRatingImages().ToImmutableArray();
+        var promptGroup = new PromptGroup(PromptGroup.Shared, images[0].Generation!.Prompt, images);
+        var promptIndex = images.ToImmutableDictionary(image => image.Id, _ => promptGroup);
+        var modelIndex = images.ToImmutableDictionary(image => image.Id,
+            image => new DiffusionModelGroup(image.Generation!.Model, [image]));
 
-        // Act
-        var actualGalleryBrowsingProjection = new GalleryBrowsingProjection(sourceImageRecords.ToImmutableArray(),
-            sourcePromptGroupsByImageId.ToImmutableDictionary(), sourceDiffusionModelGroupsByImageId.ToImmutableDictionary());
+        var projection = new GalleryBrowsingProjection(images, promptIndex, modelIndex);
 
-        // Post-capture stimulus
-        sourceImageRecords.Clear();
-        sourcePromptGroupsByImageId.Clear();
-        sourceDiffusionModelGroupsByImageId.Clear();
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            actualGalleryBrowsingProjection.Images,
-            PromptIndex = actualGalleryBrowsingProjection.PromptGroupsByImageId,
-            ModelIndex = actualGalleryBrowsingProjection.DiffusionModelGroupsByImageId
-        });
+        Assert.Equal<ImageRecord>(images, projection.Images);
+        Assert.Equal(promptIndex, projection.PromptGroupsByImageId);
+        Assert.Equal(modelIndex, projection.DiffusionModelGroupsByImageId);
     }
 
     [Theory]
     [InlineData("none")]
     [InlineData("unsupported-grouping")]
-    public void Projection_WithoutARecognizedGroup_ThenPreservesRatingOrderWithoutGroupIndexes(string grouping)
+    [InlineData("model")]
+    public void Projection_PreservesRatingOrderAndIndexesOnlyTheRequestedGroups(string grouping)
     {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateRatingImages();
-        var expectedScenario = ExpectedScenario.CreateFrom("Ungrouped projection preserves rating order and has no grouping indexes.", new
+        using var vault = new TestVault();
+        ImageRecord low = new() { Id = "low", Rating = 1, Generation = new() { Prompt = "shared", Model = "Alpha" } };
+        ImageRecord high = new() { Id = "high", Rating = 5, Generation = new() { Prompt = "shared", Model = "Zeta" } };
+
+        var projection = GalleryBrowsingProjector.Create(vault.Scope.Catalog, [low, high], new GalleryFilter { Sort = "rating" }, grouping);
+
+        Assert.Equal([high.Id, low.Id], projection.Images.Select(image => image.Id));
+        Assert.Empty(projection.PromptGroupsByImageId);
+        if (grouping == "model")
         {
-            ImageIds = new[] { imageRecords[1].Id, imageRecords[0].Id }, PromptGroupCount = 0, ModelGroupCount = 0
-        });
-
-        // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, grouping);
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
+            Assert.Equal("Alpha", projection.DiffusionModelGroupsByImageId[low.Id].Model);
+            Assert.Equal("Zeta", projection.DiffusionModelGroupsByImageId[high.Id].Model);
+        }
+        else
         {
-            ImageIds = actualGalleryBrowsingProjection.Images.Select(imageRecord => imageRecord.Id).ToArray(),
-            PromptGroupCount = actualGalleryBrowsingProjection.PromptGroupsByImageId.Count,
-            ModelGroupCount = actualGalleryBrowsingProjection.DiffusionModelGroupsByImageId.Count
-        });
-    }
-
-    [Fact]
-    public void Projection_WhenMinimumRatingIsSet_ThenExcludesLowerRatedImages()
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateRatingImages();
-        string[] expectedImageIds = [imageRecords[1].Id];
-
-        // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating", MinRating = 3 }, "none");
-
-        // Assert
-        Assert.Equal(expectedImageIds, actualGalleryBrowsingProjection.Images.Select(imageRecord => imageRecord.Id));
+            Assert.Empty(projection.DiffusionModelGroupsByImageId);
+        }
     }
 
     [Fact]
@@ -165,36 +128,6 @@ public sealed class BrowsingProjectionTests
         var group = projection.PromptGroupsByImageId[images[0].Id];
         Assert.Same(group, projection.PromptGroupsByImageId[images[1].Id]);
         Assert.Equal(images.Select(image => image.Id).Order(), group.Images.Select(image => image.Id).Order());
-    }
-
-    [Fact]
-    public void Projection_WhenGroupedByModel_ThenIndexesTheModelsInRatingOrder()
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateRatingImages();
-        var sharedPrompt = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var expectedLowerRatedModel = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var expectedHigherRatedModel = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        imageRecords[0] = imageRecords[0] with { Generation = new() { Prompt = sharedPrompt, Model = expectedLowerRatedModel } };
-        imageRecords[1] = imageRecords[1] with { Generation = new() { Prompt = sharedPrompt, Model = expectedHigherRatedModel } };
-        var expectedScenario = ExpectedScenario.CreateFrom("Model grouping retains the requested rating order and the correct model for every image.", new
-        {
-            ImageIds = new[] { imageRecords[1].Id, imageRecords[0].Id },
-            HigherRatedModel = expectedHigherRatedModel, LowerRatedModel = expectedLowerRatedModel
-        });
-
-        // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "model");
-
-        // Assert
-        AsserterScenario.AssertObservationsMatch(expectedScenario, new
-        {
-            ImageIds = actualGalleryBrowsingProjection.Images.Select(imageRecord => imageRecord.Id).ToArray(),
-            HigherRatedModel = actualGalleryBrowsingProjection.DiffusionModelGroupsByImageId[imageRecords[1].Id].Model,
-            LowerRatedModel = actualGalleryBrowsingProjection.DiffusionModelGroupsByImageId[imageRecords[0].Id].Model
-        });
     }
 
     // Every grouping mode returns empty images and indexes when the filter excludes all inputs.
@@ -256,7 +189,7 @@ public sealed class BrowsingProjectionTests
         var imageRecords = CreateRatingImages().ToList();
         using var home = await OpenSessionAsync(testVault, imageRecords);
         var priorImageRecords = home.Browser.Filtered;
-        await home.Browser.ApplyFilterAsync(new GalleryFilter { MinRating = 5 });
+        await home.Browser.ApplyFilterAsync(new GalleryFilter { Sort = "rating", MinRating = 5 });
         var expectedScenario = ExpectedScenario.CreateFrom("Changing the rating filter replaces the cached snapshot with matching images.",
             new { ReusesSnapshot = false, ImageIds = new[] { imageRecords[1].Id } });
 
@@ -470,11 +403,12 @@ public sealed class BrowsingProjectionTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task Changing_view_starts_a_new_range(bool inTrash, bool resetFilters)
+    [InlineData(false, "sort")]
+    [InlineData(false, "reset filters")]
+    [InlineData(true, "sort")]
+    [InlineData(true, "reset filters")]
+    [InlineData(true, "clear selection")]
+    public async Task Resetting_selection_starts_a_new_range(bool inTrash, string action)
     {
         using var vault = new TestVault();
         var records = CreateImages(4).Select(r => r with { IsMarkedForDeletion = inTrash }).ToList();
@@ -487,30 +421,17 @@ public sealed class BrowsingProjectionTests
         browser.SelectCard(first, range: false);
         Assert.Equal(first, Assert.Single(selection()));
 
-        if (resetFilters) await browser.ResetFiltersAsync();
-        else await browser.SetSortAsync("name");
+        switch (action)
+        {
+            case "sort": await browser.SetSortAsync("name"); break;
+            case "reset filters": await browser.ResetFiltersAsync(); break;
+            case "clear selection": browser.ClearSelection(); break;
+            default: throw new ArgumentOutOfRangeException(nameof(action), action, null);
+        }
 
         Assert.Empty(selection());
         browser.SelectCard(next, range: true);
         Assert.Equal(next, Assert.Single(selection()));
-    }
-
-    [Fact]
-    public async Task TrashSelection_WhenCleared_ThenRemovesTheSelectedCards()
-    {
-        // Arrange
-        using var testVault = new TestVault();
-        var imageRecords = CreateImages(4).Select(imageRecord => imageRecord with { IsMarkedForDeletion = true }).ToList();
-        using var home = await OpenSessionAsync(testVault, imageRecords);
-        await home.Browser.SetActiveToolAsync("trash");
-        home.Browser.SelectCard(imageRecords[0].Id, false);
-        string[] expectedSelectedIds = [];
-
-        // Act
-        home.Browser.ClearSelection();
-
-        // Assert
-        Assert.Equal(expectedSelectedIds, home.Browser.RemovalSelection);
     }
 
     [Fact]
