@@ -45,9 +45,27 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         var store = galleryLifetime.Current.GalleryStore;
         var failures = new List<Exception>();
         var receipts = new List<RemovalResult>(orderedRemovalItems.Length);
-        var queueStartFailure = await RunWithRemovalGateAsync(store, () =>
-            CollectRemovalReceiptsAsync(store, orderedRemovalItems, keyLease.Bytes,
-                existingAction, missingAction, normalizedRestoreFolder, failures, receipts));
+        var queueStartFailure = await RunWithRemovalGateAsync(store, async () =>
+        {
+            foreach (var removalItem in orderedRemovalItems)
+            {
+                string? restoredPath = null;
+                try
+                {
+                    await RemoveOneAsync(store, removalItem, keyLease.Bytes, existingAction, missingAction,
+                        normalizedRestoreFolder, path => restoredPath = path);
+                    receipts.Add(new(removalItem.Id, true, restoredPath, null));
+                }
+                catch (GalleryRemovalException exception)
+                {
+                    failures.Add(exception);
+                    var catalogEntryWasRemoved =
+                        (bool)exception.ContextualDataByName.ValuesByName[CatalogEntryWasRemovedContextKey];
+                    receipts.Add(new(removalItem.Id, catalogEntryWasRemoved, restoredPath,
+                        new(removalItem.Id, exception.Message, exception)));
+                }
+            }
+        });
         var observerFailures = DeliverRemovalReceipts(receipts, reportRemoval);
         if (CanRethrowQueueStartFailure(queueStartFailure, failures, observerFailures))
             ExceptionDispatchInfo.Throw(queueStartFailure);
@@ -118,30 +136,6 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
             catch (Exception exception) { queueStartFailure = exception; }
         }
         return queueStartFailure;
-    }
-
-    private static async Task CollectRemovalReceiptsAsync(IGalleryStore store, IReadOnlyList<RemovalItem> removalItems, byte[] key,
-        ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-        List<Exception> failures, List<RemovalResult> receipts)
-    {
-        foreach (var removalItem in removalItems)
-        {
-            string? restoredPath = null;
-            try
-            {
-                await RemoveOneAsync(store, removalItem, key, existingAction, missingAction, restoreFolder,
-                    path => restoredPath = path);
-                receipts.Add(new(removalItem.Id, true, restoredPath, null));
-            }
-            catch (GalleryRemovalException exception)
-            {
-                failures.Add(exception);
-                var catalogEntryWasRemoved =
-                    (bool)exception.ContextualDataByName.ValuesByName[CatalogEntryWasRemovedContextKey];
-                receipts.Add(new(removalItem.Id, catalogEntryWasRemoved, restoredPath,
-                    new(removalItem.Id, exception.Message, exception)));
-            }
-        }
     }
 
     private static bool CanRethrowQueueStartFailure(
