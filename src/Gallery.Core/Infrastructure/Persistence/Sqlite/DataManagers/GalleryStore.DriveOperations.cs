@@ -108,6 +108,17 @@ internal sealed partial class GalleryStore
         return pendingDriveOperations[0];
     }
 
+    public async Task<DriveOperation?> FindUnfinishedDriveOperationAsync(string kind, byte[] target, byte[]? key = null)
+    {
+        await using var sqliteConnection = await OpenAsync();
+        using var sqliteCommand = DriveOperationCommandFactory.CreateFindUnfinished(sqliteConnection, kind, target);
+        var unfinishedDriveOperations = await ReadOperationsAsync(sqliteCommand);
+        if (unfinishedDriveOperations.Count == 0) return null;
+        if (unfinishedDriveOperations.Count > 1)
+            throw new InvalidOperationException($"Expected at most one unfinished drive operation of kind '{kind}', but found {unfinishedDriveOperations.Count}.");
+        return unfinishedDriveOperations[0];
+    }
+
     private static async Task<List<DriveOperation>> ReadOperationsAsync(DbCommand sqliteCommand)
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();

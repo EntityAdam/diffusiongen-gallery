@@ -53,6 +53,17 @@ internal static class DriveOperationCommandFactory
         return sqliteCommand;
     }
 
+    public static DbCommand CreateFindUnfinished(DbConnection sqliteConnection, string kind, byte[] target)
+    {
+        var sqliteCommand = Create(sqliteConnection, null, """
+            SELECT sequence, kind, target, image_id, payload, attempts, revision FROM drive_operations
+            WHERE kind = $kind AND target = $target AND state IN ('pending', 'failed')
+            """);
+        AddTextParameter(sqliteCommand, "$kind", kind);
+        sqliteCommand.AddParameter("$target", DbType.Binary).Value = target;
+        return sqliteCommand;
+    }
+
     public static DbCommand CreateDelete(DbConnection sqliteConnection, DbTransaction? sqliteTransaction, long sequence)
     {
         var sqliteCommand = Create(sqliteConnection, sqliteTransaction, "DELETE FROM drive_operations WHERE sequence = $sequence");

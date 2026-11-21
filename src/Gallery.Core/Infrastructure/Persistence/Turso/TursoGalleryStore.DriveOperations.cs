@@ -90,6 +90,14 @@ internal sealed partial class TursoGalleryStore
         return operations.Single();
     });
 
+    public Task<DriveOperation?> FindUnfinishedDriveOperationAsync(string kind, byte[] target, byte[]? key = null) => ExecuteAsync(key, async sqliteConnection =>
+    {
+        using var sqliteCommand = DriveOperationCommandFactory.CreateFindUnfinished(sqliteConnection, kind, target);
+        var operations = await ReadOperationsAsync(sqliteCommand);
+        if (operations.Count == 0) return null;
+        return operations.Single();
+    });
+
     private static async Task<List<DriveOperation>> ReadOperationsAsync(DbCommand sqliteCommand)
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();

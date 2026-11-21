@@ -39,7 +39,7 @@ internal sealed class StoredMediaMover(GalleryLifetime galleryLifetime, VaultSes
     private static async Task MoveStoredImageAsync(IGalleryStore store, ImageRecord record, string target, string newName, byte[] key)
     {
         var deleteOldCopy = DriveOperationProcessor.Create(DriveOperationKind.DeleteFile, record.StoredPath, record.Id, key);
-        var queuedDelete = await store.FindPendingDriveOperationAsync(
+        var queuedDelete = await store.FindUnfinishedDriveOperationAsync(
             DriveOperationKind.DeleteFile, DriveOperationProcessor.PathFingerprint(key, target), key);
         if (await ReconcileQueuedDestinationDeletionAsync(
                 store, record, target, newName, key, deleteOldCopy, queuedDelete))

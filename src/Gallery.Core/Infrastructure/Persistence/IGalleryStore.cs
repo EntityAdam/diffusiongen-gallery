@@ -43,6 +43,7 @@ internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReade
     Task<List<DriveOperation>> ReadDueDriveOperationsAsync(int limit, long now, byte[] key);
     Task<List<DriveOperation>> ReadOutstandingDeletesAsync(byte[] key);
     Task<DriveOperation?> FindPendingDriveOperationAsync(string kind, byte[] target, byte[] key);
+    Task<DriveOperation?> FindUnfinishedDriveOperationAsync(string kind, byte[] target, byte[] key);
     Task RemoveDriveOperationAsync(long sequence, byte[] key);
     Task CompleteDriveOperationsAsync(IReadOnlyCollection<DriveOperationResult> driveOperationResults, byte[] key);
     Task<DriveQueueCounts> ReadDriveQueueCountsAsync(byte[] key);
