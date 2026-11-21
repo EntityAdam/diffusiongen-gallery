@@ -1,8 +1,10 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using Gallery.Core.Features.Media.Export.Composers.Formatters;
+using Gallery.Core.Features.Media.Export.Composers.Processors;
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Media.Export;
+namespace Gallery.Core.Features.Media.Export.Composers;
 
 internal static class ExportComposer
 {

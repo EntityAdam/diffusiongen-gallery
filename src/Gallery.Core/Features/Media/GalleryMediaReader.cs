@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using Gallery.Core.Features.Ingestion.Metadata;
-using Gallery.Core.Features.Media.Export;
+using Gallery.Core.Features.Media.Export.Composers;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;

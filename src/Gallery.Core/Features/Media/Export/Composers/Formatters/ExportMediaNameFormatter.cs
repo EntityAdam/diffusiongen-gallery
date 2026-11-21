@@ -1,4 +1,4 @@
-namespace Gallery.Core.Features.Media.Export;
+namespace Gallery.Core.Features.Media.Export.Composers.Formatters;
 
 internal static class ExportMediaNameFormatter
 {

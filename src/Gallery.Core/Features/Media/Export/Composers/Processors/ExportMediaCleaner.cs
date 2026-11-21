@@ -3,7 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Gallery.Core.Features.Media.Export;
+namespace Gallery.Core.Features.Media.Export.Composers.Processors;
 
 /// <summary>
 /// Losslessly cleans exported media without decoding or re-encoding pixels or video: standard and metadata

@@ -1,4 +1,4 @@
-using Gallery.Core.Features.Media.Movement;
+using Gallery.Core.Features.Media.Movement.Managers;
 using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Models;
 using Gallery.Core.Services;

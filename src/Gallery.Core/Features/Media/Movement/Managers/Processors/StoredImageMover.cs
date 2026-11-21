@@ -1,6 +1,7 @@
+using Gallery.Core.Features.Media.Movement.Managers.Models;
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Media.Movement;
+namespace Gallery.Core.Features.Media.Movement.Managers.Processors;
 
 internal static class StoredImageMover
 {

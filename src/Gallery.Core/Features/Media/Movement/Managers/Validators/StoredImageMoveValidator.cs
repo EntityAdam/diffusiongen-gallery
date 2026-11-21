@@ -1,4 +1,6 @@
-namespace Gallery.Core.Features.Media.Movement;
+using Gallery.Core.Features.Media.Movement.Managers.Models;
+
+namespace Gallery.Core.Features.Media.Movement.Managers.Validators;
 
 internal static class StoredImageMoveValidator
 {

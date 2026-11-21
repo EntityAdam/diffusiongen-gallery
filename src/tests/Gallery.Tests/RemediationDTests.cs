@@ -1,6 +1,7 @@
 using System.IO.Compression;
-using Gallery.Core.Features.Media.Export;
-using Gallery.Core.Features.Media.Movement;
+using Gallery.Core.Features.Media.Export.Composers;
+using Gallery.Core.Features.Media.Export.Composers.Formatters;
+using Gallery.Core.Features.Media.Movement.Managers.Validators;
 using Gallery.Core.Models;
 
 namespace Gallery.Tests;
