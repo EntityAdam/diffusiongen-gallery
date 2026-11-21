@@ -38,8 +38,14 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         var normalizedRestoreFolder = NormalizeRestoreFolder(removalItems, missingAction, restoreFolder);
         var orderedRemovalItems = CaptureOrderedRemovalItems(removalItems);
         var store = galleryLifetime.Current.GalleryStore;
-        await RemoveBatchAsync(store, orderedRemovalItems, keyLease.Bytes,
-            existingAction, missingAction, normalizedRestoreFolder, reportRemoval);
+        var failures = new List<Exception>();
+        var receipts = new List<RemovalResult>(orderedRemovalItems.Length);
+        var queueStartFailure = await CollectRemovalReceiptsAsync(store, orderedRemovalItems, keyLease.Bytes,
+            existingAction, missingAction, normalizedRestoreFolder, failures, receipts);
+        var observerFailures = DeliverRemovalReceipts(receipts, reportRemoval);
+        if (queueStartFailure is not null && HasNoRemovalOrObserverFailures(failures, observerFailures))
+            ExceptionDispatchInfo.Throw(queueStartFailure);
+        ThrowCombinedRemovalFailures(failures, observerFailures, queueStartFailure);
     }
 
     private static void ValidateRemovalActions(
@@ -90,12 +96,10 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         return new(id, imageRecord.Name, originalPath, SourceExists(originalPath));
     }
 
-    private async Task RemoveBatchAsync(IGalleryStore store, IReadOnlyList<RemovalItem> removalItems, byte[] key,
+    private async Task<Exception?> CollectRemovalReceiptsAsync(IGalleryStore store, IReadOnlyList<RemovalItem> removalItems, byte[] key,
         ExistingOriginalAction existingAction, MissingOriginalAction missingAction, string restoreFolder,
-        Action<RemovalResult>? reportRemoval)
+        List<Exception> failures, List<RemovalResult> receipts)
     {
-        var failures = new List<Exception>();
-        var receipts = new List<RemovalResult>(removalItems.Count);
         Exception? queueStartFailure = null;
         await store.Gate.WaitAsync();
         try
@@ -126,10 +130,7 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
             try { startDriveQueue(); }
             catch (Exception exception) { queueStartFailure = exception; }
         }
-        var observerFailures = DeliverRemovalReceipts(receipts, reportRemoval);
-        if (queueStartFailure is not null && HasNoRemovalOrObserverFailures(failures, observerFailures))
-            ExceptionDispatchInfo.Throw(queueStartFailure);
-        ThrowCombinedRemovalFailures(failures, observerFailures, queueStartFailure);
+        return queueStartFailure;
     }
 
     private static bool HasNoRemovalOrObserverFailures(
