@@ -170,10 +170,7 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         try
         {
             var imageRecord = await store.ReadRecordAsync(removalItem.Id, key);
-            if (!RemovalRules.CanRemove(imageRecord))
-                throw new ImageNotMarkedForDeletionException($"Media item '{imageRecord.Id}' is no longer marked for deletion.",
-                    LogEventGallery.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
-                    .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false)));
+            EnsureMarkedForRemoval(imageRecord);
             var originalPath = OriginalPath(imageRecord);
             if (RemovalPreviewHasChanged(removalItem, originalPath))
                 throw new InvalidOperationException("Original file status changed. Review a new removal preview.");
@@ -199,6 +196,14 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
             throw CreateRemovalFailure($"Could not remove media item '{removalItem.Id}': {message}",
                 removalItem.Id, false, restoredPath, originalDeleted, exception);
         }
+    }
+
+    private static void EnsureMarkedForRemoval(ImageRecord imageRecord)
+    {
+        if (!RemovalRules.CanRemove(imageRecord))
+            throw new ImageNotMarkedForDeletionException($"Media item '{imageRecord.Id}' is no longer marked for deletion.",
+                LogEventGallery.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
+                .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false)));
     }
 
     private static GalleryRemovalException CreateRemovalFailure(string message, string imageId,

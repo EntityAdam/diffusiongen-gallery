@@ -595,6 +595,34 @@ public sealed class RemovalTests
     }
 
     [Fact]
+    public async Task Removal_WhenMarkIsClearedAfterPreview_ThenRetainsThatItemAndContinues()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(31, 20)), "second.png", "folder");
+        await fixture.Scope.Records.UpdateManyAsync([first.Id, second.Id], image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([first.Id, second.Id]);
+        await fixture.Scope.Records.UpdateAsync(first.Id, image => image with { IsMarkedForDeletion = false });
+        var expectedCiphertext = await File.ReadAllBytesAsync(first.StoredPath);
+        var receipts = new List<RemovalResult>();
+
+        var error = await Record.ExceptionAsync(() => fixture.Scope.MediaMaintenance.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", receipts.Add));
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+
+        Assert.IsType<AggregateException>(error);
+        Assert.Equal([first.Id, second.Id], receipts.Select(receipt => receipt.Id));
+        Assert.False(receipts[0].WasRemoved);
+        Assert.Contains("no longer marked for deletion", receipts[0].Error);
+        Assert.IsType<ImageNotMarkedForDeletionException>(receipts[0].RemovalFailure!.Exception.InnerException);
+        Assert.True(receipts[1].WasRemoved);
+        Assert.Equal(first.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).Id);
+        Assert.Equal(expectedCiphertext, await File.ReadAllBytesAsync(first.StoredPath));
+        Assert.False(File.Exists(second.StoredPath));
+    }
+
+    [Fact]
     public async Task BulkRemoval_WhenOneImageFails_ThenReportsPerImageAndContinues()
     {
         // Arrange
