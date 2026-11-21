@@ -72,7 +72,7 @@ internal sealed class GallerySettings(GalleryLifetime galleryLifetime, VaultSess
     public async Task DeleteViewAsync(string name)
     {
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        await galleryLifetime.Current.GalleryStore.DeleteViewAsync(name, key.Bytes);
+        await galleryLifetime.Current.GalleryStore.DeleteViewAsync(name.Trim(), key.Bytes);
     }
 
     private async Task<T?> ReadEncryptedSettingAsync<T>(string id, string purpose) where T : class
