@@ -1,0 +1,16 @@
+<ModalDialog Class="tagging-dialog" LabelledBy="tagging-dialog-title" Busy="Busy" Close="Cancel">
+    <Card Class="m-auto w-full max-w-lg space-y-4 p-5">
+        <h2 id="tagging-dialog-title" class="text-lg font-semibold">Edit tags</h2>
+        <Tagging Images="Images" Options="Options" Counts="Counts" Busy="Busy" Error="@Error" Save="Save" Cancel="Cancel" />
+    </Card>
+</ModalDialog>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public IEnumerable<string> Options { get; set; } = [];
+    [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public EventCallback<TagEdit> Save { get; set; }
+    [Parameter] public EventCallback Cancel { get; set; }
+}

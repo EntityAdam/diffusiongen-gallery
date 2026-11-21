@@ -1,0 +1,16 @@
+@using Gallery.Web.Components.Workspace
+
+<div class="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground" role="status" data-testid="catalog-loading">
+    @if (Catalog.IsLoading) { <LoaderCircleIcon Size="16" ClassName="animate-spin" aria-hidden="true" /> }
+    <span>Showing @(InfiniteScroll ? "the first results" : "the initial page"). Full-library search, filters and counts are @(Catalog.IsLoading ? "loading in the background" : "not ready yet").</span>
+    @if (Catalog.LoadError.Length > 0)
+    {
+        <span>@Catalog.LoadError</span>
+        <Button Variant="ButtonVariant.Outline" Size="ButtonSize.Sm" OnClick="() => Catalog.RetryLoad()">Retry loading library</Button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public WorkspaceCatalog Catalog { get; set; } = default!;
+    [Parameter] public bool InfiniteScroll { get; set; }
+}

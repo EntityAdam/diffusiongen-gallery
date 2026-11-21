@@ -361,6 +361,9 @@ and move/rename controls are not exposed here.
 
 ### Keyboard shortcuts and full-screen viewing
 
+Open **Keyboard shortcuts** directly above **Settings** in the sidebar for an
+in-app reference covering gallery cards, fullscreen, review modes, and panic lock.
+
 Curation shortcuts target the card under the pointer, falling back to the focused
 card when no card is hovered. Arrow keys continue from keyboard focus:
 
@@ -384,11 +387,16 @@ In ordinary fullscreen browsing, clicking the current star clears the rating;
 rating decisions and advances after each decision. Rating, favorite, and deletion
 mark changes save immediately; the viewing sequence stays fixed until closing.
 
-Quick tag stages additions and removals until **Save changes**; **Cancel** discards
-both. Bulk tag edits show each tag's assignment count (for example, **2 of 5 selected**)
-and preserve mixed assignments for tags you leave unchanged. New tags apply to all selected
-media; removing a tag removes it from all selected media. A successful save confirms the
-number of affected media items.
+In Gallery, select media and press **T** to edit tags in a dialog, or use the same
+editor in the **Organize** drawer. The dialog edits the selection captured when it
+opened. The drawer follows the current selection; changing the selection discards
+its unsaved draft. Both stage edits until **Save changes**. Cancel the dialog or
+choose **Discard changes** in the drawer to leave the media untouched.
+
+The editor shows how many selected items have each tag (for example, **2 of 5 selected**).
+New tags apply to all selected items; removing a tag removes it from all of them.
+Unchanged tags retain their original assignments. Collections and fullscreen use
+the same editor.
 The move dialog stages new collections and sets until **Move**. Cancel discards
 the destination draft. Creation and placement commit together; a failed move leaves
 no new destinations. Undo restores both the placement and destination catalog.

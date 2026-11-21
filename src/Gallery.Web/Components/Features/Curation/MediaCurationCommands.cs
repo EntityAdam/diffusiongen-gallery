@@ -1,5 +1,6 @@
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Web.Components.Features.Tags;
 using Gallery.Web.Components.Workspace;
 
 namespace Gallery.Web.Components.Features.Curation;
@@ -22,6 +23,9 @@ public sealed class MediaCurationCommands(IGalleryRecordEditor gallery, Workspac
 
     internal Task RestoreAsync(IReadOnlyCollection<string> ids) =>
         RunBulkAsync("Updating deletion marks...", ids, current => gallery.SetDeletionMark(current, false), "Deletion marks cleared");
+
+    internal Task EditTagsAsync(TagEdit edit) =>
+        RunBulkAsync("Saving tags...", edit.Ids, image => edit.Apply(gallery, image), "");
 
     private Task RunSingleAsync(string status, string id, Func<ImageRecordEdit, ImageRecordEdit> update) =>
         commands.RunAsync(status, async () =>

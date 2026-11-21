@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
-using Gallery.Web.Components.Features.Collections;
+using Gallery.Core.Models;
+using Gallery.Web.Components.Features.Tags;
 using Gallery.Web.Components.Shared;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web.HtmlRendering;
@@ -145,48 +146,31 @@ public sealed class AdvancedSelectTests
     }
 
     [Fact]
-    public async Task QuickTags_StagesRemovalsAndAdditionsUntilSave()
+    public async Task Tagging_StagesRemovalsAndAdditionsUntilSave()
     {
         await using var fixture = ComponentRenderFixture.Create();
-        QuickOrganizationDialog? dialog = null;
-        string? saved = null;
+        TagEdit? saved = null;
+        var image = new ImageRecord { Tags = "Design, Product" };
         var root = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
-            fixture.HtmlRenderer.RenderComponentAsync<QuickTagTestHost>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            fixture.HtmlRenderer.RenderComponentAsync<Tagging>(ParameterView.FromDictionary(new Dictionary<string, object?>
             {
-                [nameof(QuickTagTestHost.Capture)] = (Action<QuickOrganizationDialog>)(value => dialog = value),
-                [nameof(QuickTagTestHost.Saved)] = (Action<string>)(value => saved = value)
+                [nameof(Tagging.Images)] = new[] { image },
+                [nameof(Tagging.Save)] = EventCallback.Factory.Create<TagEdit>(this, edit => saved = edit)
             })));
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
-        {
-            await (Task)typeof(QuickOrganizationDialog).GetMethod("TagsChangedAsync", flags)!
-                .Invoke(dialog, [new[] { "Product", "Research" }])!;
-            typeof(ComponentBase).GetMethod("StateHasChanged", flags)!.Invoke(dialog, null);
-        });
+        var editor = fixture.LatestComponent<Tagging>();
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() =>
+            fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["Product", "Research"]));
         Assert.Null(saved);
         string html = await Html(fixture, root);
         Assert.DoesNotContain("aria-label=\"Remove tag Design\"", html);
         Assert.Contains("aria-label=\"Remove tag Product\"", html);
         Assert.Contains("aria-label=\"Remove tag Research\"", html);
         await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
-            await (Task)typeof(QuickOrganizationDialog).GetMethod("SaveAsync", flags)!.Invoke(dialog, null)!);
-        Assert.Equal("Product, Research", saved);
-    }
-
-    private sealed class QuickTagTestHost : ComponentBase
-    {
-        [Parameter] public Action<QuickOrganizationDialog>? Capture { get; set; }
-        [Parameter] public Action<string>? Saved { get; set; }
-        private string tags = "Design, Product";
-        protected override void BuildRenderTree(RenderTreeBuilder builder)
-        {
-            builder.OpenComponent<QuickOrganizationDialog>(0);
-            builder.AddAttribute(1, nameof(QuickOrganizationDialog.Tags), tags);
-            builder.AddAttribute(2, nameof(QuickOrganizationDialog.Options), new[] { "Design", "Product" });
-            builder.AddAttribute(4, nameof(QuickOrganizationDialog.Save), EventCallback.Factory.Create<string>(this, value => Saved?.Invoke(value)));
-            builder.AddComponentReferenceCapture(5, instance => Capture?.Invoke((QuickOrganizationDialog)instance));
-            builder.CloseComponent();
-        }
+            await (Task)typeof(Tagging).GetMethod("SaveAsync", flags)!.Invoke(editor, null)!);
+        Assert.Equal([image.Id], saved!.Ids);
+        Assert.Equal(["Design"], saved.Removed);
+        Assert.Equal(["Research"], saved.Added);
     }
 
     private static Task<HtmlRootComponent> Render(ComponentRenderFixture fixture, bool multiple, bool disabled, bool filter,

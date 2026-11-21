@@ -179,7 +179,7 @@ public sealed class UiConsistencyTests
         var organizeHtml = await Html(fixture, root);
         Assert.Contains("gallery-organize-drawer", organizeHtml);
         Assert.Contains("Move to set", organizeHtml);
-        Assert.Contains("bulk-tags", organizeHtml);
+        Assert.Contains("Select media to edit tags.", organizeHtml);
         Assert.Same(workbench, fixture.LatestComponent<LibraryWorkbench>());
         await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "organize");
         Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
@@ -191,6 +191,31 @@ public sealed class UiConsistencyTests
         Assert.Contains("Restore", trashHtml);
         var trashNavigation = Regex.Match(trashHtml, @"<nav class=""workspace-navigation""[^>]*>(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
         Assert.Matches(@"aria-label=""Trash""[^>]*aria-current=""page""", trashNavigation);
+    }
+
+    [Fact]
+    public async Task Sidebar_KeyboardShortcutsOpensAndClosesWithoutNavigating()
+    {
+        using var vault = new TestVault();
+        await vault.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
+        var (home, root) = await fixture.RenderWorkspaceAsync("settings");
+        var html = await Html(fixture, root);
+        var shortcuts = html.IndexOf("aria-label=\"Keyboard shortcuts\"", StringComparison.Ordinal);
+        var settings = html.IndexOf("aria-label=\"Settings\"", StringComparison.Ordinal);
+        Assert.True(shortcuts >= 0 && shortcuts < settings);
+        Assert.DoesNotContain("id=\"keyboard-shortcuts-title\"", html);
+
+        await Invoke(fixture, fixture.LatestComponent<GalleryWorkspaceLayout>(), "OpenShortcuts");
+        var openHtml = await Html(fixture, root);
+        Assert.Contains("aria-labelledby=\"keyboard-shortcuts-title\"", openHtml);
+        Assert.Contains("Duplicate review", openHtml);
+        Assert.Contains("<kbd>Shift+X</kbd>", openHtml);
+        Assert.Contains("<kbd>Ctrl+Shift+L</kbd>", openHtml);
+
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<KeyboardShortcutsDialog>().Close.InvokeAsync());
+        Assert.DoesNotContain("id=\"keyboard-shortcuts-title\"", await Html(fixture, root));
+        Assert.Equal("settings", home.Session.Navigation.Section);
     }
 
     [Fact]
@@ -298,18 +323,18 @@ public sealed class UiConsistencyTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task QuickTag_CancelDiscardsBothAdditionsAndRemovals(bool removeAll)
+    public async Task Tagging_CancelDiscardsBothAdditionsAndRemovals(bool removeAll)
     {
         await using var fixture = ComponentRenderFixture.Create();
-        string? saved = null;
+        TagEdit? saved = null;
         var cancelled = false;
-        var (dialog, root) = await Render<QuickOrganizationDialog>(fixture, new()
+        var (dialog, root) = await Render<Tagging>(fixture, new()
         {
-            [nameof(QuickOrganizationDialog.Tags)] = "cat, dog",
-            [nameof(QuickOrganizationDialog.Save)] = EventCallback.Factory.Create<string>(this, value => saved = value),
-            [nameof(QuickOrganizationDialog.Cancel)] = EventCallback.Factory.Create(this, () => cancelled = true)
+            [nameof(Tagging.Images)] = new[] { new ImageRecord { Tags = "cat, dog" } },
+            [nameof(Tagging.Save)] = EventCallback.Factory.Create<TagEdit>(this, value => saved = value),
+            [nameof(Tagging.Cancel)] = EventCallback.Factory.Create(this, () => cancelled = true)
         });
-        await Invoke(fixture, dialog, "TagsChangedAsync", (object)(removeAll ? Array.Empty<string>() : new[] { "dog", "bird" }));
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(removeAll ? [] : ["dog", "bird"]));
         Assert.Null(saved);
         var html = await Html(fixture, root);
         Assert.Contains("Save changes", html);
@@ -317,6 +342,95 @@ public sealed class UiConsistencyTests
         await Invoke(fixture, dialog, "CancelAsync");
         Assert.True(cancelled);
         Assert.Null(saved);
+    }
+
+    [Fact]
+    public async Task GalleryTagging_OneSelectionCanRemoveAllTags()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "cat, dog" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
+        var (_, root) = await fixture.RenderWorkspaceAsync();
+        var browser = fixture.LatestComponent<GalleryBrowser>();
+
+        Assert.Contains("data-can-edit-tags=\"false\"", await Html(fixture, root));
+        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", image.Id, false);
+        var selected = await Html(fixture, root);
+        Assert.Contains("data-can-edit-tags=\"true\"", selected);
+        Assert.DoesNotContain("1 selected", selected);
+        await Invoke(fixture, browser, "HandleGridKeyAsync", "t", "", false);
+
+        var html = await Html(fixture, root);
+        Assert.Contains("aria-label=\"Remove tag cat\"", html);
+        Assert.Contains("aria-label=\"Remove tag dog\"", html);
+        var dialog = fixture.LatestComponent<Tagging>();
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync([]));
+        await Invoke(fixture, dialog, "SaveAsync");
+
+        Assert.Empty(Assert.Single(await vault.Scope.Catalog.ListAsync()).Tags);
+        Assert.DoesNotContain("id=\"tagging-dialog-title\"", await Html(fixture, root));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GalleryTagging_AppliesOnlyExplicitChangesInBothHosts(bool inDrawer)
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        var unselected = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(5, 5)), "other.png", "folder");
+        await vault.Scope.Records.UpdateAsync(first.Id, edit => edit with { Tags = "cat, Bird, shared", Rating = 4 });
+        await vault.Scope.Records.UpdateAsync(second.Id, edit => edit with { Tags = "dog, shared" });
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
+        var (home, root) = await fixture.RenderWorkspaceAsync();
+        var browser = fixture.LatestComponent<GalleryBrowser>();
+
+        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", first.Id, false);
+        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", second.Id, false);
+        if (inDrawer) await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "organize");
+        else await Invoke(fixture, browser, "HandleGridKeyAsync", "t", "", false);
+
+        var html = await Html(fixture, root);
+        Assert.Contains("1 of 2 selected", html);
+        Assert.Contains("2 of 2 selected", html);
+        var dialog = fixture.LatestComponent<Tagging>();
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["cat", "dog", "bird", "landscape"]));
+        await Invoke(fixture, dialog, "SaveAsync");
+
+        var saved = (await vault.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
+        Assert.Equal("cat, Bird, landscape", saved[first.Id].Tags);
+        Assert.Equal(4, saved[first.Id].Rating);
+        Assert.Equal("dog, landscape", saved[second.Id].Tags);
+        Assert.Empty(saved[unselected.Id].Tags);
+        Assert.Empty(home.Session.Activity.Error);
+        Assert.Empty(home.Session.Activity.Message);
+        var afterSave = await Html(fixture, root);
+        Assert.DoesNotContain("id=\"tagging-dialog-title\"", afterSave);
+        if (inDrawer) Assert.Contains("aria-label=\"Remove tag landscape\"", afterSave);
+    }
+
+    [Fact]
+    public async Task Organize_ChangingSelectionDiscardsDraftEvenWhenTheNewItemHasTheSameTags()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
+        var (home, root) = await fixture.RenderWorkspaceAsync();
+        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "organize");
+        var browser = fixture.LatestComponent<GalleryBrowser>();
+        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", first.Id, false);
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["draft"]));
+        Assert.Contains("aria-label=\"Remove tag draft\"", await Html(fixture, root));
+
+        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", second.Id, false);
+        Assert.DoesNotContain("aria-label=\"Remove tag draft\"", await Html(fixture, root));
+        Assert.All(await vault.Scope.Catalog.ListAsync(), image => Assert.Empty(image.Tags));
     }
 
     [Fact]
@@ -336,13 +450,14 @@ public sealed class UiConsistencyTests
                 (await vault.Scope.Collections.LoadCollectionCatalogAsync(), await vault.Scope.Catalog.ListAsync())),
             [nameof(CollectionsWorkspace.Location)] = new CollectionLocation(Unorganized: true)
         });
-        typeof(CollectionsWorkspace).GetField("quickTagIds", Private)!.SetValue(workspace, new[] { first.Id, second.Id });
         await Invoke(fixture, workspace, "SelectAll");
         await Invoke(fixture, workspace, "OpenTags");
         var tagHtml = await Html(fixture, root);
         Assert.Contains("1 of 2 selected", tagHtml);
         Assert.Contains("2 of 2 selected", tagHtml);
-        await Invoke(fixture, workspace, "SaveTagsAsync", "dog, shared, bird");
+        var editor = fixture.LatestComponent<Tagging>();
+        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["dog", "shared", "bird"]));
+        await Invoke(fixture, editor, "SaveAsync");
         var saved = await vault.Scope.Catalog.ListAsync();
         Assert.Equal("shared, bird", saved.Single(image => image.Id == first.Id).Tags);
         Assert.Equal("dog, shared, bird", saved.Single(image => image.Id == second.Id).Tags);

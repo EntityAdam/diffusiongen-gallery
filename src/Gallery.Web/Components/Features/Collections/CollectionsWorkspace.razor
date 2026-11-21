@@ -66,7 +66,7 @@
     }
 </div>
 @if (destination) { <CollectionDestinationDialog Images="@SelectedMedia" InitialCollectionId="@Collection?.Id" InitialSetId="@(choosingMedia ? Set?.Id : null)" Saved="MovedAsync" Cancel="CloseDestinationAsync" /> }
-@if (quickTags) { <QuickOrganizationDialog Tags="@CommonTags" AssignmentCounts="@QuickTagCounts" MediaCount="@quickTagIds.Length" ImageName="" Options="@KnownTags" Busy="@ControlsDisabled" Error="@error" Save="SaveTagsAsync" Cancel="() => quickTags = false" /> }
+@if (taggingImages is not null) { <TaggingDialog Images="taggingImages" Options="@KnownTags" Busy="@ControlsDisabled" Error="@error" Save="SaveTagsAsync" Cancel="() => taggingImages = null" /> }
 @if (modal is not null)
 { <OrganizationModal Title="@ModalTitle" Action="@(modal == "delete" ? (modalIsSet ? "Delete set" : "Delete collection") : modal == "move" ? "Move set" : modalId is null ? "Create" : "Save")" Error="@error" Busy="@ControlsDisabled" Disabled="@(modal != "delete" && string.IsNullOrWhiteSpace(name))" Destructive='@(modal == "delete")' Submit="SubmitModalAsync" Close="CloseModal">
     @if (modal == "delete") { <p>@AffectedMedia media will move to Unorganized.@(modalIsSet ? "" : $" {Catalog.Sets.Count(set => set.CollectionId == modalId)} sets will be deleted.")</p><p class="text-muted-foreground">The media files, tags and ratings are preserved.</p> }
@@ -147,13 +147,13 @@
     }
     private const int PageSize = 12;
     private int page, minRating;
-    private bool includeTrash, favoritesOnly, listView, choosingMedia, destination, quickTags, working, disposed;
+    private bool includeTrash, favoritesOnly, listView, choosingMedia, destination, working, disposed;
     private string query = "", sort = "updated", error = "", notice = "", name = "";
     private string? modal, modalId, anchor, draggedSet;
     private bool modalIsSet;
     private bool ControlsDisabled => Disabled || working || OrganizationHistory.IsBusy;
-    private string[] quickTagIds = [];
-    private void OpenTags() { if (ControlsDisabled) return; quickTagIds = SelectedMedia.Select(image => image.Id).ToArray();quickTags = true; }
+    private IReadOnlyList<ImageRecord>? taggingImages;
+    private void OpenTags() { if (!ControlsDisabled) taggingImages = SelectedMedia; }
     private CollectionLocation? previousLocation;
     private readonly HashSet<string> selection = [];
     private readonly Dictionary<string, string> thumbnails = [];
@@ -163,10 +163,6 @@
     private IEnumerable<ImageRecord> PageMedia => Media.Skip(page * PageSize).Take(PageSize);
     private IReadOnlyList<ImageRecord> SelectedMedia => Media.Where(image => selection.Contains(image.Id)).ToArray();
     private bool HasFilters => query.Length > 0 || minRating > 0 || favoritesOnly || includeTrash;
-    private IReadOnlyDictionary<string, int> QuickTagCounts => Images.Where(image => quickTagIds.Contains(image.Id))
-        .SelectMany(image => image.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.OrdinalIgnoreCase))
-        .GroupBy(tag => tag, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-    private string CommonTags => string.Join(", ", Images.Where(image => quickTagIds.Contains(image.Id)).SelectMany(image => image.Tags.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)).Distinct(StringComparer.OrdinalIgnoreCase));
     private string CollectionSummary(string id) => $"{Index.SetsByCollection[id].Count()} sets · {Index.MediaByCollection[id].Count()} media";
     private string ModalName => modalIsSet ? Catalog.Sets.FirstOrDefault(item => item.Id == modalId)?.Name ?? "" : Catalog.Collections.FirstOrDefault(item => item.Id == modalId)?.Name ?? "";
     private string ModalTitle => modal == "delete" ? $"Delete “{ModalName}”?" : modal == "move" ? $"Move “{ModalName}”" : $"{(modalId is null ? "New" : "Rename")} {(modalIsSet ? "set" : "collection")}";
@@ -270,11 +266,17 @@
     private Task RateAsync(ImageRecord image, int rating) => CurateAsync(image, GalleryKeyboardCuration.Rating(GalleryRecords, image.Rating == rating ? 0 : rating), "Rating saved.");
     private Task FavoriteAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(GalleryRecords, "f", image)!, image.IsFavorite ? "Removed from favorites." : "Added to favorites.");
     private Task MarkAsync(ImageRecord image) => CurateAsync(image, GalleryKeyboardCuration.ForKey(GalleryRecords, "d", image)!, image.IsMarkedForDeletion ? "Deletion mark cleared." : "Marked for deletion.");
-    private Task SaveTagsAsync(string tags) => RunAsync(async () => { await GalleryRecords.UpdateManyAsync(quickTagIds, edit => edit with { Tags = TagSelection.Apply(GalleryRecords, edit.Tags, CommonTags, tags) });quickTags = false;await RefreshParentAsync();notice = $"Tags saved for {quickTagIds.Length} media item(s)."; });
+    private Task SaveTagsAsync(TagEdit edit) => RunAsync(async () =>
+    {
+        await GalleryRecords.UpdateManyAsync(edit.Ids, image => edit.Apply(GalleryRecords, image));
+        taggingImages = null;
+        await RefreshParentAsync();
+        notice = $"Tags saved for {edit.Ids.Count} media item(s).";
+    });
     private Task OpenMediaAsync(ImageRecord image) => ControlsDisabled ? Task.CompletedTask : Open.InvokeAsync((PageMedia.ToArray(), image.Id));
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
     {
-        if (ControlsDisabled || modal is not null || quickTags || destination) return;
+        if (ControlsDisabled || modal is not null || taggingImages is not null || destination) return;
         if (key == "escape") { ClearSelection(); return; }
         var image = Media.FirstOrDefault(item => item.Id == id);
         if (image is null) return;

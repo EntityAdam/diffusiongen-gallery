@@ -12,6 +12,10 @@
             <CollectionHierarchy Catalog="Catalog" Location="Location" Images="Images" Busy="Busy" Selected="SelectLocation" />
         }
         <div class="workspace-sidebar-actions">
+            <Button Variant="ButtonVariant.Ghost" Type="button" Class="workspace-nav-button" aria-label="Keyboard shortcuts"
+                    title="Keyboard shortcuts" aria-haspopup="dialog" OnClick="OpenShortcuts">
+                <LucideIcon Name="keyboard" Size="16" aria-hidden="true" /><span class="sidebar-label">Keyboard shortcuts</span>
+            </Button>
             <Button Variant="@(Workflow == "settings" ? ButtonVariant.Secondary : ButtonVariant.Ghost)" Disabled="@(Busy || JobRunning)" Class="workspace-nav-button" aria-label="Settings" title="Settings" aria-current="@(Workflow == "settings" ? "page" : null)" OnClick='() => Settings.InvokeAsync()'><SettingsIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Settings</span></Button>
             <Button Variant="ButtonVariant.Destructive" Size="ButtonSize.Default" Type="button" Class="workspace-panic" aria-label="Panic lock gallery (Ctrl+Shift+L)" title="Panic: immediately lock gallery, release checkout, purge memory and wipe media (Ctrl+Shift+L)" OnClick="Panic">
                 <ShieldAlertIcon Size="16" aria-hidden="true" /><span class="sidebar-label">Panic <kbd>Ctrl+Shift+L</kbd></span>
@@ -30,6 +34,12 @@
     </AppLayoutBody>
     </AppLayoutMain>
 </AppLayout>
+
+@if (shortcutsOpen)
+{
+    <KeyboardShortcutsDialog Close="() => shortcutsOpen = false" />
+}
+
 @code {
     [Parameter] public RenderFragment? ChildContent { get; set; }
     [Parameter] public string Workflow { get; set; } = "";
@@ -48,7 +58,10 @@
 
     private bool sidebarCollapsed;
     private bool collectionNavigationOpen;
+    private bool shortcutsOpen;
     private bool? focusCollectionNavigation;
+
+    private void OpenShortcuts() => shortcutsOpen = true;
 
     private void ToggleCollectionNavigation()
     {

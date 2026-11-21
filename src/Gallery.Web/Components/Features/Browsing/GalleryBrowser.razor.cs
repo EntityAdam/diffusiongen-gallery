@@ -3,6 +3,7 @@ using Gallery.Core.Services;
 using Gallery.Web.Components.Features.Curation;
 using Gallery.Web.Components.Features.Media.Removal;
 using Gallery.Web.Components.Features.Media;
+using Gallery.Web.Components.Features.Tags;
 using Gallery.Web.Components.Features.Vision;
 using Gallery.Web.Components.Workspace;
 using Microsoft.AspNetCore.Components;
@@ -25,11 +26,23 @@ public partial class GalleryBrowser
 
     private GalleryActivity Activity => Commands.Activity;
     private bool OverlayOpen => Presentation.DetailsOpen || Removal.IsOpen;
-    private VirtualGalleryGrid? virtualGrid;
+    private GalleryResults? results;
+    private ImageRecord[]? taggingImages;
+    private string tagError = "";
+    internal bool TaggingOpen => taggingImages is not null;
+    private bool CanEditTags => !TaggingOpen && Active && !State.TrashActive && !Catalog.IsPartial && !Activity.Busy
+        && !Presentation.IsOpen && !OverlayOpen && State.LibrarySelection.Count > 0;
+
+    protected override void OnParametersSet()
+    {
+        if (!Active || State.TrashActive) CloseTagging();
+    }
 
     public async Task HandleGridKeyAsync(string key, string id, bool shift)
     {
-        if (key == "escape") State.ClearSelection();
+        if (TaggingOpen) return;
+        if (key == "t") OpenTagging();
+        else if (key == "escape") State.ClearSelection();
         else if (Catalog.ImagesById.TryGetValue(id, out var image))
         {
             if (key == "x") State.SelectCard(id, shift);
@@ -39,17 +52,33 @@ public partial class GalleryBrowser
         StateHasChanged();
     }
 
-    private Task RetryCatalogLoadAsync() { Catalog.RetryLoad(); return Task.CompletedTask; }
-    private async Task SetActiveToolAsync(string value)
+    private void OpenTagging()
     {
-        await Navigation.SetActiveToolAsync(value);
-        await Refreshed.InvokeAsync();
+        if (!CanEditTags) return;
+        tagError = "";
+        taggingImages = State.LibrarySelection.Select(id => Catalog.ImagesById[id]).ToArray();
+    }
+
+    private void CloseTagging() => taggingImages = null;
+
+    private async Task SaveTagsAsync(TagEdit edit)
+    {
+        tagError = "";
+        await Curation.EditTagsAsync(edit);
+        tagError = Activity.Error;
+    }
+
+    private async Task SaveDialogTagsAsync(TagEdit edit)
+    {
+        if (!TaggingOpen || Activity.Busy) return;
+        await SaveTagsAsync(edit);
+        if (tagError.Length == 0) CloseTagging();
     }
 
     private async Task OpenViewerAsync(string? initialId)
     {
         if (State.InfiniteScroll)
-            Presentation.OpenOrderedViewer(State.Filtered, initialId ?? virtualGrid?.PreferredViewerId);
+            Presentation.OpenOrderedViewer(State.Filtered, initialId ?? results?.PreferredViewerId);
         else Presentation.OpenViewer(State.PageImages, initialId);
         await Refreshed.InvokeAsync();
     }
@@ -63,12 +92,4 @@ public partial class GalleryBrowser
     private Task DeleteAsync() => Removal.PrepareAsync(State.RemovalSelection);
     private Task RestoreAsync() => Curation.RestoreAsync(State.RemovalSelection.ToArray());
 
-    private Task SetGroupingAsync(string value) => Commands.RunAsync("Filtering...", () => State.SetGroupingAsync(value));
-    private Task ResetFilters() => Commands.RunAsync("Filtering...", State.ResetFiltersAsync);
-    private Task ApplyFilterPanelAsync(GalleryFilter value) => Commands.RunAsync("Filtering...", () => State.ApplyFilterAsync(value));
-    private Task SetSort(string? value) => Commands.RunAsync("Filtering...", () => State.SetSortAsync(value));
-    private Task SetDensityAsync(string value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetDensityAsync(value));
-    private Task SetThumbnailScaleAsync(int value) => Commands.RunAsync("Saving thumbnail size...", () => State.SetThumbnailScaleAsync(value));
-    private Task PreviousAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page - 1));
-    private Task NextAsync() => Commands.RunAsync("Loading previews...", () => State.GoToPageAsync(State.Page + 1));
 }

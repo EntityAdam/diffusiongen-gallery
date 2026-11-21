@@ -3,6 +3,9 @@ using Gallery.Core.Services;
 using Gallery.Web.Components.Features.Collections;
 using Gallery.Web.Components.Features.Curation;
 using Gallery.Web.Components.Features.Media;
+using Gallery.Web.Components.Features.Browsing;
+using Gallery.Web.Components.Features.Tags;
+using Gallery.Web.Components.Shared;
 using Gallery.Web.Components.Features.Vision;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,14 +36,15 @@ public sealed class ReviewTests
         type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { image.Id });
         var collection = await fixture.Scope.Collections.CreateCollectionAsync("new collection");
         var set = await fixture.Scope.Collections.CreateSetAsync(collection.Id, "New set");
-        type.GetField("tags", flags)!.SetValue(workbench, "new tag");
         var moved = await fixture.Scope.Collections.MoveMediaToSetAsync([image.Id], set.Id);
         await (Task)type.GetMethod("DestinationSavedAsync", flags)!.Invoke(workbench, [moved])!;
         var collected = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Contains("new collection", collected.Collections);
         Assert.Equal("existing", collected.Tags);
-        await (Task)type.GetMethod("ApplyTagsAsync", flags)!.Invoke(workbench, null)!;
-        Assert.Equal("", type.GetField("error", flags)!.GetValue(workbench));
+        await using var ui = ComponentRenderFixture.Create(fixture.Scope);
+        var (workspace, _) = await ui.RenderWorkspaceAsync();
+        await ui.HtmlRenderer.Dispatcher.InvokeAsync(() => workspace.Session.Curation.EditTagsAsync(new([image.Id], ["new tag"], [])));
+        Assert.Empty(workspace.Session.Activity.Error);
         var tagged = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.Contains("existing", tagged.Tags);
         Assert.Contains("new tag", tagged.Tags);
@@ -93,20 +97,20 @@ public sealed class ReviewTests
         first = await fixture.Scope.Records.UpdateAsync(first.Id, edit => edit with { Tags = "warm, Portrait", Rating = 4 });
         second = await fixture.Scope.Records.UpdateAsync(second.Id, edit => edit with { Tags = "portrait" });
         other = await fixture.Scope.Records.UpdateAsync(other.Id, edit => edit with { Tags = "warm" });
-        var services = new ServiceCollection();
-        services.AddShadCnBlazorComponents();
-        using var provider = services.BuildServiceProvider();
-        using var workbench = CreateWorkbench(fixture.Scope, provider.GetRequiredService<ISonnerService>());
-        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var type = workbench.GetType();
-        type.GetProperty(nameof(workbench.Images))!.SetValue(workbench, new List<ImageRecord> { first, second, other });
-        type.GetProperty(nameof(workbench.SelectedIds))!.SetValue(workbench, new[] { first.Id, second.Id });
-
-        var chips = ((IReadOnlyList<(string Tag, int Count)>)type.GetProperty("SelectedTags", flags)!.GetValue(workbench)!).ToArray();
-        Assert.Equal([("Portrait", 2), ("warm", 1)], chips);
-
-        await (Task)type.GetMethod("RemoveTagAsync", flags)!.Invoke(workbench, ["warm"])!;
-        Assert.Equal("", type.GetField("error", flags)!.GetValue(workbench));
+        await using var ui = ComponentRenderFixture.Create(fixture.Scope);
+        var (workspace, root) = await ui.RenderWorkspaceAsync();
+        await ui.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            await workspace.Session.Navigation.NavigateSidebarAsync("organize");
+            var browser = ui.LatestComponent<GalleryBrowser>();
+            await browser.HandleGridKeyAsync("x", first.Id, false);
+            await browser.HandleGridKeyAsync("x", second.Id, false);
+            Assert.Contains("2 of 2 selected", root.ToHtmlString());
+            Assert.Contains("1 of 2 selected", root.ToHtmlString());
+            await ui.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["Portrait"]);
+            await (Task)ComponentTestAccess.Call(ui.LatestComponent<Tagging>(), "SaveAsync")!;
+        });
+        Assert.Empty(workspace.Session.Activity.Error);
         var stored = (await fixture.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
         Assert.Equal("Portrait", stored[first.Id].Tags);
         Assert.Equal(4, stored[first.Id].Rating);

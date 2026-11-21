@@ -1,0 +1,62 @@
+@if (Images.Count == 0)
+{
+    <p class="text-sm text-muted-foreground">Select media to edit tags.</p>
+}
+else
+{
+    <form class="space-y-2" @onsubmit="SaveAsync" @onsubmit:preventDefault>
+        <p class="text-sm text-muted-foreground">@Images.Count selected</p>
+        <AdvancedSelect Id="@pickerId" Label="Tags" ItemLabel="tag" Placeholder="Select tags…" Multiple="true" MaxLength="4000"
+                        Options="Options" Counts="Counts" SelectionCounts="assignments" SelectionTotal="Images.Count"
+                        Values="draft" ValuesChanged="ChangeDraft" Disabled="Busy" />
+        @if (Images.Count > 1)
+        {
+            <p class="text-sm text-muted-foreground">New tags apply to all selected items. Removing a tag removes it from all. Unchanged tags keep their existing assignments.</p>
+        }
+        @if (Error.Length > 0) { <p role="alert" class="text-destructive">@Error</p> }
+        <div class="flex justify-end gap-2">
+            <Button Type="button" Variant="ButtonVariant.Outline" Disabled="@(Busy || (!Cancel.HasDelegate && !HasChanges))" OnClick="CancelAsync">@(Cancel.HasDelegate ? "Cancel" : "Discard changes")</Button>
+            <Button Type="submit" Disabled="@(Busy || !HasChanges)">@(Busy ? "Saving..." : "Save changes")</Button>
+        </div>
+    </form>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ImageRecord> Images { get; set; } = [];
+    [Parameter] public IEnumerable<string> Options { get; set; } = [];
+    [Parameter] public IReadOnlyDictionary<string, int>? Counts { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string Error { get; set; } = "";
+    [Parameter] public EventCallback<TagEdit> Save { get; set; }
+    [Parameter] public EventCallback Cancel { get; set; }
+
+    private static readonly StringComparer Comparer = StringComparer.OrdinalIgnoreCase;
+    private readonly string pickerId = $"tagging-{Guid.NewGuid():N}";
+    private (string Id, string Tags)[] selection = [];
+    private Dictionary<string, int> assignments = new(Comparer);
+    private IReadOnlyList<string> draft = [];
+    private bool HasChanges => draft.Count != assignments.Count || draft.Any(tag => !assignments.ContainsKey(tag));
+
+    protected override void OnParametersSet()
+    {
+        var current = Images.Select(image => (image.Id, image.Tags));
+        if (selection.SequenceEqual(current)) return;
+        selection = current.ToArray();
+        assignments = selection.SelectMany(item => TagEdit.Split(item.Tags).Distinct(Comparer))
+            .GroupBy(tag => tag, Comparer).ToDictionary(group => group.Key, group => group.Count(), Comparer);
+        ResetDraft();
+    }
+
+    private void ResetDraft() => draft = assignments.Keys.Order(Comparer).ToArray();
+    private void ChangeDraft(IReadOnlyList<string> values) { if (!Busy) draft = values; }
+    private async Task CancelAsync()
+    {
+        if (Busy) return;
+        ResetDraft();
+        await Cancel.InvokeAsync();
+    }
+
+    private Task SaveAsync() => Busy || !HasChanges ? Task.CompletedTask :
+        Save.InvokeAsync(new TagEdit(selection.Select(item => item.Id).ToArray(),
+            draft.Except(assignments.Keys, Comparer).ToArray(), assignments.Keys.Except(draft, Comparer).ToArray()));
+}

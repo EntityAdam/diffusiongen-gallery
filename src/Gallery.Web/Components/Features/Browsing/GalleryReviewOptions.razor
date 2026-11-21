@@ -1,0 +1,29 @@
+@if (CatalogPartial)
+{
+    <p class="text-muted-foreground" role="status">Guided review will be available when the full library finishes loading.</p>
+}
+else
+{
+    <div class="review-intro space-y-4">
+        <p class="text-muted-foreground text-sm">Review media one item at a time. Mark your favorites, rate your media, or send your junk to the heap. Set your goal and start the review, keep it fresh with random mode.</p>
+        <div class="flex items-center gap-3">
+            <button id="review-random-order" type="button" role="switch" class="review-random-toggle" aria-checked="@(State.ReviewRandomOrder ? "true" : "false")"
+                    aria-labelledby="review-random-order-label" disabled="@Busy" @onclick="() => State.ReviewRandomOrder = !State.ReviewRandomOrder"><span></span></button>
+            <Label id="review-random-order-label" For="review-random-order">Random order</Label>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+            <Label For="review-goal">Goal:</Label>
+            <input id="review-goal" type="number" min="@(State.ReviewPoolCount > 0 ? 1 : 0)" max="@State.ReviewPoolCount" step="1"
+                   class="review-goal-input" disabled="@(Busy || State.ReviewPoolCount == 0)" @bind="State.ReviewGoal" />
+            <Button Variant="ButtonVariant.Default" Size="ButtonSize.Sm" Disabled="@(Busy || State.ReviewPoolCount == 0)" OnClick="StartReview">Start Review</Button>
+        </div>
+        <p class="text-muted-foreground text-sm">@State.ReviewPoolCount of the filtered media items await review.</p>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public GalleryBrowserState State { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool CatalogPartial { get; set; }
+    [Parameter] public EventCallback StartReview { get; set; }
+}

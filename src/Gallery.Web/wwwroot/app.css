@@ -359,7 +359,25 @@ input::placeholder, textarea::placeholder, .advanced-select-placeholder {
     color: inherit;
 }
 .workspace-modal::backdrop { background: rgb(0 0 0 / 90%); }
+.tagging-dialog[open] { display: flex; }
 @media (max-width: 767px) { .workspace-modal { padding: .75rem; } }
+
+.keyboard-shortcuts-dialog[open] { display: flex; padding: 1rem; }
+.keyboard-shortcuts-card { display: flex; flex-direction: column; width: min(840px, 100%); max-height: 100%; margin: auto; overflow: hidden; border: 1px solid hsl(var(--border)); border-radius: 12px; background: hsl(var(--card)); color: hsl(var(--card-foreground)); }
+.keyboard-shortcuts-header { display: flex; flex-shrink: 0; align-items: flex-start; justify-content: space-between; gap: .75rem; padding: 1rem 1.25rem; border-bottom: 1px solid hsl(var(--border)); }
+.keyboard-shortcuts-header h2 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+.keyboard-shortcuts-header p, .keyboard-shortcuts-group p { margin: .25rem 0 0; color: hsl(var(--muted-foreground)); font-size: .875rem; }
+.keyboard-shortcuts-content { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; min-height: 0; padding: 1rem 1.25rem; overflow-y: auto; overscroll-behavior: contain; }
+.keyboard-shortcuts-content:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
+.keyboard-shortcuts-group { min-width: 0; padding: .75rem; border: 1px solid hsl(var(--border)); border-radius: 8px; }
+.keyboard-shortcuts-group:last-child { grid-column: 1 / -1; }
+.keyboard-shortcuts-group h3 { margin: 0; font-size: .95rem; font-weight: 600; }
+.keyboard-shortcuts-group dl { margin: .5rem 0 0; }
+.keyboard-shortcuts-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .25rem .75rem; padding: .35rem 0; font-size: .875rem; }
+.keyboard-shortcuts-row + .keyboard-shortcuts-row { border-top: 1px solid hsl(var(--border)); }
+.keyboard-shortcuts-row dd { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0; }
+.keyboard-shortcuts-row kbd { padding: .1rem .35rem; border: 1px solid hsl(var(--border)); border-radius: 4px; background: hsl(var(--muted)); color: hsl(var(--foreground)); font-size: .75rem; white-space: nowrap; }
+@media (max-width: 640px) { .keyboard-shortcuts-content { grid-template-columns: minmax(0, 1fr); } }
 
 /* Consolidated local AI settings */
 .llm-settings { padding: 0; overflow: hidden; }
