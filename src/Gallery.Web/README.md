@@ -292,12 +292,8 @@ across pages in the current sort order; Escape clears selection. Changing search
 filters, grouping, or sorting clears selection in Gallery and Collections. Paging
 keeps selection.
 
-The **Organize** tool lists selected items' tags as removable chips. A count means
-only that many selected items have the tag. A chip's **x** removes that tag from
-all selected items that carry it. Collection and tag **Apply** actions add/merge
-values; **Clear** only resets the input. Collections are virtual and never move
-files. AI organization suggestions support up to 24 selected media items and apply
-only the requested collection or tags.
+Collections are virtual and never move files. In **Organize**, you can request AI
+tag suggestions for up to 24 selected items and choose **Apply** for each suggestion.
 
 Filters include collections, tags, ratings, review status, favorite/deletion state,
 source/current folders, text/metadata, vision and diffusion models, media type,
@@ -799,9 +795,6 @@ dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Releas
 dotnet test .\src\Gallery.slnx
 node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
-
-Explicit persisted vision-acceptance tracking is a future change;
-the current card icon is inferred from saved analysis and pending suggestions.
 
 ## Experimental structured vision analysis
 
