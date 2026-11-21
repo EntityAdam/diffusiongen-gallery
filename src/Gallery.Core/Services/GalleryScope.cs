@@ -60,7 +60,8 @@ public sealed class GalleryScope : IDisposable
         galleryLifetime = new GalleryLifetime(galleryStore, vaultStore, storeFactory);
         this.vaultSession = vaultSession;
         ownedHttpClient = ownsHttpClient ? httpClient : null;
-        vaultAccess = new VaultAccess(galleryLifetime, vaultSession);
+        var sessionLockPolicy = new VaultSessionLockPolicy(galleryLifetime, vaultSession);
+        vaultAccess = new VaultAccess(galleryLifetime, vaultSession, sessionLockPolicy);
         driveQueue = new GalleryDriveQueue(galleryLifetime, vaultSession);
         importWorkflow = new GalleryImportWorkflow(galleryLifetime, vaultSession, videoTools);
 
@@ -69,7 +70,7 @@ public sealed class GalleryScope : IDisposable
         var recordEditor = new GalleryRecordEditor(galleryLifetime, vaultSession, tagCatalogManager);
         var collectionOrganizer = new CollectionOrganizer(galleryLifetime, vaultSession);
         var vaultManager = new VaultManager(galleryLifetime, vaultSession);
-        var vaultLocations = new VaultLocationCoordinator(galleryLifetime, vaultSession, driveQueue, vaultAccess);
+        var vaultLocations = new VaultLocationCoordinator(galleryLifetime, vaultSession, driveQueue, sessionLockPolicy);
 
         Backup = new GalleryBackupWriter(galleryLifetime, vaultSession, httpClient);
         Catalog = new GalleryCatalogLoader(galleryLifetime, vaultSession, mediaStorageIndex, driveQueue);

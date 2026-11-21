@@ -6,6 +6,7 @@ using Gallery.Core.Features.Settings;
 using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Storage;
 using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults.Publication;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
@@ -15,7 +16,7 @@ using GalleryLocation = Gallery.Core.Models.GalleryLocation;
 namespace Gallery.Core.Features.Vaults;
 
 internal sealed class VaultLocationCoordinator(
-    GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue, VaultAccess vaultAccess)
+    GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue, VaultSessionLockPolicy sessionLockPolicy)
 {
     private enum VaultSelectionMode { ExistingVault, NewVault }
 
@@ -73,7 +74,7 @@ internal sealed class VaultLocationCoordinator(
             {
                 if (selectionMode == VaultSelectionMode.NewVault)
                 {
-                    VaultManager.RecoverInterruptedCreation(root);
+                    VaultCreationPublication.RecoverInterruptedCreation(root);
                     RequireEmptyDestination(root);
                 }
                 await StopDriveAndDrainSessionAsync();
@@ -89,7 +90,7 @@ internal sealed class VaultLocationCoordinator(
             {
                 if (selectionMode == VaultSelectionMode.NewVault)
                 {
-                    VaultManager.RecoverInterruptedCreation(root);
+                    VaultCreationPublication.RecoverInterruptedCreation(root);
                     RequireEmptyDestination(root);
                 }
                 await StopDriveAndDrainSessionAsync();
@@ -204,7 +205,7 @@ internal sealed class VaultLocationCoordinator(
         {
             galleryLifetime.EnsureCheckout();
             location = AcquireStagedLocation(destination);
-            lockRequestsAtStart = vaultAccess.ExplicitLockRequests;
+            lockRequestsAtStart = sessionLockPolicy.ExplicitLockRequests;
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
 
@@ -230,7 +231,7 @@ internal sealed class VaultLocationCoordinator(
                 throw new IOException(publishedFailureMessage(destination), exception);
             if (location?.FilesPublished == true)
                 throw new IOException($"The verified gallery files were published to '{destination}', but the destination could not be activated. The source was not removed.", exception);
-            vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
+            sessionLockPolicy.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
         finally { FinishStagedLocation(location, stagingDirectory, key, preserveStagingDirectory); }

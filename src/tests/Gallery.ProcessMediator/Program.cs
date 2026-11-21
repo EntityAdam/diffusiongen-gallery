@@ -10,8 +10,9 @@ if (args is ["interrupt-creation", var creationRoot, var phase])
         await scope.Vault.CloseVaultAsync();
     }
     // Arrange the exact durable publication prefix, then let the parent terminate this process.
-    var manager = typeof(Gallery.Core.Services.GalleryScope).Assembly.GetType("Gallery.Core.Features.Vaults.VaultManager")!;
-    manager.GetMethod("PrepareCreationPublication", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+    var publication = typeof(Gallery.Core.Services.GalleryScope).Assembly
+        .GetType("Gallery.Core.Features.Vaults.Publication.VaultCreationPublication")!;
+    publication.GetMethod("Prepare", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
         .Invoke(null, [staging, creationRoot]);
     if (phase is "catalog" or "header")
         File.Move(Path.Combine(staging, "gallery.db"), Path.Combine(creationRoot, "gallery.db"));

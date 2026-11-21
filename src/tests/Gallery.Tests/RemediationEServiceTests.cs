@@ -77,9 +77,12 @@ public sealed class RemediationEServiceTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Move_WhenItFailsAfterLocking_ThenRestoresTheSessionOnlyWithoutANewerExplicitLock(bool lockDuringMove)
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Relocation_WhenItFailsAfterLocking_ThenRestoresTheSessionOnlyWithoutANewerExplicitLock(
+        bool catalogOnly, bool lockDuringMove)
     {
         using var fixture = new TestVault();
         var destination = fixture.Root + "-moved";
@@ -89,17 +92,19 @@ public sealed class RemediationEServiceTests
             await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
             await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
             Task move;
-            await fixture.Store.Gate.WaitAsync();
+            using var lease = fixture.Session.AcquireUnlockedSession().Borrow();
             try
             {
-                move = fixture.Scope.Vault.MoveVaultAsync(destination);
+                move = catalogOnly
+                    ? fixture.Scope.Vault.RelocateCatalogAsync(destination)
+                    : fixture.Scope.Vault.MoveVaultAsync(destination);
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
                 while (fixture.Scope.Vault.IsUnlocked && DateTime.UtcNow < deadline) await Task.Delay(5);
                 Assert.False(fixture.Scope.Vault.IsUnlocked);
                 if (lockDuringMove) fixture.Scope.Vault.Panic();
                 File.Move(header, header + ".hidden");
             }
-            finally { fixture.Store.Gate.Release(); }
+            finally { lease.Dispose(); }
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => move);
             File.Move(header + ".hidden", header);

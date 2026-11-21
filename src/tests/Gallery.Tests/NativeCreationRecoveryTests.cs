@@ -1,3 +1,5 @@
+using System.Reflection;
+using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
@@ -6,6 +8,50 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class NativeCreationRecoveryTests
 {
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Selection_WhenCreationWasInterrupted_ThenRecoversBeforeCheckingTheDestination(
+        bool sameCheckout, bool occupied)
+    {
+        using var fixture = new TestVault();
+        var destination = sameCheckout ? fixture.Root : fixture.Root + "-destination";
+        try
+        {
+            await InterruptCreationAsync(destination, "catalog");
+            var lifetime = (GalleryLifetime)typeof(GalleryScope)
+                .GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(fixture.Scope)!;
+            lifetime.EnsureCheckout();
+            if (occupied) await File.WriteAllTextAsync(Path.Combine(destination, "keep.txt"), "keep");
+
+            if (occupied)
+                await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Vault.SelectNewVaultAsync(destination));
+            else
+                await fixture.Scope.Vault.SelectNewVaultAsync(destination);
+
+            Assert.False(File.Exists(Path.Combine(destination, ".vault-create.json")));
+            Assert.False(File.Exists(Path.Combine(destination, "gallery.db")));
+            Assert.Empty(Directory.EnumerateDirectories(destination, ".vault-create-*"));
+            Assert.Equal(occupied ? fixture.Root : destination, fixture.Scope.Vault.VaultRoot);
+            if (occupied)
+                Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(destination, "keep.txt")));
+            if (occupied && !sameCheckout)
+            {
+                using var released = VaultCheckout.Acquire(destination);
+            }
+            else
+                Assert.Throws<IOException>(() => VaultCheckout.Acquire(destination));
+        }
+        finally
+        {
+            await fixture.Scope.Vault.CloseVaultAsync();
+            if (!sameCheckout && Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("receipt", false)]
     [InlineData("catalog", false)]

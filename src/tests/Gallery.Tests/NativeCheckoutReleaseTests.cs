@@ -39,7 +39,7 @@ public sealed class NativeCheckoutReleaseTests
             checkout.Dispose();
             throw new TimeoutException("Checkout publication was not released.");
         });
-        var access = new VaultAccess(lifetime, fixture.Session);
+        var access = new VaultAccess(lifetime, fixture.Session, new VaultSessionLockPolicy(lifetime, fixture.Session));
         var unlock = Task.Run(() => access.UnlockWithPassphraseAsync(
             invalidCredential ? "incorrect passphrase" : TestVault.Passphrase));
         try

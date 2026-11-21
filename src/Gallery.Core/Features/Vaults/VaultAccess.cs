@@ -5,7 +5,7 @@ using Gallery.Core.Features.Vaults.Security;
 namespace Gallery.Core.Features.Vaults;
 
 /// <summary>
-/// GalleryScope owns and shares this coordinator for the scope's lifetime. The activation gate
+/// GalleryScope owns and shares this coordinator for the scope's lifetime. The session lock policy
 /// serializes explicit-lock generation changes with conditional session restoration; the gallery
 /// lifetime gate protects checkout changes. The session drains key leases before checkout release.
 /// </summary>
@@ -13,13 +13,16 @@ internal sealed class VaultAccess
 {
     private readonly GalleryLifetime galleryLifetime;
     private readonly VaultSession vaultSession;
-    private readonly object activationGate = new();
-    private long explicitLockRequests;
+    private readonly VaultSessionLockPolicy sessionLockPolicy;
 
-    public VaultAccess(GalleryLifetime galleryLifetime, VaultSession vaultSession)
+    public VaultAccess(
+        GalleryLifetime galleryLifetime,
+        VaultSession vaultSession,
+        VaultSessionLockPolicy sessionLockPolicy)
     {
         this.galleryLifetime = galleryLifetime;
         this.vaultSession = vaultSession;
+        this.sessionLockPolicy = sessionLockPolicy;
         vaultSession.AutoLocked += HandleAutoLock;
     }
 
@@ -27,32 +30,9 @@ internal sealed class VaultAccess
 
     public void LockVault()
     {
-        VaultCheckout? expectedCheckout;
-        lock (activationGate)
-        {
-            explicitLockRequests++;
-            expectedCheckout = galleryLifetime.Current.Checkout;
-            vaultSession.Lock();
-        }
+        var expectedCheckout = sessionLockPolicy.LockAndCaptureCheckout();
         _ = ReleaseCheckoutAfterOperationsAsync(expectedCheckout);
     }
-
-    public long ExplicitLockRequests
-    {
-        get { lock (activationGate) return explicitLockRequests; }
-    }
-
-    // A failed location change may resume the previous session unless a newer explicit lock superseded it.
-    public void RestoreUnlockedSessionAfterFailure(byte[]? key, long lockRequestsAtStart)
-    {
-        if (key is null) return;
-        lock (activationGate)
-            if (CanResumePreviousSession(galleryLifetime.IsDisposed, explicitLockRequests, lockRequestsAtStart))
-                vaultSession.Unlock(key);
-    }
-
-    private static bool CanResumePreviousSession(bool isDisposed, long currentLockRequests, long lockRequestsAtStart) =>
-        !isDisposed && currentLockRequests == lockRequestsAtStart;
 
     public Task UnlockWithPassphraseAsync(string passphrase) =>
         UnlockAsync(passphrase, VaultCredentialKind.Passphrase);
@@ -68,13 +48,13 @@ internal sealed class VaultAccess
         var started = VaultOpenTelemetry.Start(activity);
         if (credentialKind == VaultCredentialKind.RecoveryPhrase)
             credential = RecoveryPhraseValidator.Normalize(credential);
-        var lockRequestsAtAdmission = ExplicitLockRequests;
+        var lockRequestsAtAdmission = sessionLockPolicy.ExplicitLockRequests;
         await galleryLifetime.Gate.WaitAsync();
         VaultOpenTelemetry.Record(activity, "vault.unlock.gate_wait_ms", started);
         VaultCheckout? acquiredCheckout = null;
         try
         {
-            if (ExplicitLockRequests != lockRequestsAtAdmission)
+            if (sessionLockPolicy.ExplicitLockRequests != lockRequestsAtAdmission)
                 throw new InvalidOperationException("Vault unlock was superseded by an explicit lock request.");
             var checkoutWasMissing = galleryLifetime.Current.Checkout is null;
             galleryLifetime.EnsureCheckout();
@@ -88,19 +68,14 @@ internal sealed class VaultAccess
                 var historyStarted = VaultOpenTelemetry.Start(activity);
                 galleryLifetime.History?.Save(store.Root);
                 VaultOpenTelemetry.Record(activity, "vault.unlock.history_save_ms", historyStarted);
-                lock (activationGate)
-                {
-                    if (explicitLockRequests != lockRequestsAtAdmission)
-                        throw new InvalidOperationException("Vault unlock was superseded by an explicit lock request.");
-                    vaultSession.Unlock(key);
-                }
+                sessionLockPolicy.UnlockIfCurrent(key, lockRequestsAtAdmission);
             }
             finally { CryptographicOperations.ZeroMemory(key); }
         }
         finally
         {
             bool wasSuperseded;
-            lock (activationGate) wasSuperseded = explicitLockRequests != lockRequestsAtAdmission;
+            wasSuperseded = sessionLockPolicy.ExplicitLockRequests != lockRequestsAtAdmission;
             galleryLifetime.Gate.Release();
             // A lock during initial acquisition could not capture the unpublished checkout.
             if (wasSuperseded && acquiredCheckout is not null)
