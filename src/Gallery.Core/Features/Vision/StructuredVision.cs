@@ -65,7 +65,14 @@ public static class StructuredVision
         var warnings = new List<string>();
         var description = Text(scene, "description");
         if (string.IsNullOrWhiteSpace(description)) warnings.Add("Scene overview is missing; existing vision notes will be preserved.");
-        if (description.Length > 10_000) { description = description[..10_000]; warnings.Add("Overview shortened to 10,000 characters; the full JSON is preserved."); }
+        const int maximumDescriptionLength = 10_000;
+        if (description.Length > maximumDescriptionLength)
+        {
+            var length = char.IsHighSurrogate(description[maximumDescriptionLength - 1]) && char.IsLowSurrogate(description[maximumDescriptionLength])
+                ? maximumDescriptionLength - 1 : maximumDescriptionLength;
+            description = description[..length];
+            warnings.Add("Overview shortened to 10,000 characters; the full JSON is preserved.");
+        }
         var candidates = new List<VisionEntity>();
         foreach (var entity in entities.EnumerateArray())
         {

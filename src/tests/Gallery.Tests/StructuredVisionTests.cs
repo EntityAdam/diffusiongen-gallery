@@ -35,6 +35,27 @@ public sealed class StructuredVisionTests
         Assert.Throws<InvalidOperationException>(() => StructuredVision.Parse(json.RootElement));
     }
 
+    [Theory]
+    [InlineData(9997, false)]
+    [InlineData(9998, true)]
+    [InlineData(9999, false)]
+    [InlineData(10000, false)]
+    public void Parse_WhenDescriptionCrossesLimit_ThenPreservesSurrogatePairsAndOriginalJson(int prefixLength, bool includesEmoji)
+    {
+        var description = new string('a', prefixLength) + "\U0001F600" + "b";
+        var content = JsonSerializer.Serialize(new { scene = new { description }, entities = Array.Empty<object>(), tags = Array.Empty<string>(), suggested_tags = Array.Empty<string>() });
+        using var json = JsonDocument.Parse(content);
+        var expectedDescription = new string('a', Math.Min(prefixLength, 10_000)) + (includesEmoji ? "\U0001F600" : "");
+        if (description.Length <= 10_000) expectedDescription = description;
+        var expectedWarning = description.Length > 10_000;
+
+        var result = StructuredVision.Parse(json.RootElement);
+
+        Assert.Equal(expectedDescription, result.Description);
+        Assert.Equal(content, result.Analysis!.Json);
+        Assert.Equal(expectedWarning, result.Warning.Contains("Overview shortened", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void NestedProblems_AreRetainedWithWarningsAndCannotProduceFalseRelations()
     {
