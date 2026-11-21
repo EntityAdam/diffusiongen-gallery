@@ -95,6 +95,7 @@ public sealed class NativeCreationRecoveryTests
     [Theory]
     [InlineData("history")]
     [InlineData("existing-catalog")]
+    [InlineData("receipt-publication")]
     [InlineData("header-publication")]
     public async Task Creation_WhenSetupFails_ThenPreservesExistingFilesAndRetryDeliversUsableRecovery(string failure)
     {
@@ -106,7 +107,7 @@ public sealed class NativeCreationRecoveryTests
         var sentinel = Path.Combine(root, "keep.txt");
         await File.WriteAllTextAsync(sentinel, "caller-owned");
         if (failure == "history") await File.WriteAllTextAsync(state, "block history directory");
-        else Directory.CreateDirectory(Path.Combine(root, failure == "existing-catalog" ? "gallery.db" : "vault.json"));
+        else Directory.CreateDirectory(Path.Combine(root, BlockerName(failure)));
         using var service = GalleryScope.Create(root, new GalleryRuntimeOptions { StateDirectory = state }, new HttpClient());
         try
         {
@@ -125,9 +126,14 @@ public sealed class NativeCreationRecoveryTests
             }
             else
             {
-                var blocker = Path.Combine(root, failure == "existing-catalog" ? "gallery.db" : "vault.json");
+                var blocker = Path.Combine(root, BlockerName(failure));
                 Assert.True(Directory.Exists(blocker));
-                if (failure == "header-publication") Assert.False(File.Exists(Path.Combine(root, "gallery.db")));
+                if (failure is "receipt-publication" or "header-publication")
+                {
+                    Assert.False(File.Exists(Path.Combine(root, "gallery.db")));
+                    Assert.False(File.Exists(Path.Combine(root, "vault.json")));
+                    Assert.False(File.Exists(Path.Combine(root, ".vault-create.json")));
+                }
                 Directory.Delete(blocker);
             }
             Assert.Empty(Directory.EnumerateDirectories(root, ".vault-create-*"));
@@ -151,6 +157,56 @@ public sealed class NativeCreationRecoveryTests
             if (Directory.Exists(media)) Directory.Delete(media, recursive: true);
         }
     }
+
+    [Theory]
+    [InlineData("catalog")]
+    [InlineData("header")]
+    public async Task Creation_WhenRecoveryCannotMoveCatalogOrRemoveReceipt_ThenPreservesFilesAndRetries(string phase)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var fixture = new TestVault();
+        await InterruptCreationAsync(fixture.Root, phase);
+        var catalogPath = Path.Combine(fixture.Root, "gallery.db");
+        var headerPath = Path.Combine(fixture.Root, "vault.json");
+        var markerPath = Path.Combine(fixture.Root, ".vault-create.json");
+        var catalog = await File.ReadAllBytesAsync(catalogPath);
+        var header = phase == "header" ? await File.ReadAllBytesAsync(headerPath) : null;
+
+        using (new FileStream(phase == "catalog" ? catalogPath : markerPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() =>
+                fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
+            Assert.False(fixture.Scope.Vault.IsUnlocked);
+            Assert.True(File.Exists(markerPath));
+            Assert.Equal(catalog, await File.ReadAllBytesAsync(catalogPath));
+            if (header is not null) Assert.Equal(header, await File.ReadAllBytesAsync(headerPath));
+            else Assert.Single(Directory.EnumerateDirectories(fixture.Root, ".vault-create-*"));
+        }
+
+        if (phase == "catalog")
+        {
+            var recovery = await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+            fixture.Scope.Vault.LockVault();
+            await fixture.Scope.Vault.UnlockWithRecoveryPhraseAsync(recovery);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase));
+            await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        }
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+        Assert.False(File.Exists(markerPath));
+        Assert.Empty(Directory.EnumerateDirectories(fixture.Root, ".vault-create-*"));
+        await fixture.Scope.Vault.CloseVaultAsync();
+    }
+
+    private static string BlockerName(string failure) => failure switch
+    {
+        "existing-catalog" => "gallery.db",
+        "receipt-publication" => ".vault-create.json",
+        _ => "vault.json"
+    };
 
     private static async Task InterruptCreationAsync(string root, string phase)
     {

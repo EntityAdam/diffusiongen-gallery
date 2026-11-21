@@ -76,7 +76,21 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
             await InitializeStagedCatalogAsync(staging, storageOptions, createdKey);
             EnsureActive();
             SaveVaultHistory(vaultRoot);
-            vaultSession.PublishUnlock(createdKey, () => PublishCreatedVault(staging, vaultRoot));
+            vaultSession.PublishUnlock(createdKey, () =>
+            {
+                PrepareCreationPublication(staging, vaultRoot);
+                var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
+                try
+                {
+                    MoveCreatedVaultFiles(staging, vaultRoot, catalogPath);
+                }
+                catch
+                {
+                    RecoverInterruptedCreation(vaultRoot);
+                    throw;
+                }
+                RemoveCreationReceipt(vaultRoot);
+            });
             return createdVault.Recovery;
         }
         finally
@@ -119,23 +133,15 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
 
     private void SaveVaultHistory(string vaultRoot) => galleryLifetime.History?.Save(vaultRoot);
 
-    private static void PublishCreatedVault(string staging, string vaultRoot)
+    private static void MoveCreatedVaultFiles(string staging, string vaultRoot, string catalogPath)
     {
-        PrepareCreationPublication(staging, vaultRoot);
-        var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
-        try
-        {
-            File.Move(Path.Combine(staging, GalleryStoreFactory.CatalogFileName), catalogPath, overwrite: false);
-            File.Move(Path.Combine(staging, VaultStore.HeaderFileName),
-                Path.Combine(vaultRoot, VaultStore.HeaderFileName), overwrite: false);
-        }
-        catch
-        {
-            RecoverInterruptedCreation(vaultRoot);
-            throw;
-        }
-        File.Delete(Path.Combine(vaultRoot, CreationMarkerFileName));
+        File.Move(Path.Combine(staging, GalleryStoreFactory.CatalogFileName), catalogPath, overwrite: false);
+        File.Move(Path.Combine(staging, VaultStore.HeaderFileName),
+            Path.Combine(vaultRoot, VaultStore.HeaderFileName), overwrite: false);
     }
+
+    private static void RemoveCreationReceipt(string vaultRoot) =>
+        File.Delete(Path.Combine(vaultRoot, CreationMarkerFileName));
 
     private static void PrepareCreationPublication(string staging, string vaultRoot)
     {
