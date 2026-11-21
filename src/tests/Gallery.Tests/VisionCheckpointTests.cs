@@ -17,6 +17,46 @@ public sealed class VisionCheckpointTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Equal_valued_replacement_survives_in_flight_approval(bool tagsOnly)
+    {
+        var draft = new VisionDraft("image", "Image", "Description", "tag", "model", TagsOnly: tagsOnly);
+        var replacement = draft with { };
+        Assert.NotSame(draft, replacement);
+        Assert.Equal(draft, replacement);
+        var record = new ImageRecord { Id = draft.Id };
+        var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishApproval = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var persisted = new VisionCheckpoint { Drafts = [draft] };
+        VisionCheckpoint? approvalCheckpoint = null;
+        var session = new VisionCheckpointSession(new() { Drafts = [draft] }, CancellationToken.None,
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, async (_, checkpoint) =>
+            {
+                approvalCheckpoint = checkpoint;
+                approvalStarted.SetResult();
+                await finishApproval.Task;
+                persisted = checkpoint;
+                return record;
+            });
+
+        var approval = session.ApproveDraftAsync(draft);
+        await approvalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var staging = session.StageAsync(replacement);
+        Assert.False(staging.IsCompleted);
+        Assert.Empty(approvalCheckpoint!.Drafts);
+        finishApproval.SetResult();
+
+        Assert.Equal(record, await approval.WaitAsync(TimeSpan.FromSeconds(5)));
+        await staging.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Same(replacement, Assert.Single(session.State.Drafts));
+        Assert.Same(replacement, Assert.Single(persisted.Drafts));
+        var reopened = new VisionCheckpointSession(persisted, CancellationToken.None,
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, (_, _) => Task.FromResult(record));
+        Assert.Same(replacement, Assert.Single(reopened.State.Drafts));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task A_replacement_draft_survives_in_flight_approval_and_rejects_stale_decisions(bool tagsOnly)
     {
         var draft = new VisionDraft("image", "Image", "Description", "old", "model", TagsOnly: tagsOnly);
