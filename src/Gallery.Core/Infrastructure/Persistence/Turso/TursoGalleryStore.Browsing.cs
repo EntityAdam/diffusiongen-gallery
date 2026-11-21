@@ -16,18 +16,25 @@ internal sealed partial class TursoGalleryStore
         token.ThrowIfCancellationRequested();
         using var transaction = connection.BeginTransaction();
         var revision = await ReadRevisionAsync(connection);
-        var count = Convert.ToInt32(await ScalarAsync(connection, "SELECT COUNT(*) FROM media", transaction));
+        var count = await CountInitialPageRecordsAsync(connection, transaction);
         var catalogFitsOnOnePage = count <= pageSize;
-        var records = await ReadRecordsAsync(connection,
+        var records = await ReadInitialPageRecordsAsync(connection, transaction, pageSize, mode, catalogFitsOnOnePage, token);
+        transaction.Commit();
+        // This is an indexed query, not a hit in the legacy encrypted first-page cache.
+        return new GalleryCatalog(records, revision, count, catalogFitsOnOnePage, true, false);
+    }
+
+    private static async Task<int> CountInitialPageRecordsAsync(DbConnection connection, DbTransaction transaction) =>
+        Convert.ToInt32(await ScalarAsync(connection, "SELECT COUNT(*) FROM media", transaction));
+
+    private static Task<List<ImageRecord>> ReadInitialPageRecordsAsync(DbConnection connection, DbTransaction transaction,
+        int pageSize, InitialPageMode mode, bool catalogFitsOnOnePage, CancellationToken token) =>
+        ReadRecordsAsync(connection,
             (catalogFitsOnOnePage ? "" : "WHERE m.is_marked_for_deletion=$marked ") +
             "ORDER BY m.imported_ticks DESC,m.rowid LIMIT $limit",
             token, transaction, catalogFitsOnOnePage
                 ? [("$limit", pageSize)]
                 : [("$marked", mode == InitialPageMode.Marked ? 1L : 0L), ("$limit", pageSize)]);
-        transaction.Commit();
-        // This is an indexed query, not a hit in the legacy encrypted first-page cache.
-        return new GalleryCatalog(records, revision, count, catalogFitsOnOnePage, true, false);
-    }
 
     public Task<GalleryCatalog> ReadCatalogSnapshotAsync(byte[] key, CancellationToken token) => ExecuteAsync(key, async connection =>
     {
@@ -86,14 +93,20 @@ internal sealed partial class TursoGalleryStore
         var currentRevision = await ReadRevisionAsync(connection, transaction);
         if (currentRevision != sourceSnapshot.Revision)
             throw new CatalogRevisionConflictException(sourceSnapshot.Revision, currentRevision);
+        await WriteRefreshedRecordsAsync(connection, transaction, refreshedRecords, token);
+        var revision = await ReadRevisionAsync(connection, transaction);
+        token.ThrowIfCancellationRequested();
+        transaction.Commit();
+        return revision;
+    }
+
+    private static async Task WriteRefreshedRecordsAsync(DbConnection connection, DbTransaction transaction,
+        IReadOnlyList<ImageRecord> refreshedRecords, CancellationToken token)
+    {
         foreach (var record in refreshedRecords)
         {
             token.ThrowIfCancellationRequested();
             await WriteRecordAsync(connection, transaction, record, RecordWriteMode.Update);
         }
-        var revision = await ReadRevisionAsync(connection, transaction);
-        token.ThrowIfCancellationRequested();
-        transaction.Commit();
-        return revision;
     }
 }

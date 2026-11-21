@@ -13,11 +13,17 @@ internal sealed partial class TursoGalleryStore
         CollectionCatalog catalog, IReadOnlyList<SavedView>? views)
     {
         using var transaction = connection.BeginTransaction();
-        foreach (var record in records)
-            await WriteRecordAsync(connection, transaction, record, RecordWriteMode.Update);
+        await UpdateCollectionRecordsAsync(connection, transaction, records);
         await UpsertSettingAsync(connection, transaction, CollectionCatalog.SettingId, catalog);
         if (views is not null)
             await UpsertSettingAsync(connection, transaction, SavedViewsSettingId, views);
         transaction.Commit();
+    }
+
+    private static async Task UpdateCollectionRecordsAsync(DbConnection connection, DbTransaction transaction,
+        IReadOnlyList<ImageRecord> records)
+    {
+        foreach (var record in records)
+            await WriteRecordAsync(connection, transaction, record, RecordWriteMode.Update);
     }
 }

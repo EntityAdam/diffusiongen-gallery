@@ -14,6 +14,16 @@ internal sealed partial class TursoGalleryStore
         TagCatalog catalog, IReadOnlyList<SavedView>? views)
     {
         using var transaction = connection.BeginTransaction();
+        await UpdateTagRecordsAsync(connection, transaction, records);
+        await UpsertSettingAsync(connection, transaction, TagCatalog.SettingId, catalog);
+        if (views is not null)
+            await UpsertSettingAsync(connection, transaction, SavedViewsSettingId, views);
+        transaction.Commit();
+    }
+
+    private static async Task UpdateTagRecordsAsync(DbConnection connection, DbTransaction transaction,
+        IReadOnlyList<ImageRecord> records)
+    {
         var existingRecords = await ReadBrowseRecordsAsync(connection, transaction,
             records.Select(record => record.Id).Distinct(StringComparer.Ordinal).ToArray(), CancellationToken.None);
         var existingById = existingRecords.ToDictionary(record => record.Id, StringComparer.Ordinal);
@@ -28,9 +38,5 @@ internal sealed partial class TursoGalleryStore
                 await ReplaceGenerationAsync(connection, transaction, record);
             existingById[record.Id] = record;
         }
-        await UpsertSettingAsync(connection, transaction, TagCatalog.SettingId, catalog);
-        if (views is not null)
-            await UpsertSettingAsync(connection, transaction, SavedViewsSettingId, views);
-        transaction.Commit();
     }
 }
