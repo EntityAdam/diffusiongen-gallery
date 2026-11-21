@@ -11,9 +11,12 @@ using Gallery.Core.Shared.Files;
 
 namespace Gallery.Core.Features.Storage.DriveOperations;
 
-// Drive work (file deletes, directory index scans and interrupted-removal recovery) is recorded in the
-// catalog database and played in the background, so the gallery never walks its whole media tree on the
-// request path and queued work survives pause, cancellation of the player, lock and restart.
+/// <summary>
+/// GalleryScope owns this queue and disposes it to prevent new playback and request cancellation.
+/// The player serializes lifecycle and status transitions; retry delay reads and writes are atomic.
+/// Changed callbacks may overlap on background or caller threads. Queued work is durable across
+/// pause, cancellation, lock and restart.
+/// </summary>
 internal sealed class GalleryDriveQueue : IDisposable
 {
     internal const string RemovalStagingMarker = ".removing-";
@@ -40,7 +43,7 @@ internal sealed class GalleryDriveQueue : IDisposable
         set => Volatile.Write(ref retryDelayTicks, value.Ticks);
     }
 
-    /// <summary>Raised from a background thread whenever queued drive work progresses.</summary>
+    /// <summary>Raised when queued drive work progresses or its status is refreshed.</summary>
     public event Action? Changed;
 
     public DriveQueueStatus DriveQueueStatus => driveOperationPlayer.Status;

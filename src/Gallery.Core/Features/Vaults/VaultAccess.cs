@@ -4,6 +4,11 @@ using Gallery.Core.Features.Vaults.Security;
 
 namespace Gallery.Core.Features.Vaults;
 
+/// <summary>
+/// GalleryScope owns and shares this coordinator for the scope's lifetime. The activation gate
+/// serializes explicit-lock generation changes with conditional session restoration; the gallery
+/// lifetime gate protects checkout changes. The session drains key leases before checkout release.
+/// </summary>
 internal sealed class VaultAccess
 {
     private readonly GalleryLifetime galleryLifetime;
