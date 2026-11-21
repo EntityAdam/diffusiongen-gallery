@@ -88,14 +88,6 @@ input::placeholder, textarea::placeholder, .advanced-select-placeholder {
 }
 .eyebrow { display: inline-flex; align-items: center; gap: 9px; color: hsl(var(--primary)); font-size: 9px; font-weight: 700; letter-spacing: .17em; }
 .eyebrow > span { width: 20px; height: 1px; background: hsl(var(--primary)); }
-.hero { display: flex; align-items: center; justify-content: space-between; padding-bottom: 48px; }
-.hero h1 { margin: 18px 0 14px; font-size: clamp(38px, 5vw, 58px); font-weight: 560; letter-spacing: -2.9px; line-height: 1.05; }
-.hero h1 span { color: #819093; font-weight: 410; }
-.hero p { color: hsl(var(--muted-foreground)); }
-.hero-art { position: relative; display: grid; width: 270px; height: 190px; margin-right: 8%; place-items: center; }
-.orbit { position: absolute; width: 240px; height: 120px; border: 1px solid #75e0b12e; border-radius: 50%; transform: rotate(-30deg); }
-.orbit.second { width: 200px; height: 160px; border-color: #75e0b117; transform: rotate(35deg); }
-.art-caption { position: absolute; bottom: -15px; color: #697c78; font-size: 8px; letter-spacing: .24em; }
 .status-dot { display: inline-block; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: hsl(var(--primary)); box-shadow: 0 0 10px #70dfa650; }
 
 .filter-primary { padding-bottom: 20px; }
@@ -124,14 +116,6 @@ input::placeholder, textarea::placeholder, .advanced-select-placeholder {
 .gallery-filter-drawer .filter-panel { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .gallery-filter-drawer .filter-panel > p { flex-shrink: 0; margin: 0; padding: 12px 16px; }
 .gallery-filter-drawer .filter-panel-body { flex: 1; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px max(16px, env(safe-area-inset-bottom)); }
-.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.tag-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 10px; border: 1px solid hsl(var(--border)); border-radius: 999px; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground)); font-size: 12px; line-height: 20px; }
-.tag-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tag-chip-count { color: hsl(var(--muted-foreground)); font-size: 11px; }
-.tag-chip button { display: inline-grid; width: 18px; height: 18px; flex-shrink: 0; place-items: center; padding: 0; border: 0; border-radius: 999px; background: none; color: hsl(var(--muted-foreground)); }
-.tag-chip button:hover { background: hsl(var(--destructive) / .2); color: hsl(var(--destructive)); }
-.tag-chip button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
-.tag-chip button:disabled { opacity: .5; }
 .viewer-suggestion { position: absolute; right: 16px; bottom: 64px; display: grid; gap: 8px; font-size: 13px; z-index: 5; width: min(360px, calc(100% - 32px)); max-height: 60%; overflow: auto; padding: 14px; border: 1px solid hsl(var(--primary) / .4); border-radius: 12px; background: hsl(var(--card) / .96); box-shadow: 0 16px 40px #0008; }
 .viewer-suggestion h3 { display: flex; align-items: center; gap: 6px; margin: 0; color: hsl(var(--primary)); font-size: 14px; }
 .viewer-suggestion p { margin: 0; }
@@ -190,11 +174,9 @@ input::placeholder, textarea::placeholder, .advanced-select-placeholder {
 .original-size img, .original-size video { display: block; max-width: none; max-height: none; margin: auto; }
 #blazor-error-ui { display: none; position: fixed; bottom: 0; z-index: 100; width: 100%; padding: 18px; background: #341f24; color: hsl(var(--destructive)); }
 
-@media (max-width: 1100px) { .image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .hero-art { margin-right: 2%; } }
+@media (max-width: 1100px) { .image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
     .main-content { width: calc(100% - 32px); padding-top: 35px; }
-    .hero { padding-bottom: 35px; }
-    .hero-art { display: none; }
     .brand-product { margin-left: 5px; font-size: 11px; }
     .image-grid { gap: 12px; }
     .image-grid.density-compact { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }

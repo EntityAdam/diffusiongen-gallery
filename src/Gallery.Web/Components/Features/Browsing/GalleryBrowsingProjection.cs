@@ -30,14 +30,6 @@ internal static class GalleryBrowsingProjector
     private const string PromptGrouping = "prompt";
     private const string ModelGrouping = "model";
 
-    public static GalleryBrowsingProjection CreateGroupedByPrompt(IGalleryCatalog galleryService,
-        IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter) =>
-        Create(galleryService, sourceImages, galleryFilter, PromptGrouping);
-
-    public static GalleryBrowsingProjection CreateUngrouped(IGalleryCatalog galleryService,
-        IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter) =>
-        Create(galleryService, sourceImages, galleryFilter, "none");
-
     public static GalleryBrowsingProjection Create(IGalleryCatalog galleryService,
         IReadOnlyList<ImageRecord> sourceImages, GalleryFilter galleryFilter, string grouping,
         IReadOnlySet<string>? awaitingApprovalIds = null, GalleryBrowsingProjection? previousReviewProjection = null)

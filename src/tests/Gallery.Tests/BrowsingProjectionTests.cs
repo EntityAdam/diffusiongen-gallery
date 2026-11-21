@@ -75,8 +75,8 @@ public sealed class BrowsingProjectionTests
             new() { Id = imageIdPeer, Generation = new() { Prompt = sharedPrompt } }
         ]);
         var countingImagesIndependent = new CountingImages([new() { Id = imageIdIndependent, Rating = 5 }]);
-        var actualGalleryBrowsingProjectionOriginal = GalleryBrowsingProjector.CreateGroupedByPrompt(
-            testVault.Scope.Catalog, countingImagesOriginal, new GalleryFilter());
+        var actualGalleryBrowsingProjectionOriginal = GalleryBrowsingProjector.Create(
+            testVault.Scope.Catalog, countingImagesOriginal, new GalleryFilter(), "prompt");
         countingImagesOriginal[0] = countingImagesOriginal[0] with { Id = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) };
         var expectedScenario = ExpectedScenario.CreateFrom("Independent projections enumerate each source once and preserve immutable images and group identity.", new
         {
@@ -86,8 +86,8 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        var actualGalleryBrowsingProjectionIndependent = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Scope.Catalog, countingImagesIndependent, new GalleryFilter { MinRating = 3 });
+        var actualGalleryBrowsingProjectionIndependent = GalleryBrowsingProjector.Create(
+            testVault.Scope.Catalog, countingImagesIndependent, new GalleryFilter { MinRating = 3 }, "none");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -148,8 +148,8 @@ public sealed class BrowsingProjectionTests
         });
 
         // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
+        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "none");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
@@ -169,8 +169,8 @@ public sealed class BrowsingProjectionTests
         string[] expectedImageIds = [imageRecords[1].Id];
 
         // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateUngrouped(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating", MinRating = 3 });
+        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating", MinRating = 3 }, "none");
 
         // Assert
         Assert.Equal(expectedImageIds, actualGalleryBrowsingProjection.Images.Select(imageRecord => imageRecord.Id));
@@ -190,8 +190,8 @@ public sealed class BrowsingProjectionTests
             });
 
         // Act
-        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.CreateGroupedByPrompt(
-            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" });
+        var actualGalleryBrowsingProjection = GalleryBrowsingProjector.Create(
+            testVault.Scope.Catalog, imageRecords, new GalleryFilter { Sort = "rating" }, "prompt");
 
         // Assert
         AsserterScenario.AssertObservationsMatch(expectedScenario, new
