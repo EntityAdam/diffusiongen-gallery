@@ -803,9 +803,12 @@ license from [Six Labors](https://sixlabors.com/pricing/) and place it in
 Debug and Release. The root license file is not excluded by `.gitignore`;
 do not commit private license material.
 
+The JavaScript tests use Node.js 24.15+ LTS (or 22.22.2+ LTS) for their test-only DOM dependency.
+
 ```powershell
 dotnet run --project .\src\Gallery.Web\Gallery.Web.csproj --configuration Release
 dotnet test .\src\Gallery.slnx
+npm ci --prefix .\src\tests
 node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
 

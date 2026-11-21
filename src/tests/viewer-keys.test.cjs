@@ -3,84 +3,79 @@ const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { test } = require("node:test");
 const vm = require("node:vm");
+const { JSDOM } = require("jsdom");
 
-function loadGalleryScripts(globals) {
+function loadGalleryScripts(globals, scripts = ["gallery-dom.js", "gallery-grid.js", "gallery-security.js", "viewer.js"]) {
     const context = vm.createContext(globals);
-    const scripts = ["gallery-dom.js", "gallery-grid.js", "gallery-security.js", "viewer.js"];
     for (const script of scripts) {
         const source = readFileSync(path.join(__dirname, "..", "Gallery.Web", "wwwroot", script), "utf8");
         vm.runInContext(source, context, { filename: script });
     }
 }
 
-function setup({ dialog = false, selection = false, canUseGallerySelection = false } = {}) {
-    const listeners = new Map();
+function setup({ dialog = "", selection = false, canUseGallerySelection = false } = {}) {
+    const { window } = new JSDOM(`<main data-has-selection="${selection || canUseGallerySelection}"
+        data-can-use-gallery-selection="${canUseGallerySelection}"><div class="image-grid"></div><input></main>
+        ${dialog}`);
+    const doc = window.document;
+    const grid = doc.querySelector(".image-grid");
+    const input = doc.querySelector("input");
     const calls = [];
+    let pointer = null;
     const card = id => {
-        const element = {
-            dataset: { imageId: id },
-            closest(selector) { return selector.startsWith(".image-card") ? element : null; }
-        };
+        const element = doc.createElement("article");
+        element.className = "image-card";
+        element.dataset.imageId = id;
+        element.innerHTML = '<button class="image-open">Open</button>';
+        grid.append(element);
+        // jsdom has no physical pointer. Only :hover is simulated; structural selectors use the DOM.
+        const matches = element.matches.bind(element);
+        element.matches = selector => selector === ":hover" ? element.contains(pointer) : matches(selector);
         return element;
     };
-    const input = { type: "text", closest(selector) { return selector.startsWith("input") ? input : null; } };
-    const doc = {
-        activeElement: null,
-        addEventListener(name, handler, capture) {
-            assert.equal(capture, true);
-            listeners.set(name, handler);
-        },
-        removeEventListener(name) { listeners.delete(name); },
-        querySelector(selector) {
-            return (selector.startsWith("[role=dialog]") && dialog) || (selector === "[data-has-selection=true]" && selection)
-                || (selector === "[data-can-use-gallery-selection=true]" && canUseGallerySelection) ? {} : null;
-        },
-        querySelectorAll() { return []; }
-    };
-    const window = {};
-    loadGalleryScripts({
-        window, Element: class { }, document: { addEventListener() { } }
-    });
+    loadGalleryScripts({ window, document: doc }, ["gallery-grid.js"]);
     window.galleryGrid.attach({ invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } }, doc);
-    const key = (value, target, extra = {}) => {
-        const event = { key: value, target, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...extra };
-        listeners.get("keydown")(event);
+    const key = (value, target = doc.activeElement, extra = {}) => {
+        const event = new window.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true, ...extra });
+        target.dispatchEvent(event);
         return event;
     };
-    const hover = target => listeners.get("mouseover")({ target });
-    const leave = (target, relatedTarget = null) => listeners.get("mouseout")({ target, relatedTarget });
-    return { window, doc, listeners, calls, card, input, key, hover, leave };
+    const hover = (target = doc.body) => {
+        pointer = target;
+        target.dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true }));
+    };
+    const leave = (target, relatedTarget = null) => {
+        pointer = relatedTarget;
+        target.dispatchEvent(new window.MouseEvent("mouseout", { bubbles: true, relatedTarget }));
+    };
+    return { window, doc, grid, calls, card, input, key, hover, leave };
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-test("T edits the gallery selection without needing a toolbar, hovered or focused card", async () => {
-    const available = setup({ canUseGallerySelection: true });
-    const unavailable = setup({ selection: true });
-    const modal = setup({ canUseGallerySelection: true, dialog: true });
-    assert.equal(available.key("t", {}).defaultPrevented, true);
-    assert.equal(available.key("t", available.input).defaultPrevented, false);
-    assert.equal(unavailable.key("t", {}).defaultPrevented, false);
-    assert.equal(modal.key("t", {}).defaultPrevented, false);
-    await flush();
-    assert.deepEqual(available.calls, [["HandleGridKey", "t", "", false]]);
-    assert.deepEqual(unavailable.calls, []);
-    assert.deepEqual(modal.calls, []);
-});
+for (const shortcut of ["T", "E"]) {
+    test(`${shortcut} acts only on a usable gallery selection, outside inputs and dialogs`, async () => {
+        const gallery = setup({ canUseGallerySelection: true });
+        const otherGrid = setup({ selection: true });
+        const modal = setup({ canUseGallerySelection: true, dialog: '<div role="dialog" aria-modal="true"></div>' });
+        otherGrid.hover(otherGrid.card("hovered"));
+        assert.equal(gallery.key(shortcut).defaultPrevented, true);
+        assert.equal(gallery.key(shortcut, gallery.input).defaultPrevented, false);
+        assert.equal(gallery.key(shortcut, undefined, { ctrlKey: true }).defaultPrevented, false);
+        assert.equal(otherGrid.key(shortcut).defaultPrevented, false);
+        assert.equal(modal.key(shortcut).defaultPrevented, false);
+        await flush();
+        assert.deepEqual(gallery.calls, [["HandleGridKey", shortcut.toLowerCase(), "", false]]);
+        assert.deepEqual(otherGrid.calls, []);
+        assert.deepEqual(modal.calls, []);
+    });
+}
 
-test("E exports the gallery selection without a card and ignores typing, dialogs, and key repeat", async () => {
+test("holding E does not request another export", async () => {
     const gallery = setup({ canUseGallerySelection: true });
-    const otherGrid = setup({ selection: true });
-    const modal = setup({ canUseGallerySelection: true, dialog: true });
-    assert.equal(gallery.key("E", {}).defaultPrevented, true);
-    assert.equal(gallery.key("e", {}, { repeat: true }).defaultPrevented, false);
-    assert.equal(gallery.key("e", gallery.input).defaultPrevented, false);
-    assert.equal(gallery.key("e", {}, { ctrlKey: true }).defaultPrevented, false);
-    assert.equal(otherGrid.key("e", otherGrid.card("hovered")).defaultPrevented, false);
-    assert.equal(modal.key("e", {}).defaultPrevented, false);
+    assert.equal(gallery.key("e", undefined, { repeat: true }).defaultPrevented, false);
     await flush();
-    assert.deepEqual(gallery.calls, [["HandleGridKey", "e", "", false]]);
-    assert.deepEqual([...otherGrid.calls, ...modal.calls], []);
+    assert.deepEqual(gallery.calls, []);
 });
 
 test("review confetti bursts left then right after 80ms and cleans up", async () => {
@@ -120,21 +115,21 @@ test("review confetti bursts left then right after 80ms and cleans up", async ()
 
 test("Escape forwards clear selection without a hovered or focused card", async () => {
     const { calls, key } = setup({ selection: true });
-    assert.equal(key("Escape", {}).defaultPrevented, true);
+    assert.equal(key("Escape").defaultPrevented, true);
     await flush();
     assert.deepEqual(calls, [["HandleGridKey", "escape", "", false]]);
 });
 
 test("rating, favorite and deletion keys act on the hovered or focused card", async () => {
-    const { doc, calls, card, key, hover } = setup();
+    const { calls, card, key, hover } = setup();
     hover(card("hovered"));
-    assert.equal(key("3", {}).defaultPrevented, true);
-    hover({});
-    doc.activeElement = card("focused");
-    key("F", {});
-    assert.equal(key("Delete", {}).defaultPrevented, false);
-    key("D", {}, { shiftKey: false });
-    key("x", {}, { shiftKey: true });
+    assert.equal(key("3").defaultPrevented, true);
+    hover();
+    card("focused").querySelector("button").focus();
+    key("F");
+    assert.equal(key("Delete").defaultPrevented, false);
+    key("D");
+    key("x", undefined, { shiftKey: true });
     await flush();
     assert.deepEqual(calls, [["HandleGridKey", "3", "hovered", false], ["HandleGridKey", "f", "focused", false],
         ["HandleGridKey", "d", "focused", false], ["HandleGridKey", "x", "focused", true]]);
@@ -142,7 +137,7 @@ test("rating, favorite and deletion keys act on the hovered or focused card", as
 
 test("hovered card overrides retained focus for all curation and selection shortcuts", async () => {
     const { doc, calls, card, key, hover } = setup();
-    doc.activeElement = card("last-selected");
+    card("last-selected").querySelector("button").focus();
     hover(card("under-pointer"));
     for (const value of ["0", "1", "2", "3", "4", "5", "f", "d", "x"]) key(value, doc.activeElement);
     hover(card("next-pointer-target"));
@@ -157,15 +152,15 @@ test("hovered card overrides retained focus for all curation and selection short
 test("leaving a card or the document clears hover and restores focused-card shortcuts", async () => {
     const { doc, calls, card, key, hover, leave } = setup();
     const hovered = card("under-pointer");
-    doc.activeElement = card("focused");
+    card("focused").querySelector("button").focus();
     hover(hovered);
     // Moving between controls within the same card must retain its target.
-    leave(hovered, hovered);
+    leave(hovered, hovered.querySelector("button"));
     key("f", doc.activeElement);
     leave(hovered);
     key("d", doc.activeElement);
-    doc.activeElement = null;
-    assert.equal(key("f", {}).defaultPrevented, false);
+    doc.activeElement.blur();
+    assert.equal(key("f").defaultPrevented, false);
     await flush();
     assert.deepEqual(calls, [["HandleGridKey", "f", "under-pointer", false], ["HandleGridKey", "d", "focused", false]]);
 });
@@ -174,42 +169,50 @@ test("shortcuts are ignored while typing, with modifiers, without a card, or beh
     const typing = setup();
     typing.hover(typing.card("a"));
     assert.equal(typing.key("5", typing.input).defaultPrevented, false);
-    assert.equal(typing.key("5", {}, { ctrlKey: true }).defaultPrevented, false);
+    assert.equal(typing.key("5", undefined, { ctrlKey: true }).defaultPrevented, false);
     const empty = setup();
-    assert.equal(empty.key("5", {}).defaultPrevented, false);
-    assert.equal(empty.key("Escape", {}).defaultPrevented, false);
-    const modal = setup({ dialog: true });
+    assert.equal(empty.key("5").defaultPrevented, false);
+    assert.equal(empty.key("Escape").defaultPrevented, false);
+    const modal = setup({ dialog: "<dialog open></dialog>" });
     modal.hover(modal.card("a"));
-    assert.equal(modal.key("5", {}).defaultPrevented, false);
+    assert.equal(modal.key("5").defaultPrevented, false);
     await flush();
     assert.equal(typing.calls.length + empty.calls.length + modal.calls.length, 0);
 });
 
-test("detach removes the document listeners", () => {
-    const { window, listeners } = setup();
-    window.galleryGrid.detach();
-    assert.equal(listeners.size, 0);
-});
-
 test("detaching a retired grid leaves the replacement listener attached", async () => {
-    const { window, listeners, doc, key, calls } = setup();
+    const { window, doc, card, key, calls } = setup();
     const reference = { invokeMethodAsync: (...args) => { calls.push(args); return Promise.resolve(); } };
     window.galleryGrid.attach(reference, doc, 1);
     window.galleryGrid.attach(reference, doc, 2);
     window.galleryGrid.detach(1);
-    const card = { dataset: { imageId: "a" }, closest(selector) { return selector.startsWith(".image-card") ? this : null; } };
-    doc.activeElement = card;
-    key("5", card);
+    card("a").querySelector("button").focus();
+    key("5");
     await flush();
     assert.deepEqual(calls, [["HandleGridKey", "5", "a", false]]);
     window.galleryGrid.detach(2);
-    assert.equal(listeners.size, 0);
+    assert.equal(key("5").defaultPrevented, false);
+    await flush();
+    assert.equal(calls.length, 1);
+});
+
+test("detach releases all grid event listeners", t => {
+    const { window, doc } = setup();
+    window.galleryGrid.detach();
+    const added = t.mock.method(doc, "addEventListener").mock;
+    const removed = t.mock.method(doc, "removeEventListener").mock;
+    window.galleryGrid.attach({}, doc);
+    window.galleryGrid.detach();
+    assert.ok(added.callCount() > 0);
+    for (const { arguments: [type, handler, capture] } of added.calls)
+        assert.ok(removed.calls.some(({ arguments: args }) =>
+            args[0] === type && args[1] === handler && args[2] === capture), type);
 });
 
 test("backtick is no longer a gallery shortcut", async () => {
     const { calls, key, input } = setup();
-    assert.equal(key("`", {}, { code: "Backquote" }).defaultPrevented, false);
-    assert.equal(key("~", {}, { code: "Backquote", shiftKey: true }).defaultPrevented, false);
+    assert.equal(key("`", undefined, { code: "Backquote" }).defaultPrevented, false);
+    assert.equal(key("~", undefined, { code: "Backquote", shiftKey: true }).defaultPrevented, false);
     assert.equal(key("`", input, { code: "Backquote" }).defaultPrevented, false);
     await flush();
     assert.deepEqual(calls, []);
@@ -500,20 +503,16 @@ test("Escape leaves native dialogs open until the save/discard decision closes t
 });
 
 test("vertical card navigation uses grid columns through collection wrappers", () => {
-    const { window, doc, card, key, hover } = setup();
-    const grid = {};
-    const focused = [];
+    const { doc, grid, card, key, hover } = setup();
+    grid.style.gridTemplateColumns = "100px 100px 100px";
     const cards = Array.from({ length: 6 }, (_, index) => {
         const element = card(String(index));
-        element.parentElement = {};
-        element.closest = selector => selector === ".image-grid" ? grid : selector.startsWith(".image-card") ? element : null;
-        element.querySelector = () => ({ focus() { focused.push(index); } });
+        const wrapper = grid.appendChild(doc.createElement("div"));
+        wrapper.append(element);
         return element;
     });
-    window.getComputedStyle = element => ({ gridTemplateColumns: element === grid ? "100px 100px 100px" : "100px" });
-    doc.querySelectorAll = () => cards;
-    doc.activeElement = cards[0];
+    cards[0].querySelector("button").focus();
     hover(cards[5]);
-    assert.equal(key("ArrowDown", {}).defaultPrevented, true);
-    assert.deepEqual(focused, [3]);
+    assert.equal(key("ArrowDown").defaultPrevented, true);
+    assert.equal(doc.activeElement, cards[3].querySelector("button"));
 });

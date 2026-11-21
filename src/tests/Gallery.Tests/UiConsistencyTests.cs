@@ -151,28 +151,6 @@ public sealed class UiConsistencyTests
     }
 
     [Fact]
-    public async Task FilterChipRemoval_UpdatesTheCriterionAndInvalidatesPendingTextEdits()
-    {
-        await using var fixture = ComponentRenderFixture.Create();
-        GalleryFilter? changed = null;
-        var (panel, root) = await Render<GalleryFilterPanel>(fixture, new()
-        {
-            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter { Search = "portrait", Tag = "cat, dog", MinRating = 4 },
-            [nameof(GalleryFilterPanel.Changed)] = EventCallback.Factory.Create<GalleryFilter>(this, value => changed = value)
-        });
-        var html = await Html(fixture, root);
-        Assert.Contains("aria-label=\"Active filters\"", html);
-        Assert.Contains("aria-label=\"Remove Search: portrait\"", html);
-        Assert.DoesNotContain("filter-panel-footer", html);
-        Assert.DoesNotContain("Reset filters", html);
-        await Invoke(fixture, panel, "RemoveChipAsync", "search");
-        Assert.Equal("", changed!.Search);
-        Assert.Equal("cat, dog", changed.Tag);
-        Assert.Equal(4, changed.MinRating);
-        Assert.True(Field<long>(panel, "chipResetRevision") > 0);
-    }
-
-    [Fact]
     public async Task QuickFilters_SaveAnEncryptedSnapshotAndClearOnLock()
     {
         using var vault = new TestVault();

@@ -25,10 +25,13 @@ public sealed class GalleryVirtualizationTests
         Assert.Equal(count - 1, layout.RowAt(layout.Height - 1));
         Assert.Equal(count - 1, layout.RowOfImage(count - 1));
 
+        const double firstHeight = 400, secondHeight = 480;
+        layout.Measure(0, firstHeight);
         var original = layout.Offset(count / 2);
-        Assert.True(layout.Measure(0, 400));
-        Assert.Equal(original + 34, layout.Offset(count / 2));
-        Assert.Equal(count / 2, layout.RowAt(original + 34));
+        Assert.True(layout.Measure(0, secondHeight));
+        var corrected = original + (secondHeight - firstHeight);
+        Assert.Equal(corrected, layout.Offset(count / 2));
+        Assert.Equal(count / 2, layout.RowAt(corrected));
     }
 
     [Fact]

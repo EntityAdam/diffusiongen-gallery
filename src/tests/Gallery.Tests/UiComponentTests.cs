@@ -650,43 +650,6 @@ public sealed class UiComponentTests
     }
 
     [Fact]
-    public async Task FilterPanel_RendersInlineAndExpandsActiveSectionsOnly()
-    {
-        // Arrange
-        await using ComponentRenderFixture componentRenderFixture = ComponentRenderFixture.Create();
-        HtmlRenderer htmlRenderer = componentRenderFixture.HtmlRenderer;
-        GalleryFilter activeFilter = new() { Deletion = GalleryFilter.AnyValue, Orientation = "portrait" };
-
-        // Act
-        string html = await htmlRenderer.Dispatcher.InvokeAsync(async () =>
-        {
-            HtmlRootComponent root = await htmlRenderer.RenderComponentAsync<GalleryFilterPanel>(ParameterView.FromDictionary(new Dictionary<string, object?>
-            {
-                [nameof(GalleryFilterPanel.Filter)] = activeFilter,
-                [nameof(GalleryFilterPanel.ResultCount)] = 7
-            }));
-            return WebUtility.HtmlDecode(root.ToHtmlString());
-        });
-
-        // Assert
-        Assert.DoesNotContain("role=\"dialog\"", html);
-        Assert.DoesNotContain("aria-modal", html);
-        Assert.Contains("7 of 0 media items match", html);
-        Assert.Contains(">All media<", html);
-        Assert.Contains(">Images only<", html);
-        Assert.Contains(">Videos only<", html);
-        Assert.Contains("id=\"analysis-options\"", html);
-        Assert.DoesNotContain("<select", html);
-        Assert.DoesNotContain("<datalist", html);
-        Assert.Contains(">Awaiting approval<", html);
-        Assert.Equal(1, GalleryFilterPanel.CountActive(activeFilter));
-        Assert.Equal(0, GalleryFilterPanel.CountChanged(new GalleryFilter()));
-        Assert.Equal(2, GalleryFilterPanel.CountChanged(activeFilter));
-        Assert.Matches(@"aria-expanded=""true"" aria-controls=""filter-section-media""", html);
-        Assert.Matches(@"aria-expanded=""false"" aria-controls=""filter-section-organization""", html);
-        Assert.Matches(@"id=""filter-section-organization"" class=""filter-section-body"" hidden", html);
-    }
-    [Fact]
     public async Task BackupDestination_WhenAzureSelected_ThenPreservesPasswordAndSavedCredentialHint()
     {
         // Arrange

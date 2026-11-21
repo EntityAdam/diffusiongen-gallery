@@ -6,9 +6,11 @@ using Gallery.Web.Components.Features.Browsing;
 using Gallery.Web.Components.Features.Collections;
 using Gallery.Web.Components.Features.Media;
 using Gallery.Web.Components.Pages;
+using Gallery.Web.Components.Shared;
 using Gallery.Web.Components.Workspace;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
 using ShadCn.Blazor.Components;
 
 namespace Gallery.Tests;
@@ -108,6 +110,65 @@ public sealed class GalleryBrowsingInteractionTests
             "Tags" => filter with { Tag = "" },
             _ => throw new ArgumentOutOfRangeException(nameof(label))
         }, changed);
+    }
+
+    [Fact]
+    public async Task Removing_search_chip_rejects_pending_browser_edits_and_preserves_other_filters()
+    {
+        await using var ui = CreateContext();
+        var filter = new GalleryFilter { Search = "portrait", Tag = "cat, dog", MinRating = 4 };
+        var changes = new List<GalleryFilter>();
+        var panel = ui.Render<GalleryFilterPanel>(p => p.Add(c => c.Filter, filter)
+            .Add(c => c.Changed, changes.Add));
+        var clients = ui.JSInterop.Invocations["galleryFilterInput.attach"].Select(call =>
+            (Input: ((DotNetObjectReference<DebouncedFilterInput>)call.Arguments[1]!).Value, Revision: (long)call.Arguments[3]!))
+            .ToDictionary(client => client.Input.Id);
+        const string remove = "[aria-label='Active filters'] button[aria-label='Remove Search: portrait']";
+        Assert.DoesNotContain(panel.FindAll("button"), button => button.TextContent.Trim() == "Reset filters");
+        await panel.Find(remove).ClickAsync();
+        var cleared = Assert.Single(changes);
+        Assert.Equal(filter with { Search = "" }, cleared);
+        panel.Render(p => p.Add(c => c.Filter, cleared));
+        Assert.Empty(panel.FindAll(remove));
+
+        // Deliver edits from before the click, including one whose bound value did not change.
+        foreach (var id in new[] { "search", "folder" })
+        {
+            var (input, revision) = clients[id];
+            Assert.False(await panel.InvokeAsync(() => input.CommitAsync($"stale {id}", revision)));
+        }
+        Assert.Single(changes);
+    }
+
+    [Fact]
+    public async Task Filter_panel_renders_inline_and_expands_only_sections_with_active_filters()
+    {
+        await using var ui = CreateContext();
+        var filter = new GalleryFilter { Deletion = GalleryFilter.AnyValue, Orientation = "portrait" };
+        var panel = ui.Render<GalleryFilterPanel>(p => p.Add(c => c.Filter, filter)
+            .Add(c => c.Images, [new ImageRecord(), new ImageRecord()]).Add(c => c.ResultCount, 1));
+
+        Assert.Empty(panel.FindAll("dialog, [role=dialog], [aria-modal], select, datalist"));
+        Assert.Equal("1 of 2 media items match", panel.Find("[aria-live=polite]").TextContent.Trim());
+        var mediaOptions = panel.FindAll("[role=listbox][aria-label='Media types'] [role=option]");
+        foreach (var label in new[] { "All media", "Images only", "Videos only" })
+            Assert.Contains(mediaOptions, option => option.TextContent.Contains(label));
+        Assert.Contains(panel.FindAll("[role=listbox][aria-label='Analysis statuses'] [role=option]"),
+            option => option.TextContent.Contains("Awaiting approval"));
+        Assert.Equal(1, GalleryFilterPanel.CountActive(filter));
+        Assert.Equal(0, GalleryFilterPanel.CountChanged(new GalleryFilter()));
+        Assert.Equal(2, GalleryFilterPanel.CountChanged(filter));
+
+        foreach (var (title, expanded, field) in new[] {
+            ("Media & dimensions", true, "Media type"), ("Organization", false, "Collection"),
+            ("Vision analysis", false, "Analysis status"), ("Imported date", false, "From") })
+        {
+            var toggle = Assert.Single(panel.FindAll("button[aria-controls]"), b => b.TextContent.Trim().StartsWith(title));
+            Assert.Equal(expanded ? "true" : "false", toggle.GetAttribute("aria-expanded"));
+            var section = panel.Find($"[id='{toggle.GetAttribute("aria-controls")}']");
+            Assert.Equal(!expanded, section.HasAttribute("hidden"));
+            Assert.Contains(section.QuerySelectorAll("label"), label => label.TextContent.Trim() == field);
+        }
     }
 
     [Fact]

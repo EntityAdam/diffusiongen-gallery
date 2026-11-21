@@ -1,8 +1,3 @@
-using System.Security.Cryptography;
-using Gallery.Core.Features.Ingestion.Metadata;
-using Gallery.Core.Features.Vaults.Security;
-using Gallery.Core.Infrastructure.Persistence;
-using Gallery.Core.Models;
 using Gallery.Web.Components.Workspace;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -15,8 +10,10 @@ public sealed class WorkspaceCatalogTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var records = await SeedAsync(vault);
-        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action => action());
+        var records = BrowsingWorkspaceFixture.CreateImages(3);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = new BrowsingWorkspaceFixture.BrowsingCatalogSource(vault.Scope.Catalog, records, release.Task);
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, source, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action => action());
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         catalog.Changed += () =>
         {
@@ -25,11 +22,17 @@ public sealed class WorkspaceCatalogTests
         };
 
         await catalog.OpenAsync(1, false);
-        Assert.Single(catalog.Images);
-        Assert.True(catalog.IsPartial);
-        Assert.True(catalog.IsLoading);
+        try
+        {
+            Assert.Equal(records[0], Assert.Single(catalog.Images));
+            Assert.True(catalog.IsPartial);
+            Assert.True(catalog.IsLoading);
+        }
+        finally { release.TrySetResult(); }
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(catalog.IsPartial);
         Assert.False(catalog.IsLoading);
+        Assert.Equal(records, catalog.Images);
         Assert.Equal(records.Select(image => image.Id).Order(), catalog.ImagesById.Keys.Order());
     }
 
@@ -38,10 +41,11 @@ public sealed class WorkspaceCatalogTests
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
-        var records = await SeedAsync(vault);
+        var records = BrowsingWorkspaceFixture.CreateImages(3);
+        var source = new BrowsingWorkspaceFixture.BrowsingCatalogSource(vault.Scope.Catalog, records, Task.CompletedTask);
         var queued = new TaskCompletionSource<Func<Task>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, vault.Scope.Catalog, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action =>
+        using var catalog = new WorkspaceCatalog(vault.Scope.Vault, source, vault.Scope.Collections, vault.Scope.Tags, NullLogger.Instance, action =>
         {
             queued.TrySetResult(action);
             return release.Task;
@@ -98,23 +102,4 @@ public sealed class WorkspaceCatalogTests
         Assert.Equal(["first", "second"], publications);
     }
 
-    private static async Task<IReadOnlyList<ImageRecord>> SeedAsync(TestVault vault)
-    {
-        // Small catalogs are intentionally returned whole; exceed the encrypted
-        // index capacity to exercise the real initial-page/background-load path.
-        var records = Enumerable.Range(0, 1025).Select(i => new ImageRecord
-        {
-            Name = $"{i}.png", ImportedAt = DateTimeOffset.UnixEpoch.AddSeconds(i),
-            StoredPath = Path.Combine(vault.Root, "images", $"{i}.dpng"),
-            Sha256 = Convert.ToHexString(SHA256.HashData(BitConverter.GetBytes(i))),
-            MetadataVersion = ComfyMetadata.Version
-        }).ToList();
-        using var key = vault.Session.AcquireUnlockedSession().Borrow();
-        var thumbnail = GalleryTests.MakePng(1, 1);
-        await vault.Store.CommitImportsAsync(records.Select(image => new ImportCatalogEntry(image,
-            VaultCrypto.Encrypt(thumbnail, key.Bytes, $"thumbnail:{image.Id}"))).ToArray(), key.Bytes);
-        // Warm the encrypted first-page index so the workspace opens a partial page.
-        await vault.Scope.Catalog.LoadInitialPageAsync(1);
-        return records;
-    }
 }
