@@ -272,7 +272,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
     {
         using var thumbnail = image.Clone(context => context.Resize(new ResizeOptions
         {
-            Size = new Size(384, 384), Mode = ResizeMode.Max
+            Size = new Size(ThumbnailMaxDimensionPixels, ThumbnailMaxDimensionPixels), Mode = ResizeMode.Max
         }));
         thumbnail.Metadata.ExifProfile = null;
         thumbnail.Metadata.IccProfile = null;
