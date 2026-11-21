@@ -28,13 +28,20 @@ internal sealed class VaultHistory(string directory)
     {
         lock (gate)
         {
-            Directory.CreateDirectory(directory);
-            var roots = ReadRoots();
-            roots.RemoveAll(path => PathComparer.Equals(path, root));
-            roots.Insert(0, root);
-            WriteAtomically(GalleriesPath, JsonSerializer.Serialize(roots));
+            EnsureHistoryDirectory();
+            WriteUpdatedGalleries(root);
             WriteHistoryAtomically(root);
         }
+    }
+
+    private void EnsureHistoryDirectory() => Directory.CreateDirectory(directory);
+
+    private void WriteUpdatedGalleries(string root)
+    {
+        var roots = ReadRoots();
+        roots.RemoveAll(path => PathComparer.Equals(path, root));
+        roots.Insert(0, root);
+        WriteAtomically(GalleriesPath, JsonSerializer.Serialize(roots));
     }
 
     private static StringComparer PathComparer => OperatingSystem.IsWindows()

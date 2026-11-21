@@ -121,7 +121,8 @@ internal sealed class VaultLocationCoordinator(
     public Task MoveVaultAsync(string directory) => RelocateUnlockedVaultAsync(directory, StageVaultMoveAsync,
         destination => $"The gallery was moved to '{destination}', but old-location cleanup or history persistence failed. The verified destination is intact; inspect the original location before removing any remaining files.");
 
-    private async Task<(IGalleryStore StagedStore, Action CleanSource)> StageVaultMoveAsync(StagedLocation location, byte[] key)
+    private async Task<(IGalleryStore StagedStore, string StagingDirectory, Action CleanSource)> StageVaultMoveAsync(
+        StagedLocation location, byte[] key)
     {
         var sourceRoot = VaultRoot;
         await QueuedFileDeletion.ReconcileOutstandingDeletesAsync(galleryStore, key);
@@ -129,19 +130,9 @@ internal sealed class VaultLocationCoordinator(
         var staging = location.CreateStagingDirectory(VaultStagingDirectoryPrefix);
         await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
         var stagedStore = galleryLifetime.StoreFactory.Create(staging);
-        foreach (var record in records)
-        {
-            ValidateMediaPath(record);
-            var relative = StoredMediaProcessor.RelativePath(record);
-            var target = Path.Combine(staging, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(record.StoredPath, target, overwrite: false);
-            if (await FileSha256.ComputeAsync(record.StoredPath) != await FileSha256.ComputeAsync(target))
-                throw new IOException($"Media verification failed for '{record.Name}'. The source gallery was not removed.");
-            await stagedStore.UpdateAsync(record with { StoredPath = Path.Combine(location.Destination, relative) }, key);
-        }
+        await CopyVaultMediaToStageAsync(records, staging, location.Destination, stagedStore, key);
         await ClearLocationSettingsAsync(stagedStore, key);
-        return (stagedStore, () => DeleteVaultData(sourceRoot, records));
+        return (stagedStore, staging, () => DeleteVaultData(sourceRoot, records));
     }
 
     public async Task PurgeVaultAsync(string confirmation)
@@ -155,9 +146,7 @@ internal sealed class VaultLocationCoordinator(
             galleryLifetime.EnsureCheckout();
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
-            await QueuedFileDeletion.ReconcileOutstandingDeletesAsync(galleryStore, key);
-            var records = await galleryStore.ReadRecordsAsync(key);
-            foreach (var record in records) ValidateMediaPath(record);
+            var records = await ReadValidatedVaultRecordsAsync(key);
             DeleteVaultData(VaultRoot, records);
         }
         finally
@@ -167,11 +156,20 @@ internal sealed class VaultLocationCoordinator(
         }
     }
 
+    private async Task<List<ImageRecord>> ReadValidatedVaultRecordsAsync(byte[] key)
+    {
+        await QueuedFileDeletion.ReconcileOutstandingDeletesAsync(galleryStore, key);
+        var records = await galleryStore.ReadRecordsAsync(key);
+        foreach (var record in records) ValidateMediaPath(record);
+        return records;
+    }
+
     /// <summary>Relocates only the encrypted catalog and header; all encrypted media stays at its existing paths.</summary>
     public Task RelocateCatalogAsync(string directory) => RelocateUnlockedVaultAsync(directory, StageCatalogRelocationAsync,
         destination => $"The local catalog is intact at '{destination}', but old catalog cleanup or history persistence failed. Media files were not moved.");
 
-    private async Task<(IGalleryStore StagedStore, Action CleanSource)> StageCatalogRelocationAsync(StagedLocation location, byte[] key)
+    private async Task<(IGalleryStore StagedStore, string StagingDirectory, Action CleanSource)> StageCatalogRelocationAsync(
+        StagedLocation location, byte[] key)
     {
         var mediaDirectory = await GallerySettings.ReadMediaDirectoryAsync(galleryLifetime.Current, key);
         var sourceRoot = VaultRoot;
@@ -185,11 +183,11 @@ internal sealed class VaultLocationCoordinator(
         var sourceRecords = await galleryStore.ReadRecordsAsync(key);
         if (!CatalogRecordsMatch(copiedRecords, sourceRecords))
             throw new IOException("The copied catalog did not match the original; relocation was stopped.");
-        return (stagedStore, () => DeleteCatalogFiles(sourceRoot));
+        return (stagedStore, staging, () => DeleteCatalogFiles(sourceRoot));
     }
 
     private async Task RelocateUnlockedVaultAsync(string directory,
-        Func<StagedLocation, byte[], Task<(IGalleryStore StagedStore, Action CleanSource)>> prepare,
+        Func<StagedLocation, byte[], Task<(IGalleryStore StagedStore, string StagingDirectory, Action CleanSource)>> prepare,
         Func<string, string> publishedFailureMessage)
     {
         var destination = CatalogDirectoryRules.NormalizeVaultDirectory(directory);
@@ -208,10 +206,11 @@ internal sealed class VaultLocationCoordinator(
             await StopDriveAndDrainSessionAsync();
 
             IGalleryStore stagedStore;
+            string staging;
             Action cleanSource;
-            (stagedStore, cleanSource) = await prepare(location, key);
+            (stagedStore, staging, cleanSource) = await prepare(location, key);
             EnsureActive();
-            await location.PublishFilesAsync(stagedStore, key);
+            await location.PublishFilesAsync(staging, stagedStore, key);
             using var sourceCheckout = ActivatePublishedLocation(location);
             locationWasActivated = true;
             history?.Save(destination);
@@ -304,7 +303,7 @@ internal sealed class VaultLocationCoordinator(
             if (name is not null) await new VaultStore(staging).RenameVaultAsync(name);
             await StopDriveAndDrainSessionAsync();
             EnsureActive();
-            await stagedLocation.PublishFilesAsync(store, key);
+            await stagedLocation.PublishFilesAsync(staging, store, key);
             ActivatePublishedLocation(stagedLocation)?.Dispose();
             history?.Save(destination);
             // Restore returns to regular sign-in; credentials and plaintext never survive the operation.
@@ -317,6 +316,22 @@ internal sealed class VaultLocationCoordinator(
     {
         await vaultStore.CopyHeaderAsync(Path.Combine(staging, VaultHeaderFileName));
         await snapshots.CreateSnapshotAsync(Path.Combine(staging, CatalogFileName), key);
+    }
+
+    private static async Task CopyVaultMediaToStageAsync(IReadOnlyList<ImageRecord> records, string staging,
+        string destination, IGalleryStore stagedStore, byte[] key)
+    {
+        foreach (var record in records)
+        {
+            ValidateMediaPath(record);
+            var relative = StoredMediaProcessor.RelativePath(record);
+            var target = Path.Combine(staging, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(record.StoredPath, target, overwrite: false);
+            if (await FileSha256.ComputeAsync(record.StoredPath) != await FileSha256.ComputeAsync(target))
+                throw new IOException($"Media verification failed for '{record.Name}'. The source gallery was not removed.");
+            await stagedStore.UpdateAsync(record with { StoredPath = Path.Combine(destination, relative) }, key);
+        }
     }
 
     private StagedLocation AcquireStagedLocation(string destination, string? sourceDirectory = null)
@@ -440,9 +455,8 @@ internal sealed class VaultLocationCoordinator(
             return stagingDirectory;
         }
 
-        public async Task PublishFilesAsync(IGalleryStore store, byte[] key)
+        public async Task PublishFilesAsync(string staging, IGalleryStore store, byte[] key)
         {
-            var staging = stagingDirectory ?? throw new InvalidOperationException("Create the staging directory before publishing.");
             await store.PrepareForPublicationAsync(key);
             var moved = new List<string>();
             try
