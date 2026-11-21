@@ -76,11 +76,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
             await InitializeStagedCatalogAsync(staging, storageOptions, createdKey);
             EnsureActive();
             SaveVaultHistory(vaultRoot);
-            using (var activation = vaultSession.PrepareUnlock(createdKey))
-            {
-                PublishCreatedVault(staging, vaultRoot);
-                activation.Commit();
-            }
+            vaultSession.PublishUnlock(createdKey, () => PublishCreatedVault(staging, vaultRoot));
             return createdVault.Recovery;
         }
         finally

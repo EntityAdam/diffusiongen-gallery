@@ -205,35 +205,76 @@ public sealed class NativeCheckoutReleaseTests
     }
 
     [Fact]
-    public void PreparedUnlock_WhenPublicationHasNotCommitted_ThenKeyLeasesRemainUnavailable()
+    public void UnlockPublication_WhenCallbackRuns_ThenPreparedKeyRemainsUnavailable()
     {
         using var session = new VaultSession(Timeout.InfiniteTimeSpan);
-        using (var activation = session.PrepareUnlock(Enumerable.Repeat((byte)7, 32).ToArray()))
+        session.PublishUnlock(Enumerable.Repeat((byte)7, 32).ToArray(), () =>
         {
             Assert.False(session.IsUnlocked);
             Assert.Throws<Gallery.Core.Exceptions.VaultLockedException>(() => session.AcquireUnlockedSession());
-            activation.Commit();
-        }
+        });
         using var lease = session.AcquireUnlockedSession().Borrow();
         Assert.Equal(Enumerable.Repeat((byte)7, 32), lease.Bytes);
     }
 
     [Fact]
-    public void PreparedUnlock_WhenPublicationFails_ThenDiscardsPreparedKeyWithoutRevokingPreviousGeneration()
+    public async Task UnlockPublication_WhenPublicationFails_ThenKeepsPreviousGenerationAndReleasesMonitor()
     {
         using var session = new VaultSession(Timeout.InfiniteTimeSpan);
         session.Unlock(Enumerable.Repeat((byte)3, 32).ToArray());
         var previousGeneration = session.AcquireUnlockedSession();
-        Action publish = () =>
-        {
-            using var activation = session.PrepareUnlock(Enumerable.Repeat((byte)7, 32).ToArray());
-            throw new IOException("Publication failed before commit.");
-        };
+        Action publish = () => session.PublishUnlock(Enumerable.Repeat((byte)7, 32).ToArray(),
+            () => throw new IOException("Publication failed before commit."));
         Assert.Throws<IOException>(publish);
 
         using var lease = session.AcquireUnlockedSession().Borrow();
         Assert.Same(previousGeneration, session.AcquireUnlockedSession());
         Assert.Equal(Enumerable.Repeat((byte)3, 32), lease.Bytes);
+
+        await Task.Run(() => session.Unlock(Enumerable.Repeat((byte)9, 32).ToArray()))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        using var replacementLease = session.AcquireUnlockedSession().Borrow();
+        Assert.Equal(Enumerable.Repeat((byte)9, 32), replacementLease.Bytes);
+    }
+
+    [Fact]
+    public async Task UnlockPublication_WhenPaused_ThenCompetingUnlockWaitsForPublication()
+    {
+        using var session = new VaultSession(Timeout.InfiniteTimeSpan);
+        session.Unlock(Enumerable.Repeat((byte)3, 32).ToArray());
+        using var publicationPaused = new ManualResetEventSlim();
+        using var continuePublication = new ManualResetEventSlim();
+        using var competingUnlockAttempted = new ManualResetEventSlim();
+
+        var publication = Task.Run(() => session.PublishUnlock(
+            Enumerable.Repeat((byte)7, 32).ToArray(),
+            () =>
+            {
+                publicationPaused.Set();
+                if (!continuePublication.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("Unlock publication was not released.");
+            }));
+        Task? competingUnlock = null;
+        try
+        {
+            Assert.True(publicationPaused.Wait(TimeSpan.FromSeconds(5)));
+            var syncRoot = GetSyncRoot(session);
+            competingUnlock = Task.Run(() =>
+            {
+                Assert.False(Monitor.TryEnter(syncRoot));
+                competingUnlockAttempted.Set();
+                session.Unlock(Enumerable.Repeat((byte)9, 32).ToArray());
+            });
+
+            Assert.True(competingUnlockAttempted.Wait(TimeSpan.FromSeconds(5)));
+            Assert.False(competingUnlock.IsCompleted);
+        }
+        finally { continuePublication.Set(); }
+
+        await publication.WaitAsync(TimeSpan.FromSeconds(5));
+        await competingUnlock!.WaitAsync(TimeSpan.FromSeconds(5));
+        using var lease = session.AcquireUnlockedSession().Borrow();
+        Assert.Equal(Enumerable.Repeat((byte)9, 32), lease.Bytes);
     }
 
     private static GalleryLifetime Lifetime(GalleryScope service) =>
@@ -241,6 +282,13 @@ public sealed class NativeCheckoutReleaseTests
 
     private static VaultAccess Access(GalleryScope service) =>
         (VaultAccess)typeof(GalleryScope).GetField("vaultAccess", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(service)!;
+
+    private static object GetSyncRoot(VaultSession session)
+    {
+        var state = typeof(VaultSession).GetField("vaultLeaseState", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(session)!;
+        return state.GetType().GetField("SyncRoot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(state)!;
+    }
 
     private static async Task<VaultCheckout> WaitForCheckoutReleaseAsync(string root)
     {

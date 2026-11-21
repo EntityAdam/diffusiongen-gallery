@@ -120,23 +120,34 @@ internal sealed class VaultSession : IDisposable
     public void Unlock(byte[] suppliedKeyBytes)
     {
         ArgumentNullException.ThrowIfNull(suppliedKeyBytes);
-        using var activation = PrepareUnlock(suppliedKeyBytes);
-        activation.Commit();
+        PublishUnlock(suppliedKeyBytes, static () => { });
     }
 
-    // The caller must finish this synchronous scope without awaiting or changing threads.
-    internal VaultActivation PrepareUnlock(byte[] value)
+    // Publication must stay synchronous while the session monitor protects the previous generation.
+    internal void PublishUnlock(byte[] value, Action publish)
     {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(publish);
         Monitor.Enter(vaultLeaseState.SyncRoot);
+        UnlockedVaultSession? preparedSession = null;
+        var committed = false;
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            return new VaultActivation(value, vaultLeaseState);
+            preparedSession = new UnlockedVaultSession(value, vaultLeaseState);
+            publish();
+            vaultLeaseState.UnlockedVaultSession?.Revoke();
+            vaultLeaseState.UnlockedVaultSession = preparedSession;
+            vaultLeaseState.RecordActivity();
+            committed = true;
         }
-        catch
+        finally
         {
-            Monitor.Exit(vaultLeaseState.SyncRoot);
-            throw;
+            try
+            {
+                if (!committed) preparedSession?.Revoke();
+            }
+            finally { Monitor.Exit(vaultLeaseState.SyncRoot); }
         }
     }
 
