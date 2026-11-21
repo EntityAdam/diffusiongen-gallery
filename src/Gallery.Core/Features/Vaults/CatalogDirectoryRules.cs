@@ -1,4 +1,4 @@
-using Gallery.Core.Shared.Files;
+using Gallery.Core.Features.Files.Processors;
 
 namespace Gallery.Core.Features.Vaults;
 

@@ -11,7 +11,7 @@ using Gallery.Core.Features.Vaults.Publication;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
-using Gallery.Core.Shared.Files;
+using Gallery.Core.Features.Files.Processors;
 using GalleryLocation = Gallery.Core.Models.GalleryLocation;
 
 namespace Gallery.Core.Features.Vaults;

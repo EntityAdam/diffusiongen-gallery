@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 
 namespace Gallery.Core.Features.Ingestion.Metadata;
 

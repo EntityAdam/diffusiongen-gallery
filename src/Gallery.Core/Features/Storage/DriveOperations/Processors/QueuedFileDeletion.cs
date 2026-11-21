@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
-using Gallery.Core.Shared.Files;
+using Gallery.Core.Features.Files.Processors;
 
 namespace Gallery.Core.Features.Storage.DriveOperations;
 

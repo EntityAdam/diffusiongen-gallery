@@ -12,7 +12,7 @@ using Gallery.Core.Features.Ingestion.Managers.Validators;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.Formats;
 using SixLabors.ImageSharp.Memory;

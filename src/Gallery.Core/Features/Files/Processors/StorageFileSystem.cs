@@ -1,4 +1,4 @@
-namespace Gallery.Core.Shared.Files;
+namespace Gallery.Core.Features.Files.Processors;
 
 internal static class StorageFileSystem
 {

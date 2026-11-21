@@ -4,7 +4,7 @@ using Gallery.Core.Features.Vaults;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Shared.Files;
+using Gallery.Core.Features.Files.Processors;
 
 namespace Gallery.Core.Features.Storage;
 

@@ -1,6 +1,6 @@
 using Gallery.Core.Exceptions;
 
-namespace Gallery.Core.Shared.Diagnostics;
+namespace Gallery.Core.Features.Diagnostics.Models;
 
 internal sealed class LogEventGallery(string value) : LogEventBase(value)
 {

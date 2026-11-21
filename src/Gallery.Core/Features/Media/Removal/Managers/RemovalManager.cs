@@ -12,7 +12,7 @@ using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 using SixLabors.ImageSharp;
 
 namespace Gallery.Core.Features.Media.Removal.Managers;

@@ -9,7 +9,7 @@ using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
-using Gallery.Core.Shared.Validation;
+using Gallery.Core.Features.Validators;
 
 namespace Gallery.Core.Features.Ingestion.Workflows;
 

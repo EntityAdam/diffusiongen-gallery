@@ -1,4 +1,4 @@
-namespace Gallery.Core.Shared.Validation;
+namespace Gallery.Core.Features.Validators;
 
 internal static class OperationChoiceValidator
 {

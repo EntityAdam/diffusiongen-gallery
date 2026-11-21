@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 
 namespace Gallery.Core.Features.Vaults.Session;
 

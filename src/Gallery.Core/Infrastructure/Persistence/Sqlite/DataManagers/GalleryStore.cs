@@ -6,7 +6,7 @@ using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
 using Gallery.Core.Models;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 using Gallery.Migrations;
 using Microsoft.Data.Sqlite;
 

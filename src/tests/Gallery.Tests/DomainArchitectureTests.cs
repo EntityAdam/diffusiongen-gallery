@@ -45,6 +45,26 @@ public sealed class DomainArchitectureTests
     }
 
     [Fact]
+    public void CoreSource_UsesExplicitRoleFoldersWithoutShared()
+    {
+        var coreSource = Path.Combine(SourceRoot(), "Gallery.Core");
+
+        Assert.False(Directory.Exists(Path.Combine(coreSource, "Shared")));
+        Assert.True(File.Exists(Path.Combine(coreSource, "Features", "Validators", "OperationChoiceValidator.cs")));
+        Assert.True(File.Exists(Path.Combine(coreSource, "Services", "GalleryDisplay.cs")));
+        Assert.True(File.Exists(Path.Combine(coreSource, "Features", "Formatters", "GalleryDisplay.cs")));
+        var core = typeof(GalleryScope).Assembly;
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.GalleryException"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.GalleryBusinessException"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.GalleryTechnicalException"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.LogEventBase"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.ContextualData"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.ExceptionCause"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.Severity"));
+        Assert.NotNull(core.GetType("Gallery.Core.Services.GalleryDisplay"));
+    }
+
+    [Fact]
     public void ProjectBoundary_HasNoHostFriendAccessOrLinkedDomainSource()
     {
         var sourceRoot = SourceRoot();

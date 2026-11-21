@@ -1,19 +1,19 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Services;
+namespace Gallery.Core.Features.Formatters;
 
-public static class GalleryDisplay
+internal static class GalleryDisplayFormatter
 {
     private const string ModelExtension = ".safetensors";
 
-    public static string FormatModelFilename(string model) => RemoveModelExtension(SelectFilename(model));
+    internal static string FormatModelFilename(string model) => RemoveModelExtension(SelectFilename(model));
 
     private static string SelectFilename(string model) => model.Replace('\\', '/').Split('/')[^1];
 
     private static string RemoveModelExtension(string filename) =>
         filename.EndsWith(ModelExtension, StringComparison.OrdinalIgnoreCase) ? filename[..^ModelExtension.Length] : filename;
 
-    public static string FormatDuration(ImageRecord image)
+    internal static string FormatDuration(ImageRecord image)
     {
         ArgumentNullException.ThrowIfNull(image);
         return RenderDuration(NormalizeDuration(image.DurationSeconds));
@@ -27,7 +27,7 @@ public static class GalleryDisplay
                 $"{(long)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}")
             : duration.ToString(@"m\:ss");
 
-    public static string FormatBytes(long bytes) => RenderBytes(bytes, ScaleBytes(bytes));
+    internal static string FormatBytes(long bytes) => RenderBytes(bytes, ScaleBytes(bytes));
 
     private static (double Value, string Unit) ScaleBytes(long bytes)
     {
