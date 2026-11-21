@@ -3,8 +3,6 @@ using Gallery.Core.Services;
 using Gallery.Web.Components.Features.Collections;
 using Gallery.Web.Components.Features.Curation;
 using Gallery.Web.Components.Features.Media;
-using Gallery.Web.Components.Features.Browsing;
-using Gallery.Web.Components.Features.Tags;
 using Gallery.Web.Components.Shared;
 using Gallery.Web.Components.Features.Vision;
 using Microsoft.Extensions.DependencyInjection;
@@ -87,35 +85,27 @@ public sealed class ReviewTests
     }
 
     [Fact]
-    public async Task Organize_TagChipsListSelectedTagsAndRemoveOnlyThatTagFromSelectedImages()
+    public async Task Bulk_tag_edits_preserve_existing_assignments_and_unselected_records()
     {
-        using var fixture = new TestVault();
-        await fixture.InitializeAsync();
-        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(9, 9)), "second.png", "folder");
-        var other = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(11, 11)), "other.png", "folder");
-        first = await fixture.Scope.Records.UpdateAsync(first.Id, edit => edit with { Tags = "warm, Portrait", Rating = 4 });
-        second = await fixture.Scope.Records.UpdateAsync(second.Id, edit => edit with { Tags = "portrait" });
-        other = await fixture.Scope.Records.UpdateAsync(other.Id, edit => edit with { Tags = "warm" });
-        await using var ui = ComponentRenderFixture.Create(fixture.Scope);
-        var (workspace, root) = await ui.RenderWorkspaceAsync();
-        await ui.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        async Task<ImageRecord> Seed(string name, int width, string tags)
         {
-            await workspace.Session.Navigation.NavigateSidebarAsync("organize");
-            var browser = ui.LatestComponent<GalleryBrowser>();
-            await browser.HandleGridKeyAsync("x", first.Id, false);
-            await browser.HandleGridKeyAsync("x", second.Id, false);
-            Assert.Contains("2 of 2 selected", root.ToHtmlString());
-            Assert.Contains("1 of 2 selected", root.ToHtmlString());
-            await ui.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["Portrait"]);
-            await (Task)ComponentTestAccess.Call(ui.LatestComponent<Tagging>(), "SaveAsync")!;
-        });
-        Assert.Empty(workspace.Session.Activity.Error);
-        var stored = (await fixture.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
-        Assert.Equal("Portrait", stored[first.Id].Tags);
-        Assert.Equal(4, stored[first.Id].Rating);
-        Assert.Equal("portrait", stored[second.Id].Tags);
-        Assert.Equal("warm", stored[other.Id].Tags);
+            var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(width, 4)), name, "folder");
+            return await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = tags, Rating = 4 });
+        }
+        var first = await Seed("first.png", 4, "cat, Bird, shared");
+        var second = await Seed("second.png", 8, "dog, shared");
+        var other = await Seed("other.png", 12, "shared");
+        using var session = await BrowsingWorkspaceFixture.OpenSessionAsync(vault, [first, second, other]);
+
+        await session.Curation.EditTagsAsync(new([first.Id, second.Id], ["bird", "landscape"], ["SHARED"]));
+
+        var saved = (await vault.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
+        Assert.Equal("cat, Bird, landscape", saved[first.Id].Tags);
+        Assert.Equal("dog, bird, landscape", saved[second.Id].Tags);
+        Assert.Equal(other.Tags, saved[other.Id].Tags);
+        Assert.All(saved.Values, image => Assert.Equal(4, image.Rating));
     }
 
     private static LibraryWorkbench CreateWorkbench(GalleryScope gallery, ISonnerService toasts)

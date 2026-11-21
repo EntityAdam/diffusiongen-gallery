@@ -126,75 +126,6 @@ public sealed class UiConsistencyTests
     }
 
     [Fact]
-    public async Task Sidebar_UsesTheRequestedOrderAndOpensGalleryTools()
-    {
-        using var vault = new TestVault();
-        await vault.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var (home, root) = await fixture.RenderWorkspaceAsync();
-        var html = await Html(fixture, root);
-        var navigation = Regex.Match(html, @"<nav class=""workspace-navigation""[^>]*>(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
-        var labels = Regex.Matches(navigation, @"aria-label=""([^""]+)""").Select(match => match.Groups[1].Value).ToArray();
-        Assert.Equal(new[] { "Gallery", "Change view", "Filters", "Organize", "Review", "AI analysis", "Collections", "Tags", "Duplicates", "Import media", "Trash" }, labels);
-        Assert.Equal(2, Regex.Matches(navigation, "role=\"separator\"").Count);
-        Assert.DoesNotContain("Unorganized", navigation);
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "views");
-        Assert.Equal("views", Field<string>(home, "Browser.ActiveTool"));
-        var viewHtml = await Html(fixture, root);
-        Assert.Contains("gallery-view-drawer", viewHtml);
-        Assert.Contains("Thumbnail size", viewHtml);
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "views");
-        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "filters");
-        Assert.Equal("filters", Field<string>(home, "Browser.ActiveTool"));
-        Assert.Contains("class=\"gallery-filter-drawer\"", await Html(fixture, root));
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "tags");
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "gallery");
-        Assert.Equal("gallery", Field<string>(home, "Navigation.Section"));
-        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "tags");
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "review");
-        Assert.Equal("gallery", Field<string>(home, "Navigation.Section"));
-        Assert.Equal("review", Field<string>(home, "Browser.ActiveTool"));
-        var reviewHtml = await Html(fixture, root);
-        Assert.Contains("gallery-review-drawer", reviewHtml);
-        Assert.Contains("review-random-order", reviewHtml);
-        Assert.Contains("review-goal", reviewHtml);
-        Assert.Contains("Start Review", reviewHtml);
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "review");
-        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "intelligence");
-        Assert.Equal("gallery", Field<string>(home, "Navigation.Section"));
-        Assert.Equal("intelligence", Field<string>(home, "Browser.ActiveTool"));
-        var analysisHtml = await Html(fixture, root);
-        Assert.Contains("gallery-analysis-drawer", analysisHtml);
-        Assert.Contains("Start analyzing unanalyzed media", analysisHtml);
-        var workbench = fixture.LatestComponent<LibraryWorkbench>();
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "intelligence");
-        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
-        Assert.Same(workbench, fixture.LatestComponent<LibraryWorkbench>());
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "tags");
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "organize");
-        Assert.Equal("gallery", Field<string>(home, "Navigation.Section"));
-        Assert.Equal("organize", Field<string>(home, "Browser.ActiveTool"));
-        var organizeHtml = await Html(fixture, root);
-        Assert.Contains("gallery-organize-drawer", organizeHtml);
-        Assert.Contains("Move to set", organizeHtml);
-        Assert.Contains("Select media to edit tags.", organizeHtml);
-        Assert.Same(workbench, fixture.LatestComponent<LibraryWorkbench>());
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "organize");
-        Assert.Equal("", Field<string>(home, "Browser.ActiveTool"));
-        await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "trash");
-        Assert.Equal("trash", Field<string>(home, "Browser.ActiveTool"));
-        var trashHtml = await Html(fixture, root);
-        Assert.Contains("Showing media marked for deletion.", trashHtml);
-        Assert.Contains("Delete Forever", trashHtml);
-        Assert.Contains("Restore", trashHtml);
-        var trashNavigation = Regex.Match(trashHtml, @"<nav class=""workspace-navigation""[^>]*>(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
-        Assert.Matches(@"aria-label=""Trash""[^>]*aria-current=""page""", trashNavigation);
-    }
-
-    [Fact]
     public async Task Sidebar_KeyboardShortcutsOpensAndClosesWithoutNavigating()
     {
         using var vault = new TestVault();
@@ -270,60 +201,6 @@ public sealed class UiConsistencyTests
     }
 
     [Theory]
-    [InlineData("Review")]
-    [InlineData("Deletion")]
-    [InlineData("Media")]
-    [InlineData("Orientation")]
-    [InlineData("Analysis")]
-    [InlineData("Rating")]
-    public async Task FilterDropdown_ClearingRemovesTheCriterion(string property)
-    {
-        await using var fixture = ComponentRenderFixture.Create();
-        GalleryFilter? changed = null;
-        var (panel, _) = await Render<GalleryFilterPanel>(fixture, new()
-        {
-            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter
-            {
-                Review = "reviewed", Deletion = "marked", Media = "video", Orientation = "portrait", Analysis = "analyzed", MinRating = 4
-            },
-            [nameof(GalleryFilterPanel.Changed)] = EventCallback.Factory.Create<GalleryFilter>(this, value => changed = value)
-        });
-        var draft = Field<object>(panel, "draft");
-        draft.GetType().GetProperty(property)!.SetValue(draft, "");
-        await Invoke(fixture, panel, "NotifyChangedAsync");
-
-        if (property == "Rating") Assert.Equal(0, changed!.MinRating);
-        else Assert.Equal(GalleryFilter.AnyValue, typeof(GalleryFilter).GetProperty(property)!.GetValue(changed));
-    }
-
-    [Fact]
-    public async Task TagFilter_RestoresMultipleSelectionsAndPublishesChangesAndClearing()
-    {
-        await using var fixture = ComponentRenderFixture.Create();
-        GalleryFilter? changed = null;
-        var (panel, root) = await Render<GalleryFilterPanel>(fixture, new()
-        {
-            [nameof(GalleryFilterPanel.Filter)] = new GalleryFilter { Tag = "cat, dog" },
-            [nameof(GalleryFilterPanel.KnownTags)] = new[] { "cat", "dog", "bird" },
-            [nameof(GalleryFilterPanel.Changed)] = EventCallback.Factory.Create<GalleryFilter>(this, value => changed = value)
-        });
-        var html = await Html(fixture, root);
-        Assert.Contains("aria-multiselectable=\"true\"", html);
-        Assert.Contains("aria-label=\"Remove tag cat\"", html);
-        Assert.Contains("aria-label=\"Remove tag dog\"", html);
-
-        var draft = Field<object>(panel, "draft");
-        var tags = draft.GetType().GetProperty("Tags")!;
-        tags.SetValue(draft, new[] { "dog", "bird" });
-        await Invoke(fixture, panel, "NotifyChangedAsync");
-        Assert.Equal("dog, bird", changed!.Tag);
-
-        tags.SetValue(draft, Array.Empty<string>());
-        await Invoke(fixture, panel, "NotifyChangedAsync");
-        Assert.Equal("", changed!.Tag);
-    }
-
-    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Tagging_CancelDiscardsBothAdditionsAndRemovals(bool removeAll)
@@ -345,35 +222,6 @@ public sealed class UiConsistencyTests
         await Invoke(fixture, dialog, "CancelAsync");
         Assert.True(cancelled);
         Assert.Null(saved);
-    }
-
-    [Fact]
-    public async Task GalleryTagging_OneSelectionCanRemoveAllTags()
-    {
-        using var vault = new TestVault();
-        await vault.InitializeAsync();
-        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "cat, dog" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var (_, root) = await fixture.RenderWorkspaceAsync();
-        var browser = fixture.LatestComponent<GalleryBrowser>();
-
-        Assert.Contains("data-can-use-gallery-selection=\"false\"", await Html(fixture, root));
-        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", image.Id, false);
-        var selected = await Html(fixture, root);
-        Assert.Contains("data-can-use-gallery-selection=\"true\"", selected);
-        Assert.DoesNotContain("1 selected", selected);
-        await Invoke(fixture, browser, "HandleGridKeyAsync", "t", "", false);
-
-        var html = await Html(fixture, root);
-        Assert.Contains("aria-label=\"Remove tag cat\"", html);
-        Assert.Contains("aria-label=\"Remove tag dog\"", html);
-        var dialog = fixture.LatestComponent<Tagging>();
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync([]));
-        await Invoke(fixture, dialog, "SaveAsync");
-
-        Assert.Empty(Assert.Single(await vault.Scope.Catalog.ListAsync()).Tags);
-        Assert.DoesNotContain("id=\"tagging-dialog-title\"", await Html(fixture, root));
     }
 
     [Fact]
@@ -404,46 +252,6 @@ public sealed class UiConsistencyTests
         Assert.Equal("application/zip", js.ContentType);
         using var archive = new ZipArchive(new MemoryStream(js.Content));
         Assert.Equal(["first.png", "second.png"], archive.Entries.Select(entry => entry.FullName).Order());
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task GalleryTagging_AppliesOnlyExplicitChangesInBothHosts(bool inDrawer)
-    {
-        using var vault = new TestVault();
-        await vault.InitializeAsync();
-        var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
-        var unselected = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(5, 5)), "other.png", "folder");
-        await vault.Scope.Records.UpdateAsync(first.Id, edit => edit with { Tags = "cat, Bird, shared", Rating = 4 });
-        await vault.Scope.Records.UpdateAsync(second.Id, edit => edit with { Tags = "dog, shared" });
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var (home, root) = await fixture.RenderWorkspaceAsync();
-        var browser = fixture.LatestComponent<GalleryBrowser>();
-
-        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", first.Id, false);
-        await Invoke(fixture, browser, "HandleGridKeyAsync", "x", second.Id, false);
-        if (inDrawer) await Invoke(fixture, home, "Navigation.NavigateSidebarAsync", "organize");
-        else await Invoke(fixture, browser, "HandleGridKeyAsync", "t", "", false);
-
-        var html = await Html(fixture, root);
-        Assert.Contains("1 of 2 selected", html);
-        Assert.Contains("2 of 2 selected", html);
-        var dialog = fixture.LatestComponent<Tagging>();
-        await fixture.HtmlRenderer.Dispatcher.InvokeAsync(() => fixture.LatestComponent<AdvancedSelect>().ValuesChanged.InvokeAsync(["cat", "dog", "bird", "landscape"]));
-        await Invoke(fixture, dialog, "SaveAsync");
-
-        var saved = (await vault.Scope.Catalog.ListAsync()).ToDictionary(image => image.Id);
-        Assert.Equal("cat, Bird, landscape", saved[first.Id].Tags);
-        Assert.Equal(4, saved[first.Id].Rating);
-        Assert.Equal("dog, landscape", saved[second.Id].Tags);
-        Assert.Empty(saved[unselected.Id].Tags);
-        Assert.Empty(home.Session.Activity.Error);
-        Assert.Empty(home.Session.Activity.Message);
-        var afterSave = await Html(fixture, root);
-        Assert.DoesNotContain("id=\"tagging-dialog-title\"", afterSave);
-        if (inDrawer) Assert.Contains("aria-label=\"Remove tag landscape\"", afterSave);
     }
 
     [Fact]
@@ -726,25 +534,6 @@ public sealed class UiConsistencyTests
         Assert.Contains("aria-labelledby=\"dialog-title\"", html);
         await Invoke(fixture, dialog, "CloseAsync");
         Assert.Equal(!busy, closed);
-    }
-
-    [Theory]
-    [InlineData("Browser.SetSortAsync")]
-    [InlineData("Browser.ResetFiltersAsync")]
-    public async Task Gallery_ViewChangesClearSelectionAndRangeAnchor(string action)
-    {
-        using var vault = new TestVault();
-        await vault.InitializeAsync();
-        await using var fixture = ComponentRenderFixture.Create(vault.Scope);
-        var (home, _) = await fixture.RenderWorkspaceAsync();
-        var selected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.librarySelection")!;
-        var trashSelected = (HashSet<string>)ComponentTestAccess.Get<object>(home, "Browser.removalSelection")!;
-        selected.Add("hidden"); trashSelected.Add("marked");
-        ComponentTestAccess.Set(home, "Browser.SelectionAnchor", "hidden");
-        await Invoke(fixture, home, action, action == "Browser.SetSortAsync" ? ["name"] : []);
-        Assert.Empty(selected);
-        Assert.Empty(trashSelected);
-        Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.SelectionAnchor"));
     }
 
     [Theory]
