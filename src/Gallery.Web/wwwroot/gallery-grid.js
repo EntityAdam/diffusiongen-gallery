@@ -1,5 +1,5 @@
 window.galleryGrid = {
-    keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "t", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
+    keys: ["0", "1", "2", "3", "4", "5", "f", "d", "x", "t", "e", "escape", "arrowleft", "arrowright", "arrowup", "arrowdown"],
     attach: function (reference, doc, owner) {
         const grid = window.galleryGrid;
         grid.detach();
@@ -47,7 +47,8 @@ window.galleryGrid = {
                 next.scrollIntoView?.({ block: "nearest" });
                 return;
             }
-            if (key === "t" ? !doc.querySelector("[data-can-edit-tags=true]")
+            if (key === "e" && event.repeat) return;
+            if (key === "t" || key === "e" ? !doc.querySelector("[data-can-use-gallery-selection=true]")
                 : key === "escape" ? !doc.querySelector("[data-has-selection=true]") : !id) return;
             event.preventDefault();
             const invocation = queue.then(() => reference.invokeMethodAsync("HandleGridKey", key, id ?? "", event.shiftKey === true));

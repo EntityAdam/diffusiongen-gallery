@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -357,10 +358,10 @@ public sealed class UiConsistencyTests
         var (_, root) = await fixture.RenderWorkspaceAsync();
         var browser = fixture.LatestComponent<GalleryBrowser>();
 
-        Assert.Contains("data-can-edit-tags=\"false\"", await Html(fixture, root));
+        Assert.Contains("data-can-use-gallery-selection=\"false\"", await Html(fixture, root));
         await Invoke(fixture, browser, "HandleGridKeyAsync", "x", image.Id, false);
         var selected = await Html(fixture, root);
-        Assert.Contains("data-can-edit-tags=\"true\"", selected);
+        Assert.Contains("data-can-use-gallery-selection=\"true\"", selected);
         Assert.DoesNotContain("1 selected", selected);
         await Invoke(fixture, browser, "HandleGridKeyAsync", "t", "", false);
 
@@ -373,6 +374,36 @@ public sealed class UiConsistencyTests
 
         Assert.Empty(Assert.Single(await vault.Scope.Catalog.ListAsync()).Tags);
         Assert.DoesNotContain("id=\"tagging-dialog-title\"", await Html(fixture, root));
+    }
+
+    [Fact]
+    public async Task GalleryExport_DownloadsOnlySelectedMediaAsOneFileOrAZip()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var first = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "second.png", "folder");
+        var other = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(5, 5)), "other.png", "folder");
+        var js = new DownloadRuntime();
+        await using var fixture = ComponentRenderFixture.Create(vault.Scope, js);
+        await fixture.RenderWorkspaceAsync();
+        var browser = fixture.LatestComponent<GalleryBrowser>();
+        Task Key(string key, string id) => Invoke(fixture, browser, "HandleGridKeyAsync", key, id, false);
+
+        await Key("e", other.Id);
+        Assert.Null(js.FileName);
+        await Key("x", first.Id);
+        await Key("e", other.Id);
+        Assert.Equal("first.png", js.FileName);
+        Assert.Equal("image/png", js.ContentType);
+        Assert.StartsWith("89504E470D0A1A0A", Convert.ToHexString(js.Content));
+
+        await Key("x", second.Id);
+        await Key("e", other.Id);
+        Assert.EndsWith(".zip", js.FileName);
+        Assert.Equal("application/zip", js.ContentType);
+        using var archive = new ZipArchive(new MemoryStream(js.Content));
+        Assert.Equal(["first.png", "second.png"], archive.Entries.Select(entry => entry.FullName).Order());
     }
 
     [Theory]
@@ -906,7 +937,7 @@ public sealed class UiConsistencyTests
         using var vault = new TestVault();
         await vault.InitializeAsync();
         await vault.Scope.Tags.AddTagAsync("Unused");
-        var js = new CsvDownloadRuntime();
+        var js = new DownloadRuntime();
         await using var fixture = ComponentRenderFixture.Create(vault.Scope, js);
         var changes = 0;
         var (manager, root) = await Render<TagCsvSettings>(fixture, new()
@@ -925,7 +956,7 @@ public sealed class UiConsistencyTests
         Assert.Equal("Imported 1 tag(s); skipped 1 duplicate(s).", Field<string>(manager, "message"));
         await Invoke(fixture, manager, "ExportCsvAsync");
         Assert.Equal("tags.csv", js.FileName);
-        Assert.Equal("\uFEFFtag\r\n\"Added\"\r\n\"Unused\"\r\n", js.Content);
+        Assert.Equal("\uFEFFtag\r\n\"Added\"\r\n\"Unused\"\r\n", Encoding.UTF8.GetString(js.Content));
 
         await Invoke(fixture, manager, "CsvSelected", new InputFileChangeEventArgs([new CsvBrowserFile("tag\nGood\nbad,columns\n")]));
         await Invoke(fixture, manager, "ImportCsvAsync");
@@ -973,20 +1004,22 @@ public sealed class UiConsistencyTests
         }
     }
 
-    private sealed class CsvDownloadRuntime : IJSRuntime
+    private sealed class DownloadRuntime : IJSRuntime
     {
         public string? FileName { get; private set; }
-        public string? Content { get; private set; }
+        public string? ContentType { get; private set; }
+        public byte[] Content { get; private set; } = [];
         public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => InvokeAsync<TValue>(identifier, default, args);
         public async ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
         {
             if (identifier == "galleryMedia.download")
             {
                 FileName = (string)args![1]!;
+                ContentType = (string)args[2]!;
                 var reference = (DotNetStreamReference)args[0]!;
                 using var bytes = new MemoryStream();
                 await reference.Stream.CopyToAsync(bytes, cancellationToken);
-                Content = Encoding.UTF8.GetString(bytes.ToArray());
+                Content = bytes.ToArray();
             }
             return default!;
         }

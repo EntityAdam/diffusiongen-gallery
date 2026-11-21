@@ -126,23 +126,11 @@
 
     private Task DismissDetailSuggestionAsync() => Image is not null && Suggestion is { } suggestion
         ? Dismiss.InvokeAsync(suggestion) : Task.CompletedTask;
-    private async Task DownloadAsync(ExportFile file)
-    {
-        var contentBytes = file.CopyContentBytes();
-        try { await DownloadAsync(new MemoryStream(contentBytes, writable: false), file.FileName, file.ContentType); }
-        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(contentBytes); }
-    }
-
-    private async Task DownloadAsync(Stream content, string fileName, string contentType)
-    {
-        using var reference = new DotNetStreamReference(content);
-        await JS.InvokeVoidAsync("galleryMedia.download", reference, fileName, contentType);
-    }
 
     private Task ExportAsync(ImageRecord image) => Commands.RunAsync(image.IsVideo ? "Decrypting video copy..." : "Preparing image copy...", async () =>
     {
         var file = await GalleryMedia.ExportAsync(image.Id);
-        try { await DownloadAsync(file); }
+        try { await MediaDownload.SendAsync(JS, file); }
         finally { file.ClearContent(); }
         Commands.Activity.Message = $"Saved a decrypted copy as {file.FileName}. It is no longer protected by the gallery.";
     });
@@ -153,7 +141,7 @@
     {
         var file = await GalleryMedia.WorkflowAsync(image.Id)
             ?? throw new InvalidOperationException("No ComfyUI workflow was found in this file.");
-        try { await DownloadAsync(file); }
+        try { await MediaDownload.SendAsync(JS, file); }
         finally { file.ClearContent(); }
         Commands.Activity.Message = $"Saved the ComfyUI workflow as {file.FileName}.";
     });

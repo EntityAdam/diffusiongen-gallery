@@ -13,7 +13,7 @@ function loadGalleryScripts(globals) {
     }
 }
 
-function setup({ dialog = false, selection = false, canEditTags = false } = {}) {
+function setup({ dialog = false, selection = false, canUseGallerySelection = false } = {}) {
     const listeners = new Map();
     const calls = [];
     const card = id => {
@@ -33,7 +33,7 @@ function setup({ dialog = false, selection = false, canEditTags = false } = {}) 
         removeEventListener(name) { listeners.delete(name); },
         querySelector(selector) {
             return (selector.startsWith("[role=dialog]") && dialog) || (selector === "[data-has-selection=true]" && selection)
-                || (selector === "[data-can-edit-tags=true]" && canEditTags) ? {} : null;
+                || (selector === "[data-can-use-gallery-selection=true]" && canUseGallerySelection) ? {} : null;
         },
         querySelectorAll() { return []; }
     };
@@ -55,9 +55,9 @@ function setup({ dialog = false, selection = false, canEditTags = false } = {}) 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 test("T edits the gallery selection without needing a toolbar, hovered or focused card", async () => {
-    const available = setup({ canEditTags: true });
+    const available = setup({ canUseGallerySelection: true });
     const unavailable = setup({ selection: true });
-    const modal = setup({ canEditTags: true, dialog: true });
+    const modal = setup({ canUseGallerySelection: true, dialog: true });
     assert.equal(available.key("t", {}).defaultPrevented, true);
     assert.equal(available.key("t", available.input).defaultPrevented, false);
     assert.equal(unavailable.key("t", {}).defaultPrevented, false);
@@ -66,6 +66,21 @@ test("T edits the gallery selection without needing a toolbar, hovered or focuse
     assert.deepEqual(available.calls, [["HandleGridKey", "t", "", false]]);
     assert.deepEqual(unavailable.calls, []);
     assert.deepEqual(modal.calls, []);
+});
+
+test("E exports the gallery selection without a card and ignores typing, dialogs, and key repeat", async () => {
+    const gallery = setup({ canUseGallerySelection: true });
+    const otherGrid = setup({ selection: true });
+    const modal = setup({ canUseGallerySelection: true, dialog: true });
+    assert.equal(gallery.key("E", {}).defaultPrevented, true);
+    assert.equal(gallery.key("e", {}, { repeat: true }).defaultPrevented, false);
+    assert.equal(gallery.key("e", gallery.input).defaultPrevented, false);
+    assert.equal(gallery.key("e", {}, { ctrlKey: true }).defaultPrevented, false);
+    assert.equal(otherGrid.key("e", otherGrid.card("hovered")).defaultPrevented, false);
+    assert.equal(modal.key("e", {}).defaultPrevented, false);
+    await flush();
+    assert.deepEqual(gallery.calls, [["HandleGridKey", "e", "", false]]);
+    assert.deepEqual([...otherGrid.calls, ...modal.calls], []);
 });
 
 test("review confetti bursts left then right after 80ms and cleans up", async () => {

@@ -379,6 +379,10 @@ card when no card is hovered. Arrow keys continue from keyboard focus:
 The same shortcuts work in Collections and Unorganized. They are ignored while
 typing or while a dialog/viewer is open.
 
+In Gallery, press **E** to download the selected item, or a ZIP containing all
+selected items if more than one is selected. With nothing selected, **E** does
+nothing. Downloads are decrypted copies and are not protected by the gallery.
+
 **Full screen view** in Change view opens the current page; the details preview
 also provides access. Left/Right navigate within that page, D toggles deletion,
 F toggles favorite, O shows original size, P fits to the window, and Escape closes.
@@ -796,7 +800,6 @@ dotnet test .\src\Gallery.slnx
 node --test .\src\tests\viewer-drag.test.cjs .\src\tests\viewer-keys.test.cjs
 ```
 
-Selection ZIP export is retained in code but is not user-facing.
 Explicit persisted vision-acceptance tracking is a future change;
 the current card icon is inferred from saved analysis and pending suggestions.
 
