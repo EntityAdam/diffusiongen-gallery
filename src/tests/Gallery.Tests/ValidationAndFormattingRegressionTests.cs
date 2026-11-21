@@ -20,6 +20,25 @@ public sealed class ValidationAndFormattingRegressionTests
     }
 
     [Theory]
+    [InlineData(" Favorites ", " Favorites ")]
+    [InlineData("Favorites", " favorites ")]
+    [InlineData(" Favorites ", "FAVORITES")]
+    public async Task DeleteView_WhenNameHasSurroundingWhitespace_RemovesOnlyTheMatchingView(string savedName, string deletedName)
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Scope.Settings.SaveViewAsync(savedName, new GalleryFilter());
+        await fixture.Scope.Settings.SaveViewAsync("Other", new GalleryFilter());
+        var savedViews = await fixture.Scope.Settings.LoadViewsAsync();
+        Assert.Contains(savedViews, view => view.Name == "Favorites");
+
+        await fixture.Scope.Settings.DeleteViewAsync(deletedName);
+
+        var remainingViews = await fixture.Scope.Settings.LoadViewsAsync();
+        Assert.Equal("Other", Assert.Single(remainingViews).Name);
+    }
+
+    [Theory]
     [InlineData(" Cats ")]
     [InlineData("Cats ")]
     public async Task Update_WhenCollectionNameIsNotCanonical_RejectsWithoutChangingRecord(string collection)
