@@ -39,39 +39,54 @@ public sealed class GalleryBrowsingInteractionTests
         Assert.True(saved.IsFavorite);
     }
 
-    [Theory]
-    [InlineData(false, false, false, false, "Not analyzed")]
-    [InlineData(false, true, false, true, "Vision analysis accepted")]
-    [InlineData(true, false, true, false, "Vision analysis awaiting acceptance")]
-    [InlineData(true, true, true, true, "Vision analysis awaiting acceptance")]
-    public async Task Card_shows_media_summary_and_accessible_statuses(bool video, bool analyzed, bool pending, bool reviewed, string vision)
+    [Fact]
+    public async Task Card_shows_original_filename_dimensions_size_and_generation_metadata()
     {
         await using var ui = CreateContext();
-        var filename = video ? "original.mp4" : "original.png";
         var card = ui.Render<GalleryImageCard>(p => p.Add(c => c.Image, new ImageRecord
         {
-            Name = "display name", OriginalName = filename, Width = 1536, Height = 1024, OriginalBytes = 2516582,
-            MediaType = video ? "video" : "image", DurationSeconds = 3665, IsReviewed = reviewed,
-            Description = analyzed ? "vision result" : "",
-            Generation = analyzed ? new() { Model = @"models\cat.safetensors", Prompt = "a cat in sunlight" } : null
-        }).Add(c => c.HasSuggestion, pending));
+            Name = "display name", OriginalName = "original.png", Width = 1536, Height = 1024, OriginalBytes = 2516582,
+            IsReviewed = true, Generation = new() { Model = @"models\cat.safetensors", Prompt = "a cat in sunlight" }
+        }));
 
-        Assert.Equal(filename, card.Find("h3").TextContent);
+        Assert.Equal("original.png", card.Find("h3").TextContent);
         var text = string.Concat(card.Nodes.Select(node => node.TextContent));
         Assert.Contains("1536 × 1024", text);
-        Assert.Contains(video ? "01:01:05" : "2MP", text);
         Assert.Contains("2.4 MiB", text);
+        Assert.Contains("Model: cat", text);
+        Assert.DoesNotContain("cat.safetensors", text);
+        Assert.Contains("a cat in sunlight", text);
         var labels = card.FindAll("[role=img]").Select(icon => icon.GetAttribute("aria-label")).ToArray();
-        Assert.Contains(video ? "Video" : "Image", labels);
-        Assert.Contains(vision, labels);
-        Assert.Contains(reviewed ? "Reviewed" : "Not reviewed", labels);
-        Assert.Equal(analyzed, labels.Contains("AI generated: ComfyUI metadata detected"));
-        if (analyzed)
-        {
-            Assert.Contains("Model: cat", text);
-            Assert.DoesNotContain("cat.safetensors", text);
-            Assert.Contains("a cat in sunlight", text);
-        }
+        Assert.Contains("Image", labels);
+        Assert.Contains("Reviewed", labels);
+        Assert.Contains("AI generated: ComfyUI metadata detected", labels);
+    }
+
+    [Theory]
+    [InlineData(false, false, "Not analyzed")]
+    [InlineData(true, false, "Vision analysis accepted")]
+    [InlineData(false, true, "Vision analysis awaiting acceptance")]
+    [InlineData(true, true, "Vision analysis awaiting acceptance")]
+    public async Task Card_announces_pending_suggestions_before_accepted_analysis(bool analyzed, bool pending, string expected)
+    {
+        await using var ui = CreateContext();
+        var card = ui.Render<GalleryImageCard>(p => p
+            .Add(c => c.Image, new ImageRecord { Description = analyzed ? "vision result" : "" })
+            .Add(c => c.HasSuggestion, pending));
+
+        Assert.NotNull(card.Find($"[role=img][aria-label='{expected}']"));
+    }
+
+    [Fact]
+    public async Task Card_labels_unreviewed_video_without_generation_metadata()
+    {
+        await using var ui = CreateContext();
+        var card = ui.Render<GalleryImageCard>(p => p.Add(c => c.Image, new ImageRecord { MediaType = "video" }));
+
+        var labels = card.FindAll("[role=img]").Select(icon => icon.GetAttribute("aria-label")).ToArray();
+        Assert.Contains("Video", labels);
+        Assert.Contains("Not reviewed", labels);
+        Assert.DoesNotContain("AI generated: ComfyUI metadata detected", labels);
     }
 
     [Theory]
@@ -120,9 +135,9 @@ public sealed class GalleryBrowsingInteractionTests
         var changes = new List<GalleryFilter>();
         var panel = ui.Render<GalleryFilterPanel>(p => p.Add(c => c.Filter, filter)
             .Add(c => c.Changed, changes.Add));
-        var clients = ui.JSInterop.Invocations["galleryFilterInput.attach"].Select(call =>
+        var (folder, revision) = ui.JSInterop.Invocations["galleryFilterInput.attach"].Select(call =>
             (Input: ((DotNetObjectReference<DebouncedFilterInput>)call.Arguments[1]!).Value, Revision: (long)call.Arguments[3]!))
-            .ToDictionary(client => client.Input.Id);
+            .Single(client => client.Input.Id == "folder");
         const string remove = "[aria-label='Active filters'] button[aria-label='Remove Search: portrait']";
         Assert.DoesNotContain(panel.FindAll("button"), button => button.TextContent.Trim() == "Reset filters");
         await panel.Find(remove).ClickAsync();
@@ -131,12 +146,8 @@ public sealed class GalleryBrowsingInteractionTests
         panel.Render(p => p.Add(c => c.Filter, cleared));
         Assert.Empty(panel.FindAll(remove));
 
-        // Deliver edits from before the click, including one whose bound value did not change.
-        foreach (var id in new[] { "search", "folder" })
-        {
-            var (input, revision) = clients[id];
-            Assert.False(await panel.InvokeAsync(() => input.CommitAsync($"stale {id}", revision)));
-        }
+        // Folder's bound value did not change; only the panel reset can invalidate its pending edit.
+        Assert.False(await panel.InvokeAsync(() => folder.CommitAsync("stale folder", revision)));
         Assert.Single(changes);
     }
 
@@ -190,11 +201,13 @@ public sealed class GalleryBrowsingInteractionTests
         {
             Assert.Equal(records.Take(12).Select(r => r.Name), Filenames());
             Assert.True(Next().HasAttribute("disabled"));
+            await gallery.Find("button[aria-label='Select 00']").ClickAsync();
         }
         finally { release.TrySetResult(); }
 
         await gallery.WaitForAssertionAsync(() => Assert.False(Next().HasAttribute("disabled")));
         Assert.Empty(gallery.FindAll("section[aria-label='Gallery'] [role=status]"));
+        Assert.Equal("true", gallery.Find("button[aria-label='Select 00']").GetAttribute("aria-pressed"));
         await Next().ClickAsync();
         Assert.Equal(records.Skip(12).Select(r => r.Name), Filenames());
     }

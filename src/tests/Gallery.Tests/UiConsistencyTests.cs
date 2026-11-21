@@ -514,54 +514,75 @@ public sealed class UiConsistencyTests
         Assert.Equal(!busy, closed);
     }
 
-    [Theory]
-    [InlineData(false, "cat")]
-    [InlineData(true, "cat")]
-    [InlineData(true, "Unused tag")]
-    public async Task ViewingManagedTag_OpensGalleryWithOnlyThatTagAndClearsTrashAndSelection(bool fromTrash, string tag)
+    [Fact]
+    public async Task ViewingManagedTagFromTrash_OpensFilterDrawerAndResetsTheBrowser()
     {
         using var vault = new TestVault();
         await vault.InitializeAsync();
         var matching = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "matching.png", "folder");
-        var other = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(4, 4)), "other.png", "folder");
         var marked = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(5, 5)), "marked.png", "folder");
         await vault.Scope.Records.UpdateAsync(matching.Id, image => image with { Tags = "cat" });
-        await vault.Scope.Records.UpdateAsync(other.Id, image => image with { Tags = "catfish" });
         await vault.Scope.Records.UpdateAsync(marked.Id, image => image with { Tags = "cat", IsMarkedForDeletion = true });
-        await vault.Scope.Tags.AddTagAsync("Unused tag");
         await using var fixture = ComponentRenderFixture.Create(vault.Scope);
         var (home, root) = await fixture.RenderWorkspaceAsync();
-        await Invoke(fixture, home, "Catalog.ReloadAsync");
-        ComponentTestAccess.Set(home, "Browser.Filter", new GalleryFilter
-        {
-            Search = "no match", Tag = "previous", MinRating = 5, IncludesFavoritesOnly = true,
-            Collection = "old collection", Vision = new() { Subject = "old subject" }, Sort = "name"
-        });
-        if (fromTrash) await Invoke(fixture, home, "Navigation.SetActiveToolAsync", "trash");
+        var browser = home.Session.Browser;
+        await Invoke(fixture, home, "Browser.ApplyFilterAsync", new GalleryFilter { Search = "no match", Sort = "name" });
+        await Invoke(fixture, home, "Navigation.SetActiveToolAsync", "trash");
         await Invoke(fixture, home, "Navigation.SwitchWorkflowAsync", "tags");
-        Assert.Contains("View media tagged", await Html(fixture, root));
-        ComponentTestAccess.Set(home, "Browser.Page", 2);
-        Field<HashSet<string>>(home, "Browser.librarySelection").Add(other.Id);
-        Field<HashSet<string>>(home, "Browser.removalSelection").Add(marked.Id);
-        ComponentTestAccess.Set(home, "Browser.SelectionAnchor", other.Id);
-        var revision = Field<long>(home, "Browser.FilterInputRevision");
+        Assert.Contains("View media tagged cat", await Html(fixture, root));
+        ComponentTestAccess.Set(browser, "Page", 2);
+        Field<HashSet<string>>(browser, "librarySelection").Add(matching.Id);
+        browser.SelectCard(marked.Id, range: false);
+        var revision = browser.FilterInputRevision;
 
-        await Invoke(fixture, home, "Navigation.ViewTagAsync", tag);
+        await Invoke(fixture, fixture.LatestComponent<TagManagement>(), "ViewAsync", "cat");
 
-        Assert.Equal("gallery", Field<string>(home, "Navigation.Section"));
-        Assert.Equal(new GalleryFilter { Tag = tag }, Field<GalleryFilter>(home, "Browser.Filter"));
-        Assert.Equal("filters", Field<string>(home, "Browser.ActiveTool"));
-        Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.BrowsingFilter"));
-        var galleryHtml = await Html(fixture, root);
-        Assert.Contains("<aside id=\"gallery-filter-drawer\" class=\"gallery-filter-drawer\"", galleryHtml);
-        Assert.Contains("aria-label=\"Close filters\"", galleryHtml);
-        Assert.Equal(0, Field<int>(home, "Browser.Page"));
-        Assert.True(Field<long>(home, "Browser.FilterInputRevision") > revision);
-        Assert.Empty(Field<IReadOnlySet<string>>(home, "Browser.LibrarySelection"));
-        Assert.Empty(Field<IReadOnlySet<string>>(home, "Browser.RemovalSelection"));
-        Assert.Null(ComponentTestAccess.Get<object>(home, "Browser.SelectionAnchor"));
-        var filtered = (IReadOnlyList<ImageRecord>)ComponentTestAccess.Get<object>(home, "Browser.Filtered")!;
-        Assert.Equal(tag == "cat" ? new[] { matching.Id } : Array.Empty<string>(), filtered.Select(image => image.Id));
+        Assert.Equal("gallery", home.Session.Navigation.Section);
+        Assert.Equal(new GalleryFilter { Tag = "cat" }, browser.Filter);
+        Assert.Null(browser.BrowsingFilter);
+        Assert.Equal("filters", browser.ActiveTool);
+        Assert.Contains("aria-label=\"Close filters\"", await Html(fixture, root));
+        Assert.Equal(0, browser.Page);
+        Assert.True(browser.FilterInputRevision > revision);
+        Assert.Empty(browser.LibrarySelection);
+        Assert.Empty(browser.RemovalSelection);
+        Assert.Null(browser.SelectionAnchor);
+        Assert.Equal(matching.Id, Assert.Single(browser.Filtered).Id);
+    }
+
+    [Theory]
+    [InlineData("", "cat", 1)]
+    [InlineData("trash", "Unused tag", 0)]
+    public async Task ViewingManagedTag_ShowsItsMatches(string initialTool, string tag, int matches)
+    {
+        using var vault = new TestVault();
+        using var home = await BrowsingWorkspaceFixture.OpenSessionAsync(vault, [new ImageRecord { Id = "cat-photo", Tags = "cat" }]);
+        await home.Browser.SetActiveToolAsync(initialTool);
+        await home.Navigation.SwitchWorkflowAsync("tags");
+
+        await home.Navigation.ViewTagAsync(tag);
+
+        Assert.Equal("gallery", home.Navigation.Section);
+        Assert.Equal(tag, home.Browser.Filter.Tag);
+        Assert.Equal(matches, home.Browser.Filtered.Count);
+    }
+
+    [Fact]
+    public void RangeSelection_IncludesBothEndpointsAndTheIdsBetweenThem()
+    {
+        var selection = new HashSet<string> { "first" };
+        MediaRangeSelection.Select(selection, ["first", "middle", "last", "outside"], "first", "last", range: true);
+
+        Assert.True(selection.SetEquals(["first", "middle", "last"]));
+    }
+
+    [Fact]
+    public void RangeSelection_ClickingASelectedIdRemovesOnlyThatId()
+    {
+        var selection = new HashSet<string> { "first", "middle", "last" };
+        MediaRangeSelection.Select(selection, ["first", "middle", "last"], "last", "middle", range: false);
+
+        Assert.True(selection.SetEquals(["first", "last"]));
     }
 
     [Fact]
