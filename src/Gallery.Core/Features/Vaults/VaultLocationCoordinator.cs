@@ -122,12 +122,12 @@ internal sealed class VaultLocationCoordinator(
         destination => $"The gallery was moved to '{destination}', but old-location cleanup or history persistence failed. The verified destination is intact; inspect the original location before removing any remaining files.");
 
     private async Task<(IGalleryStore StagedStore, string StagingDirectory, Action CleanSource)> StageVaultMoveAsync(
-        StagedLocation location, byte[] key)
+        StagedLocation location, byte[] key, Action<string> trackStagingDirectory)
     {
         var sourceRoot = VaultRoot;
         await QueuedFileDeletion.ReconcileOutstandingDeletesAsync(galleryStore, key);
         var records = await galleryStore.ReadRecordsAsync(key);
-        var staging = location.CreateStagingDirectory(VaultStagingDirectoryPrefix);
+        var staging = CreateStagingDirectory(location.Destination, VaultStagingDirectoryPrefix, trackStagingDirectory);
         await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
         var stagedStore = galleryLifetime.StoreFactory.Create(staging);
         await CopyVaultMediaToStageAsync(records, staging, location.Destination, stagedStore, key);
@@ -169,11 +169,11 @@ internal sealed class VaultLocationCoordinator(
         destination => $"The local catalog is intact at '{destination}', but old catalog cleanup or history persistence failed. Media files were not moved.");
 
     private async Task<(IGalleryStore StagedStore, string StagingDirectory, Action CleanSource)> StageCatalogRelocationAsync(
-        StagedLocation location, byte[] key)
+        StagedLocation location, byte[] key, Action<string> trackStagingDirectory)
     {
         var mediaDirectory = await GallerySettings.ReadMediaDirectoryAsync(galleryLifetime.Current, key);
         var sourceRoot = VaultRoot;
-        var staging = location.CreateStagingDirectory(".catalog-stage-");
+        var staging = CreateStagingDirectory(location.Destination, ".catalog-stage-", trackStagingDirectory);
         await CopyCatalogToStageAsync(vaultStore, galleryStore, staging, key);
         var stagedStore = galleryLifetime.StoreFactory.Create(staging);
         await stagedStore.SaveSettingsAsync(new MediaStorageOptions { MediaDirectory = mediaDirectory },
@@ -187,7 +187,8 @@ internal sealed class VaultLocationCoordinator(
     }
 
     private async Task RelocateUnlockedVaultAsync(string directory,
-        Func<StagedLocation, byte[], Task<(IGalleryStore StagedStore, string StagingDirectory, Action CleanSource)>> prepare,
+        Func<StagedLocation, byte[], Action<string>,
+            Task<(IGalleryStore StagedStore, string StagingDirectory, Action CleanSource)>> prepare,
         Func<string, string> publishedFailureMessage)
     {
         var destination = CatalogDirectoryRules.NormalizeVaultDirectory(directory);
@@ -195,6 +196,8 @@ internal sealed class VaultLocationCoordinator(
         await galleryLifetime.Gate.WaitAsync();
         byte[]? key = null;
         StagedLocation? location = null;
+        string? stagingDirectory = null;
+        var preserveStagingDirectory = false;
         var lockRequestsAtStart = 0L;
         var locationWasActivated = false;
         try
@@ -208,16 +211,21 @@ internal sealed class VaultLocationCoordinator(
             IGalleryStore stagedStore;
             string staging;
             Action cleanSource;
-            (stagedStore, staging, cleanSource) = await prepare(location, key);
+            (stagedStore, staging, cleanSource) =
+                await prepare(location.Value, key, path => stagingDirectory = path);
             EnsureActive();
-            await location.PublishFilesAsync(staging, stagedStore, key);
-            using var sourceCheckout = ActivatePublishedLocation(location);
+            await PublishStagedFilesAsync(staging, destination, stagedStore, key);
+            location = location.Value with { FilesPublished = true };
+            var (activatedLocation, sourceCheckout) = ActivatePublishedLocation(location.Value);
+            location = activatedLocation;
+            using var retiredSourceCheckout = sourceCheckout;
             locationWasActivated = true;
             history?.Save(destination);
             cleanSource();
         }
         catch (Exception exception)
         {
+            preserveStagingDirectory = exception is StagedFilePublicationException;
             if (locationWasActivated)
                 throw new IOException(publishedFailureMessage(destination), exception);
             if (location?.FilesPublished == true)
@@ -225,7 +233,7 @@ internal sealed class VaultLocationCoordinator(
             vaultAccess.RestoreUnlockedSessionAfterFailure(key, lockRequestsAtStart);
             throw;
         }
-        finally { FinishStagedLocation(location, key); }
+        finally { FinishStagedLocation(location, stagingDirectory, key, preserveStagingDirectory); }
     }
 
     internal static bool CatalogRecordsMatch(List<ImageRecord> copied, List<ImageRecord> source)
@@ -290,12 +298,15 @@ internal sealed class VaultLocationCoordinator(
         CatalogDirectoryRules.RequireLocalCatalogDirectory(destination);
         await galleryLifetime.Gate.WaitAsync();
         StagedLocation? stagedLocation = null;
+        string? stagingDirectory = null;
+        var preserveStagingDirectory = false;
         byte[]? key = null;
         try
         {
             EnsureActive();
             stagedLocation = AcquireStagedLocation(destination, sourceDirectory);
-            var staging = stagedLocation.CreateStagingDirectory(VaultStagingDirectoryPrefix);
+            var staging = CreateStagingDirectory(destination, VaultStagingDirectoryPrefix,
+                path => stagingDirectory = path);
             IGalleryStore store;
             (store, key) = await BackupRestoreStaging.StageRestoreAsync(
                 galleryLifetime.StoreFactory, target, latestBackupName, staging, destination, credential, vaultCredentialKind);
@@ -303,12 +314,20 @@ internal sealed class VaultLocationCoordinator(
             if (name is not null) await new VaultStore(staging).RenameVaultAsync(name);
             await StopDriveAndDrainSessionAsync();
             EnsureActive();
-            await stagedLocation.PublishFilesAsync(staging, store, key);
-            ActivatePublishedLocation(stagedLocation)?.Dispose();
+            await PublishStagedFilesAsync(staging, destination, store, key);
+            stagedLocation = stagedLocation.Value with { FilesPublished = true };
+            var (activatedLocation, sourceCheckout) = ActivatePublishedLocation(stagedLocation.Value);
+            stagedLocation = activatedLocation;
+            sourceCheckout?.Dispose();
             history?.Save(destination);
             // Restore returns to regular sign-in; credentials and plaintext never survive the operation.
         }
-        finally { FinishStagedLocation(stagedLocation, key); }
+        catch (StagedFilePublicationException)
+        {
+            preserveStagingDirectory = true;
+            throw;
+        }
+        finally { FinishStagedLocation(stagedLocation, stagingDirectory, key, preserveStagingDirectory); }
     }
 
     private static async Task CopyCatalogToStageAsync(
@@ -345,7 +364,7 @@ internal sealed class VaultLocationCoordinator(
         try
         {
             RequireEmptyDestination(destination);
-            return new StagedLocation(destination, checkout);
+            return new StagedLocation(destination, checkout, FilesPublished: false);
         }
         catch
         {
@@ -354,15 +373,91 @@ internal sealed class VaultLocationCoordinator(
         }
     }
 
-    private void FinishStagedLocation(StagedLocation? stagedLocation, byte[]? key)
+    private void FinishStagedLocation(StagedLocation? stagedLocation, string? stagingDirectory, byte[]? key,
+        bool preserveStagingDirectory)
     {
         try
         {
             if (key is not null) CryptographicOperations.ZeroMemory(key);
-            stagedLocation?.Dispose();
+            try { stagedLocation?.Checkout?.Dispose(); }
+            finally
+            {
+                if (!preserveStagingDirectory) DeleteStagingDirectory(stagingDirectory);
+            }
         }
         finally { galleryLifetime.Gate.Release(); }
     }
+
+    internal static void DeleteStagingDirectory(string? stagingDirectory)
+    {
+        if (stagingDirectory is not null && Directory.Exists(stagingDirectory))
+            Directory.Delete(stagingDirectory, recursive: true);
+    }
+
+    private static string CreateStagingDirectory(string destination, string prefix, Action<string> trackStagingDirectory)
+    {
+        var stagingDirectory = Path.Combine(destination, prefix + Guid.NewGuid().ToString("N"));
+        trackStagingDirectory(stagingDirectory);
+        Directory.CreateDirectory(stagingDirectory);
+        return stagingDirectory;
+    }
+
+    private static async Task PublishStagedFilesAsync(string staging, string destination, IGalleryStore store, byte[] key)
+    {
+        await store.PrepareForPublicationAsync(key);
+        PublishStagedFiles(staging, destination);
+    }
+
+    internal static void PublishStagedFiles(string staging, string destination,
+        Action<string, string>? moveFileOrDirectory = null)
+    {
+        moveFileOrDirectory ??= MoveFileOrDirectory;
+        var moved = new List<string>();
+        try
+        {
+            foreach (var name in new[] { "images", CatalogFileName, VaultHeaderFileName })
+            {
+                var source = Path.Combine(staging, name);
+                var target = Path.Combine(destination, name);
+                if (!Directory.Exists(source) && !File.Exists(source)) continue;
+                moveFileOrDirectory(source, target);
+                moved.Add(name);
+            }
+        }
+        catch (Exception publicationFailure)
+        {
+            var rollbackFailures = RollbackPublishedFiles(staging, destination, moved, moveFileOrDirectory);
+            if (rollbackFailures.Count > 0)
+                throw new StagedFilePublicationException(staging, publicationFailure, rollbackFailures);
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(publicationFailure).Throw();
+            throw;
+        }
+    }
+
+    private static void MoveFileOrDirectory(string source, string destination)
+    {
+        if (Directory.Exists(source)) Directory.Move(source, destination);
+        else File.Move(source, destination);
+    }
+
+    private static List<Exception> RollbackPublishedFiles(string staging, string destination, IEnumerable<string> moved,
+        Action<string, string> moveFileOrDirectory)
+    {
+        var failures = new List<Exception>();
+        foreach (var name in moved.Reverse())
+        {
+            var source = Path.Combine(destination, name);
+            var target = Path.Combine(staging, name);
+            try { moveFileOrDirectory(source, target); }
+            catch (Exception exception) { failures.Add(exception); }
+        }
+        return failures;
+    }
+
+    private sealed class StagedFilePublicationException(
+        string stagingDirectory, Exception publicationFailure, IReadOnlyList<Exception> rollbackFailures)
+        : IOException($"Publishing staged files partially failed and rollback was incomplete. Staged data was retained at '{stagingDirectory}'.",
+            new AggregateException("Publication and rollback failures.", [publicationFailure, .. rollbackFailures]));
 
     private static void RejectOverlappingDirectories(string destination, string source)
     {
@@ -428,72 +523,13 @@ internal sealed class VaultLocationCoordinator(
                 StoredBackupSettings.SettingId, StoredBackupSettings.SettingPurpose, key);
     }
 
-    private VaultCheckout? ActivatePublishedLocation(StagedLocation location)
+    private (StagedLocation Location, VaultCheckout? RetiredCheckout) ActivatePublishedLocation(StagedLocation location)
     {
         var destination = location.Destination;
         var retired = galleryLifetime.PublishLocation(
             galleryLifetime.StoreFactory.Create(destination), new VaultStore(destination), location.Checkout);
-        location.ReleaseCheckoutOwnership();
-        return retired;
+        return (location with { Checkout = null }, retired);
     }
 
-    private sealed class StagedLocation(string destination, VaultCheckout destinationCheckout) : IDisposable
-    {
-        private VaultCheckout? checkout = destinationCheckout;
-        private string? stagingDirectory;
-
-        public string Destination => destination;
-        public bool FilesPublished { get; private set; }
-        public VaultCheckout? Checkout => checkout;
-
-        public void ReleaseCheckoutOwnership() => checkout = null;
-
-        public string CreateStagingDirectory(string prefix)
-        {
-            stagingDirectory = Path.Combine(destination, prefix + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(stagingDirectory);
-            return stagingDirectory;
-        }
-
-        public async Task PublishFilesAsync(string staging, IGalleryStore store, byte[] key)
-        {
-            await store.PrepareForPublicationAsync(key);
-            var moved = new List<string>();
-            try
-            {
-                foreach (var name in new[] { "images", CatalogFileName, VaultHeaderFileName })
-                {
-                    var source = Path.Combine(staging, name);
-                    var target = Path.Combine(destination, name);
-                    if (Directory.Exists(source)) Directory.Move(source, target);
-                    else if (File.Exists(source)) File.Move(source, target);
-                    else continue;
-                    moved.Add(name);
-                }
-            }
-            catch
-            {
-                foreach (var name in moved.AsEnumerable().Reverse())
-                {
-                    var source = Path.Combine(destination, name);
-                    var target = Path.Combine(staging, name);
-                    if (Directory.Exists(source)) Directory.Move(source, target);
-                    else File.Move(source, target);
-                }
-                throw;
-            }
-
-            FilesPublished = true;
-        }
-
-        public void Dispose()
-        {
-            try { checkout?.Dispose(); }
-            finally
-            {
-                if (stagingDirectory is not null && Directory.Exists(stagingDirectory))
-                    Directory.Delete(stagingDirectory, recursive: true);
-            }
-        }
-    }
+    private readonly record struct StagedLocation(string Destination, VaultCheckout? Checkout, bool FilesPublished);
 }
