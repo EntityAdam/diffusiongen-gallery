@@ -158,6 +158,65 @@ public sealed class CatalogAdapterTests
         Assert.Equal(30, updated.Generation!.Steps);
     }
 
+    [Fact]
+    public async Task Read_catalog_snapshot_reports_revision_conflict_and_recovers_on_a_later_read()
+    {
+        using var fixture = new AdapterFixture(CatalogBackend.Sqlite);
+        await fixture.Store.InitializeAsync(fixture.Key);
+
+        var successful = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+        Assert.True(successful.IsCurrent);
+
+        var database = Path.Combine(fixture.Root, "gallery.db");
+        var connectionOpens = 0;
+        Exception? revisionChangeFailure = null;
+        GalleryCatalog stale;
+        using (var listener = new MeterListener())
+        {
+            listener.InstrumentPublished = (instrument, meter) =>
+            {
+                if (instrument.Meter.Name == CatalogMetrics.MeterName &&
+                    instrument.Name == "gallery.catalog.connection.opens")
+                    listener.EnableMeasurementEvents(instrument);
+            };
+            listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+            {
+                if (instrument.Name != "gallery.catalog.connection.opens" ||
+                    Interlocked.Increment(ref connectionOpens) != 2)
+                    return;
+
+                try
+                {
+                    using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                    {
+                        DataSource = database,
+                        Pooling = false
+                    }.ToString());
+                    connection.Open();
+                    using var command = connection.CreateCommand();
+                    command.CommandText = "UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1";
+                    if (command.ExecuteNonQuery() != 1)
+                        throw new InvalidOperationException("Expected one storage revision row.");
+                }
+                catch (Exception exception)
+                {
+                    revisionChangeFailure = exception;
+                }
+            });
+            listener.Start();
+
+            stale = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+        }
+
+        Assert.Null(revisionChangeFailure);
+        Assert.Equal(2, connectionOpens);
+        Assert.False(stale.IsCurrent);
+
+        var recovered = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+        Assert.True(recovered.IsCurrent);
+        Assert.Equal(stale.Revision + 1, recovered.Revision);
+    }
+
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
