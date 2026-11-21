@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
+using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Vaults.Security;
+using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
@@ -85,6 +87,82 @@ public sealed class StorageIndexTests
         // Assert
         Assert.Empty(records);
         Assert.True(await fixture.Store.ContainsFingerprintAsync(reimported.Sha256, fixture.Session.Key));
+    }
+
+    [Fact]
+    public async Task BrowsingThumbnail_WhenDatabaseIsRecreated_ThenInitializesTheNewSchema()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        using (await fixture.Store.ReadBrowsingThumbnailAsync(image.Id, fixture.Session.Key)) { }
+        foreach (var name in new[] { "gallery.db-wal", "gallery.db-shm", "gallery.db" })
+            File.Delete(Path.Combine(fixture.Root, name));
+
+        await Assert.ThrowsAsync<ThumbnailNotFoundException>(() =>
+            fixture.Store.ReadBrowsingThumbnailAsync(image.Id, fixture.Session.Key));
+
+        Assert.Equal(0, await fixture.Store.CountRecordsAsync(fixture.Session.Key));
+    }
+
+    [Fact]
+    public async Task BrowsingThumbnail_WhenCatalogHasNoJournal_ThenMigratesBeforeReading()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        using var expected = await fixture.Store.ReadBrowsingThumbnailAsync(image.Id, fixture.Session.Key);
+        await using (var connection = Connect(fixture))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DROP TABLE SchemaVersions";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        using var actual = await fixture.Store.ReadBrowsingThumbnailAsync(image.Id, fixture.Session.Key);
+
+        Assert.Equal(expected.Content.ToArray(), actual.Content.ToArray());
+        await using var verify = Connect(fixture);
+        await verify.OpenAsync();
+        using var query = verify.CreateCommand();
+        query.CommandText = "SELECT ScriptName FROM SchemaVersions ORDER BY ScriptName";
+        var scripts = new List<string>();
+        await using var reader = await query.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) scripts.Add(reader.GetString(0));
+        Assert.Equal([
+            "Gallery.Migrations.Scripts.M0001_Baseline.sql",
+            "Gallery.Migrations.Scripts.M0002_Fingerprint.cs",
+            "Gallery.Migrations.Scripts.M0003_VisionAnalysis.sql"
+        ], scripts);
+    }
+
+    [Fact]
+    public async Task BrowsingThumbnail_WhenWriterHasUncommittedChanges_ThenReadsCommittedDataWithoutWaiting()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var freshStore = new GalleryStore(Path.Combine(fixture.Root, "gallery.db"));
+        using var expected = await freshStore.ReadBrowsingThumbnailAsync(image.Id, fixture.Session.Key);
+        await using var connection = Connect(fixture);
+        await connection.OpenAsync();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "INSERT INTO images (id, record, thumbnail) VALUES ('uncommitted', X'01', X'02')";
+        await command.ExecuteNonQueryAsync();
+
+        try
+        {
+            using var actual = await freshStore.ReadBrowsingThumbnailAsync(image.Id, fixture.Session.Key)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(expected.Content.ToArray(), actual.Content.ToArray());
+        }
+        finally
+        {
+            transaction.Rollback();
+        }
     }
 
     [Fact]

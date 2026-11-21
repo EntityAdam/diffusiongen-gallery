@@ -18,8 +18,6 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     private const string InvalidMediaRecordMessage = "Invalid media record.";
     private const string MediaRecordIdentityMismatchMessage = "Media record identity mismatch.";
 
-    private volatile bool catalogInitialized;
-
     private readonly string databasePath = Path.GetFullPath(databasePath);
     public SemaphoreSlim Gate { get; } = new(1);
     public SemaphoreSlim BackupGate { get; } = new(1);
@@ -80,13 +78,14 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         try
         {
             await ConfigureDurabilityAsync(sqliteConnection);
-            await ConfigureJournalAsync(sqliteConnection);
+            if (!await HasExpectedJournalAsync(sqliteConnection))
+                await ConfigureJournalAsync(sqliteConnection);
             if (openStarted != 0) CatalogMetrics.ConnectionDuration.Record(Stopwatch.GetElapsedTime(openStarted).TotalMilliseconds);
             var migrationStarted = CatalogMetrics.MigrationDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
             try
             {
-                GalleryDatabase.Upgrade(sqliteConnection);
-                catalogInitialized = true;
+                if (GalleryDatabase.IsUpgradeRequired(sqliteConnection))
+                    GalleryDatabase.Upgrade(sqliteConnection);
             }
             finally
             {
@@ -133,6 +132,15 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
             ? GalleryStoreCommandFactory.CreateConfigureDeleteJournal(sqliteConnection)
             : GalleryStoreCommandFactory.CreateConfigureWalJournal(sqliteConnection);
         await sqliteCommand.ExecuteNonQueryAsync();
+    }
+
+    private async Task<bool> HasExpectedJournalAsync(SqliteConnection sqliteConnection)
+    {
+        using var sqliteCommand = sqliteConnection.CreateCommand();
+        sqliteCommand.CommandText = "PRAGMA journal_mode";
+        var mode = (string?)await sqliteCommand.ExecuteScalarAsync();
+        var expected = IsNetworkDirectory(Path.GetDirectoryName(databasePath)!) ? "delete" : "wal";
+        return string.Equals(mode, expected, StringComparison.OrdinalIgnoreCase);
     }
 
     internal static bool IsNetworkDirectory(string directory) => CatalogDirectoryRules.IsNetworkDirectory(directory);
@@ -253,13 +261,23 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
 
     private async Task<SqliteConnection> OpenThumbnailConnectionAsync()
     {
-        // An initialized catalog already has its schema and journal mode. A thumbnail lookup only reads.
-        if (!catalogInitialized) return await OpenAsync();
+        if (!File.Exists(databasePath)) return await OpenAsync();
         var started = CatalogMetrics.ConnectionDuration.Enabled ? Stopwatch.GetTimestamp() : 0;
         var connection = await OpenConnectionAsync(databasePath, SqliteOpenMode.ReadOnly);
-        CatalogMetrics.ConnectionOpens.Add(1);
-        if (started != 0) CatalogMetrics.ConnectionDuration.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-        return connection;
+        try
+        {
+            CatalogMetrics.ConnectionOpens.Add(1);
+            if (started != 0) CatalogMetrics.ConnectionDuration.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            if (await HasExpectedJournalAsync(connection) && !GalleryDatabase.IsUpgradeRequired(connection))
+                return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+        await connection.DisposeAsync();
+        return await OpenAsync();
     }
 
     private async Task<ImageThumbnail> ReadThumbnailAsync(string id, byte[] key, Func<Task<SqliteConnection>> open)
