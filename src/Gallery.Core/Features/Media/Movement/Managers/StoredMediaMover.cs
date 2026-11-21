@@ -8,16 +8,22 @@ using Gallery.Core.Models;
 
 namespace Gallery.Core.Features.Media.Movement.Managers;
 
-internal sealed class StoredMediaMover(GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue)
+internal sealed class StoredMediaMover(
+    GalleryLifetime galleryLifetime, VaultSession vaultSession,
+    Func<DriveFailureSnapshot?> captureFailure, Func<DriveFailureSnapshot?, Task> startAfterCommit)
 {
+    internal StoredMediaMover(GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue)
+        : this(galleryLifetime, vaultSession, driveQueue.CaptureFailure, driveQueue.StartAfterCommitAsync) { }
+
     public async Task MoveAsync(string id, string folder, string name)
     {
         StoredImageMoveValidator.ValidateName(name);
         var storedImageMoveDestination = StoredImageMover.NormalizeDestination(folder, name);
         StoredImageMoveValidator.ValidateDestination(storedImageMoveDestination);
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
+        var previousFailure = captureFailure();
         await MoveUnderGateAsync(galleryLifetime.Current.GalleryStore, id, storedImageMoveDestination, key.Bytes);
-        driveQueue.Start();
+        await startAfterCommit(previousFailure);
     }
 
     private static async Task MoveUnderGateAsync(

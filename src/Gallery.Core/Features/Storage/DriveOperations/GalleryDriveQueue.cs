@@ -50,6 +50,11 @@ internal sealed class GalleryDriveQueue : IDisposable
     public Task StartAfterObservingPreviousFailureAsync() =>
         driveOperationPlayer.StartAfterObservingPreviousFailureAsync();
 
+    internal DriveFailureSnapshot? CaptureFailure() => driveOperationPlayer.CaptureFailure();
+
+    internal Task StartAfterCommitAsync(DriveFailureSnapshot? previousFailure) =>
+        driveOperationPlayer.StartAfterCommitAsync(previousFailure);
+
     public Task StopAsync() => driveOperationPlayer.StopAsync();
 
     public void Dispose() => driveOperationPlayer.Dispose();

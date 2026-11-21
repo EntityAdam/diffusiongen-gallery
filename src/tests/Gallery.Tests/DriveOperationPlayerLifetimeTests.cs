@@ -279,6 +279,80 @@ public sealed class DriveOperationPlayerLifetimeTests
     }
 
     [Fact]
+    public async Task StartAfterCommit_WhenAnotherCallerStartsAndItsRunFaults_PreservesTheNewFault()
+    {
+        var oldFailure = new IOException("old failure");
+        var newFailure = new InvalidDataException("replacement failure");
+        var replacementFaulted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var opened = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            Exception failure = Interlocked.Increment(ref opened) == 1 ? oldFailure : newFailure;
+            return new Session(_ => Task.FromException<DriveBatchReport>(failure));
+        }, () => Task.FromResult(new DriveQueueCounts(1, 0, null)));
+        player.Changed += () =>
+        {
+            if (Volatile.Read(ref opened) == 2 && player.Status.State == DriveQueueState.Faulted)
+                replacementFaulted.TrySetResult();
+        };
+
+        player.Start();
+        await WaitForFaultAsync(player);
+        var firstMoveFailure = player.CaptureFailure();
+        var secondMoveFailure = player.CaptureFailure();
+        await player.StartAfterCommitAsync(firstMoveFailure);
+        await replacementFaulted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, opened);
+
+        await player.StartAfterCommitAsync(secondMoveFailure);
+
+        Assert.Same(newFailure, Assert.Throws<InvalidDataException>(player.Start));
+        Assert.Same(newFailure, await Assert.ThrowsAsync<InvalidDataException>(player.WhenIdleAsync));
+        Assert.Equal(2, opened);
+    }
+
+    [Fact]
+    public async Task StartAfterCommit_WhenRunFaultsAfterCapture_LeavesTheFailureUnobserved()
+    {
+        var batchStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failure = new IOException("new failure");
+        using var player = new DriveOperationPlayer(() => new Session(async _ =>
+        {
+            batchStarted.SetResult();
+            await releaseBatch.Task;
+            throw failure;
+        }), () => Task.FromResult(new DriveQueueCounts(1, 0, null)));
+        player.Start();
+        await batchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var previousFailure = player.CaptureFailure();
+        releaseBatch.SetResult();
+        await WaitForFaultAsync(player);
+
+        await player.StartAfterCommitAsync(previousFailure);
+
+        Assert.Same(failure, Assert.Throws<IOException>(player.Start));
+        Assert.Same(failure, await Assert.ThrowsAsync<IOException>(player.WhenIdleAsync));
+    }
+
+    [Fact]
+    public async Task StartAfterCommit_WhenFaultPublicationThrows_DoesNotAcknowledgeTheDifferentTaskFailure()
+    {
+        var oldFailure = new IOException("queue failure");
+        var callbackFailure = new InvalidDataException("fault observer failure");
+        using var player = new DriveOperationPlayer(() => null,
+            () => Task.FromException<DriveQueueCounts>(oldFailure));
+        player.Changed += () => throw callbackFailure;
+        player.Start();
+        await WaitForFaultAsync(player);
+
+        await player.StartAfterCommitAsync(player.CaptureFailure());
+
+        Assert.Same(oldFailure, Assert.Throws<IOException>(player.Start));
+        Assert.Same(callbackFailure, await Assert.ThrowsAsync<InvalidDataException>(player.WhenIdleAsync));
+    }
+
+    [Fact]
     public async Task PauseAndResume_WhenInterleaved_ThenPendingWorkDoesNotNeedAnotherStart()
     {
         var firstBatchStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);

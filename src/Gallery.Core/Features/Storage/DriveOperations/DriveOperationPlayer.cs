@@ -4,6 +4,7 @@ using Gallery.Core.Models;
 namespace Gallery.Core.Features.Storage.DriveOperations;
 
 internal sealed record DriveBatchReport(int Played, int Done, string Activity);
+internal sealed record DriveFailureSnapshot(ExceptionDispatchInfo Failure, Task Task);
 
 /// <summary>A key-holding binding of the queue to one gallery store; disposed when the player stops.</summary>
 internal interface IDriveOperationSession : IDisposable
@@ -41,15 +42,20 @@ internal sealed class DriveOperationPlayer : IDisposable
 
     public void Start() => playerLifetime.Start(StartRun);
 
-    public async Task StartAfterObservingPreviousFailureAsync()
+    public Task StartAfterObservingPreviousFailureAsync() => StartAfterCommitAsync(CaptureFailure());
+
+    internal DriveFailureSnapshot? CaptureFailure() => playerLifetime.CaptureFailure();
+
+    internal async Task StartAfterCommitAsync(DriveFailureSnapshot? previousFailure)
     {
-        try { Start(); }
-        catch (Exception startFailure)
+        if (previousFailure is not null)
         {
-            try { await WhenIdleAsync(); }
-            catch (Exception observedFailure) when (ReferenceEquals(startFailure, observedFailure)) { }
-            Start();
+            try { await previousFailure.Task; }
+            catch (Exception exception) when (ReferenceEquals(exception, previousFailure.Failure.SourceException)) { }
+            // A different task failure stays available through the normal player fault boundaries.
+            catch (Exception) { return; }
         }
+        playerLifetime.StartAfterCommit(previousFailure?.Failure, StartRun);
     }
 
     private Task StartRun(PlayerRun playerRun) => Task.Run(() => RunAsync(playerRun));
@@ -273,6 +279,28 @@ internal sealed class DriveOperationPlayer : IDisposable
         internal void Start(Func<PlayerRun, Task> startRun)
         {
             lock (gate) StartIfEligible(startRun);
+        }
+
+        internal DriveFailureSnapshot? CaptureFailure()
+        {
+            lock (gate) return playerRun?.Failure is { } failure
+                ? new DriveFailureSnapshot(failure, playerRun.Task)
+                : null;
+        }
+
+        internal void StartAfterCommit(ExceptionDispatchInfo? previousFailure, Func<PlayerRun, Task> startRun)
+        {
+            lock (gate)
+            {
+                if (!disposed && !paused && !startAdmissionBlocked && playerRun is { } currentRun
+                    && currentRun.TryGetUnobservedFailure(out var currentFailure))
+                {
+                    // A later run's fault remains available to Start/WhenIdle; the move has already committed.
+                    if (!ReferenceEquals(currentFailure, previousFailure)) return;
+                    currentRun.MarkFaultObserved();
+                }
+                StartIfEligible(startRun);
+            }
         }
 
         private void StartIfEligible(Func<PlayerRun, Task> startRun)
