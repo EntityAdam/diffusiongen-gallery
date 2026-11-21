@@ -135,13 +135,15 @@ internal sealed partial class GalleryStore
         return (mode == InitialPageMode.Marked ? index.Marked : index.Active).Take(pageSize).ToArray();
     }
 
-    public async Task<long?> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot,
+    public async Task<long> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot,
         IReadOnlyList<ImageRecord> refreshedRecords, byte[] key, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         await using var connection = await OpenAsync();
         using var transaction = connection.BeginTransaction();
-        if (await ReadBrowseRevisionAsync(connection, transaction, token) != sourceSnapshot.Revision) return null;
+        var currentRevision = await ReadBrowseRevisionAsync(connection, transaction, token);
+        if (currentRevision != sourceSnapshot.Revision)
+            throw new CatalogRevisionConflictException(sourceSnapshot.Revision, currentRevision);
         await WriteRefreshedRecordsAsync(connection, transaction, refreshedRecords, key, token);
         var revision = await ReadBrowseRevisionAsync(connection, transaction, token);
         await WriteBrowseIndexAsync(connection, transaction, sourceSnapshot.Records, revision, key, token);

@@ -1,12 +1,15 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Ingestion.Metadata;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Features.Vaults;
+using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;
@@ -114,6 +117,39 @@ public sealed class FirstPageBrowsingTests
         Assert.Equal(8, cached.TotalRecords);
         Assert.Equal(bootstrap.Revision, cached.Revision);
         Assert.Equal(bootstrap.Records.Select(record => record.Id).Order(), cached.Records.Select(record => record.Id).Order());
+    }
+
+    [Fact]
+    public async Task Legacy_metadata_refresh_conflict_returns_stale_snapshot_then_recovers()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var records = await SeedAsync(fixture, 2);
+        await fixture.Store.UpdateAsync(records[0] with { MetadataVersion = 0, Generation = null }, fixture.Session.Key);
+
+        var proxy = DispatchProxy.Create<IGalleryStore, MetadataRefreshConflictProxy>();
+        var conflictProxy = (MetadataRefreshConflictProxy)(object)proxy;
+        conflictProxy.Inner = fixture.Store;
+        conflictProxy.ConcurrentEdit = records[1] with { Rating = 5 };
+        var lifetime = (GalleryLifetime)typeof(GalleryScope)
+            .GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(fixture.Scope)!;
+        var location = lifetime.Current;
+        lifetime.PublishLocation(proxy, location.VaultStore, location.Checkout);
+
+        var stale = await fixture.Scope.Catalog.LoadCatalogAsync();
+
+        Assert.Equal(1, conflictProxy.RefreshConflictCount);
+        Assert.False(stale.IsCurrent);
+        Assert.Equal(0, Assert.Single(stale.Records, record => record.Id == records[0].Id).MetadataVersion);
+        Assert.Equal(records[1].Rating, Assert.Single(stale.Records, record => record.Id == records[1].Id).Rating);
+        var concurrentEdit = await fixture.Store.ReadRecordAsync(records[1].Id, fixture.Session.Key);
+        Assert.Equal(5, concurrentEdit.Rating);
+
+        var recovered = await fixture.Scope.Catalog.LoadCatalogAsync();
+
+        Assert.True(recovered.IsCurrent);
+        Assert.Equal(ComfyMetadata.Version, Assert.Single(recovered.Records, record => record.Id == records[0].Id).MetadataVersion);
+        Assert.Equal(5, Assert.Single(recovered.Records, record => record.Id == records[1].Id).Rating);
     }
 
     [Fact]
@@ -256,6 +292,38 @@ public sealed class FirstPageBrowsingTests
         var entries = rows.Select(row => new ImportCatalogEntry(row, VaultCrypto.Encrypt(png, key.Bytes, $"thumbnail:{row.Id}"))).ToArray();
         await fixture.Store.CommitImportsAsync(entries, key.Bytes);
         return rows;
+    }
+
+    public class MetadataRefreshConflictProxy : DispatchProxy
+    {
+        private int conflictPending = 1;
+
+        internal IGalleryStore Inner { get; set; } = null!;
+        public ImageRecord ConcurrentEdit { get; set; } = null!;
+        public int RefreshConflictCount { get; private set; }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name == nameof(IGalleryStore.RefreshGenerationMetadataAsync) &&
+                Interlocked.Exchange(ref conflictPending, 0) == 1)
+            {
+                RefreshConflictCount++;
+                return RefreshAfterConcurrentEditAsync(
+                    (GalleryCatalog)args![0]!,
+                    (IReadOnlyList<ImageRecord>)args[1]!,
+                    (byte[])args[2]!,
+                    (CancellationToken)args[3]!);
+            }
+
+            return targetMethod!.Invoke(Inner, args);
+        }
+
+        private async Task<long> RefreshAfterConcurrentEditAsync(GalleryCatalog sourceSnapshot,
+            IReadOnlyList<ImageRecord> refreshedRecords, byte[] key, CancellationToken token)
+        {
+            await Inner.UpdateAsync(ConcurrentEdit, key);
+            return await Inner.RefreshGenerationMetadataAsync(sourceSnapshot, refreshedRecords, key, token);
+        }
     }
 
     private static async Task MakeBrowseIndexUnreadableAsync(TestVault fixture)

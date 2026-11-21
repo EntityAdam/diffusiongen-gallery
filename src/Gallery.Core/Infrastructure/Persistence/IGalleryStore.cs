@@ -34,8 +34,8 @@ internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReade
     Task<List<SavedView>> LoadViewsAsync(byte[] key);
     Task SaveViewAsync(string name, GalleryFilter galleryFilter, byte[] key);
     Task DeleteViewAsync(string name, byte[] key);
-    // Returns the committed revision, or null when the source snapshot is stale.
-    Task<long?> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot, IReadOnlyList<ImageRecord> refreshedRecords,
+    // Returns the committed revision; throws CatalogRevisionConflictException when the source snapshot is stale.
+    Task<long> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot, IReadOnlyList<ImageRecord> refreshedRecords,
         byte[] key, CancellationToken token);
     Task EnqueueDriveOperationsAsync(IReadOnlyCollection<NewDriveOperation> operations, byte[] key);
     Task DeleteImageAndEnqueueAsync(string id, NewDriveOperation newDriveOperation, byte[] key);

@@ -190,10 +190,15 @@ internal sealed class GalleryCatalogLoader(
             }
         }
 
-        var revision = await store.RefreshGenerationMetadataAsync(snapshot, refreshed, key, token);
-        return revision is long committedRevision
-            ? snapshot with { Records = records, Revision = committedRevision }
-            : snapshot with { IsCurrent = false };
+        try
+        {
+            var committedRevision = await store.RefreshGenerationMetadataAsync(snapshot, refreshed, key, token);
+            return snapshot with { Records = records, Revision = committedRevision };
+        }
+        catch (CatalogRevisionConflictException)
+        {
+            return snapshot with { IsCurrent = false };
+        }
     }
 
     private static List<(ImageRecord Record, int Index)> SelectStaleRecords(IReadOnlyList<ImageRecord> records) =>

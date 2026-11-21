@@ -137,7 +137,11 @@ public sealed class CatalogAdapterTests
 
         var refreshed = record with { MetadataVersion = ComfyMetadata.Version, Generation = new() { Steps = 30 } };
         await store.UpdateAsync(record with { IsMarkedForDeletion = true }, key);
-        Assert.Null(await store.RefreshGenerationMetadataAsync(source, [refreshed], key, CancellationToken.None));
+        var conflict = await Assert.ThrowsAsync<CatalogRevisionConflictException>(() =>
+            store.RefreshGenerationMetadataAsync(source, [refreshed], key, CancellationToken.None));
+        Assert.Equal(source.Revision, conflict.ExpectedRevision);
+        Assert.True(conflict.ActualRevision > conflict.ExpectedRevision);
+        Assert.Equal(conflict.ActualRevision, await store.ReadStorageRevisionAsync(key));
         var afterEdit = await store.ReadRecordAsync(record.Id, key);
         Assert.True(afterEdit.IsMarkedForDeletion);
         Assert.Equal(0, afterEdit.MetadataVersion);
@@ -365,6 +369,51 @@ public sealed class CatalogAdapterTests
         File.Copy(Path.Combine(fixture.Root, "gallery.db"), Path.Combine(fixture.Root, "released.db"));
         Assert.Equal(0, await fixture.Store.CountRecordsAsync(fixture.Key));
         Assert.Equal(3, opens);
+    }
+
+    [Fact]
+    public async Task Turso_refresh_conflict_reopens_connection_without_releasing_active_operation_lease()
+    {
+        using var fixture = new AdapterFixture(CatalogBackend.Turso);
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var record = Record() with { MetadataVersion = 0, Generation = null };
+        using var thumbnail = new ImageThumbnail([1, 2, 3]);
+        await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
+
+        using var activity = new Activity("catalog refresh conflict").Start();
+        long opens = 0;
+        using var metrics = Listen("gallery.catalog.connection.opens", () => Interlocked.Increment(ref opens), activity);
+        await using (var operation = await fixture.Store.OpenOperationAsync(fixture.Key))
+        {
+            var source = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+            var refreshed = record with { MetadataVersion = ComfyMetadata.Version };
+            await fixture.Store.UpdateAsync(record with { Rating = 5 }, fixture.Key);
+
+            var conflict = await Assert.ThrowsAsync<CatalogRevisionConflictException>(() =>
+                fixture.Store.RefreshGenerationMetadataAsync(source, [refreshed], fixture.Key, CancellationToken.None));
+            Assert.Equal(source.Revision, conflict.ExpectedRevision);
+            Assert.True(conflict.ActualRevision > conflict.ExpectedRevision);
+
+            var otherKey = RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                await Assert.ThrowsAsync<CatalogStorageException>(() =>
+                    fixture.Store.OpenOperationAsync(otherKey).AsTask());
+                Assert.Equal(1, opens);
+                Assert.Equal(1L, await fixture.Store.CountRecordsAsync(fixture.Key));
+                Assert.Equal(2, opens);
+                Assert.Equal(0, (await fixture.Store.ReadRecordAsync(record.Id, fixture.Key)).MetadataVersion);
+                Assert.Equal(2, opens);
+            }
+            finally { CryptographicOperations.ZeroMemory(otherKey); }
+        }
+
+        var releasedKey = RandomNumberGenerator.GetBytes(32);
+        try
+        {
+            await using var released = await fixture.Store.OpenOperationAsync(releasedKey);
+        }
+        finally { CryptographicOperations.ZeroMemory(releasedKey); }
     }
 
     [Fact]

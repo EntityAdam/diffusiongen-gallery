@@ -45,9 +45,9 @@ internal sealed partial class TursoGalleryStore
             cancellationToken: token);
     }
 
-    public Task<long?> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot, IReadOnlyList<ImageRecord> refreshedRecords,
+    public Task<long> RefreshGenerationMetadataAsync(GalleryCatalog sourceSnapshot, IReadOnlyList<ImageRecord> refreshedRecords,
         byte[] key, CancellationToken token) =>
-        ExecuteAsync<long?>(key,
+        ExecuteAsync<long>(key,
             connection => RefreshGenerationMetadataAsync(connection, sourceSnapshot, refreshedRecords, token),
             cancellationToken: token);
 
@@ -78,12 +78,14 @@ internal sealed partial class TursoGalleryStore
         return requestedIds.Where(recordsById.ContainsKey).Select(id => recordsById[id]).ToList();
     }
 
-    private static async Task<long?> RefreshGenerationMetadataAsync(DbConnection connection, GalleryCatalog sourceSnapshot,
+    private static async Task<long> RefreshGenerationMetadataAsync(DbConnection connection, GalleryCatalog sourceSnapshot,
         IReadOnlyList<ImageRecord> refreshedRecords, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         using var transaction = connection.BeginTransaction();
-        if (await ReadRevisionAsync(connection, transaction) != sourceSnapshot.Revision) return null;
+        var currentRevision = await ReadRevisionAsync(connection, transaction);
+        if (currentRevision != sourceSnapshot.Revision)
+            throw new CatalogRevisionConflictException(sourceSnapshot.Revision, currentRevision);
         foreach (var record in refreshedRecords)
         {
             token.ThrowIfCancellationRequested();
