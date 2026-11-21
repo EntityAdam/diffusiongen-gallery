@@ -88,7 +88,7 @@ public sealed class GalleryScope : IDisposable
         Restore = new GalleryRestore(vaultLocations, ownedHttpClient);
         Storage = mediaStorageIndex;
         Tags = tagCatalogManager;
-        Vision = new GalleryVisionWorkflow(galleryLifetime, vaultSession, visionManager, collectionOrganizer);
+        Vision = new GalleryVisionWorkflow(galleryLifetime, vaultSession, visionManager);
     }
 
     /// <summary>Creates an owned gallery scope and transfers ownership of the supplied HTTP client.</summary>

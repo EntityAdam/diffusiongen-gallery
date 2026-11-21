@@ -15,7 +15,7 @@ using Gallery.Core.Services;
 namespace Gallery.Core.Features.Vision.Workflows;
 
 internal sealed class GalleryVisionWorkflow(
-    GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager, CollectionOrganizer collectionOrganizer) : IGalleryVision
+    GalleryLifetime galleryLifetime, VaultSession vaultSession, VisionManager? visionManager) : IGalleryVision
 {
     [Flags]
     private enum VisionTagSources
@@ -56,20 +56,17 @@ internal sealed class GalleryVisionWorkflow(
     public async Task<MediaSet?> SuggestDestinationSetAsync(string collectionId, IEnumerable<string> mediaIds)
     {
         var generation = vaultSession.AcquireUnlockedSession();
-        var store = galleryStore;
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(generation.RevocationToken);
-        var catalog = await collectionOrganizer.LoadCollectionCatalogAsync();
-        cancellation.Token.ThrowIfCancellationRequested();
-        var suggestionInputs = await LoadSetSuggestionInputsAsync(generation, store, cancellation.Token);
-        cancellation.Token.ThrowIfCancellationRequested();
-        var collection = RequireSuggestionCollection(catalog, collectionId);
-        var sets = FindSuggestionSets(catalog, collectionId);
+        var cancellationToken = generation.RevocationToken;
+        var suggestionInputs = await LoadSetSuggestionInputsAsync(generation, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var collection = RequireSuggestionCollection(suggestionInputs.Catalog, collectionId);
+        var sets = FindSuggestionSets(suggestionInputs.Catalog, collectionId);
         var images = SelectSuggestionImages(suggestionInputs.Records, mediaIds);
         EnsureSuggestionInputsAreUsable(images, sets);
         var settings = suggestionInputs.Settings;
         var suggestedId = await RequiredVisionManager().SuggestSetAsync(settings.ForLane(settings.GetLanes()[0]),
-            collection.Name, sets, images, cancellation.Token);
-        cancellation.Token.ThrowIfCancellationRequested();
+            collection.Name, sets, images, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return FindSuggestedSet(sets, suggestedId);
     }
 
@@ -93,16 +90,21 @@ internal sealed class GalleryVisionWorkflow(
             throw new InvalidOperationException("Analyze or tag the selected media first so the model has content to use.");
     }
 
-    private async Task<(List<ImageRecord> Records, VisionSettings Settings)> LoadSetSuggestionInputsAsync(
-        UnlockedVaultSession generation, IGalleryStore store, CancellationToken cancellationToken)
+    private async Task<(CollectionCatalog Catalog, List<ImageRecord> Records, VisionSettings Settings)> LoadSetSuggestionInputsAsync(
+        UnlockedVaultSession generation, CancellationToken cancellationToken)
     {
+        // Location changes drain leases before publishing a replacement store.
+        using var keyLease = generation.Borrow();
+        var store = galleryStore;
         await store.Gate.WaitAsync(cancellationToken);
         try
         {
-            using var keyLease = generation.Borrow();
+            var catalog = await CollectionOrganizer.ReadCollectionsAsync(store, keyLease.Bytes);
+            cancellationToken.ThrowIfCancellationRequested();
             var records = await store.ReadRecordsAsync(keyLease.Bytes);
+            cancellationToken.ThrowIfCancellationRequested();
             var settings = await store.ReadSettingsAsync<VisionSettings>(VisionSettingsId, VisionSettingsId, keyLease.Bytes) ?? new();
-            return (records, settings);
+            return (catalog, records, settings);
         }
         finally { store.Gate.Release(); }
     }

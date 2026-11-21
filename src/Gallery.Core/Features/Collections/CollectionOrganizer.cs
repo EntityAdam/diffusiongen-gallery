@@ -18,7 +18,7 @@ internal sealed class CollectionOrganizer(GalleryLifetime galleryLifetime, Vault
         finally { galleryStore.Gate.Release(); }
     }
 
-    private static async Task<CollectionCatalog> ReadCollectionsAsync(IGalleryStore galleryStore, byte[] key)
+    internal static async Task<CollectionCatalog> ReadCollectionsAsync(IGalleryStore galleryStore, byte[] key)
     {
         var saved = await galleryStore.ReadSettingsAsync<CollectionCatalog>(CollectionCatalog.SettingId, CollectionCatalog.SettingPurpose, key);
         if (saved is not null) return saved;
