@@ -1,5 +1,9 @@
 namespace Gallery.Core.Features.Vaults.Session;
 
+/// <summary>
+/// GalleryScope shares this policy for its lifetime. Its gate serializes lock generations, checkout
+/// capture, and conditional session activation so newer explicit locks supersede in-flight unlocks.
+/// </summary>
 internal sealed class VaultSessionLockPolicy(GalleryLifetime galleryLifetime, VaultSession vaultSession)
 {
     private readonly object activationGate = new();
