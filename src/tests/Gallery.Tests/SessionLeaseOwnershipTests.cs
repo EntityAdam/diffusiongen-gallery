@@ -13,12 +13,12 @@ public sealed class SessionLeaseOwnershipTests
         var lastActivity = DateTimeOffset.UtcNow.AddMinutes(-1);
         var state = new VaultLeaseState { LastAccessUtc = lastActivity, InactivityTimeout = TimeSpan.FromHours(1) };
         var generation = new UnlockedVaultSession(Enumerable.Repeat((byte)7, 32).ToArray(), state);
-        using var lease = generation.TryBorrow(LeaseActivityPolicy.PreserveInactivityDeadline);
-        Assert.NotNull(lease);
+        using var lease = generation.Borrow(LeaseActivityPolicy.PreserveInactivityDeadline);
         Assert.Equal(lastActivity, state.LastAccessUtc);
         Assert.Equal(1, state.ActiveLeases);
         generation.Revoke();
-        Assert.Null(generation.TryBorrow(LeaseActivityPolicy.PreserveInactivityDeadline));
+        Assert.Throws<VaultLockedException>(() => generation.Borrow(LeaseActivityPolicy.PreserveInactivityDeadline));
+        Assert.Equal(1, state.ActiveLeases);
         Assert.Equal(Enumerable.Repeat((byte)7, 32), lease.Bytes);
         var buffer = lease.Bytes;
         lease.Dispose();
@@ -78,6 +78,55 @@ public sealed class SessionLeaseOwnershipTests
         Assert.False(revokedBeforeCommand);
         Assert.True(generation.IsRevoked);
         Assert.Equal("timed_out", failure.ContextualDataByName.ValuesByName["Vault.State"]);
+    }
+
+    [Fact]
+    public void ManualLockBorrow_ThrowsAsRevokedWithoutPublishingTimeout()
+    {
+        using var session = new VaultSession(Timeout.InfiniteTimeSpan);
+        session.Unlock(new byte[32]);
+        var notifications = 0;
+        session.AutoLocked += () => notifications++;
+        session.Lock();
+
+        var failure = Assert.Throws<VaultLockedException>(
+            () => session.BorrowUnlockedKey(LeaseActivityPolicy.PreserveInactivityDeadline));
+
+        Assert.Equal("revoked", failure.ContextualDataByName.ValuesByName["Vault.State"]);
+        Assert.Equal(0, notifications);
+        Assert.True(session.WhenDrainedAsync().IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public void BorrowWithoutUnlockedGeneration_ThrowsAsLockedWithoutCreatingALease()
+    {
+        using var session = new VaultSession(Timeout.InfiniteTimeSpan);
+
+        var failure = Assert.Throws<VaultLockedException>(
+            () => session.BorrowUnlockedKey(LeaseActivityPolicy.PreserveInactivityDeadline));
+
+        Assert.Equal("locked", failure.ContextualDataByName.ValuesByName["Vault.State"]);
+        Assert.True(session.WhenDrainedAsync().IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public void TimedOutSessionBorrow_ThrowsWithoutCreatingALeaseAndPublishesNotification()
+    {
+        var started = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
+        var timeProvider = new AdjustableTimeProvider(started);
+        using var session = new VaultSession(Timeout.InfiniteTimeSpan, timeProvider);
+        session.InactivityTimeout = TimeSpan.FromMinutes(1);
+        session.Unlock(new byte[32]);
+        var notifications = 0;
+        session.AutoLocked += () => notifications++;
+
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        var failure = Assert.Throws<VaultLockedException>(
+            () => session.BorrowUnlockedKey(LeaseActivityPolicy.PreserveInactivityDeadline));
+
+        Assert.Equal("timed_out", failure.ContextualDataByName.ValuesByName["Vault.State"]);
+        Assert.Equal(1, notifications);
+        Assert.True(session.WhenDrainedAsync().IsCompletedSuccessfully);
     }
 
     [Fact]

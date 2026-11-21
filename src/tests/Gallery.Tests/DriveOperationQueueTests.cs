@@ -101,6 +101,28 @@ public sealed class DriveOperationQueueTests
     }
 
     [Fact]
+    public async Task Resume_WhenGalleryIsLocked_ThenQueuedWorkWaitsForUnlockAndResumes()
+    {
+        using var fixture = await LoadedVaultAsync();
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await fixture.Scope.DriveOperations.PauseDriveOperationsAsync();
+        await RemoveAsync(fixture, record.Id);
+
+        fixture.Scope.Vault.LockVault();
+        await WaitForCheckoutReleaseAsync(fixture.Root);
+        fixture.Scope.DriveOperations.ResumeDriveOperations();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+
+        Assert.True(File.Exists(record.StoredPath));
+
+        await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+        await fixture.Scope.Catalog.LoadAsync();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+
+        Assert.False(File.Exists(record.StoredPath));
+    }
+
+    [Fact]
     public async Task RefreshQueueStatus_AfterPurge_DoesNotRecreateTheCatalog()
     {
         using var fixture = await LoadedVaultAsync();

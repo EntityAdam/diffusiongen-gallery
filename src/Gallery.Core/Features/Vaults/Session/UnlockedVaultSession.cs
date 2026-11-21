@@ -40,12 +40,12 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
         }
     }
 
-    internal KeyLease? TryBorrow(LeaseActivityPolicy leaseActivityPolicy)
+    internal KeyLease Borrow(LeaseActivityPolicy leaseActivityPolicy)
     {
         lock (vaultLeaseState.SyncRoot)
         {
-            if (HasExpired()) Expire();
-            return IsRevoked ? null : CreateKeyLease(leaseActivityPolicy);
+            RequireActive();
+            return CreateKeyLease(leaseActivityPolicy);
         }
     }
 

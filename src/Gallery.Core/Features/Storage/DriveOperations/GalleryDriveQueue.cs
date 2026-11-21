@@ -104,17 +104,23 @@ internal sealed class GalleryDriveQueue : IDisposable
 
     private async Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
     {
-        using var keyLease = vaultSession.TryBorrowUnlockedKey(LeaseActivityPolicy.PreserveInactivityDeadline);
-        var location = galleryLifetime.Current;
-        return location.VaultStore.Exists && keyLease is not null
-            ? await location.GalleryStore.ReadDriveQueueCountsAsync(keyLease.Bytes)
-            : new DriveQueueCounts(0, 0, null);
+        KeyLease? keyLease;
+        try { keyLease = vaultSession.BorrowUnlockedKey(LeaseActivityPolicy.PreserveInactivityDeadline); }
+        catch (VaultLockedException) { keyLease = null; }
+        using (keyLease)
+        {
+            var location = galleryLifetime.Current;
+            return location.VaultStore.Exists && keyLease is not null
+                ? await location.GalleryStore.ReadDriveQueueCountsAsync(keyLease.Bytes)
+                : new DriveQueueCounts(0, 0, null);
+        }
     }
 
     private IDriveOperationSession? OpenDriveSession()
     {
-        var keyLease = vaultSession.TryBorrowUnlockedKey(LeaseActivityPolicy.RefreshInactivityDeadline);
-        if (keyLease is null) return null;
+        KeyLease keyLease;
+        try { keyLease = vaultSession.BorrowUnlockedKey(LeaseActivityPolicy.RefreshInactivityDeadline); }
+        catch (VaultLockedException) { return null; }
         var location = galleryLifetime.Current;
         return new DriveOperationSession(location.GalleryStore, Path.Combine(location.VaultStore.Root, "images"), keyLease, DriveRetryDelay);
     }

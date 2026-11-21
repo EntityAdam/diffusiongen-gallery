@@ -92,15 +92,30 @@ internal sealed class VaultSession : IDisposable
         }
     }
 
-    internal KeyLease? TryBorrowUnlockedKey(LeaseActivityPolicy leaseActivityPolicy)
+    internal KeyLease BorrowUnlockedKey(LeaseActivityPolicy leaseActivityPolicy)
     {
         CheckInactivityTimeout();
-        KeyLease? keyLease;
-        lock (vaultLeaseState.SyncRoot)
-            keyLease = vaultLeaseState.UnlockedVaultSession?.TryBorrow(leaseActivityPolicy);
-        if (keyLease is null) CheckInactivityTimeout();
-        return keyLease;
+        try
+        {
+            lock (vaultLeaseState.SyncRoot)
+            {
+                var unlockedSession = vaultLeaseState.UnlockedVaultSession;
+                if (unlockedSession is null) throw CreateLockedException(timedOut: false);
+                return unlockedSession.Borrow(leaseActivityPolicy);
+            }
+        }
+        catch (VaultLockedException)
+        {
+            CheckInactivityTimeout();
+            throw;
+        }
     }
+
+    private static VaultLockedException CreateLockedException(bool timedOut) =>
+        new(timedOut
+                ? "The gallery locked automatically due to inactivity."
+                : UnlockRequiredMessage, LogEventGallery.AcquireVaultKey,
+            new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", timedOut ? "timed_out" : "locked")));
 
     public void Unlock(byte[] suppliedKeyBytes)
     {
