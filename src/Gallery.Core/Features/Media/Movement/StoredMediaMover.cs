@@ -58,8 +58,11 @@ internal sealed class StoredMediaMover(GalleryLifetime galleryLifetime, VaultSes
                 deleteOldCopy, queuedDelete.Sequence);
             return true;
         }
-        if (await QueuedFileDeletion.DeleteIfUnownedAsync(store, queuedDelete, target, key))
+        if (await QueuedFileDeletion.IsUnownedAsync(store, queuedDelete.ImageId, target, key))
+        {
+            await QueuedFileDeletion.DeleteUnownedFileAsync(store, queuedDelete, target, key);
             await store.RemoveDriveOperationAsync(queuedDelete.Sequence, key);
+        }
         return false;
     }
 

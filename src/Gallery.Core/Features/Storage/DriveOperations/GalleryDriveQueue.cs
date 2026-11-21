@@ -271,7 +271,11 @@ internal sealed class GalleryDriveQueue : IDisposable
         private async Task DeleteFileAsync(DriveOperation driveOperation, string path)
         {
             await galleryStore.Gate.WaitAsync();
-            try { await QueuedFileDeletion.DeleteIfUnownedAsync(galleryStore, driveOperation, path, Key); }
+            try
+            {
+                if (await QueuedFileDeletion.IsUnownedAsync(galleryStore, driveOperation.ImageId, path, Key))
+                    await QueuedFileDeletion.DeleteUnownedFileAsync(galleryStore, driveOperation, path, Key);
+            }
             finally { galleryStore.Gate.Release(); }
         }
 

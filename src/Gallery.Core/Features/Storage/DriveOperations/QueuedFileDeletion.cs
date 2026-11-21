@@ -56,24 +56,19 @@ internal static class QueuedFileDeletion
         catch (DirectoryNotFoundException) { return null; }
     }
 
-    /// <summary>
-    /// Deletes a queued file if its image no longer owns the path. The caller holds the catalog gate.
-    /// Returns false when the path is owned again, or true when the obsolete file is gone.
-    /// </summary>
-    internal static async Task<bool> DeleteIfUnownedAsync(
+    /// <summary>The caller holds the catalog gate through this check and the subsequent delete action.</summary>
+    internal static async Task<bool> IsUnownedAsync(IGalleryStore galleryStore, string? imageId, string path, byte[] key) =>
+        imageId is null || await galleryStore.TryReadRecordAsync(imageId, key) is not { } owner
+        || !StorageFileSystem.PathEquals(owner.StoredPath, path);
+
+    /// <summary>Performs deletion after the ownership check while the caller still holds the catalog gate.</summary>
+    internal static async Task DeleteUnownedFileAsync(
         IGalleryStore galleryStore, DriveOperation driveOperation, string path, byte[] key)
     {
-        if (!await CanDeleteQueuedFileAsync(galleryStore, driveOperation.ImageId, path, key)) return false;
         try { await DeleteObsoleteCiphertextAsync(galleryStore, driveOperation, path, key); }
         catch (Exception exception) when (exception is CryptographicException or InvalidOperationException)
         {
             throw new DriveOperationConflictException("Queued file is not the expected ciphertext.", exception);
         }
-        return true;
     }
-
-    private static async Task<bool> CanDeleteQueuedFileAsync(
-        IGalleryStore galleryStore, string? imageId, string path, byte[] key) =>
-        imageId is null || await galleryStore.TryReadRecordAsync(imageId, key) is not { } owner
-        || !StorageFileSystem.PathEquals(owner.StoredPath, path);
 }
