@@ -3,7 +3,7 @@ using System.Text;
 using Microsoft.VisualBasic.FileIO;
 using Gallery.Core.Features.Tags.TagNameValidators;
 
-namespace Gallery.Core.Features.Tags;
+namespace Gallery.Core.Features.Tags.CsvProcessors;
 
 internal static class TagCsvProcessor
 {

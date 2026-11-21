@@ -12,7 +12,7 @@ using Gallery.Core.Features.Media;
 using Gallery.Core.Features.Settings;
 using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Storage;
-using Gallery.Core.Features.Tags;
+using Gallery.Core.Features.Tags.Managers;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;

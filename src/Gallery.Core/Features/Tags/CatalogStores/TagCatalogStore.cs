@@ -3,7 +3,7 @@ using Gallery.Core.Features.Tags.TagNameValidators;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Tags;
+namespace Gallery.Core.Features.Tags.CatalogStores;
 
 internal static class TagCatalogStore
 {

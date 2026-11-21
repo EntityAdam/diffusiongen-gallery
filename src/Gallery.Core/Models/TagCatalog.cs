@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
 
-namespace Gallery.Core.Features.Tags;
+namespace Gallery.Core.Models;
 
 internal sealed record TagCatalog(ImmutableArray<string> Names)
 {

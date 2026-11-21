@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using Gallery.Core.Features.Tags.CatalogProjectors;
+using Gallery.Core.Features.Tags.CatalogStores;
+using Gallery.Core.Features.Tags.CsvProcessors;
 using Gallery.Core.Features.Ingestion;
 using Gallery.Core.Features.Tags.TagNameValidators;
 using Gallery.Core.Features.Vaults.Session;
@@ -7,7 +9,7 @@ using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
-namespace Gallery.Core.Features.Tags;
+namespace Gallery.Core.Features.Tags.Managers;
 
 internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSession vaultSession)
     : IGalleryTags, IGalleryRecordTagCommitter

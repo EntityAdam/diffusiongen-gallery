@@ -1,4 +1,5 @@
 using Gallery.Core.Features.Tags;
+using Gallery.Core.Features.Tags.CatalogStores;
 using Gallery.Core.Models;
 
 namespace Gallery.Core.Features.Tags.CatalogProjectors;

@@ -4,6 +4,7 @@ using Gallery.Core.Features.Collections;
 using Gallery.Core.Features.Curation;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Features.Tags;
+using Gallery.Core.Features.Tags.CatalogStores;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Features.Vision.Validators;
