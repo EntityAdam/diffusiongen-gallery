@@ -66,6 +66,7 @@ public sealed class IngestionPerformanceTests
         Assert.Equal(5, report.Imported);
         Assert.Equal(0, report.Failed);
         Assert.Equal(3, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogCommit).Count);
+        Assert.Equal(3, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogInsert).Count);
         foreach (var stage in new[] { IngestionStage.OpenSource, IngestionStage.CloseSource,
             IngestionStage.WriteMedia, IngestionStage.Verify, IngestionStage.DeleteSource,
             IngestionStage.DuplicateWait, IngestionStage.DuplicateCheck })

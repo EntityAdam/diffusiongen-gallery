@@ -97,6 +97,41 @@ public sealed class NativeCheckoutReleaseTests
     }
 
     [Fact]
+    public async Task LockCleanup_WhenLocationChangesBeforeItAcquiresTheGate_ThenKeepsTheReplacementCheckout()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var lifetime = Lifetime(fixture.Scope);
+        var access = Access(fixture.Scope);
+        var oldCheckout = lifetime.Current.Checkout!;
+        var destination = fixture.Root + "-replacement";
+        Directory.CreateDirectory(destination);
+        var replacementCheckout = VaultCheckout.Acquire(destination);
+        try
+        {
+            await lifetime.Gate.WaitAsync();
+            try
+            {
+                fixture.Scope.Vault.LockVault();
+                Assert.Same(oldCheckout, lifetime.PublishLocation(
+                    lifetime.StoreFactory.Create(destination), new VaultStore(destination), replacementCheckout));
+                oldCheckout.Dispose();
+            }
+            finally { lifetime.Gate.Release(); }
+
+            await access.ReleaseCheckoutAfterOperationsAsync(oldCheckout).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Same(replacementCheckout, lifetime.Current.Checkout);
+            Assert.Throws<IOException>(() => VaultCheckout.Acquire(destination));
+        }
+        finally
+        {
+            await fixture.Scope.Vault.CloseVaultAsync();
+            if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
+        }
+    }
+
+    [Fact]
     public void PreparedUnlock_WhenPublicationHasNotCommitted_ThenKeyLeasesRemainUnavailable()
     {
         using var session = new VaultSession(Timeout.InfiniteTimeSpan);

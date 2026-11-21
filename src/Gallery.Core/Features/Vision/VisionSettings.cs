@@ -45,18 +45,28 @@ public sealed record VisionSettings
     };
 
     public string BuildImageAnalysisSystemPrompt(bool hasExistingTags)
+        => SystemPrompt + BuildTagVocabularyInstructions(hasExistingTags) + BuildTagPolicyInstructions();
+
+    private string BuildTagVocabularyInstructions(bool hasExistingTags) =>
+        ShouldIncludeTagVocabularyInstructions(hasExistingTags) ? " " + TagVocabularyInstructions : "";
+
+    private bool ShouldIncludeTagVocabularyInstructions(bool hasExistingTags) =>
+        UseExistingTags && hasExistingTags && !string.IsNullOrWhiteSpace(TagVocabularyInstructions);
+
+    private string BuildTagPolicyInstructions()
     {
-        var prompt = SystemPrompt;
-        if (UseExistingTags && hasExistingTags && !string.IsNullOrWhiteSpace(TagVocabularyInstructions)) prompt += " " + TagVocabularyInstructions;
-        if (!UseExistingTags || !SuggestNewTags)
-        {
-            prompt += UseExistingTags ? " Choose only relevant registered tags." : " Do not choose registered gallery tags; no catalog is supplied.";
-            prompt += SuggestNewTags ? " You may suggest new gallery tags." : " Do not suggest new gallery tags.";
-            if (!UseExistingTags && !SuggestNewTags) prompt += StructuredAnalysis
-                ? " Return empty top-level tags and suggested_tags arrays. Still describe the image fully."
-                : " Return empty tag arrays. Still describe the image fully.";
-        }
-        return prompt;
+        if (!HasRestrictedTagSources()) return "";
+        var instructions = UseExistingTags
+            ? " Choose only relevant registered tags."
+            : " Do not choose registered gallery tags; no catalog is supplied.";
+        instructions += SuggestNewTags ? " You may suggest new gallery tags." : " Do not suggest new gallery tags.";
+        if (RequiresEmptyTagArrays()) instructions += StructuredAnalysis
+            ? " Return empty top-level tags and suggested_tags arrays. Still describe the image fully."
+            : " Return empty tag arrays. Still describe the image fully.";
+        return instructions;
     }
 
+    private bool HasRestrictedTagSources() => !UseExistingTags || !SuggestNewTags;
+
+    private bool RequiresEmptyTagArrays() => !UseExistingTags && !SuggestNewTags;
 }

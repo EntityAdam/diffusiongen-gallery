@@ -97,6 +97,43 @@ public sealed class TagCatalogTests
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
+    public async Task RecordEditorRejectsNewTagNamesOutsideTheSharedContract(CatalogBackend backend)
+    {
+        using var fixture = new ServiceFixture(backend);
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Records.UpdateAsync(image.Id, current => current with { Tags = new string('x', 101) }));
+
+        Assert.Equal("", Assert.Single(await fixture.Scope.Catalog.ListAsync()).Tags);
+        Assert.Empty(await fixture.Scope.Tags.LoadTagNamesAsync());
+    }
+
+    [Fact]
+    public async Task PreviouslyStoredLegacyTagNamesRemainTransferable()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy.png", "folder");
+        var legacyName = new string('x', 101);
+        await fixture.Store.UpdateAsync(image with { Tags = legacyName }, fixture.Session.Key);
+        await fixture.Scope.Records.UpdateAsync(image.Id, current => current with { IsFavorite = true });
+
+        var file = await fixture.Scope.Tags.ExportTagsCsvAsync();
+        try
+        {
+            using var input = new MemoryStream(file.CopyContentBytes());
+            Assert.Equal((0, 1), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
+        }
+        finally { file.ClearContent(); }
+
+        Assert.Equal(new[] { new TagDefinition(legacyName, 1) }, await fixture.Scope.Tags.LoadTagCatalogAsync());
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
     public async Task TagTransaction_RollsBackAssignmentsCatalogAndFiltersWhenAnyRecordFails(CatalogBackend backend)
     {
         var root = Path.Combine(Path.GetTempPath(), "tag-atomic-" + Guid.NewGuid().ToString("N"));

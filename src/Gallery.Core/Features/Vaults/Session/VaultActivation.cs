@@ -23,7 +23,7 @@ internal sealed class VaultActivation
         if (ActivationIsFinished) return;
         vaultLeaseState.UnlockedVaultSession?.Revoke();
         vaultLeaseState.UnlockedVaultSession = unlockedVaultSession;
-        vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+        vaultLeaseState.RecordActivity();
         activationIsCommitted = true;
     }
 

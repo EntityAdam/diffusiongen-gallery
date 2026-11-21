@@ -58,21 +58,28 @@ internal static class BackupArchive
 
     // Manifests written before hashes were recorded have null hashes and are always treated as changed.
     internal static bool IsUnchangedSince(
-        Manifest previous, IReadOnlyDictionary<string, MediaEntry> media,
+        Manifest previous, IReadOnlyDictionary<string, MediaEntry> mediaEntriesByRecordId,
         string DatabaseFingerprint, string vaultHeaderSha256)
     {
         if (previous.DatabaseFingerprint != DatabaseFingerprint || previous.VaultHeaderSha256 != vaultHeaderSha256)
             return false;
-        if (previous.Media.Count != media.Count) return false;
-        foreach (var (id, entry) in media)
+        if (previous.Media.Count != mediaEntriesByRecordId.Count) return false;
+        foreach (var (recordId, entry) in mediaEntriesByRecordId)
         {
-            if (!previous.Media.TryGetValue(id, out var previousEntry)
-                || previousEntry.Sha256 != entry.Sha256
-                || previousEntry.Extension != entry.Extension)
+            if (!previous.Media.TryGetValue(recordId, out var previousEntry)
+                || !AreMediaEntriesEquivalent(previousEntry, entry))
                 return false;
         }
         return true;
     }
+
+    internal static bool AreMediaEntriesEquivalent(MediaEntry? previous, MediaEntry current) =>
+        previous is not null
+        && previous.Sha256 == current.Sha256
+        && previous.Extension == current.Extension;
+
+    internal static bool IsValidSha256(string? value) =>
+        value is { Length: 64 } && value.All(char.IsAsciiHexDigit);
 
     internal static byte[] ReadArchiveManifest(string archivePath)
     {
@@ -125,8 +132,12 @@ internal static class BackupArchive
     }
 
     internal static async Task WriteAsync(
-        string archivePath, Manifest manifest, IReadOnlyDictionary<string, string> stagedMedia, byte[] key)
+        string archivePath, Manifest manifest, IReadOnlyDictionary<string, string> stagedMediaPathsBySha256, byte[] key)
     {
+        var headerPath = Path.Combine(Path.GetDirectoryName(archivePath)!, VaultHeaderFileName);
+        if (new FileInfo(headerPath).Length > MaximumVaultHeaderBytes)
+            throw new InvalidOperationException("The vault header is too large to publish in a backup.");
+
         var encryptedManifest = ArchiveManifestProcessor.Protect(manifest, key);
         try
         {
@@ -134,17 +145,27 @@ internal static class BackupArchive
                 throw new InvalidOperationException("A backup manifest is too large to publish.");
             await using var archiveStream = new FileStream(archivePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
             using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true);
-            AddFile(archive, VaultHeaderFileName, Path.Combine(Path.GetDirectoryName(archivePath)!, VaultHeaderFileName));
+            AddFile(archive, VaultHeaderFileName, headerPath);
             AddFile(archive, CatalogFileName, Path.Combine(Path.GetDirectoryName(archivePath)!, CatalogFileName));
-            var manifestEntry = archive.CreateEntry("manifest.enc", CompressionLevel.NoCompression);
-            await using (var target = manifestEntry.Open())
-                await target.WriteAsync(encryptedManifest);
-            foreach (var (hash, path) in stagedMedia)
-                AddFile(archive, MediaBlobEntryName(hash), path);
+            await WriteManifestEntryAsync(archive, encryptedManifest);
+            AddStagedMedia(archive, stagedMediaPathsBySha256);
             archive.Dispose();
             await archiveStream.FlushAsync();
         }
         finally { CryptographicOperations.ZeroMemory(encryptedManifest); }
+    }
+
+    private static async Task WriteManifestEntryAsync(ZipArchive archive, byte[] encryptedManifest)
+    {
+        var manifestEntry = archive.CreateEntry("manifest.enc", CompressionLevel.NoCompression);
+        await using var target = manifestEntry.Open();
+        await target.WriteAsync(encryptedManifest);
+    }
+
+    private static void AddStagedMedia(ZipArchive archive, IReadOnlyDictionary<string, string> stagedMediaPathsBySha256)
+    {
+        foreach (var (sha256, path) in stagedMediaPathsBySha256)
+            AddFile(archive, MediaBlobEntryName(sha256), path);
     }
 
     private static void AddFile(ZipArchive archive, string entryName, string filePath)

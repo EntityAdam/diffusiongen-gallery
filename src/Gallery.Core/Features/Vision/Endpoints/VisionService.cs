@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Gallery.Core.Models;
 using Gallery.Core.Services.Processors;
@@ -22,6 +23,10 @@ internal sealed partial class VisionService
 
     private const string EndpointPolicy =
         "Use a literal loopback or private LAN IP address: 127.0.0.1, ::1, 10.x.x.x, 172.16.x.x through 172.31.x.x, or 192.168.x.x. Public addresses and hostnames are not allowed.";
+    private const string SetSuggestionSystemPromptLabel = "Set suggestion system prompt";
+    private const int MaximumSummaryCharacters = 160;
+    private const int MaximumResponseBytes = StructuredVision.MaximumDocumentBytes * 8;
+    private const int ResponseReadBufferSize = 81920;
 
     public static Uri Validate(VisionSettings visionSettings)
     {
@@ -30,7 +35,7 @@ internal sealed partial class VisionService
         ValidateGenerationSettings(visionSettings);
         ValidateModel(visionSettings.Model);
         ValidateSystemPrompt(visionSettings.SystemPrompt);
-        ValidateSystemPrompt(visionSettings.SetSuggestionSystemPrompt, "Set suggestion system prompt");
+        ValidateSystemPrompt(visionSettings.SetSuggestionSystemPrompt, SetSuggestionSystemPromptLabel);
         return uri;
     }
 
@@ -84,7 +89,7 @@ internal sealed partial class VisionService
             && IsLocalAddress(ipAddress);
         if (!IsAllowedEndpoint(hasLiteralLocalAddress, uri))
         {
-            var endpointRejectionMessage = hasAbsoluteUri && uri!.Host.Length > 0 ? $"Endpoint '{uri.GetLeftPart(UriPartial.Authority)}' is not allowed. " : "";
+            const string endpointRejectionMessage = "The endpoint is not allowed. ";
             throw new InvalidOperationException(endpointRejectionMessage + EndpointPolicy);
         }
         if (apiKey.Any(char.IsControl))
@@ -115,17 +120,16 @@ internal sealed partial class VisionService
 
     public async Task<IReadOnlyList<string>> GetModelsAsync(int requestTimeoutSeconds)
     {
-        using var httpRequestMessage = CreateModelsRequest();
-        using var httpResponseMessage = await SendAsync(requestTimeoutSeconds, httpRequestMessage);
-        return await ReadModelsAsync(httpResponseMessage);
+        using var request = CreateModelsRequest();
+        return await SendAndReadModelsAsync(request, requestTimeoutSeconds, CancellationToken.None);
     }
 
     private HttpRequestMessage CreateModelsRequest() =>
         new(HttpMethod.Get, new Uri(ValidateEndpoint(settings.Endpoint, settings.ApiKey), "models"));
 
-    private static async Task<IReadOnlyList<string>> ReadModelsAsync(HttpResponseMessage httpResponseMessage)
+    private static async Task<IReadOnlyList<string>> ReadModelsAsync(HttpResponseMessage httpResponseMessage, CancellationToken cancellationToken)
     {
-        using var jsonDocument = JsonDocument.Parse(await httpResponseMessage.Content.ReadAsStringAsync());
+        using var jsonDocument = JsonDocument.Parse(await httpResponseMessage.Content.ReadAsStringAsync(cancellationToken));
         if (!jsonDocument.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException(
                 $"The endpoint returned '{Summarize(jsonDocument.RootElement)}'; expected an OpenAI-compatible object with a data array.");
@@ -144,22 +148,24 @@ internal sealed partial class VisionService
     private static string Summarize(JsonElement value)
     {
         var text = value.GetRawText();
-        return text.Length <= 160 ? text : text[..160] + "...";
+        return text.Length <= MaximumSummaryCharacters ? text : text[..MaximumSummaryCharacters] + "...";
     }
 
-    private async Task<HttpResponseMessage> SendAsync(int requestTimeoutSeconds, HttpRequestMessage httpRequestMessage, CancellationToken cancellationToken = default)
+    private void ApplyAuthentication(HttpRequestMessage httpRequestMessage)
     {
-        ValidateTimeout(requestTimeoutSeconds);
         if (!string.IsNullOrWhiteSpace(settings.ApiKey))
             httpRequestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
-        using var cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(requestTimeoutSeconds));
-        HttpResponseMessage httpResponseMessage;
-        try { httpResponseMessage = await httpClient.SendAsync(httpRequestMessage, cancellationTokenSource.Token); }
-        catch (OperationCanceledException operationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new InvalidOperationException($"Local LLM request timed out after {requestTimeoutSeconds} seconds.", operationCanceledException);
-        }
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage httpRequestMessage, CancellationToken cancellationToken)
+    {
+        ApplyAuthentication(httpRequestMessage);
+        var httpResponseMessage = await httpClient.SendAsync(httpRequestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        return RequireSuccessfulResponse(httpResponseMessage);
+    }
+
+    private static HttpResponseMessage RequireSuccessfulResponse(HttpResponseMessage httpResponseMessage)
+    {
         if (httpResponseMessage.IsSuccessStatusCode) return httpResponseMessage;
         var status = httpResponseMessage.StatusCode;
         httpResponseMessage.Dispose();
@@ -167,7 +173,48 @@ internal sealed partial class VisionService
         throw new InvalidOperationException($"Local LLM endpoint returned HTTP {(int)status}. Check the endpoint, API key, model and server logs.", failure);
     }
 
-    public async Task<(string Description, string Tags)> AnalyzeAsync(string model, int requestTimeoutSeconds, string imageData, IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default)
+    private async Task<IReadOnlyList<string>> SendAndReadModelsAsync(HttpRequestMessage httpRequestMessage, int requestTimeoutSeconds, CancellationToken callerToken)
+    {
+        using var requestCancellation = CreateRequestCancellation(requestTimeoutSeconds, callerToken);
+        try
+        {
+            using var httpResponseMessage = await SendAsync(httpRequestMessage, requestCancellation.Token);
+            return await ReadModelsAsync(httpResponseMessage, requestCancellation.Token);
+        }
+        catch (OperationCanceledException exception) when (!callerToken.IsCancellationRequested)
+        {
+            throw RequestTimedOut(requestTimeoutSeconds, exception);
+        }
+    }
+
+    private async Task<JsonDocument> SendAndReadCompletionAsync(HttpRequestMessage httpRequestMessage,
+        int requestTimeoutSeconds, CancellationToken callerToken)
+    {
+        using var requestCancellation = CreateRequestCancellation(requestTimeoutSeconds, callerToken);
+        try
+        {
+            using var httpResponseMessage = await SendAsync(httpRequestMessage, requestCancellation.Token);
+            return await ReadCompletionAsync(httpResponseMessage, requestCancellation.Token);
+        }
+        catch (OperationCanceledException exception) when (!callerToken.IsCancellationRequested)
+        {
+            throw RequestTimedOut(requestTimeoutSeconds, exception);
+        }
+    }
+
+    private static CancellationTokenSource CreateRequestCancellation(int requestTimeoutSeconds, CancellationToken callerToken)
+    {
+        ValidateTimeout(requestTimeoutSeconds);
+        var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+        requestCancellation.CancelAfter(TimeSpan.FromSeconds(requestTimeoutSeconds));
+        return requestCancellation;
+    }
+
+    private static InvalidOperationException RequestTimedOut(int requestTimeoutSeconds, OperationCanceledException exception) =>
+        new($"Local LLM request timed out after {requestTimeoutSeconds} seconds.", exception);
+
+    public async Task<(string Description, string Tags)> AnalyzeImageAsync(string model, int requestTimeoutSeconds, string imageData,
+        IReadOnlyList<string>? existingTags = null, CancellationToken cancellationToken = default)
     {
         var result = await AnalyzeResultAsync(model, requestTimeoutSeconds, imageData, existingTags, cancellationToken);
         return (result.Description, result.Tags);
@@ -178,26 +225,33 @@ internal sealed partial class VisionService
     {
         cancellationToken.ThrowIfCancellationRequested();
         ValidateSystemPrompt(settings.SystemPrompt);
-        using var request = CreateAnalysisRequest(model, requestTimeoutSeconds, imageData, existingTags);
-        using var response = await SendAsync(requestTimeoutSeconds, request, cancellationToken);
-        using var json = await ReadCompletionAsync(response);
+        using var httpRequestMessage = CreateAnalysisRequest(model, requestTimeoutSeconds, imageData, existingTags);
+        using var jsonDocument = await SendAndReadCompletionAsync(httpRequestMessage, requestTimeoutSeconds, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         if (!settings.StructuredAnalysis)
         {
-            var legacy = ParseAnalysis(json);
+            var legacy = ParseAnalysis(jsonDocument);
             return new(legacy.Description, legacy.Tags);
         }
-        var result = StructuredVision.Parse(json.RootElement);
-        var analysis = result.Analysis! with
+        var visionAnalysisResult = StructuredVision.Parse(jsonDocument.RootElement);
+        return EnrichStructuredAnalysis(visionAnalysisResult, model, existingTags, requestTimeoutSeconds);
+    }
+
+    private VisionAnalysisResult EnrichStructuredAnalysis(VisionAnalysisResult visionAnalysisResult, string model,
+        IReadOnlyList<string>? existingTags, int requestTimeoutSeconds)
+    {
+        var analysis = visionAnalysisResult.Analysis! with
         {
-            Model = model, Endpoint = settings.Endpoint,
+            Model = model,
+            Endpoint = settings.Endpoint,
             EffectiveSystemPrompt = CreateAnalysisPrompt(existingTags).System,
             MaxTokens = settings.StructuredAnalysisMaxTokens,
             RequestTimeoutSeconds = requestTimeoutSeconds,
             Temperature = settings.AnalysisTemperature,
-            UseExistingTags = settings.UseExistingTags, SuggestNewTags = settings.SuggestNewTags
+            UseExistingTags = settings.UseExistingTags,
+            SuggestNewTags = settings.SuggestNewTags
         };
-        return result with { Analysis = analysis };
+        return visionAnalysisResult with { Analysis = analysis };
     }
 
     private HttpRequestMessage CreateAnalysisRequest(
@@ -214,21 +268,25 @@ internal sealed partial class VisionService
         IReadOnlyList<string>? existingTags)
     {
         var system = settings.BuildImageAnalysisSystemPrompt(existingTags?.Count > 0);
+        var includeExistingTags = ShouldIncludeExistingTags(existingTags);
         var prompt = "Describe and tag this image.";
         if (settings.StructuredAnalysis)
         {
             prompt += " In this first response, include top-level tags and suggested_tags arrays alongside scene and entities."
                 + " Keep scene.booru_tags as descriptive metadata only; gallery assignments belong in the top-level arrays.";
-            prompt += settings.UseExistingTags && existingTags?.Count > 0
+            prompt += includeExistingTags
                 ? " For tags, select only relevant exact names from Existing tags."
                 : " Return tags: []; no existing gallery tags are supplied.";
             prompt += settings.SuggestNewTags
                 ? " For suggested_tags, propose useful new gallery tags; exclude names in Existing tags when supplied."
                 : " Return suggested_tags: []; new gallery tag suggestions are disabled.";
         }
-        if (settings.UseExistingTags && existingTags?.Count > 0) prompt += " Existing tags: " + JsonSerializer.Serialize(existingTags);
+        if (includeExistingTags) prompt += " Existing tags: " + JsonSerializer.Serialize(existingTags);
         return (system, prompt);
     }
+
+    private bool ShouldIncludeExistingTags(IReadOnlyList<string>? existingTags) =>
+        settings.UseExistingTags && existingTags?.Count > 0;
 
     private HttpRequestMessage CreateAnalysisHttpRequest(
         Uri uri, string model, string imageData, string system, string prompt)
@@ -255,32 +313,40 @@ internal sealed partial class VisionService
 
     private static (string Description, string Tags) ParseAnalysis(JsonDocument jsonDocument)
     {
-        if (jsonDocument.RootElement.ValueKind != JsonValueKind.Object
-            || !jsonDocument.RootElement.TryGetProperty("description", out var descriptionValue) || descriptionValue.ValueKind != JsonValueKind.String)
-            throw new InvalidOperationException("The vision model must return description as a string.");
-        var description = descriptionValue.GetString();
-        if (!jsonDocument.RootElement.TryGetProperty("tags", out var tagsValue) || tagsValue.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException("The vision model must return tags as an array of strings.");
-        var tags = tagsValue.EnumerateArray().Select(tag => tag.ValueKind == JsonValueKind.String ? tag.GetString()!
-            : throw new InvalidOperationException("The vision model returned a tag that is not a string.")).ToArray();
+        var description = ReadAnalysisDescription(jsonDocument.RootElement);
+        var tags = ReadAnalysisTags(jsonDocument.RootElement);
         if (!HasValidAnalysisContent(description, tags))
             throw new InvalidOperationException("The vision model returned invalid description or tags.");
         return (description!, string.Join(", ", tags.Distinct(StringComparer.OrdinalIgnoreCase)));
+    }
+
+    private static string? ReadAnalysisDescription(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("description", out var description) || description.ValueKind != JsonValueKind.String)
+            throw new InvalidOperationException("The vision model must return description as a string.");
+        return description.GetString();
+    }
+
+    private static string[] ReadAnalysisTags(JsonElement root)
+    {
+        if (!root.TryGetProperty("tags", out var tags) || tags.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("The vision model must return tags as an array of strings.");
+        return tags.EnumerateArray().Select(tag => tag.ValueKind == JsonValueKind.String ? tag.GetString()!
+            : throw new InvalidOperationException("The vision model returned a tag that is not a string.")).ToArray();
     }
 
     private static bool HasValidAnalysisContent(string? description, string[] tags) =>
         !string.IsNullOrWhiteSpace(description) && description.Length <= 10_000 && tags.Length <= 100
         && tags.All(tag => tag.Length <= 100 && !tag.Contains(','));
 
-    private static async Task<JsonDocument> ReadCompletionAsync(HttpResponseMessage httpResponseMessage)
+    private static async Task<JsonDocument> ReadCompletionAsync(HttpResponseMessage httpResponseMessage, CancellationToken cancellationToken)
     {
-        var body = await httpResponseMessage.Content.ReadAsStringAsync();
-        if (System.Text.Encoding.UTF8.GetByteCount(body) > StructuredVision.MaximumDocumentBytes * 8)
-            throw new InvalidOperationException("The LLM response exceeds the response size limit.");
-        if (string.IsNullOrWhiteSpace(body))
+        using var responseBody = await ReadBoundedResponseAsync(httpResponseMessage.Content, cancellationToken);
+        if (IsWhitespaceOnly(responseBody))
             throw new InvalidOperationException("The LLM endpoint returned an empty response. Check the model and server logs.");
         JsonDocument parsed;
-        try { parsed = JsonDocument.Parse(body); }
+        try { parsed = JsonDocument.Parse(responseBody); }
         catch (JsonException jsonException) { throw new InvalidOperationException("The LLM endpoint returned an invalid JSON response envelope. Check its server logs.", jsonException); }
         using var payload = parsed;
         if (payload.RootElement.ValueKind != JsonValueKind.Object)
@@ -310,5 +376,49 @@ internal sealed partial class VisionService
         {
             throw new InvalidOperationException("The model did not return valid JSON. Check its output in the server logs; no suggestion was saved.", jsonException);
         }
+    }
+
+    private static async Task<MemoryStream> ReadBoundedResponseAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > MaximumResponseBytes)
+            throw new InvalidOperationException("The LLM response exceeds the response size limit.");
+        var capacity = content.Headers.ContentLength is { } contentLength ? (int)contentLength : 0;
+        var responseBody = new MemoryStream(capacity);
+        try
+        {
+            await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+            var buffer = new byte[ResponseReadBufferSize];
+            while (true)
+            {
+                var remaining = MaximumResponseBytes + 1L - responseBody.Length;
+                var readSize = (int)Math.Min(buffer.Length, remaining);
+                var bytesRead = await stream.ReadAsync(buffer.AsMemory(0, readSize), cancellationToken);
+                if (bytesRead == 0) break;
+                if (responseBody.Length + bytesRead > MaximumResponseBytes)
+                    throw new InvalidOperationException("The LLM response exceeds the response size limit.");
+                await responseBody.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+            }
+            responseBody.Position = 0;
+            return responseBody;
+        }
+        catch
+        {
+            await responseBody.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static bool IsWhitespaceOnly(MemoryStream responseBody)
+    {
+        if (!responseBody.TryGetBuffer(out var buffer)) return responseBody.Length == 0;
+        var containsNonAscii = false;
+        foreach (var value in buffer.Array!.AsSpan(buffer.Offset, (int)responseBody.Length))
+        {
+            if (value == (byte)' ' || value == (byte)'\t' || value == (byte)'\r' || value == (byte)'\n') continue;
+            if (value < 0x80) return false;
+            containsNonAscii = true;
+        }
+        return !containsNonAscii || string.IsNullOrWhiteSpace(Encoding.UTF8.GetString(
+            buffer.Array!, buffer.Offset, (int)responseBody.Length));
     }
 }

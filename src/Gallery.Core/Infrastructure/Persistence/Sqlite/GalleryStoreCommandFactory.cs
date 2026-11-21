@@ -4,6 +4,8 @@ namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
 
 internal static class GalleryStoreCommandFactory
 {
+    private const string SettingsTableName = "settings";
+
     public static SqliteCommand CreateConfigureWalJournal(SqliteConnection sqliteConnection) =>
         CreateCommand(sqliteConnection, "PRAGMA journal_mode=WAL");
 
@@ -23,13 +25,16 @@ internal static class GalleryStoreCommandFactory
     public static SqliteCommand CreateReadStorageRevision(SqliteConnection sqliteConnection) =>
         CreateCommand(sqliteConnection, "SELECT revision FROM storage_overview_state WHERE id = 1");
 
+    public static SqliteCommand CreateCountRecords(SqliteConnection sqliteConnection) =>
+        CreateCommand(sqliteConnection, "SELECT COUNT(*) FROM images");
+
     public static SqliteCommand CreateReadFingerprintSchema(SqliteConnection sqliteConnection) =>
         CreateCommand(sqliteConnection, "SELECT type, name, COALESCE(sql, '') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name");
 
     public static SqliteCommand CreateReadFingerprintRows(SqliteConnection sqliteConnection, string table, string excludedSettingId)
     {
         var sqliteCommand = CreateCommand(sqliteConnection, CreateReadFingerprintRowsSql(table));
-        if (table == "settings")
+        if (table == SettingsTableName)
             sqliteCommand.Parameters.Add("$excluded", SqliteType.Text, excludedSettingId.Length).Value = excludedSettingId;
         return sqliteCommand;
     }
@@ -37,7 +42,7 @@ internal static class GalleryStoreCommandFactory
     private static string CreateReadFingerprintRowsSql(string table)
     {
         var quotedTable = QuoteIdentifier(table);
-        return table == "settings"
+        return table == SettingsTableName
             ? $"SELECT * FROM {quotedTable} WHERE id <> $excluded ORDER BY rowid"
             : $"SELECT * FROM {quotedTable} ORDER BY rowid";
     }
@@ -155,6 +160,25 @@ internal static class GalleryStoreCommandFactory
         var sqliteCommand = sqliteConnection.CreateCommand();
         sqliteCommand.CommandText = "INSERT INTO settings (id, payload) VALUES ($id, $payload) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload";
         sqliteCommand.Parameters.Add("$id", SqliteType.Text, id.Length).Value = id;
+        sqliteCommand.Parameters.Add("$payload", SqliteType.Blob).Value = payload;
+        return sqliteCommand;
+    }
+
+    public static SqliteCommand CreateReadVisionAnalysis(SqliteConnection sqliteConnection, string id)
+    {
+        var sqliteCommand = CreateCommand(sqliteConnection, "SELECT payload FROM vision_analysis WHERE image_id = $id");
+        sqliteCommand.Parameters.Add("$id", SqliteType.Text, Math.Max(id.Length, 1)).Value = id;
+        return sqliteCommand;
+    }
+
+    public static SqliteCommand CreateSaveVisionAnalysis(SqliteConnection sqliteConnection, SqliteTransaction sqliteTransaction,
+        string id, byte[] payload)
+    {
+        var sqliteCommand = CreateCommand(sqliteConnection, """
+            INSERT INTO vision_analysis (image_id, payload) VALUES ($id, $payload)
+            ON CONFLICT(image_id) DO UPDATE SET payload = excluded.payload
+            """, sqliteTransaction);
+        sqliteCommand.Parameters.Add("$id", SqliteType.Text, Math.Max(id.Length, 1)).Value = id;
         sqliteCommand.Parameters.Add("$payload", SqliteType.Blob).Value = payload;
         return sqliteCommand;
     }

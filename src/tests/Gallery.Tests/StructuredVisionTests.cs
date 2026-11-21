@@ -74,6 +74,35 @@ public sealed class StructuredVisionTests
         Assert.Empty(result.Tags);
     }
 
+    [Fact]
+    public void Parse_BoundsWarningsForRepeatedMalformedAttributesAndLongEntityIds()
+    {
+        var id = new string('x', 200_000);
+        object?[] attributes = [.. Enumerable.Repeat<object?>(null, 5_000), new { name = "color", value = "blue" }];
+        var entities = new List<object> { new { id, kind = "object", description = "A blue object.", attributes } };
+        entities.AddRange(Enumerable.Range(0, 100).Select(index => (object)new { id = $"extra-{index}", kind = "", description = "" }));
+        var content = JsonSerializer.Serialize(new
+        {
+            scene = new { description = "A scene." },
+            entities,
+            relationships = Array.Empty<object>(),
+            tags = Array.Empty<string>(),
+            suggested_tags = Array.Empty<string>()
+        });
+        using var json = JsonDocument.Parse(content);
+
+        var result = StructuredVision.Parse(json.RootElement);
+
+        Assert.Equal(content, result.Analysis!.Json);
+        Assert.True(result.Analysis.Warnings.Length <= 100);
+        Assert.All(result.Analysis.Warnings, warning => Assert.True(warning.Length <= 512));
+        Assert.Single(result.Analysis.Warnings, warning => warning.Contains("unusable attribute", StringComparison.Ordinal));
+        Assert.Contains("…", Assert.Single(result.Analysis.Warnings, warning => warning.Contains("unusable attribute", StringComparison.Ordinal)));
+        Assert.Contains("Additional structured analysis warnings omitted.", result.Analysis.Warnings);
+        var analyzedEntity = Assert.Single(result.Analysis.Facts.Entities, entity => entity.Id == id);
+        Assert.Equal("blue", Assert.Single(analyzedEntity.Attributes).Value);
+    }
+
     [Theory]
     [InlineData("{}", "'tags' is missing", "'suggested_tags' is missing")]
     [InlineData("{\"tags\":false,\"suggested_tags\":null}", "'tags' is not an array", "'suggested_tags' is not an array")]

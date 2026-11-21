@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace Gallery.Core.Features.Vaults;
@@ -11,9 +12,16 @@ internal sealed class VaultHistory(string directory)
     public string? Read()
     {
         lock (gate)
-            return File.Exists(HistoryPath)
-                ? JsonSerializer.Deserialize<string>(File.ReadAllText(HistoryPath))
-                : null;
+        {
+            if (!File.Exists(HistoryPath)) return null;
+            try { return JsonSerializer.Deserialize<string>(File.ReadAllText(HistoryPath)); }
+            catch (JsonException exception)
+            {
+                Trace.TraceWarning("Ignoring malformed legacy gallery history ({0}).",
+                    exception.GetType().FullName);
+                return null;
+            }
+        }
     }
 
     public void Save(string root)

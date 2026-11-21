@@ -3,29 +3,29 @@ using Gallery.Core.Services;
 
 namespace Gallery.Core.Features.Storage.DriveOperations;
 
-internal sealed class GalleryDriveControls(GalleryDriveQueue driveQueue) : IGalleryDriveOperations
+internal sealed class GalleryDriveControls(GalleryDriveQueue galleryDriveQueue) : IGalleryDriveOperations
 {
     public event Action? DriveQueueChanged
     {
-        add => driveQueue.Changed += value;
-        remove => driveQueue.Changed -= value;
+        add => galleryDriveQueue.Changed += value;
+        remove => galleryDriveQueue.Changed -= value;
     }
 
-    public DriveQueueStatus DriveQueueStatus => driveQueue.DriveQueueStatus;
+    public DriveQueueStatus DriveQueueStatus => galleryDriveQueue.DriveQueueStatus;
 
-    public Task PauseDriveOperationsAsync() => driveQueue.PauseDriveOperationsAsync();
+    public Task PauseDriveOperationsAsync() => galleryDriveQueue.PauseDriveOperationsAsync();
 
-    public void ResumeDriveOperations() => driveQueue.ResumeDriveOperations();
+    public void ResumeDriveOperations() => galleryDriveQueue.ResumeDriveOperations();
 
     /// <summary>Discards queued and failed drive work. Files those operations would have changed stay as they are.</summary>
 
-    public Task CancelDriveOperationsAsync() => driveQueue.CancelDriveOperationsAsync();
+    public Task CancelDriveOperationsAsync() => galleryDriveQueue.CancelDriveOperationsAsync();
 
-    public Task RetryFailedDriveOperationsAsync() => driveQueue.RetryFailedDriveOperationsAsync();
+    public Task RetryFailedDriveOperationsAsync() => galleryDriveQueue.RetryFailedDriveOperationsAsync();
 
-    public Task WaitForDriveOperationsAsync() => driveQueue.WaitForDriveOperationsAsync();
+    public Task WaitForDriveOperationsAsync() => galleryDriveQueue.WaitForDriveOperationsAsync();
 
-    public Task RefreshDriveQueueStatusAsync() => driveQueue.RefreshDriveQueueStatusAsync();
+    public Task RefreshDriveQueueStatusAsync() => galleryDriveQueue.RefreshDriveQueueStatusAsync();
 
     /// <summary>Discards the cached file index and schedules a fresh background scan of the media folders.</summary>
 }

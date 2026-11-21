@@ -15,6 +15,9 @@ namespace Gallery.Core.Features.Media.Removal;
 internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSession vaultSession, Action startDriveQueue)
 {
     private const string OriginalDeletedMessage = "Original was deleted. ";
+    private const string ImageIdContextKey = "Image.Id";
+    private const string ImageMarkedForDeletionContextKey = "Image.MarkedForDeletion";
+    private const string CatalogEntryWasRemovedContextKey = "Gallery.CatalogRemoved";
 
     public async Task<List<RemovalItem>> PrepareRemovalAsync(IEnumerable<string> ids)
     {
@@ -54,13 +57,16 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
     private static string NormalizeRestoreFolder(
         IReadOnlyCollection<RemovalItem> removalItems, MissingOriginalAction missingAction, string restoreFolder)
     {
-        if (!removalItems.Any(removalItem => !removalItem.OriginalExists)
-            || missingAction != MissingOriginalAction.RestorePng) return restoreFolder;
+        if (!RequiresRestoreFolder(removalItems, missingAction)) return restoreFolder;
         var normalizedRestoreFolder = Path.GetFullPath(restoreFolder);
         if (!Directory.Exists(normalizedRestoreFolder))
             throw new DirectoryNotFoundException("Choose an existing restoration folder.");
         return normalizedRestoreFolder;
     }
+
+    private static bool RequiresRestoreFolder(
+        IEnumerable<RemovalItem> removalItems, MissingOriginalAction missingAction) =>
+        removalItems.Any(removalItem => RemovalRules.ShouldRestoreOriginal(removalItem, missingAction));
 
     private static RemovalItem[] CaptureOrderedRemovalItems(IReadOnlyList<RemovalItem> removalItems) =>
         removalItems.DistinctBy(removalItem => removalItem.Id).ToArray();
@@ -78,10 +84,10 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         var imageRecord = await store.ReadRecordAsync(id, key);
         if (!RemovalRules.CanRemove(imageRecord))
             throw new ImageNotMarkedForDeletionException($"'{imageRecord.Name}' (media item '{imageRecord.Id}') must be marked for deletion first.",
-                GalleryLogEvent.PrepareRemoval, new ContextualData(ImmutableDictionary<string, object>.Empty
-                    .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false)));
-        var original = OriginalPath(imageRecord);
-        return new(id, imageRecord.Name, original, SourceExists(original));
+                LogEventGallery.PrepareRemoval, new ContextualData(ImmutableDictionary<string, object>.Empty
+                .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false)));
+        var originalPath = OriginalPath(imageRecord);
+        return new(id, imageRecord.Name, originalPath, SourceExists(originalPath));
     }
 
     private async Task RemoveBatchAsync(IGalleryStore store, IReadOnlyList<RemovalItem> removalItems, byte[] key,
@@ -106,8 +112,9 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
                 catch (GalleryRemovalException exception)
                 {
                     failures.Add(exception);
-                    var catalogRemoved = (bool)exception.ContextualDataByName.ValuesByName["Gallery.CatalogRemoved"];
-                    receipts.Add(new(removalItem.Id, catalogRemoved, restoredPath,
+                    var catalogEntryWasRemoved =
+                        (bool)exception.ContextualDataByName.ValuesByName[CatalogEntryWasRemovedContextKey];
+                    receipts.Add(new(removalItem.Id, catalogEntryWasRemoved, restoredPath,
                         new(removalItem.Id, exception.Message, exception)));
                 }
             }
@@ -120,10 +127,14 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
             catch (Exception exception) { queueStartFailure = exception; }
         }
         var observerFailures = DeliverRemovalReceipts(receipts, reportRemoval);
-        if (queueStartFailure is not null && failures.Count == 0 && observerFailures.Count == 0)
+        if (queueStartFailure is not null && HasNoRemovalOrObserverFailures(failures, observerFailures))
             ExceptionDispatchInfo.Throw(queueStartFailure);
         ThrowCombinedRemovalFailures(failures, observerFailures, queueStartFailure);
     }
+
+    private static bool HasNoRemovalOrObserverFailures(
+        IReadOnlyCollection<Exception> failures, IReadOnlyCollection<Exception> observerFailures) =>
+        failures.Count == 0 && observerFailures.Count == 0;
 
     private static List<Exception> DeliverRemovalReceipts(
         IEnumerable<RemovalResult> removalResults, Action<RemovalResult>? reportRemoval)
@@ -161,20 +172,15 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
             var imageRecord = await store.ReadRecordAsync(removalItem.Id, key);
             if (!RemovalRules.CanRemove(imageRecord))
                 throw new ImageNotMarkedForDeletionException($"Media item '{imageRecord.Id}' is no longer marked for deletion.",
-                    GalleryLogEvent.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
-                        .Add("Image.Id", imageRecord.Id).Add("Image.MarkedForDeletion", false)));
-            var original = OriginalPath(imageRecord);
-            if (RemovalPreviewHasChanged(removalItem, original))
+                    LogEventGallery.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
+                    .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false)));
+            var originalPath = OriginalPath(imageRecord);
+            if (RemovalPreviewHasChanged(removalItem, originalPath))
                 throw new InvalidOperationException("Original file status changed. Review a new removal preview.");
 
-            if (ShouldDeleteExistingOriginal(removalItem, existingAction))
-            {
-                if (string.Equals(original, imageRecord.StoredPath, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Original and gallery file paths must differ.");
-                await ImportSource.DeleteVerifiedPathAsync(original, imageRecord.Sha256);
-                originalDeleted = true;
-            }
-            else if (ShouldRestoreMissingOriginal(removalItem, missingAction))
+            originalDeleted = await DeleteVerifiedOriginalIfRequestedAsync(
+                removalItem, imageRecord, originalPath, existingAction);
+            if (!originalDeleted && ShouldRestoreMissingOriginal(removalItem, missingAction))
             {
                 await RestoreOriginalAsync(imageRecord, key, restoreFolder, path =>
                 {
@@ -196,10 +202,20 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
     }
 
     private static GalleryRemovalException CreateRemovalFailure(string message, string imageId,
-        bool catalogRemoved, string? restoredPath, bool originalDeleted, Exception cause) =>
+        bool catalogEntryWasRemoved, string? restoredPath, bool originalDeleted, Exception cause) =>
         new(message, new RemovalFailureLogEvent(), new ContextualData(ImmutableDictionary<string, object>.Empty
-            .Add("Image.Id", imageId).Add("Gallery.CatalogRemoved", catalogRemoved)
+            .Add(ImageIdContextKey, imageId).Add(CatalogEntryWasRemovedContextKey, catalogEntryWasRemoved)
             .Add("Gallery.RestoredPath", restoredPath ?? "").Add("Original.Deleted", originalDeleted)), cause);
+
+    private static async Task<bool> DeleteVerifiedOriginalIfRequestedAsync(
+        RemovalItem removalItem, ImageRecord imageRecord, string originalPath, ExistingOriginalAction existingAction)
+    {
+        if (!ShouldDeleteExistingOriginal(removalItem, existingAction)) return false;
+        if (string.Equals(originalPath, imageRecord.StoredPath, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Original and gallery file paths must differ.");
+        await ImportSource.DeleteVerifiedPathAsync(originalPath, imageRecord.Sha256);
+        return true;
+    }
 
     private static bool RemovalPreviewHasChanged(RemovalItem removalItem, string currentOriginalPath) =>
         !string.Equals(currentOriginalPath, removalItem.OriginalPath, StringComparison.Ordinal)
@@ -239,26 +255,60 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
 
     private static async Task WriteRestoredFileAsync(string restoredPath, byte[] content)
     {
-        await using var output = new FileStream(restoredPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        if (File.Exists(restoredPath))
+        {
+            if (await RestoredFileMatchesAsync(restoredPath, content)) return;
+            throw new IOException($"Restoration destination '{restoredPath}' already exists with different content.");
+        }
+
+        var stagingPath = restoredPath + ".restoring";
+        if (File.Exists(stagingPath))
+        {
+            if (!await RestoredFileMatchesAsync(stagingPath, content))
+                throw new IOException($"Restoration staging file '{stagingPath}' already exists with different content.");
+            await PublishRestoredFileAsync(stagingPath, restoredPath, content);
+            return;
+        }
+
+        var createdStagingFile = false;
         try
         {
-            await output.WriteAsync(content);
-            output.Flush(flushToDisk: true);
+            await using (var fileStream = new FileStream(stagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                createdStagingFile = true;
+                await fileStream.WriteAsync(content);
+                fileStream.Flush(flushToDisk: true);
+            }
+            await VerifyRestoredFileAsync(stagingPath, content);
+            await PublishRestoredFileAsync(stagingPath, restoredPath, content);
         }
-        catch
+        finally
         {
-            output.Close();
-            File.Delete(restoredPath);
-            throw;
+            if (createdStagingFile && File.Exists(stagingPath)) File.Delete(stagingPath);
+        }
+    }
+
+    private static async Task PublishRestoredFileAsync(string stagingPath, string restoredPath, byte[] content)
+    {
+        try { File.Move(stagingPath, restoredPath); }
+        catch (IOException) when (File.Exists(restoredPath))
+        {
+            if (!await RestoredFileMatchesAsync(restoredPath, content))
+                throw new IOException($"Restoration destination '{restoredPath}' already exists with different content.");
         }
     }
 
     private static async Task VerifyRestoredFileAsync(string restoredPath, byte[] content)
     {
-        await using var restoredFile = File.OpenRead(restoredPath);
-        if (!CryptographicOperations.FixedTimeEquals(
-                await SHA256.HashDataAsync(restoredFile), SHA256.HashData(content)))
+        if (!await RestoredFileMatchesAsync(restoredPath, content))
             throw new CryptographicException("Restored file failed read-back verification; gallery media item retained.");
+    }
+
+    private static async Task<bool> RestoredFileMatchesAsync(string restoredPath, byte[] content)
+    {
+        await using var fileStream = File.OpenRead(restoredPath);
+        return CryptographicOperations.FixedTimeEquals(
+            await SHA256.HashDataAsync(fileStream), SHA256.HashData(content));
     }
 
     // The catalog row and the queued ciphertext delete commit together; the drive queue deletes the file.
@@ -279,18 +329,24 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
     {
         if (imageRecord.SourcePath.Length > 0) return Path.GetFullPath(imageRecord.SourcePath);
         // Legacy local-path imports can be recovered; relative browser folder names cannot.
-        return Path.IsPathFullyQualified(imageRecord.SourceFolder)
-            && Path.GetFileName(imageRecord.OriginalName) == imageRecord.OriginalName
+        return CanRecoverLegacyOriginalPath(imageRecord.SourceFolder, imageRecord.OriginalName)
             ? Path.Combine(imageRecord.SourceFolder, imageRecord.OriginalName) : "";
     }
+
+    private static bool CanRecoverLegacyOriginalPath(string sourceFolder, string originalName) =>
+        Path.IsPathFullyQualified(sourceFolder) && Path.GetFileName(originalName) == originalName;
 
     private static bool SourceExists(string path)
     {
         if (path.Length == 0) return false;
-        if (!File.Exists(path) && !Directory.Exists(path)) return false;
-        var attributes = File.GetAttributes(path);
-        if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-            throw new InvalidOperationException($"'{path}' is a directory or link; removal was stopped.");
-        return true;
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new InvalidOperationException($"'{path}' is a directory or link; removal was stopped.");
+            return true;
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
     }
 }

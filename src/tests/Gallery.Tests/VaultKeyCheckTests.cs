@@ -19,9 +19,9 @@ public sealed class VaultKeyCheckTests
         byte[]? secondKey = null;
         try
         {
-            var firstCreated = await first.CreateAsync(TestVault.Passphrase);
+            var firstCreated = await first.CreateVaultAsync(TestVault.Passphrase);
             firstKey = firstCreated.Key;
-            var secondCreated = await second.CreateAsync(TestVault.Passphrase);
+            var secondCreated = await second.CreateVaultAsync(TestVault.Passphrase);
             secondKey = secondCreated.Key;
             var headerPath = Path.Combine(first.Root, "vault.json");
             var originalHeader = await File.ReadAllTextAsync(headerPath);
@@ -71,7 +71,7 @@ public sealed class VaultKeyCheckTests
         byte[]? key = null;
         try
         {
-            var created = await vault.CreateAsync(TestVault.Passphrase);
+            var created = await vault.CreateVaultAsync(TestVault.Passphrase);
             key = created.Key;
             await Assert.ThrowsAsync<AuthenticationTagMismatchException>(() =>
                 recovery

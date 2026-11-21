@@ -46,6 +46,8 @@ internal sealed class IngestionTimings
 
 internal static class IngestionTimingReports
 {
+    private const string UnknownDriveDescription = "Unknown";
+
     internal static IngestionMeasurementStart Start(string sourceFolder, string galleryRoot, string catalogRoot) =>
         new(Stopwatch.GetTimestamp(), DescribeDrive(sourceFolder), DescribeDrive(galleryRoot),
             DescribeDrive(catalogRoot), Environment.ProcessorCount);
@@ -53,15 +55,16 @@ internal static class IngestionTimingReports
     internal static IngestionTimingReport CreateReport(CompletedIngestionMeasurement completedIngestionMeasurement)
     {
         var observations = completedIngestionMeasurement.Observations;
-        var files = observations.LastOrDefault(observation => observation.FilesFound.HasValue);
+        var discoveryObservation = observations.LastOrDefault(observation => observation.FilesFound.HasValue);
         var outcome = observations.LastOrDefault(observation => observation.Imported.HasValue);
         var stages = observations.Where(observation => observation.Stage.HasValue)
             .GroupBy(observation => observation.Stage!.Value).OrderBy(group => group.Key)
             .Select(group => CreateStageTiming(group.Key, group.Select(observation => observation.ElapsedMs).Order().ToArray()))
             .ToImmutableArray();
         var start = completedIngestionMeasurement.Start;
-        return new IngestionTimingReport(start.SourceDrive, start.GalleryDrive, files.Workers ?? 0, start.ProcessorCount,
-            files.FilesFound ?? 0, outcome.Imported ?? 0, outcome.Failed ?? 0,
+        return new IngestionTimingReport(start.SourceDrive, start.GalleryDrive,
+            discoveryObservation.Workers ?? 0, start.ProcessorCount,
+            discoveryObservation.FilesFound ?? 0, outcome.Imported ?? 0, outcome.Failed ?? 0,
             observations.Sum(observation => observation.SourceBytes),
             Stopwatch.GetElapsedTime(start.Timestamp, completedIngestionMeasurement.CompletedTimestamp).TotalMilliseconds,
             stages) { CatalogDrive = start.CatalogDrive };
@@ -80,7 +83,7 @@ internal static class IngestionTimingReports
         try
         {
             var root = Path.GetPathRoot(Path.GetFullPath(path));
-            if (string.IsNullOrEmpty(root)) return "Unknown";
+            if (string.IsNullOrEmpty(root)) return UnknownDriveDescription;
             if (root.StartsWith(@"\\", StringComparison.Ordinal) || root.StartsWith("//", StringComparison.Ordinal)) return "Network (UNC)";
             var driveInfo = new DriveInfo(root);
             string format;
@@ -90,7 +93,7 @@ internal static class IngestionTimingReports
         }
         catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException)
         {
-            return "Unknown";
+            return UnknownDriveDescription;
         }
     }
 }

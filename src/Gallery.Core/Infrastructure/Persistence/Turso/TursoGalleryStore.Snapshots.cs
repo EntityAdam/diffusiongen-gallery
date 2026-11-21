@@ -22,16 +22,21 @@ internal sealed partial class TursoGalleryStore
     private static async Task CheckpointAsync(DbConnection connection)
     {
         var started = Stopwatch.GetTimestamp();
-        using var command = Command(connection, "PRAGMA wal_checkpoint(TRUNCATE)");
+        using var command = Command(connection, CheckpointCommand);
         await using var reader = await command.ExecuteReaderAsync();
-        if (!await reader.ReadAsync() || reader.GetInt64(0) != 0)
+        if (!await reader.ReadAsync())
+            throw WithResultShapeContext(
+                new IOException("The Turso catalog checkpoint returned no status row."),
+                CheckpointCommand, observedRowCount: 0);
+        if (reader.GetInt64(0) != 0)
             throw new IOException("The Turso catalog could not be checkpointed for publication.");
         CatalogMetrics.Checkpoints.Add(1);
         CatalogMetrics.CheckpointDuration.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
     }
 
     public Task<string> ComputeSnapshotFingerprintAsync(string snapshotPath, string excludedSettingId, byte[]? key = null) =>
-        ExecuteAsync(key, connection => ComputeFingerprintAsync(connection, excludedSettingId), path: snapshotPath, upgrade: false);
+        ExecuteAsync(key, connection => ComputeFingerprintAsync(connection, excludedSettingId),
+            CatalogOpenMode.ValidateExisting, path: snapshotPath);
 
     private static async Task<string> ComputeFingerprintAsync(DbConnection connection, string excludedSettingId)
     {
@@ -56,8 +61,8 @@ internal sealed partial class TursoGalleryStore
         {
             var quoted = "\"" + table.Replace("\"", "\"\"") + "\"";
             using var command = Command(connection, "SELECT * FROM " + quoted +
-                (table == "settings" ? " WHERE id<>$excluded" : "") + " ORDER BY rowid", null,
-                table == "settings" ? [("$excluded", excludedSettingId)] : []);
+                (table == SettingsTableName ? " WHERE id<>$excluded" : "") + " ORDER BY rowid", null,
+                table == SettingsTableName ? [("$excluded", excludedSettingId)] : []);
             AddFingerprintValue(hash, "table:" + table);
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -71,7 +76,9 @@ internal sealed partial class TursoGalleryStore
 
     private static void AddFingerprintValue(IncrementalHash hash, object? value)
     {
-        var (tag, bytes) = value switch
+        byte tag;
+        byte[] bytes;
+        (tag, bytes) = value switch
         {
             null => ((byte)0, Array.Empty<byte>()),
             byte[] blob => ((byte)1, blob),

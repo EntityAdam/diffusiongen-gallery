@@ -59,12 +59,12 @@ internal static class VaultCrypto
     public static byte[] Decrypt(ReadOnlySpan<byte> envelope, ReadOnlySpan<byte> key, string purpose)
     {
         // Preserve native fail-before-allocation safety even when called without an ingress owner.
-        if (!HasValidEnvelopeFormat(envelope))
+        if (!IsValidEnvelopeFormat(envelope))
             throw new CryptographicException("Invalid encrypted file format.");
         return DecryptToNewBuffer(envelope, key, purpose);
     }
 
-    private static bool HasValidEnvelopeFormat(ReadOnlySpan<byte> envelope) =>
+    internal static bool IsValidEnvelopeFormat(ReadOnlySpan<byte> envelope) =>
         envelope.Length >= EnvelopeHeaderSizeBytes && envelope[..MagicSizeBytes].SequenceEqual(Magic);
 
     private static byte[] DecryptToNewBuffer(ReadOnlySpan<byte> envelope, ReadOnlySpan<byte> key, string purpose)

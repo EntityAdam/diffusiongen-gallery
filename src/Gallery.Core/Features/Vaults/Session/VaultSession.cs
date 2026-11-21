@@ -8,14 +8,19 @@ internal sealed class VaultSession : IDisposable
 {
     private const string UnlockRequiredMessage = "Unlock the gallery first.";
 
-    private readonly VaultLeaseState vaultLeaseState = new();
+    private readonly VaultLeaseState vaultLeaseState;
     private readonly Timer timer;
     private bool disposed;
 
-    public VaultSession() : this(TimeSpan.FromSeconds(5)) { }
+    public VaultSession() : this(TimeSpan.FromSeconds(5), TimeProvider.System) { }
 
-    internal VaultSession(TimeSpan timerInterval) =>
+    internal VaultSession(TimeSpan timerInterval) : this(timerInterval, TimeProvider.System) { }
+
+    internal VaultSession(TimeSpan timerInterval, TimeProvider timeProvider)
+    {
+        vaultLeaseState = new VaultLeaseState(timeProvider);
         timer = new Timer(_ => CheckInactivityTimeout(), null, timerInterval, timerInterval);
+    }
 
     public event Action? AutoLocked;
 
@@ -65,7 +70,7 @@ internal sealed class VaultSession : IDisposable
     private void RecordActivityTimestamp()
     {
         lock (vaultLeaseState.SyncRoot)
-            if (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }) vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+            if (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }) vaultLeaseState.RecordActivity();
     }
 
     internal UnlockedVaultSession AcquireUnlockedSession()
@@ -75,24 +80,24 @@ internal sealed class VaultSession : IDisposable
         {
             if (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false })
             {
-                vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+                vaultLeaseState.RecordActivity();
                 return vaultLeaseState.UnlockedVaultSession;
             }
 
             var timedOut = vaultLeaseState.UnlockedVaultSession?.HasTimedOut == true;
             throw new VaultLockedException(timedOut
                     ? "The gallery locked automatically due to inactivity."
-                    : UnlockRequiredMessage, GalleryLogEvent.AcquireVaultKey,
+                    : UnlockRequiredMessage, LogEventGallery.AcquireVaultKey,
                 new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", timedOut ? "timed_out" : "locked")));
         }
     }
 
-    internal KeyLease? TryBorrowUnlockedKey(bool recordActivity = true)
+    internal KeyLease? TryBorrowUnlockedKey(LeaseActivityPolicy leaseActivityPolicy)
     {
         CheckInactivityTimeout();
         KeyLease? keyLease;
         lock (vaultLeaseState.SyncRoot)
-            keyLease = vaultLeaseState.UnlockedVaultSession?.TryBorrow(recordActivity);
+            keyLease = vaultLeaseState.UnlockedVaultSession?.TryBorrow(leaseActivityPolicy);
         if (keyLease is null) CheckInactivityTimeout();
         return keyLease;
     }
@@ -130,22 +135,22 @@ internal sealed class VaultSession : IDisposable
         lock (vaultLeaseState.SyncRoot)
         {
             vaultLeaseState.UnlockedVaultSession?.Revoke();
-            return WaitForLeases();
+            return WaitForLeasesAsync();
         }
     }
 
     internal Task WhenDrainedAsync()
     {
-        lock (vaultLeaseState.SyncRoot) return WaitForLeases();
+        lock (vaultLeaseState.SyncRoot) return WaitForLeasesAsync();
     }
 
     internal (bool Unlocked, Task Drain) ReadCheckoutReleaseState()
     {
         lock (vaultLeaseState.SyncRoot)
-            return (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }, WaitForLeases());
+            return (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }, WaitForLeasesAsync());
     }
 
-    private Task WaitForLeases()
+    private Task WaitForLeasesAsync()
     {
         if (vaultLeaseState.ActiveLeases == 0) return Task.CompletedTask;
         return (vaultLeaseState.TaskCompletionSource ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
@@ -153,14 +158,15 @@ internal sealed class VaultSession : IDisposable
 
     internal void CheckInactivityTimeout()
     {
-        bool publish;
+        bool shouldPublishTimeoutNotification;
         lock (vaultLeaseState.SyncRoot)
         {
-            if (vaultLeaseState.UnlockedVaultSession?.HasExpired(DateTimeOffset.UtcNow) == true) vaultLeaseState.UnlockedVaultSession.Expire();
-            publish = vaultLeaseState.UnlockedVaultSession?.HasPendingTimeoutNotification == true;
-            if (publish) vaultLeaseState.UnlockedVaultSession!.AcknowledgeTimeout();
+            if (vaultLeaseState.UnlockedVaultSession?.HasExpired() == true)
+                vaultLeaseState.UnlockedVaultSession.Expire();
+            shouldPublishTimeoutNotification = vaultLeaseState.UnlockedVaultSession?.HasPendingTimeoutNotification == true;
+            if (shouldPublishTimeoutNotification) vaultLeaseState.UnlockedVaultSession!.AcknowledgeTimeout();
         }
-        if (publish) AutoLocked?.Invoke();
+        if (shouldPublishTimeoutNotification) AutoLockNotificationPublisher.Publish(AutoLocked);
     }
 
     public void Dispose()

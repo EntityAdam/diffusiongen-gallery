@@ -67,6 +67,21 @@ public sealed class CatalogAdapterTests
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
+    public async Task Fingerprint_lookup_uses_source_hash_not_content_hash(CatalogBackend backend)
+    {
+        using var fixture = new AdapterFixture(backend);
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var record = Record() with { Sha256 = new string('a', 64), ContentSha256 = new string('b', 64) };
+        using var thumbnail = new ImageThumbnail([1]);
+        await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
+
+        Assert.True(await fixture.Store.ContainsFingerprintAsync(sourceSha256: record.Sha256, fixture.Key));
+        Assert.False(await fixture.Store.ContainsFingerprintAsync(sourceSha256: record.ContentSha256, fixture.Key));
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
     public async Task Snapshot_preserves_logical_fingerprint_and_excludes_backup_settings(CatalogBackend backend)
     {
         using var fixture = new AdapterFixture(backend);
@@ -127,13 +142,13 @@ public sealed class CatalogAdapterTests
         Assert.True(afterEdit.IsMarkedForDeletion);
         Assert.Equal(0, afterEdit.MetadataVersion);
         if (backend == CatalogBackend.Sqlite)
-            Assert.Null(await store.ReadInitialPageAsync(12, markedOnly: true, key, CancellationToken.None));
+            Assert.Null(await store.ReadInitialPageAsync(12, InitialPageMode.Marked, key, CancellationToken.None));
 
         var current = await store.ReadCatalogSnapshotAsync(key, CancellationToken.None);
         var revision = await store.RefreshGenerationMetadataAsync(current,
             [refreshed with { IsMarkedForDeletion = true }], key, CancellationToken.None);
 
-        var page = Assert.IsType<GalleryCatalog>(await store.ReadInitialPageAsync(12, markedOnly: true, key, CancellationToken.None));
+        var page = Assert.IsType<GalleryCatalog>(await store.ReadInitialPageAsync(12, InitialPageMode.Marked, key, CancellationToken.None));
         Assert.True(revision > current.Revision);
         Assert.Equal(revision, page.Revision);
         Assert.Equal(backend == CatalogBackend.Sqlite, page.CacheHit);

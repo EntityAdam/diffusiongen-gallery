@@ -44,7 +44,7 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
         var importer = new MediaImporter(store, store.Gate, importMediaPreparer);
         await importer.ImportFolderAsync(folder, searchScope, progress, sourceRetention, reportProgress, reportTimings,
-            options, scan, includeImages, includeVideos, location.VaultStore.Root, mediaRoot, key.Bytes);
+            options, scan, SelectMedia(includeImages, includeVideos), location.VaultStore.Root, mediaRoot, key.Bytes);
     }
 
     public async Task VerifyImportedAsync(string id)
@@ -72,9 +72,13 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
         var location = galleryLifetime.Current;
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
         IngestionSourceScanner.ValidateScan(scan, scan.Folder, scan.SearchScope, location.VaultStore.Root, mediaRoot);
-        var files = scan.SelectFiles(includeImages, includeVideos);
+        var files = scan.SelectFiles(SelectMedia(includeImages, includeVideos));
         return await Task.Run(() => IngestionSourceScanner.MeasureSpace(scan, files));
     }
+
+    private static IngestionMediaSelection SelectMedia(bool includeImages, bool includeVideos) =>
+        (includeImages ? IngestionMediaSelection.Images : IngestionMediaSelection.None)
+        | (includeVideos ? IngestionMediaSelection.Videos : IngestionMediaSelection.None);
 
     internal async Task<List<CatalogImportSource>> ReadImportSourcesAsync()
     {

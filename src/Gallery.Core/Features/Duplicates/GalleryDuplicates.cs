@@ -1,4 +1,5 @@
 using Gallery.Core.Features.Curation;
+using Gallery.Core.Features.Duplicates.Validators;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
@@ -11,10 +12,11 @@ internal sealed class GalleryDuplicates(DuplicateScanner duplicateScanner, Galle
     public Task<DuplicateScan> ScanDuplicatesAsync(IProgress<(int Completed, int Total)>? progress = null) =>
         duplicateScanner.ScanDuplicatesAsync(progress);
 
-    public ImageRecord PickDuplicateKeeper(IEnumerable<ImageRecord> records) => DuplicateRules.PickDuplicateKeeper(records);
+    public ImageRecord PickDuplicateKeeper(IEnumerable<ImageRecord> records) =>
+        DuplicateRules.PickDuplicateKeeper(DuplicateCandidatesValidator.Validate(records));
 
     public HashSet<string> InitialDuplicateKeepers(IReadOnlyCollection<ImageRecord> duplicateImageRecords) =>
-        DuplicateRules.InitialDuplicateKeepers(duplicateImageRecords);
+        DuplicateRules.InitialDuplicateKeepers(DuplicateCandidatesValidator.Validate(duplicateImageRecords));
 
     /// <summary>Unmarks the kept copies, marks the other copies for deletion, and returns the committed records.</summary>
 

@@ -1,4 +1,8 @@
+using System.Data.Common;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
+using Gallery.Core.Features.Tags;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Infrastructure.Persistence.Sqlite;
 using Gallery.Core.Infrastructure.Persistence.Turso;
@@ -93,6 +97,169 @@ public sealed class TursoVaultTests
     }
 
     [Fact]
+    public async Task Browse_reload_batches_ids_and_preserves_request_order()
+    {
+        using var fixture = new StoreFixture();
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var firstRecord = CreateRecord("first");
+        var secondRecord = CreateRecord("second");
+        using var firstThumbnail = new ImageThumbnail([1]);
+        using var secondThumbnail = new ImageThumbnail([2]);
+        await fixture.Store.InsertAsync(firstRecord, firstThumbnail, fixture.Key);
+        await fixture.Store.InsertAsync(secondRecord, secondThumbnail, fixture.Key);
+
+        var requestedIds = Enumerable.Range(0, 501).Select(index => $"missing-{index}").ToArray();
+        requestedIds[0] = secondRecord.Id;
+        requestedIds[^1] = firstRecord.Id;
+        var records = await fixture.Store.ReadBrowseRecordsAsync(requestedIds, fixture.Key, CancellationToken.None);
+
+        Assert.Equal(new[] { secondRecord.Id, firstRecord.Id }, records.Select(record => record.Id));
+    }
+
+    [Fact]
+    public async Task Initial_page_mode_filters_partial_pages_but_not_complete_catalogs()
+    {
+        using var fixture = new StoreFixture();
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var active = CreateRecord("active");
+        var marked = CreateRecord("marked") with { IsMarkedForDeletion = true };
+        using var thumbnail = new ImageThumbnail([1]);
+        await fixture.Store.InsertAsync(active, thumbnail, fixture.Key);
+        await fixture.Store.InsertAsync(marked, thumbnail, fixture.Key);
+
+        var activePage = await fixture.Store.ReadInitialPageAsync(1, InitialPageMode.Active, fixture.Key, CancellationToken.None);
+        var markedPage = await fixture.Store.ReadInitialPageAsync(1, InitialPageMode.Marked, fixture.Key, CancellationToken.None);
+        var completePage = await fixture.Store.ReadInitialPageAsync(2, InitialPageMode.Marked, fixture.Key, CancellationToken.None);
+
+        Assert.Equal(active.Id, Assert.Single(activePage!.Records).Id);
+        Assert.Equal(marked.Id, Assert.Single(markedPage!.Records).Id);
+        Assert.True(completePage!.IsComplete);
+        Assert.Equal(new[] { active.Id, marked.Id }.Order(), completePage.Records.Select(record => record.Id).Order());
+    }
+
+    [Fact]
+    public async Task UpdateRecords_WhenAnyMediaIsMissing_RollsBackTheTursoBatch()
+    {
+        using var fixture = new StoreFixture();
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var firstRecord = CreateRecord("first");
+        using var thumbnail = new ImageThumbnail([1]);
+        await fixture.Store.InsertAsync(firstRecord, thumbnail, fixture.Key);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Store.UpdateRecordsAsync(
+            [firstRecord with { Name = "updated" }, CreateRecord("missing")], fixture.Key));
+
+        Assert.Equal(firstRecord.Name, (await fixture.Store.ReadRecordAsync(firstRecord.Id, fixture.Key)).Name);
+    }
+
+    [Fact]
+    public async Task Cancellation_cancels_a_browse_while_waiting_for_the_database_gate()
+    {
+        using var fixture = new StoreFixture();
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var databaseGate = (SemaphoreSlim)typeof(TursoGalleryStore)
+            .GetField("databaseGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(fixture.Store)!;
+        await databaseGate.WaitAsync();
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var read = fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, cancellation.Token);
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            databaseGate.Release();
+        }
+    }
+
+    [Fact]
+    public async Task Missing_media_and_thumbnail_failures_include_query_shape_context()
+    {
+        using var fixture = new StoreFixture();
+        await fixture.Store.InitializeAsync(fixture.Key);
+
+        var recordError = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.Store.ReadRecordAsync("missing", fixture.Key));
+        AssertResultShape(recordError, "ReadMediaRecord");
+
+        var verificationError = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.Store.ReadVerificationAsync("missing", fixture.Key));
+        AssertResultShape(verificationError, "ReadMediaRecord");
+
+        var thumbnailError = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.Store.ReadThumbnailAsync("missing", fixture.Key));
+        AssertResultShape(thumbnailError, "ReadThumbnailBytes");
+    }
+
+    [Fact]
+    public async Task Tag_catalog_commit_does_not_rewrite_unchanged_generation_rows()
+    {
+        using var fixture = new StoreFixture();
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var record = CreateRecord("generated") with
+        {
+            Generation = new GenerationInfo { Prompt = "prompt", Model = "model" }
+        };
+        using var thumbnail = new ImageThumbnail([1]);
+        await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
+
+        await using (var connection = await OpenNativeConnectionAsync(fixture.DatabasePath, fixture.Key))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TRIGGER reject_generation_rewrite
+                BEFORE DELETE ON media_generation
+                BEGIN SELECT RAISE(ABORT, 'unexpected generation rewrite'); END;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var updatedRecord = record with
+        {
+            Tags = "renamed",
+            Rating = 4,
+            UserDescription = "manual notes",
+            IsFavorite = true
+        };
+        await fixture.Store.CommitTagCatalogAsync([updatedRecord], new TagCatalog(["renamed"]), null, fixture.Key);
+
+        var saved = await fixture.Store.ReadRecordAsync(record.Id, fixture.Key);
+        Assert.Equal("renamed", saved.Tags);
+        Assert.Equal(4, saved.Rating);
+        Assert.Equal("manual notes", saved.UserDescription);
+        Assert.True(saved.IsFavorite);
+    }
+
+    [Fact]
+    public async Task Tag_catalog_commit_persists_changed_generation_and_collection_rows()
+    {
+        using var fixture = new StoreFixture();
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var record = CreateRecord("generated") with
+        {
+            Generation = new GenerationInfo { Prompt = "old" },
+            Collections = ["old"]
+        };
+        using var thumbnail = new ImageThumbnail([1]);
+        await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
+
+        var updated = record with
+        {
+            Tags = "new",
+            Generation = new GenerationInfo { Prompt = "new" },
+            Collections = ["new"]
+        };
+        await fixture.Store.CommitTagCatalogAsync([updated], new TagCatalog(["new"]), null, fixture.Key);
+
+        var saved = await fixture.Store.ReadRecordAsync(record.Id, fixture.Key);
+        Assert.Equal("new", saved.Tags);
+        Assert.Equal("new", saved.Generation?.Prompt);
+        Assert.Equal(new[] { "new" }, saved.Collections);
+    }
+
+    [Fact]
     public async Task Factory_routes_existing_formats_independently_of_new_vault_preference()
     {
         using var sqlite = new VaultFixture(CatalogBackend.Sqlite);
@@ -116,6 +283,64 @@ public sealed class TursoVaultTests
     {
         var path = Path.GetTempPath();
         return OperatingSystem.IsMacOS() && path.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + path : path;
+    }
+
+    private static ImageRecord CreateRecord(string id) => new()
+    {
+        Id = id,
+        Name = id,
+        OriginalName = id,
+        StoredPath = id,
+        SourceFolder = "source",
+        SourcePath = id,
+        Sha256 = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(id))).ToLowerInvariant(),
+        ContentSha256 = new string('b', 64)
+    };
+
+    private static void AssertResultShape(Exception error, string command)
+    {
+        Assert.Equal(command, error.Data["Gallery.Turso.Command"]);
+        Assert.Equal(0, error.Data["Gallery.Turso.ObservedRowCount"]);
+    }
+
+    private static async Task<Turso.TursoConnection> OpenNativeConnectionAsync(string databasePath, byte[] key)
+    {
+        var catalogKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, key, 32,
+            info: "DiffusionGenGallery/catalog/turso/v1"u8.ToArray());
+        try
+        {
+            var builder = new DbConnectionStringBuilder
+            {
+                ["Data Source"] = databasePath,
+                ["Pooling"] = false,
+                ["Encryption Cipher"] = "aes256gcm",
+                ["Encryption Key"] = Convert.ToHexString(catalogKey)
+            };
+            var connection = new Turso.TursoConnection(builder.ConnectionString);
+            await connection.OpenAsync();
+            return connection;
+        }
+        finally { CryptographicOperations.ZeroMemory(catalogKey); }
+    }
+
+    private sealed class StoreFixture : IDisposable
+    {
+        private readonly string Root = Path.Combine(TemporaryRoot(), "gallery-turso-store-" + Guid.NewGuid().ToString("N"));
+        public string DatabasePath => Path.Combine(Root, "catalog.db");
+        public byte[] Key { get; } = RandomNumberGenerator.GetBytes(32);
+        public TursoGalleryStore Store { get; }
+
+        public StoreFixture()
+        {
+            Directory.CreateDirectory(Root);
+            Store = new TursoGalleryStore(DatabasePath);
+        }
+
+        public void Dispose()
+        {
+            CryptographicOperations.ZeroMemory(Key);
+            if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+        }
     }
 
     private sealed class VaultFixture : IDisposable

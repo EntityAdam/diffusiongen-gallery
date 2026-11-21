@@ -34,11 +34,25 @@ internal static class ImportMediaValidator
 
     public static void ValidateVideo(VideoTools.ProbeResult probeResult)
     {
-        if (!probeResult.FormatName.Split(',').Any(format => format is "mp4" or "mov"))
+        if (!IsMp4DemuxerFormat(probeResult))
             throw new InvalidOperationException("File is not a valid MP4 video.");
         if (!HasVideoStream(probeResult.Width, probeResult.Height)) throw new InvalidOperationException("No video stream was found.");
         if (ExceedsSupportedVideoDimensions(probeResult.Width, probeResult.Height))
             throw new InvalidOperationException("Video exceeds the 16384 pixel dimension limit.");
+    }
+
+    private static bool IsMp4DemuxerFormat(VideoTools.ProbeResult probeResult) =>
+        probeResult.FormatName.Split(',').Any(format => format is "mp4" or "mov")
+        && !HasNonMp4MajorBrand(probeResult.Tags);
+
+    private static bool HasNonMp4MajorBrand(IEnumerable<KeyValuePair<string, string>> tags)
+    {
+        var majorBrand = tags.FirstOrDefault(tag => tag.Key.Equals("major_brand", StringComparison.OrdinalIgnoreCase)).Value;
+        if (majorBrand is null) return false;
+        return majorBrand.StartsWith("3gp", StringComparison.OrdinalIgnoreCase)
+            || majorBrand.StartsWith("3g2", StringComparison.OrdinalIgnoreCase)
+            || majorBrand.Equals("qt  ", StringComparison.OrdinalIgnoreCase)
+            || majorBrand.StartsWith("mj2", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool HasVideoStream(int width, int height) => width > 0 && height > 0;

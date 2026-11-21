@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
+using Gallery.Core.Features.Tags.CatalogProjectors;
 using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Tags.TagNameValidators;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
@@ -7,14 +9,11 @@ using Gallery.Core.Services;
 
 namespace Gallery.Core.Features.Tags;
 
-internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSession vaultSession) : IGalleryTags
+internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSession vaultSession)
+    : IGalleryTags, IGalleryRecordTagCommitter
 {
     private static string ValidateTagName(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 100 || name.Contains(',') || name.Any(char.IsControl))
-            throw new InvalidOperationException("A tag must contain 1–100 characters and cannot contain commas or control characters.");
-        return name.Trim();
-    }
+        => TagNameValidator.ValidateTagName(name);
 
     public async Task<IReadOnlyList<TagDefinition>> LoadTagCatalogAsync()
     {
@@ -25,12 +24,10 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
             var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
-            var names = TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagCatalogStore.TagsOf)));
-            if (!names.SequenceEqual(catalog.Names))
-                await store.CommitTagCatalogAsync([], new(names), null, key.Bytes);
-            var counts = records.SelectMany(image => TagCatalogStore.TagsOf(image).Distinct(StringComparer.OrdinalIgnoreCase))
-                .GroupBy(tag => tag, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-            return names.Select(name => new TagDefinition(name, counts.GetValueOrDefault(name))).ToArray();
+            var projection = TagCatalogProjector.Project(catalog, records);
+            if (!projection.Catalog.Names.SequenceEqual(catalog.Names))
+                await store.CommitTagCatalogAsync([], projection.Catalog, null, key.Bytes);
+            return projection.Definitions;
         }
         finally { store.Gate.Release(); }
     }
@@ -57,63 +54,59 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
             var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
-            var names = TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagCatalogStore.TagsOf)));
+            var names = TagCatalogStore.ReconcileNames(catalog, records);
             if (original is not null && !names.Contains(original, StringComparer.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"Tag '{original}' does not exist.");
             var target = replacement is null ? null : names.FirstOrDefault(name => name.Equals(replacement, StringComparison.OrdinalIgnoreCase)
                 && !name.Equals(original, StringComparison.OrdinalIgnoreCase)) ?? replacement;
             var nextNames = TagCatalogStore.NormalizeTagNames(names.Where(name => !name.Equals(original, StringComparison.OrdinalIgnoreCase))
                 .Concat(target is null ? [] : new[] { target }));
-            var changed = original is null ? [] : records.Where(image => TagCatalogStore.TagsOf(image).Contains(original, StringComparer.OrdinalIgnoreCase))
-                .Select(image => image with
-                {
-                    Tags = string.Join(", ", TagCatalogStore.TagsOf(image).Select(tag => tag.Equals(original, StringComparison.OrdinalIgnoreCase) ? target : tag)
-                        .Where(tag => tag is not null).Distinct(StringComparer.OrdinalIgnoreCase))
-                }).ToArray();
+            var changedRecords = original is null ? [] : PrepareChangedTagAssignments(records, original, target);
             // Renames follow exact-tag saved filters. Deletion retains those filters so it cannot silently broaden their results.
             IReadOnlyList<SavedView>? views = original is not null && target is not null
-                ? (await store.LoadViewsAsync(key.Bytes)).Select(view => view with
-                {
-                    GalleryFilter = view.GalleryFilter.WithRenamedTag(original, target)
-                }).ToArray()
+                ? PrepareRenamedSavedViews(await store.LoadViewsAsync(key.Bytes), original, target)
                 : null;
-            await store.CommitTagCatalogAsync(changed, new(nextNames), views, key.Bytes);
+            await store.CommitTagCatalogAsync(changedRecords, new(nextNames), views, key.Bytes);
         }
         finally { store.Gate.Release(); }
     }
+
+    private static ImageRecord[] PrepareChangedTagAssignments(IReadOnlyList<ImageRecord> records, string original, string? target) =>
+        records.Where(image => TagCatalogStore.TagsOf(image).Contains(original, StringComparer.OrdinalIgnoreCase))
+            .Select(image => image with
+            {
+                Tags = string.Join(", ", TagCatalogStore.TagsOf(image).Select(tag =>
+                        tag.Equals(original, StringComparison.OrdinalIgnoreCase) ? target : tag)
+                    .Where(tag => tag is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+            }).ToArray();
+
+    private static IReadOnlyList<SavedView> PrepareRenamedSavedViews(
+        IReadOnlyList<SavedView> savedViews, string original, string replacement) =>
+        savedViews.Select(view => view with
+        {
+            GalleryFilter = view.GalleryFilter.WithRenamedTag(original, replacement)
+        }).ToArray();
 
     public const long MaxTagCsvBytes = IGalleryTags.MaxCsvBytes;
 
     public async Task<(int Added, int Skipped)> ImportTagsCsvAsync(Stream input)
     {
-        var generation = vaultSession.AcquireUnlockedSession();
+        var unlockedVaultSession = vaultSession.AcquireUnlockedSession();
         var store = galleryLifetime.Current.GalleryStore;
         using var content = await ImportContentValidator.ReadAsync(input, MaxTagCsvBytes, "Tag CSV files must be 10 MiB or smaller.");
-        string[] imported;
-        try
-        {
-            content.Position = 0;
-            imported = TagCsvProcessor.Read(content).Select((name, index) =>
-            {
-                try { return ValidateTagName(name); }
-                catch (InvalidOperationException exception)
-                {
-                    throw new InvalidOperationException($"CSV tag {index + 1}: {exception.Message}", exception);
-                }
-            }).ToArray();
-        }
-        finally { CryptographicOperations.ZeroMemory(content.GetBuffer()); }
-        generation.RevocationToken.ThrowIfCancellationRequested();
-        using var key = generation.Borrow();
-        await store.Gate.WaitAsync(generation.RevocationToken);
+        var importedRows = TagCsvProcessor.ReadAndClear(content);
+        unlockedVaultSession.RevocationToken.ThrowIfCancellationRequested();
+        using var key = unlockedVaultSession.Borrow();
+        await store.Gate.WaitAsync(unlockedVaultSession.RevocationToken);
         try
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
             var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
-            var names = TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagCatalogStore.TagsOf)));
+            var names = TagCatalogStore.ReconcileNames(catalog, records);
+            var imported = TagCsvProcessor.ValidateRows(importedRows, names);
             var next = TagCatalogStore.NormalizeTagNames(names.Concat(imported));
             var added = next.Length - names.Length;
-            generation.RevocationToken.ThrowIfCancellationRequested();
+            unlockedVaultSession.RevocationToken.ThrowIfCancellationRequested();
             if (!next.SequenceEqual(catalog.Names)) await store.CommitTagCatalogAsync([], new(next), null, key.Bytes);
             return (added, imported.Length - added);
         }
@@ -122,16 +115,16 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
 
     public async Task<ExportFile> ExportTagsCsvAsync()
     {
-        var generation = vaultSession.AcquireUnlockedSession();
+        var unlockedVaultSession = vaultSession.AcquireUnlockedSession();
         var store = galleryLifetime.Current.GalleryStore;
-        using var key = generation.Borrow();
-        await store.Gate.WaitAsync(generation.RevocationToken);
+        using var key = unlockedVaultSession.Borrow();
+        await store.Gate.WaitAsync(unlockedVaultSession.RevocationToken);
         try
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
             var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
-            var names = TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(records.SelectMany(TagCatalogStore.TagsOf)));
-            generation.RevocationToken.ThrowIfCancellationRequested();
+            var names = TagCatalogStore.ReconcileNames(catalog, records);
+            unlockedVaultSession.RevocationToken.ThrowIfCancellationRequested();
             var csv = TagCsvProcessor.Write(names);
             try { return new("tags.csv", "text/csv;charset=utf-8", csv); }
             finally { CryptographicOperations.ZeroMemory(csv); }
@@ -140,11 +133,11 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
     }
 
     // The record editor already holds the catalog gate for the read, validation, and commit.
-    public static async Task SaveEditedTagsAsync(IGalleryStore store, ImageRecord previous, ImageRecord updated, byte[] key)
+    public async Task CommitEditedTagsAsync(
+        IGalleryStore store, ImageRecord imageRecordForTagRetention, ImageRecord imageRecordToCommit, byte[] key)
     {
         var catalog = await TagCatalogStore.ReadAsync(store, key);
-        var names = TagCatalogStore.NormalizeTagNames(catalog.Names.Concat(TagCatalogStore.TagsOf(previous)).Concat(TagCatalogStore.TagsOf(updated)));
-        // Keep tag definitions even when their last assignment is removed.
-        await store.CommitTagCatalogAsync([updated], new(names), null, key);
+        var nextCatalog = TagCatalogStore.MergeEditedTags(catalog, imageRecordForTagRetention, imageRecordToCommit);
+        await store.CommitTagCatalogAsync([imageRecordToCommit], nextCatalog, null, key);
     }
 }

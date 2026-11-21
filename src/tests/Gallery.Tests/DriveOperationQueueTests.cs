@@ -1,6 +1,7 @@
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Infrastructure.Persistence.Sqlite;
@@ -81,6 +82,21 @@ public sealed class DriveOperationQueueTests
         var counts = await fixture.Store.ReadDriveQueueCountsAsync();
         Assert.Equal(1, counts.Pending);
         await otherService.Vault.CloseVaultAsync();
+    }
+
+    [Fact]
+    public async Task CancelAndRetry_WhenGalleryIsLocked_ThenDoNotRetainTheCheckout()
+    {
+        using var fixture = await LoadedVaultAsync();
+        fixture.Scope.Vault.LockVault();
+        await WaitForCheckoutReleaseAsync(fixture.Root);
+
+        await Assert.ThrowsAsync<Gallery.Core.Exceptions.VaultLockedException>(
+            fixture.Scope.DriveOperations.CancelDriveOperationsAsync);
+        await Assert.ThrowsAsync<Gallery.Core.Exceptions.VaultLockedException>(
+            fixture.Scope.DriveOperations.RetryFailedDriveOperationsAsync);
+
+        using var checkout = VaultCheckout.Acquire(fixture.Root);
     }
 
     [Fact]
@@ -288,6 +304,57 @@ public sealed class DriveOperationQueueTests
     }
 
     [Fact]
+    public async Task IndexRebuild_WhenIndexClearFails_ThenNextLoadSchedulesTheRebuild()
+    {
+        using var fixture = await LoadedVaultAsync();
+        await fixture.Scope.Ingestion.ImportAsync(
+            new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        await fixture.Scope.Storage.RefreshStorageOverviewAsync();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            $"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False");
+        await connection.OpenAsync();
+        using (var createTrigger = connection.CreateCommand())
+        {
+            createTrigger.CommandText =
+                "CREATE TRIGGER prevent_index_clear BEFORE DELETE ON media_index BEGIN SELECT RAISE(ABORT, 'test failure'); END";
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(
+                fixture.Scope.Storage.RebuildStorageIndexAsync);
+        }
+        finally
+        {
+            using var dropTrigger = connection.CreateCommand();
+            dropTrigger.CommandText = "DROP TRIGGER prevent_index_clear";
+            await dropTrigger.ExecuteNonQueryAsync();
+        }
+
+        Assert.True((await fixture.Scope.Storage.RefreshStorageOverviewAsync()).IsIndexPending);
+
+        await fixture.Scope.Catalog.LoadAsync();
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+
+        Assert.False((await fixture.Scope.Storage.RefreshStorageOverviewAsync()).IsIndexPending);
+    }
+
+    [Fact]
+    public void DeleteProbe_WhenPathIsAbsentOrInaccessible_ThenOnlyAbsenceIsIgnored()
+    {
+        Assert.Null(QueuedFileDeletion.GetFileAttributesOrNull(
+            "missing", _ => throw new FileNotFoundException()));
+        Assert.Null(QueuedFileDeletion.GetFileAttributesOrNull(
+            "missing-parent", _ => throw new DirectoryNotFoundException()));
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            QueuedFileDeletion.GetFileAttributesOrNull(
+                "inaccessible", _ => throw new UnauthorizedAccessException()));
+    }
+
+    [Fact]
     public async Task StorageOverview_WhenTheIndexScanHasNotPlayed_ThenReportsTheIndexAsPending()
     {
         // Arrange
@@ -317,6 +384,21 @@ public sealed class DriveOperationQueueTests
         await fixture.Scope.Catalog.LoadAsync();
         await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
         return fixture;
+    }
+
+    private static async Task WaitForCheckoutReleaseAsync(string root)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var checkout = VaultCheckout.Acquire(root);
+                return;
+            }
+            catch (IOException) { await Task.Delay(10); }
+        }
+        throw new TimeoutException("The locked gallery checkout was not released.");
     }
 
     private static async Task RemoveAsync(TestVault fixture, string id)

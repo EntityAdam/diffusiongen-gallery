@@ -1,5 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Gallery.Core.Exceptions;
 
+[ExcludeFromCodeCoverage]
 public sealed class ImportCatalogWriteException : GalleryTechnicalException
 {
     public ImportCatalogWriteException() { }

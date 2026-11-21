@@ -23,6 +23,7 @@ internal interface IGalleryStore : IGalleryBrowseReader, IGalleryMediaStoreReade
         .Select(record => new CatalogImportSource(record.Id, record.SourcePath, record.Sha256, record.OriginalBytes)).ToList();
     Task InsertAsync(ImageRecord imageRecord, ImageThumbnail imageThumbnail, byte[] key);
     Task UpdateAsync(ImageRecord imageRecord, byte[] key);
+    Task UpdateRecordsAsync(IReadOnlyList<ImageRecord> imageRecords, byte[] key);
     Task DeleteAsync(string id, byte[] key);
     Task CommitCollectionCatalogAsync(IReadOnlyList<ImageRecord> records, CollectionCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);
     Task CommitTagCatalogAsync(IReadOnlyList<ImageRecord> records, TagCatalog catalog, IReadOnlyList<SavedView>? views, byte[] key);

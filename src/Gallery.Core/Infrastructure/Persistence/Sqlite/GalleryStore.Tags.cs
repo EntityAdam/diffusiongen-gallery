@@ -10,24 +10,11 @@ internal sealed partial class GalleryStore
     {
         await using var connection = await OpenAsync();
         using var transaction = connection.BeginTransaction();
-        foreach (var record in records)
-        {
-            using var command = GalleryStoreCommandFactory.CreateUpdateImage(connection, record.Id, EncodeRecord(record, key), transaction);
-            RequireSingleImageMutation(await command.ExecuteNonQueryAsync(), record.Id, UpdateAction, UpdatedOutcome);
-        }
-        using (var command = GalleryStoreCommandFactory.CreateSaveSettings(connection, TagCatalog.SettingId,
-            EncodeSetting(catalog, TagCatalog.SettingPurpose, key)))
-        {
-            command.Transaction = transaction;
-            await command.ExecuteNonQueryAsync();
-        }
+        await UpdateCatalogRecordsAsync(connection, transaction, records, key);
+        await SaveCatalogSettingAsync(connection, transaction, TagCatalog.SettingId,
+            EncodeSetting(catalog, TagCatalog.SettingPurpose, key));
         if (views is not null)
-        {
-            using var command = GalleryStoreCommandFactory.CreateSaveSettings(connection, SavedViewsId,
-                EncodeSetting(views, SavedViewsPurpose, key));
-            command.Transaction = transaction;
-            await command.ExecuteNonQueryAsync();
-        }
+            await SaveCatalogSettingAsync(connection, transaction, SavedViewsId, EncodeSetting(views, SavedViewsPurpose, key));
         transaction.Commit();
     }
 }

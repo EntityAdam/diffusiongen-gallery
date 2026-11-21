@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Gallery.Core.Exceptions;
@@ -19,6 +20,9 @@ namespace Gallery.Core.Features.Ingestion;
 
 internal sealed class ImportMediaPreparer(VideoTools? videoTools)
 {
+    private const string ImagesStorageDirectoryName = "images";
+    private const int ThumbnailMaxDimensionPixels = 384;
+
     public const long MaxFileBytes = 50 * 1024 * 1024;
     public const long MaxVideoBytes = 256 * 1024 * 1024;
     public bool VideoToolsAvailable => videoTools?.IsAvailable == true;
@@ -33,23 +37,47 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
         ImportMediaValidator.ValidateImageDimensions(image.Width, image.Height);
         var contentType = ImportMediaValidator.RequireSupportedContentType(image.Metadata.DecodedImageFormat);
         ImportMediaValidator.ValidateImageFrames(image.Frames.Count);
-        var metadata = JsonSerializer.Serialize(new
-        {
-            png = image.Metadata.GetPngMetadata().TextData.Select(chunk => new { chunk.Keyword, chunk.Value }),
-            exif = image.Metadata.ExifProfile?.Values.Select(value => $"{value.Tag}: {value.GetValue()}")
-        });
+        var metadata = SerializeImageMetadata(image);
         timings?.Record(IngestionStage.Decode, stageStart);
         stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var thumbnailBytes = await CreateThumbnailAsync(image);
         timings?.Record(IngestionStage.Thumbnail, stageStart);
+        var record = CreateImageRecord(
+            image, original.Length, name, sourceFolder, sourcePath, sourceHash, contentType, metadata, mediaRoot);
+        try
+        {
+            stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            var encrypted = StoredMediaProcessor.EncryptImport(record,
+                original.GetBuffer().AsSpan(0, (int)original.Length), thumbnailBytes, key);
+            timings?.Record(IngestionStage.Encrypt, stageStart);
+            return new PreparedImport(record,
+                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedMedia),
+                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedThumbnail));
+        }
+
+        finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
+    }
+
+    private static string SerializeImageMetadata(Image image) =>
+        JsonSerializer.Serialize(new
+        {
+            png = image.Metadata.GetPngMetadata().TextData.Select(chunk => new { chunk.Keyword, chunk.Value }),
+            exif = image.Metadata.ExifProfile?.Values.Select(value => $"{value.Tag}: {value.GetValue()}")
+        });
+
+    private static ImageRecord CreateImageRecord(
+        Image image, long originalBytes, string name, string sourceFolder, string sourcePath,
+        string sourceHash, string contentType, string metadata, string mediaRoot)
+    {
         var record = new ImageRecord
         {
             Name = Path.GetFileNameWithoutExtension(name),
             OriginalName = Path.GetFileName(name),
             SourceFolder = sourceFolder,
             SourcePath = sourcePath,
-            Width = image.Width, Height = image.Height,
-            OriginalBytes = original.Length,
+            Width = image.Width,
+            Height = image.Height,
+            OriginalBytes = originalBytes,
             Sha256 = sourceHash,
             ContentSha256 = sourceHash,
             ContentType = contentType,
@@ -57,20 +85,11 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
             Generation = ComfyMetadata.Extract(metadata),
             MetadataVersion = ComfyMetadata.Version
         };
-        record = record with
+        return record with
         {
-            StoredPath = Path.Combine(mediaRoot, "images", record.Id[..2], record.Id[2..4], record.Id + StoredMediaProcessor.EncryptedPngExtension)
+            StoredPath = Path.Combine(mediaRoot, ImagesStorageDirectoryName, record.Id[..2],
+                record.Id[2..4], record.Id + StoredMediaProcessor.EncryptedPngExtension)
         };
-        try
-        {
-            stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            var encrypted = StoredMediaProcessor.EncryptImport(record,
-                original.GetBuffer().AsSpan(0, (int)original.Length), thumbnailBytes, key);
-            timings?.Record(IngestionStage.Encrypt, stageStart);
-            return new PreparedImport(record, encrypted.EncryptedMedia, encrypted.EncryptedThumbnail);
-        }
-
-        finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
     }
 
     private static async Task<Image<Rgba32>> DecodeImportImageAsync(Stream original)
@@ -98,7 +117,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
     }
 
     /// <summary>
-    /// ffprobe/ffmpeg need a file, so the plaintext MP4 is written briefly to a randomly named temp file
+    /// ffprobe/ffmpeg need a file, so the plaintext MP4 is written briefly into a private temp directory
     /// that is deleted as soon as the metadata and first frame are read.
     /// </summary>
     public async Task<PreparedImport> PrepareVideoAsync(
@@ -118,32 +137,39 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
             stageStart = System.Diagnostics.Stopwatch.GetTimestamp();
             var encrypted = StoredMediaProcessor.EncryptImport(record, bytes.Span, thumbnailBytes, key);
             timings?.Record(IngestionStage.Encrypt, stageStart);
-            return new PreparedImport(record, encrypted.EncryptedMedia, encrypted.EncryptedThumbnail);
+            return new PreparedImport(record,
+                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedMedia),
+                ImmutableCollectionsMarshal.AsImmutableArray(encrypted.EncryptedThumbnail));
         }
         finally { CryptographicOperations.ZeroMemory(thumbnailBytes); }
     }
 
     private VideoTools RequiredVideoTools() =>
         videoTools is not null && videoTools.IsAvailable ? videoTools
-            : throw new VideoToolUnavailableException(VideoTools.MissingMessage, GalleryLogEvent.PrepareVideo,
+            : throw new VideoToolUnavailableException(VideoTools.MissingMessage, LogEventGallery.PrepareVideo,
                 new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Video.RequiredTools", "ffmpeg, ffprobe")));
 
     private static async Task<(VideoTools.ProbeResult Probe, byte[] FrameBytes)> ReadTemporaryVideoAsync(
         ReadOnlyMemory<byte> bytes, VideoTools tools)
     {
-        var temporaryVideoPath = Path.Combine(Path.GetTempPath(), "gallery-" + Guid.NewGuid().ToString("N") + IngestionSourceScanner.Mp4Extension);
+        var temporaryDirectory = CreatePrivateTemporaryVideoDirectory();
+        var temporaryVideoPath = Path.Combine(temporaryDirectory, "source" + IngestionSourceScanner.Mp4Extension);
         byte[]? videoFrameBytes = null;
         try
         {
             await WriteTemporaryVideoAsync(temporaryVideoPath, bytes);
             var probe = await tools.ProbeAsync(temporaryVideoPath);
             ImportMediaValidator.ValidateVideo(probe);
-            videoFrameBytes = await tools.FirstFrameAsync(temporaryVideoPath);
+            videoFrameBytes = await tools.FirstFrameAsync(temporaryVideoPath, probe.StreamIndex);
             return (probe, videoFrameBytes);
         }
         finally
         {
-            try { DeleteTemporaryVideo(temporaryVideoPath); }
+            try
+            {
+                DeleteTemporaryVideo(temporaryVideoPath);
+                DeleteTemporaryVideoDirectory(temporaryDirectory);
+            }
             catch
             {
                 if (videoFrameBytes is not null) CryptographicOperations.ZeroMemory(videoFrameBytes);
@@ -152,10 +178,44 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
         }
     }
 
+    internal static string CreatePrivateTemporaryVideoDirectory()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "gallery-" + Guid.NewGuid().ToString("N"));
+        if (OperatingSystem.IsWindows())
+            Directory.CreateDirectory(path);
+        else
+            Directory.CreateDirectory(path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return path;
+    }
+
+    internal static FileStream OpenPrivateTemporaryVideoFile(string path)
+    {
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+            Options = FileOptions.Asynchronous
+        };
+        if (!OperatingSystem.IsWindows())
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        return new FileStream(path, options);
+    }
+
     private static async Task WriteTemporaryVideoAsync(string path, ReadOnlyMemory<byte> bytes)
     {
-        await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        await output.WriteAsync(bytes);
+        await using var fileStream = OpenPrivateTemporaryVideoFile(path);
+        await fileStream.WriteAsync(bytes);
+    }
+
+    private static void DeleteTemporaryVideoDirectory(string path)
+    {
+        try { Directory.Delete(path); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException($"The temporary decrypted video directory could not be deleted from '{path}'. Remove it manually.", exception);
+        }
     }
 
     private static void DeleteTemporaryVideo(string path)
@@ -203,7 +263,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
         };
         record = record with
         {
-            StoredPath = Path.Combine(mediaRoot, "images", record.Id[..2], record.Id[2..4], record.Id + StoredMediaProcessor.EncryptedMp4Extension)
+            StoredPath = Path.Combine(mediaRoot, ImagesStorageDirectoryName, record.Id[..2], record.Id[2..4], record.Id + StoredMediaProcessor.EncryptedMp4Extension)
         };
         return record;
     }
@@ -218,13 +278,13 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
         thumbnail.Metadata.IccProfile = null;
         thumbnail.Metadata.XmpProfile = null;
         thumbnail.Metadata.GetPngMetadata().TextData.Clear();
-        using var thumb = new MemoryStream();
-        await thumbnail.SaveAsPngAsync(thumb, new PngEncoder
+        using var memoryStream = new MemoryStream();
+        await thumbnail.SaveAsPngAsync(memoryStream, new PngEncoder
         {
             SkipMetadata = true, CompressionLevel = PngCompressionLevel.Level1
         });
-        var thumbnailBytes = thumb.ToArray();
-        CryptographicOperations.ZeroMemory(thumb.GetBuffer());
+        var thumbnailBytes = memoryStream.ToArray();
+        CryptographicOperations.ZeroMemory(memoryStream.GetBuffer());
         return thumbnailBytes;
     }
 }

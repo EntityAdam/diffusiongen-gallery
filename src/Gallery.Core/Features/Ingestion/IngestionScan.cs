@@ -24,6 +24,8 @@ public sealed class IngestionScan
     internal string MediaRoot { get; }
     internal ImmutableArray<IngestionScanFile> Files { get; }
 
-    internal ImmutableArray<IngestionScanFile> SelectFiles(bool includeImages, bool includeVideos) =>
-        Files.Where(file => file.IsVideo ? includeVideos : includeImages).ToImmutableArray();
+    internal ImmutableArray<IngestionScanFile> SelectFiles(IngestionMediaSelection mediaSelection) =>
+        Files.Where(file => file.IsVideo
+            ? (mediaSelection & IngestionMediaSelection.Videos) != 0
+            : (mediaSelection & IngestionMediaSelection.Images) != 0).ToImmutableArray();
 }

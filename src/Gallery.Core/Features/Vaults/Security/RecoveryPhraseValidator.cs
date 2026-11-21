@@ -1,4 +1,6 @@
-namespace Gallery.Core.Features.Vaults;
+using Gallery.Core.Features.Vaults;
+
+namespace Gallery.Core.Features.Vaults.Security;
 
 internal static class RecoveryPhraseValidator
 {

@@ -57,22 +57,21 @@ internal sealed class GallerySettings(GalleryLifetime galleryLifetime, VaultSess
 
     public async Task<List<SavedView>> LoadViewsAsync()
     {
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        return await galleryLifetime.Current.GalleryStore.LoadViewsAsync(key.Bytes);
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        return await galleryLifetime.Current.GalleryStore.LoadViewsAsync(keyLease.Bytes);
     }
 
     public async Task SaveViewAsync(string name, GalleryFilter filter)
     {
-        var normalizedName = name.Trim();
-        SavedViewNameValidator.Validate(normalizedName);
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        await galleryLifetime.Current.GalleryStore.SaveViewAsync(normalizedName, filter, key.Bytes);
+        var normalizedName = SavedViewNameValidator.NormalizeAndValidate(name);
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        await galleryLifetime.Current.GalleryStore.SaveViewAsync(normalizedName, filter, keyLease.Bytes);
     }
 
     public async Task DeleteViewAsync(string name)
     {
-        using var key = vaultSession.AcquireUnlockedSession().Borrow();
-        await galleryLifetime.Current.GalleryStore.DeleteViewAsync(name.Trim(), key.Bytes);
+        using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
+        await galleryLifetime.Current.GalleryStore.DeleteViewAsync(name.Trim(), keyLease.Bytes);
     }
 
     private async Task<T?> ReadEncryptedSettingAsync<T>(string id, string purpose) where T : class

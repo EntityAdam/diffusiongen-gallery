@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using Gallery.Core.Features.Browsing;
+using Gallery.Core.Features.Browsing.Filtering;
 using Gallery.Core.Features.Curation;
 using Gallery.Core.Features.Duplicates;
 using Gallery.Core.Features.Ingestion.Metadata;

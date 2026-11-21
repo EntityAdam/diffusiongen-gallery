@@ -35,11 +35,13 @@ public sealed class VisionCheckpointSession
         finally { gate.Release(); }
     }
 
-    public Task StageAsync(VisionDraft draft) => UpdateAsync(state => state with
+    public Task StageAsync(VisionDraft draft) => UpdateAsync(state => StageDraftAndDequeue(state, draft));
+
+    private static VisionCheckpoint StageDraftAndDequeue(VisionCheckpoint state, VisionDraft draft) => state with
     {
         Drafts = [.. state.Drafts.Where(item => item.Id != draft.Id || item.TagsOnly != draft.TagsOnly), draft],
         Queue = [.. state.Queue.Where(item => item.Id != draft.Id || item.TagsOnly != draft.TagsOnly)]
-    });
+    };
 
     public Task DismissAsync(string id, bool tagsOnly = false) => UpdateAsync(state => state with
     {
@@ -71,21 +73,33 @@ public sealed class VisionCheckpointSession
         var count = 0;
         await UpdateAsync(state =>
         {
-            count = state.Drafts.Count(draft => !draft.TagsOnly);
-            return state with { Drafts = [.. state.Drafts.Where(draft => draft.TagsOnly)] };
+            var transition = DiscardFullDrafts(state);
+            count = transition.Count;
+            return transition.Checkpoint;
         });
         return count;
     });
 
-    public Task UpdateDraftTagsAsync(string previousName, string? name) => UpdateAsync(state => state with
+    private static (VisionCheckpoint Checkpoint, int Count) DiscardFullDrafts(VisionCheckpoint state)
     {
-        Drafts = [.. state.Drafts.Select(draft => draft with
-        {
-            Tags = string.Join(", ", draft.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(tag => tag.Equals(previousName, StringComparison.OrdinalIgnoreCase) ? name : tag)
-                .Where(tag => tag is not null).Distinct(StringComparer.OrdinalIgnoreCase))
-        })]
-    });
+        var count = state.Drafts.Count(draft => !draft.TagsOnly);
+        return (state with { Drafts = [.. state.Drafts.Where(draft => draft.TagsOnly)] }, count);
+    }
+
+    public Task UpdateDraftTagsAsync(string previousName, string? name) =>
+        UpdateAsync(state => RewriteDraftTags(state, previousName, name));
+
+    private static VisionCheckpoint RewriteDraftTags(VisionCheckpoint state, string previousName, string? name) =>
+        state with { Drafts = [.. state.Drafts.Select(draft => RewriteDraftTags(draft, previousName, name))] };
+
+    private static VisionDraft RewriteDraftTags(VisionDraft draft, string previousName, string? name) =>
+        draft with { Tags = RewriteTags(draft.Tags, previousName, name) };
+
+    private static string RewriteTags(string tags, string previousName, string? name) =>
+        string.Join(", ", tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(tag => tag.Equals(previousName, StringComparison.OrdinalIgnoreCase) ? name : tag)
+            .Where(tag => tag is not null)
+            .Distinct(StringComparer.OrdinalIgnoreCase));
 
     private Task RemoveDraftAsync(VisionDraft draft) => UpdateAsync(state => state with
     {

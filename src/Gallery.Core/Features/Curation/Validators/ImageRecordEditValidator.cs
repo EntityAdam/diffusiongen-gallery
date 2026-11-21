@@ -1,6 +1,6 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Curation;
+namespace Gallery.Core.Features.Curation.Validators;
 
 internal static class ImageRecordEditValidator
 {

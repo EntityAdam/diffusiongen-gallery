@@ -16,14 +16,14 @@ internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vau
 {
     // Serializes disposal admission with checkout publication so disposal cleanup observes every published checkout.
     private readonly object publicationGate = new();
-    private GalleryLocation current = new(galleryStore, vaultStore, null);
+    private GalleryLocation publishedLocation = new(galleryStore, vaultStore, null);
     private int disposalStarted;
     private VaultHistory? history;
 
     internal IGalleryStoreFactory StoreFactory { get; } = storeFactory ?? new GalleryStoreFactory();
 
     internal SemaphoreSlim Gate { get; } = new(1, 1);
-    internal GalleryLocation Current => Volatile.Read(ref current);
+    internal GalleryLocation Current => Volatile.Read(ref publishedLocation);
     internal VaultHistory? History => Volatile.Read(ref history);
     internal bool IsDisposed => Volatile.Read(ref disposalStarted) != 0;
 
@@ -50,7 +50,7 @@ internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vau
         {
             if (!IsDisposed)
             {
-                Volatile.Write(ref current, location with { Checkout = acquiredCheckout });
+                Volatile.Write(ref publishedLocation, location with { Checkout = acquiredCheckout });
                 return;
             }
         }
@@ -62,7 +62,7 @@ internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vau
     {
         var location = Current;
         location.Checkout?.Dispose();
-        Volatile.Write(ref current, location with { Checkout = null });
+        Volatile.Write(ref publishedLocation, location with { Checkout = null });
     }
 
     internal VaultCheckout? PublishLocation(IGalleryStore nextGalleryStore, VaultStore nextVaultStore, VaultCheckout? nextCheckout)
@@ -70,8 +70,8 @@ internal sealed class GalleryLifetime(IGalleryStore galleryStore, VaultStore vau
         lock (publicationGate)
         {
             ObjectDisposedException.ThrowIf(IsDisposed, this);
-            var previous = Interlocked.Exchange(ref current, new(nextGalleryStore, nextVaultStore, nextCheckout));
-            return previous.Checkout;
+            var retiredLocation = Interlocked.Exchange(ref publishedLocation, new(nextGalleryStore, nextVaultStore, nextCheckout));
+            return retiredLocation.Checkout;
         }
     }
 }

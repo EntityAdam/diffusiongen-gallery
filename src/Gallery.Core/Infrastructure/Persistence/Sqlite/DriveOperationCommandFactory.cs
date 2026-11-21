@@ -14,9 +14,9 @@ internal static class DriveOperationCommandFactory
             ON CONFLICT(kind, target) DO UPDATE SET image_id = excluded.image_id, payload = excluded.payload,
                 state = 'pending', attempts = 0, not_before = 0, error = NULL, revision = drive_operations.revision + 1
             """);
-        sqliteCommand.AddParameter("$kind", newDriveOperation.Kind);
+        AddTextParameter(sqliteCommand, "$kind", newDriveOperation.Kind);
         sqliteCommand.AddParameter("$target", DbType.Binary).Value = newDriveOperation.Target.ToArray();
-        sqliteCommand.AddParameter("$imageId", (object?)newDriveOperation.ImageId ?? DBNull.Value);
+        AddTextParameter(sqliteCommand, "$imageId", newDriveOperation.ImageId);
         sqliteCommand.AddParameter("$payload", DbType.Binary).Value = newDriveOperation.Payload.ToArray();
         return sqliteCommand;
     }
@@ -27,8 +27,8 @@ internal static class DriveOperationCommandFactory
             SELECT sequence, kind, target, image_id, payload, attempts, revision FROM drive_operations
             WHERE state = 'pending' AND not_before <= $now ORDER BY sequence LIMIT $limit
             """);
-        sqliteCommand.AddParameter("$now", now);
-        sqliteCommand.AddParameter("$limit", limit);
+        sqliteCommand.AddParameter("$now", DbType.Int64).Value = now;
+        sqliteCommand.AddParameter("$limit", DbType.Int32).Value = limit;
         return sqliteCommand;
     }
 
@@ -48,7 +48,7 @@ internal static class DriveOperationCommandFactory
             SELECT sequence, kind, target, image_id, payload, attempts, revision FROM drive_operations
             WHERE kind = $kind AND target = $target AND state = 'pending'
             """);
-        sqliteCommand.AddParameter("$kind", kind);
+        AddTextParameter(sqliteCommand, "$kind", kind);
         sqliteCommand.AddParameter("$target", DbType.Binary).Value = target;
         return sqliteCommand;
     }
@@ -56,7 +56,7 @@ internal static class DriveOperationCommandFactory
     public static DbCommand CreateDelete(DbConnection sqliteConnection, DbTransaction? sqliteTransaction, long sequence)
     {
         var sqliteCommand = Create(sqliteConnection, sqliteTransaction, "DELETE FROM drive_operations WHERE sequence = $sequence");
-        sqliteCommand.AddParameter("$sequence", sequence);
+        sqliteCommand.AddParameter("$sequence", DbType.Int64).Value = sequence;
         return sqliteCommand;
     }
 
@@ -64,8 +64,8 @@ internal static class DriveOperationCommandFactory
     {
         var sqliteCommand = Create(sqliteConnection, sqliteTransaction,
             "DELETE FROM drive_operations WHERE sequence = $sequence AND revision = $revision");
-        sqliteCommand.AddParameter("$sequence", driveOperationResult.Sequence);
-        sqliteCommand.AddParameter("$revision", driveOperationResult.Revision);
+        sqliteCommand.AddParameter("$sequence", DbType.Int64).Value = driveOperationResult.Sequence;
+        sqliteCommand.AddParameter("$revision", DbType.Int64).Value = driveOperationResult.Revision;
         return sqliteCommand;
     }
 
@@ -75,12 +75,13 @@ internal static class DriveOperationCommandFactory
             UPDATE drive_operations SET state = $state, attempts = $attempts, not_before = $notBefore, error = $error
             WHERE sequence = $sequence AND revision = $revision
             """);
-        sqliteCommand.AddParameter("$state", driveOperationResult.Outcome == DriveOperationOutcome.Failed ? "failed" : "pending");
-        sqliteCommand.AddParameter("$attempts", driveOperationResult.Attempts);
-        sqliteCommand.AddParameter("$notBefore", driveOperationResult.NotBefore);
-        sqliteCommand.AddParameter("$error", (object?)driveOperationResult.Error ?? DBNull.Value);
-        sqliteCommand.AddParameter("$sequence", driveOperationResult.Sequence);
-        sqliteCommand.AddParameter("$revision", driveOperationResult.Revision);
+        var state = driveOperationResult.Outcome == DriveOperationOutcome.Failed ? "failed" : "pending";
+        AddTextParameter(sqliteCommand, "$state", state);
+        sqliteCommand.AddParameter("$attempts", DbType.Int32).Value = driveOperationResult.Attempts;
+        sqliteCommand.AddParameter("$notBefore", DbType.Int64).Value = driveOperationResult.NotBefore;
+        AddTextParameter(sqliteCommand, "$error", driveOperationResult.Error);
+        sqliteCommand.AddParameter("$sequence", DbType.Int64).Value = driveOperationResult.Sequence;
+        sqliteCommand.AddParameter("$revision", DbType.Int64).Value = driveOperationResult.Revision;
         return sqliteCommand;
     }
 
@@ -96,7 +97,7 @@ internal static class DriveOperationCommandFactory
     public static DbCommand CreateCountKind(DbConnection sqliteConnection, string kind)
     {
         var sqliteCommand = Create(sqliteConnection, null, "SELECT COUNT(*) FROM drive_operations WHERE kind = $kind");
-        sqliteCommand.AddParameter("$kind", kind);
+        AddTextParameter(sqliteCommand, "$kind", kind);
         return sqliteCommand;
     }
 
@@ -131,7 +132,7 @@ internal static class DriveOperationCommandFactory
             """);
         sqliteCommand.AddParameter("$target", DbType.Binary).Value = indexedFile.Target.ToArray();
         sqliteCommand.AddParameter("$directory", DbType.Binary).Value = directory;
-        sqliteCommand.AddParameter("$length", indexedFile.Length);
+        sqliteCommand.AddParameter("$length", DbType.Int64).Value = indexedFile.Length;
         return sqliteCommand;
     }
 
@@ -152,4 +153,7 @@ internal static class DriveOperationCommandFactory
         sqliteCommand.CommandText = sql;
         return sqliteCommand;
     }
+
+    private static void AddTextParameter(DbCommand sqliteCommand, string name, string? value) =>
+        sqliteCommand.AddParameter(name, DbType.String, Math.Max(value?.Length ?? 0, 1)).Value = (object?)value ?? DBNull.Value;
 }

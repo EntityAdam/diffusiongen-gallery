@@ -34,7 +34,7 @@ internal sealed class TestVault : IDisposable
 
     public async Task InitializeAsync()
     {
-        var created = await Vault.CreateAsync(Passphrase);
+        var created = await Vault.CreateVaultAsync(Passphrase);
         Session.Unlock(created.Key);
     }
 

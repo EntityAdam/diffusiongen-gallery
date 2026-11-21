@@ -36,12 +36,12 @@ internal static class ComfyApiPromptParser
         try
         {
             return JsonNode.Parse(apiPrompt) as JsonObject
-                ?? throw new StoredMetadataFormatException("The API prompt must be a JSON object.", GalleryLogEvent.ParseMetadata);
+                ?? throw new StoredMetadataFormatException("The API prompt must be a JSON object.", LogEventGallery.ParseMetadata);
         }
         catch (JsonException exception)
         {
             throw new StoredMetadataFormatException("The API prompt is not valid JSON.",
-                GalleryLogEvent.ParseMetadata, exception: exception);
+                LogEventGallery.ParseMetadata, exception: exception);
         }
     }
 
@@ -49,14 +49,16 @@ internal static class ComfyApiPromptParser
     {
         var sampler = GraphResolver.FindSampler(nodesById);
         string prompt = "", negativePrompt = "", model = "", kind = "", samplerName = "", scheduler = "";
+        string? resolvedPrompt = null;
         double? cfg = null;
         int? steps = null;
         if (sampler is not null)
         {
             var guider = GraphResolver.Linked(nodesById, GraphResolver.Input(sampler, "guider"));
-            prompt = GraphResolver.ResolveText(nodesById,
+            resolvedPrompt = GraphResolver.ResolveText(nodesById,
                 GraphResolver.Input(sampler, "positive") ?? GraphResolver.Input(guider, "positive")
-                    ?? GraphResolver.Input(guider, "conditioning"), "positive") ?? "";
+                    ?? GraphResolver.Input(guider, "conditioning"), "positive");
+            prompt = resolvedPrompt ?? "";
             negativePrompt = GraphResolver.ResolveText(nodesById,
                 GraphResolver.Input(sampler, "negative") ?? GraphResolver.Input(guider, "negative"), "negative") ?? "";
             cfg = GraphResolver.ResolveNumber(nodesById,
@@ -74,7 +76,7 @@ internal static class ComfyApiPromptParser
                 ?? GraphResolver.Input(GraphResolver.Linked(nodesById, GraphResolver.Input(sampler, "sigmas")), "scheduler"),
                 "scheduler") ?? "";
         }
-        if (prompt.Length == 0) prompt = GraphResolver.FirstText(nodesById) ?? "";
+        if (resolvedPrompt is null) prompt = GraphResolver.FirstText(nodesById) ?? "";
         if (model.Length == 0) (model, kind) = GraphResolver.AnyModel(nodesById);
         return new(prompt, negativePrompt, cfg, steps, model, kind, samplerName, scheduler);
     }
@@ -92,7 +94,7 @@ internal static class ComfyApiPromptParser
     private sealed record Node(
         string Id,
         string ClassType,
-        ImmutableDictionary<string, JsonElement> Inputs,
+        ImmutableDictionary<string, JsonElement> InputValuesByName,
         ImmutableArray<string> InputNames);
 
     private static class GraphResolver
@@ -104,15 +106,18 @@ internal static class ComfyApiPromptParser
         public static Node? TryGet(JsonObject nodesById, string id) =>
             nodesById[id] is JsonObject node && node["inputs"] is JsonObject inputs
                 && node["class_type"] is JsonValue classType && classType.TryGetValue<string>(out var name)
-                ? new(id, name,
-                    inputs.ToImmutableDictionary(
-                        input => input.Key,
-                        input => JsonSerializer.SerializeToElement(input.Value),
-                        StringComparer.Ordinal),
-                    inputs.Select(input => input.Key).ToImmutableArray()) : null;
+                ? CreateNode(id, name, inputs) : null;
+
+        private static Node CreateNode(string id, string classType, JsonObject inputs) =>
+            new(id, classType,
+                inputs.ToImmutableDictionary(
+                    input => input.Key,
+                    input => JsonSerializer.SerializeToElement(input.Value),
+                    StringComparer.Ordinal),
+                inputs.Select(input => input.Key).ToImmutableArray());
 
         public static JsonNode? Input(Node? node, string key) =>
-            node is not null && node.Inputs.TryGetValue(key, out var input) ? JsonNode.Parse(input.GetRawText()) : null;
+            node is not null && node.InputValuesByName.TryGetValue(key, out var input) ? JsonNode.Parse(input.GetRawText()) : null;
 
         private static IEnumerable<Node> Nodes(JsonObject nodesById) =>
             nodesById.Select(pair => TryGet(nodesById, pair.Key)).OfType<Node>();
@@ -124,17 +129,17 @@ internal static class ComfyApiPromptParser
         public static Node? FindSampler(JsonObject nodesById) => SelectPreferredSampler(Nodes(nodesById).Where(IsSamplerCandidate).ToList());
 
         private static bool IsSamplerCandidate(Node node) =>
-            node.Inputs.ContainsKey("positive") && node.Inputs.ContainsKey("negative")
-            || node.Inputs.ContainsKey("guider") || node.ClassType.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
-                && node.Inputs.ContainsKey("model");
+            node.InputValuesByName.ContainsKey("positive") && node.InputValuesByName.ContainsKey("negative")
+            || node.InputValuesByName.ContainsKey("guider") || node.ClassType.Contains("Sampler", StringComparison.OrdinalIgnoreCase)
+                && node.InputValuesByName.ContainsKey("model");
 
         private static Node? SelectPreferredSampler(IReadOnlyList<Node> samplers)
         {
             return samplers.FirstOrDefault(node => node.ClassType is "KSampler" or "KSamplerAdvanced")
-                ?? samplers.FirstOrDefault(node => node.Inputs.TryGetValue("guider", out var guider)
+                ?? samplers.FirstOrDefault(node => node.InputValuesByName.TryGetValue("guider", out var guider)
                     && guider.ValueKind == JsonValueKind.Array)
-                ?? samplers.FirstOrDefault(node => node.Inputs.ContainsKey("positive") && node.Inputs.ContainsKey("steps"))
-                ?? samplers.FirstOrDefault(node => node.Inputs.ContainsKey("positive"))
+                ?? samplers.FirstOrDefault(node => node.InputValuesByName.ContainsKey("positive") && node.InputValuesByName.ContainsKey("steps"))
+                ?? samplers.FirstOrDefault(node => node.InputValuesByName.ContainsKey("positive"))
                 ?? samplers.FirstOrDefault();
         }
 
@@ -153,7 +158,7 @@ internal static class ComfyApiPromptParser
             string role,
             int depth,
             HashSet<string> activeNodeIds,
-            Dictionary<(string NodeId, int Depth), string?> completedNodeValues,
+            Dictionary<(string NodeId, int Depth), string?> completedTextValuesByNodeIdAndDepth,
             ref int work)
         {
             if (depth > MaxDepth || jsonNode is null) return new(null, true);
@@ -164,7 +169,7 @@ internal static class ComfyApiPromptParser
             var node = Linked(nodesById, jsonNode);
             if (node is null) return new(null, true);
             var depthKey = (node.Id, depth);
-            if (completedNodeValues.TryGetValue(depthKey, out var cachedText)) return new(cachedText, true);
+            if (completedTextValuesByNodeIdAndDepth.TryGetValue(depthKey, out var cachedText)) return new(cachedText, true);
             if (!activeNodeIds.Add(node.Id)) return new(null, false);
             try
             {
@@ -175,12 +180,12 @@ internal static class ComfyApiPromptParser
                     var resolution = input.ValueKind == JsonValueKind.String
                         ? new TextResolution(input.GetString(), true)
                         : TraverseText(nodesById, JsonNode.Parse(input.GetRawText()), role, depth + 1,
-                            activeNodeIds, completedNodeValues, ref work);
+                            activeNodeIds, completedTextValuesByNodeIdAndDepth, ref work);
                     isComplete &= resolution.IsComplete;
                     resolvedText = resolution.Value;
                     if (resolvedText is not null) break;
                 }
-                if (isComplete) completedNodeValues[depthKey] = resolvedText;
+                if (isComplete) completedTextValuesByNodeIdAndDepth[depthKey] = resolvedText;
                 return new(resolvedText, isComplete);
             }
             finally { activeNodeIds.Remove(node.Id); }
@@ -189,19 +194,25 @@ internal static class ComfyApiPromptParser
         private static IEnumerable<JsonElement> TextInputs(Node node, string role)
         {
             foreach (var key in TextKeys)
-                if (node.Inputs.TryGetValue(key, out var input)
+                if (node.InputValuesByName.TryGetValue(key, out var input)
                     && input.ValueKind is JsonValueKind.String or JsonValueKind.Array)
                     yield return input;
             foreach (var key in new[] { role }.Concat(ConditioningKeys))
-                if (node.Inputs.TryGetValue(key, out var input) && input.ValueKind == JsonValueKind.Array)
+                if (node.InputValuesByName.TryGetValue(key, out var input) && input.ValueKind == JsonValueKind.Array)
                     yield return input;
-            var opposite = role == "positive" ? "negative" : "positive";
             foreach (var key in node.InputNames)
             {
-                var input = node.Inputs[key];
-                if (input.ValueKind != JsonValueKind.Array || key == opposite || NonTextLinks.Contains(key) || ConditioningKeys.Contains(key) || key == role) continue;
+                var input = node.InputValuesByName[key];
+                if (!IsFallbackTextLink(key, input, role)) continue;
                 yield return input;
             }
+        }
+
+        private static bool IsFallbackTextLink(string key, JsonElement input, string role)
+        {
+            var opposite = role == "positive" ? "negative" : "positive";
+            return input.ValueKind == JsonValueKind.Array && key != opposite && !NonTextLinks.Contains(key)
+                && !ConditioningKeys.Contains(key) && key != role;
         }
 
         public static double? ResolveNumber(JsonObject nodesById, JsonNode? jsonNode, string key, int depth = 0)
@@ -238,7 +249,7 @@ internal static class ComfyApiPromptParser
                 var isComplete = true;
                 foreach (var inputName in new[] { key, "value", "int", "float", "number" })
                 {
-                    if (!node.Inputs.TryGetValue(inputName, out var input)) continue;
+                    if (!node.InputValuesByName.TryGetValue(inputName, out var input)) continue;
                     var resolution = TraverseNumber(nodesById, JsonNode.Parse(input.GetRawText()),
                         key, depth + 1, activeNodeKeys, completedValuesByNodeKeyAndDepth, ref work);
                     isComplete &= resolution.IsComplete;
@@ -274,13 +285,16 @@ internal static class ComfyApiPromptParser
         {
             foreach (var key in node.InputNames.OrderByDescending(inputName => inputName == "model"))
             {
-                var input = node.Inputs[key];
-                if (input.ValueKind != JsonValueKind.Array || !key.Contains("model", StringComparison.OrdinalIgnoreCase)) continue;
+                var input = node.InputValuesByName[key];
+                if (!IsModelLink(key, input)) continue;
                 var resolved = ResolveModel(nodesById, JsonNode.Parse(input.GetRawText()), depth + 1, visitedNodeIds);
                 if (resolved.Model.Length > 0) return resolved;
             }
             return ("", "");
         }
+
+        private static bool IsModelLink(string key, JsonElement input) =>
+            input.ValueKind == JsonValueKind.Array && key.Contains("model", StringComparison.OrdinalIgnoreCase);
 
         public static (string Model, string Kind) AnyModel(JsonObject nodesById) =>
             Nodes(nodesById).Select(ModelOf).FirstOrDefault(found => found is not null) ?? ("", "");
@@ -292,7 +306,7 @@ internal static class ComfyApiPromptParser
         private static string? FirstString(Node node)
         {
             foreach (var key in TextKeys)
-                if (node.Inputs.TryGetValue(key, out var input) && input.ValueKind == JsonValueKind.String)
+                if (node.InputValuesByName.TryGetValue(key, out var input) && input.ValueKind == JsonValueKind.String)
                     return input.GetString();
             return null;
         }
@@ -305,7 +319,7 @@ internal static class ComfyApiPromptParser
             {
                 var key = modelInput.Item1;
                 var kind = modelInput.Item2;
-                if (node.Inputs.TryGetValue(key, out var input)
+                if (node.InputValuesByName.TryGetValue(key, out var input)
                     && input.ValueKind == JsonValueKind.String && input.GetString() is { Length: > 0 } name)
                     return (name, kind);
             }

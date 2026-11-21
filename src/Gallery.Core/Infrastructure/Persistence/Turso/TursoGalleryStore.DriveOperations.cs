@@ -53,7 +53,7 @@ internal sealed partial class TursoGalleryStore
         RequireOne(await NonQueryAsync(connection, "DELETE FROM media WHERE id=$id", transaction, ("$id", id)), id);
 
     private static Task UpdateImageAsync(DbConnection connection, DbTransaction transaction, ImageRecord record, byte[] key) =>
-        WriteRecordAsync(connection, transaction, record, insert: false);
+        WriteRecordAsync(connection, transaction, record, RecordWriteMode.Update);
 
     private static async Task RemoveSupersededOperationAsync(DbConnection sqliteConnection, DbTransaction sqliteTransaction, long sequence)
     {
@@ -85,7 +85,9 @@ internal sealed partial class TursoGalleryStore
     public Task<DriveOperation?> FindPendingDriveOperationAsync(string kind, byte[] target, byte[]? key = null) => ExecuteAsync(key, async sqliteConnection =>
     {
         using var sqliteCommand = DriveOperationCommandFactory.CreateFind(sqliteConnection, kind, target);
-        return (await ReadOperationsAsync(sqliteCommand)).SingleOrDefault();
+        var operations = await ReadOperationsAsync(sqliteCommand);
+        if (operations.Count == 0) return null;
+        return operations.Single();
     });
 
     private static async Task<List<DriveOperation>> ReadOperationsAsync(DbCommand sqliteCommand)
@@ -123,7 +125,9 @@ internal sealed partial class TursoGalleryStore
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         if (!await sqliteDataReader.ReadAsync())
-            throw new InvalidOperationException("Expected one drive queue count row, but found 0.");
+            throw WithResultShapeContext(
+                new InvalidOperationException("Expected one drive queue count row, but found 0."),
+                DriveQueueCountsCommand, observedRowCount: 0);
         return new(sqliteDataReader.GetInt32(0), sqliteDataReader.GetInt32(1), sqliteDataReader.IsDBNull(2) ? null : sqliteDataReader.GetInt64(2));
     }
 
@@ -150,14 +154,14 @@ internal sealed partial class TursoGalleryStore
     {
         using var transaction = connection.BeginTransaction();
         await NonQueryAsync(connection, "DELETE FROM drive_operations", transaction);
-        await NonQueryAsync(connection, "DELETE FROM media_index", transaction);
+        await NonQueryAsync(connection, MediaIndexDeleteSql, transaction);
         transaction.Commit();
     });
 
     public Task ClearMediaIndexAsync(byte[]? key = null) => ExecuteAsync(key, async connection =>
     {
         using var transaction = connection.BeginTransaction();
-        await NonQueryAsync(connection, "DELETE FROM media_index", transaction);
+        await NonQueryAsync(connection, MediaIndexDeleteSql, transaction);
         await NonQueryAsync(connection, "UPDATE storage_overview_state SET revision=revision+1 WHERE id=1", transaction);
         transaction.Commit();
     });

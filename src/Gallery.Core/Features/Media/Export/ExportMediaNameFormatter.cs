@@ -2,6 +2,8 @@ namespace Gallery.Core.Features.Media.Export;
 
 internal static class ExportMediaNameFormatter
 {
+    private const int MaxFileNameLength = 150;
+
     public static string Format(string name, string contentType) => SafeFileName(name) + (contentType switch
     {
         "image/jpeg" => ".jpg",
@@ -13,19 +15,28 @@ internal static class ExportMediaNameFormatter
     public static string SafeFileName(string name)
     {
         // Archive entries may be extracted on any OS, so both separators are invalid regardless of host.
-        var invalid = Path.GetInvalidFileNameChars().Concat(['/', '\\']).ToArray();
-        var safe = new string(name.Select(character => invalid.Contains(character) || char.IsControl(character) ? '_' : character).ToArray())
-            .Trim().TrimEnd(' ', '.');
+        var safe = ReplaceUnsafeFileNameCharacters(name).Trim().TrimEnd(' ', '.');
         if (safe.Length == 0) return "image";
-        var stem = safe.Split('.')[0].TrimEnd(' ');
-        if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
+        if (IsReservedWindowsDeviceName(safe)) safe = "_" + safe;
+        return safe.Length > MaxFileNameLength ? safe[..MaxFileNameLength].TrimEnd(' ', '.') : safe;
+    }
+
+    private static string ReplaceUnsafeFileNameCharacters(string name) =>
+        new(name.Select(character => IsUnsafeFileNameCharacter(character) ? '_' : character).ToArray());
+
+    private static bool IsUnsafeFileNameCharacter(char character) =>
+        char.IsControl(character) || character is '<' or '>' or '"' or ':' or '/' or '\\' or '|' or '?' or '*';
+
+    private static bool IsReservedWindowsDeviceName(string safeName)
+    {
+        var stem = safeName.Split('.')[0].TrimEnd(' ');
+        return stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("AUX", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase)
-            || stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
-                || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
-                && stem[3] is (>= '1' and <= '9') or '\u00B9' or '\u00B2' or '\u00B3')
-            safe = "_" + safe;
-        return safe.Length > 150 ? safe[..150].TrimEnd(' ', '.') : safe;
+            || (stem.Length == 4
+                && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
+                    || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+                && (stem[3] is (>= '1' and <= '9') or '\u00B9' or '\u00B2' or '\u00B3'));
     }
 }

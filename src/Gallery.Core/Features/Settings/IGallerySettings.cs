@@ -2,7 +2,6 @@ using Gallery.Core.Models;
 
 namespace Gallery.Core.Services;
 
-/// <summary>Persists gallery preferences, saved views, and import and storage options.</summary>
 public interface IGallerySettings
 {
     Task<UiPreferences> LoadPreferencesAsync();

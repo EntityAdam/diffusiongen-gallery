@@ -6,7 +6,7 @@ internal static class SavedViewProcessor
 {
     public static void Replace(List<SavedView> views, string name, GalleryFilter galleryFilter)
     {
-        views.RemoveAll(savedView => savedView.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        Remove(views, name);
         views.Add(new SavedView(name, galleryFilter with { }));
     }
 

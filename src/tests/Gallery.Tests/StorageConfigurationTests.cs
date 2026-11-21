@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Gallery.Core.Features.Vaults;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
@@ -59,7 +61,16 @@ public sealed class StorageConfigurationTests
         using var fixture = new TestVault();
         await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Catalog relocation");
         var original = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
-        await fixture.Scope.Records.UpdateAsync(original.Id, edit => edit with { Collections = ["one", "two"] });
+        var visionFacts = new VisionFacts
+        {
+            RunId = "relocation-run",
+            SourceContentHash = "source-hash",
+            Entities = [new("entity-1", "person", "a person", [new("mood", "happy")])],
+            Relationships = [new("entity-1", "wearing", "entity-2")]
+        };
+        var updated = await fixture.Scope.Records.UpdateAsync(original.Id, edit => edit with { Collections = ["one", "two"] });
+        using (var key = fixture.Session.AcquireUnlockedSession().Borrow())
+            await fixture.Store.UpdateAsync(updated with { LegacyCollections = ["legacy"], VisionFacts = visionFacts }, key.Bytes);
         await fixture.Scope.Settings.SaveIngestionOptionsAsync(new() { Workers = 5, CatalogBatchSize = 8 });
         var destination = fixture.Root + "-catalog";
         try
@@ -86,6 +97,14 @@ public sealed class StorageConfigurationTests
             var record = Assert.Single(records);
             Assert.Equal(original.StoredPath, record.StoredPath);
             Assert.Equal(new[] { "one", "two" }, record.Collections);
+            Assert.Equal(new[] { "legacy" }, record.LegacyCollections);
+            Assert.Equal("relocation-run", record.VisionFacts!.RunId);
+            Assert.Equal("source-hash", record.VisionFacts.SourceContentHash);
+            var entity = Assert.Single(record.VisionFacts.Entities);
+            Assert.Equal("entity-1", entity.Id);
+            Assert.Equal(new[] { new VisionAttribute("mood", "happy") }, entity.Attributes);
+            Assert.Equal(new[] { new VisionRelation("entity-1", "wearing", "entity-2") },
+                record.VisionFacts.Relationships);
             Assert.Equal(fixture.Root, mediaDirectory);
             Assert.Equal(5, ingestionWorkers);
 
@@ -102,6 +121,37 @@ public sealed class StorageConfigurationTests
             await fixture.Scope.Vault.CloseVaultAsync();
             if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
         }
+    }
+
+    [Fact]
+    public void CatalogRelocationVerification_ComparesNestedVisionFactsByContents()
+    {
+        var source = new ImageRecord
+        {
+            Id = "record-1",
+            StoredPath = "source/image.dpng",
+            LegacyCollections = ["legacy"],
+            VisionFacts = new VisionFacts
+            {
+                RunId = "run-1",
+                SourceContentHash = "hash-1",
+                Entities = [new("entity-1", "person", "a person", [new("mood", "happy")])],
+                Relationships = [new("entity-1", "wearing", "entity-2")]
+            }
+        };
+        var independentlyDeserialized = JsonSerializer.Deserialize<ImageRecord>(
+            JsonSerializer.Serialize(source))! with { StoredPath = "destination/image.dpng" };
+
+        Assert.True(VaultLocationCoordinator.CatalogRecordsMatch([independentlyDeserialized], [source]));
+
+        var changed = independentlyDeserialized with
+        {
+            VisionFacts = independentlyDeserialized.VisionFacts! with
+            {
+                Entities = [new("entity-1", "person", "a person", [new("mood", "sad")])]
+            }
+        };
+        Assert.False(VaultLocationCoordinator.CatalogRecordsMatch([changed], [source]));
     }
 
     [Fact]

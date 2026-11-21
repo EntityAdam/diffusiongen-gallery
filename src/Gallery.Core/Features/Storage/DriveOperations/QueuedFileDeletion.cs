@@ -34,16 +34,26 @@ internal static class QueuedFileDeletion
     private static async Task DeleteObsoleteCiphertextAsync(
         IGalleryStore store, DriveOperation operation, string path, byte[] key)
     {
-        if (Directory.Exists(path)) throw new IOException("Queued ciphertext deletion points to a directory.");
-        if (File.Exists(path))
+        var fileAttributes = GetFileAttributesOrNull(path, File.GetAttributes);
+        if (fileAttributes is { } attributes)
         {
-            if (operation.ImageId is null || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            if (attributes.HasFlag(FileAttributes.Directory))
+                throw new IOException("Queued ciphertext deletion points to a directory.");
+            if (operation.ImageId is null || attributes.HasFlag(FileAttributes.ReparsePoint))
                 throw new InvalidOperationException("Queued ciphertext ownership cannot be verified.");
             await StoredMediaProcessor.VerifyCiphertextAsync(path, operation.ImageId, key);
             try { File.Delete(path); }
             catch (DirectoryNotFoundException) { }
         }
         await store.RemoveIndexedFileAsync(DriveOperationProcessor.PathFingerprint(key, path), key);
+    }
+
+    internal static FileAttributes? GetFileAttributesOrNull(
+        string path, Func<string, FileAttributes> getAttributes)
+    {
+        try { return getAttributes(path); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
     }
 
     /// <summary>

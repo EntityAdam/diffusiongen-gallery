@@ -54,13 +54,11 @@ internal sealed class ImportSource : IAsyncDisposable
 
     public static async Task DeleteVerifiedPathAsync(string sourcePath, string expectedSha256)
     {
-        var claimedPath = sourcePath + ".gallery-delete-" + Guid.NewGuid().ToString("N");
-        File.Move(sourcePath, claimedPath);
+        var claimedPath = ClaimSourcePath(sourcePath);
         string actualSha256;
         try
         {
-            await using var claimed = new FileStream(claimedPath, FileMode.Open, FileAccess.Read, FileShare.None);
-            actualSha256 = Convert.ToHexString(await SHA256.HashDataAsync(claimed));
+            actualSha256 = await ReadClaimedSourceSha256Async(claimedPath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -80,6 +78,19 @@ internal sealed class ImportSource : IAsyncDisposable
             RestoreClaimedSource(claimedPath, sourcePath, exception);
             throw new InvalidOperationException("Encrypted import succeeded, but source deletion failed.", exception);
         }
+    }
+
+    private static string ClaimSourcePath(string sourcePath)
+    {
+        var claimedPath = sourcePath + ".gallery-delete-" + Guid.NewGuid().ToString("N");
+        File.Move(sourcePath, claimedPath);
+        return claimedPath;
+    }
+
+    private static async Task<string> ReadClaimedSourceSha256Async(string claimedPath)
+    {
+        await using var fileStream = new FileStream(claimedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+        return Convert.ToHexString(await SHA256.HashDataAsync(fileStream));
     }
 
     private static void RestoreClaimedSource(string claimedPath, string sourcePath, Exception? cause = null)

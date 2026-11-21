@@ -64,7 +64,8 @@ public sealed class GalleryScope : IDisposable
         importWorkflow = new GalleryImportWorkflow(galleryLifetime, vaultSession, videoTools);
 
         var mediaStorageIndex = new MediaStorageIndex(galleryLifetime, vaultSession, driveQueue);
-        var recordEditor = new GalleryRecordEditor(galleryLifetime, vaultSession);
+        var tagCatalogManager = new TagCatalogManager(galleryLifetime, vaultSession);
+        var recordEditor = new GalleryRecordEditor(galleryLifetime, vaultSession, tagCatalogManager);
         var collectionOrganizer = new CollectionOrganizer(galleryLifetime, vaultSession);
         var vaultManager = new VaultManager(galleryLifetime, vaultSession);
         var vaultLocations = new VaultLocationCoordinator(galleryLifetime, vaultSession, driveQueue, vaultAccess);
@@ -84,7 +85,7 @@ public sealed class GalleryScope : IDisposable
             new StoredMediaMover(galleryLifetime, vaultSession, driveQueue));
         Restore = new GalleryRestore(vaultLocations, ownedHttpClient);
         Storage = mediaStorageIndex;
-        Tags = new TagCatalogManager(galleryLifetime, vaultSession);
+        Tags = tagCatalogManager;
         Vision = new GalleryVisionWorkflow(galleryLifetime, vaultSession, visionManager, collectionOrganizer);
     }
 
@@ -99,10 +100,8 @@ public sealed class GalleryScope : IDisposable
         try
         {
             var history = new VaultHistory(galleryRuntimeOptions.StateDirectory ?? GalleryPaths.DefaultApplicationDirectory);
-            var toolOptions = VideoToolsOptionsNormalizer.Normalize(
-                galleryRuntimeOptions.FFmpegPath, galleryRuntimeOptions.ToolSearchPaths);
-            var tools = new VideoTools(toolOptions.ConfiguredPath, toolOptions.SearchPaths);
-            var root = history.Read() ?? vaultRoot;
+            var tools = CreateVideoTools(galleryRuntimeOptions);
+            var root = ResolveStartupRoot(history, vaultRoot);
             var storeFactory = new GalleryStoreFactory(galleryRuntimeOptions.CatalogBackend);
             var store = storeFactory.Create(root);
             var vaultStore = new VaultStore(root);
@@ -119,6 +118,16 @@ public sealed class GalleryScope : IDisposable
             throw;
         }
     }
+
+    private static VideoTools CreateVideoTools(GalleryRuntimeOptions galleryRuntimeOptions)
+    {
+        var toolOptions = VideoToolsOptionsNormalizer.Normalize(
+            galleryRuntimeOptions.FFmpegPath, galleryRuntimeOptions.ToolSearchPaths);
+        return new VideoTools(toolOptions.ConfiguredPath, toolOptions.SearchPaths);
+    }
+
+    private static string ResolveStartupRoot(VaultHistory history, string vaultRoot) =>
+        history.Read() ?? vaultRoot;
 
     public void Dispose()
     {

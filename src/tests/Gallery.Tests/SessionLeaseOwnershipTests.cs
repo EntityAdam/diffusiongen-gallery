@@ -13,12 +13,12 @@ public sealed class SessionLeaseOwnershipTests
         var lastActivity = DateTimeOffset.UtcNow.AddMinutes(-1);
         var state = new VaultLeaseState { LastAccessUtc = lastActivity, InactivityTimeout = TimeSpan.FromHours(1) };
         var generation = new UnlockedVaultSession(Enumerable.Repeat((byte)7, 32).ToArray(), state);
-        using var lease = generation.TryBorrow(recordActivity: false);
+        using var lease = generation.TryBorrow(LeaseActivityPolicy.PreserveInactivityDeadline);
         Assert.NotNull(lease);
         Assert.Equal(lastActivity, state.LastAccessUtc);
         Assert.Equal(1, state.ActiveLeases);
         generation.Revoke();
-        Assert.Null(generation.TryBorrow(recordActivity: false));
+        Assert.Null(generation.TryBorrow(LeaseActivityPolicy.PreserveInactivityDeadline));
         Assert.Equal(Enumerable.Repeat((byte)7, 32), lease.Bytes);
         var buffer = lease.Bytes;
         lease.Dispose();
@@ -60,11 +60,15 @@ public sealed class SessionLeaseOwnershipTests
     public void ExpiryQuery_DoesNotRevokeOrClearUntilTheExplicitExpiryCommand()
     {
         var started = new DateTimeOffset(2026, 10, 18, 12, 0, 0, TimeSpan.Zero);
-        var state = new VaultLeaseState { LastAccessUtc = started, InactivityTimeout = TimeSpan.FromMinutes(1) };
+        var timeProvider = new AdjustableTimeProvider(started);
+        var state = new VaultLeaseState(timeProvider) { LastAccessUtc = started, InactivityTimeout = TimeSpan.FromMinutes(1) };
         var generation = new UnlockedVaultSession(Enumerable.Repeat((byte)3, 32).ToArray(), state);
 
-        var beforeLimit = generation.HasExpired(started.AddSeconds(59));
-        var atLimit = generation.HasExpired(started.AddMinutes(1));
+        timeProvider.Advance(TimeSpan.FromSeconds(59));
+        var beforeLimit = generation.HasExpired();
+        timeProvider.AdjustUtc(TimeSpan.FromHours(-2));
+        timeProvider.Advance(TimeSpan.FromSeconds(1));
+        var atLimit = generation.HasExpired();
         var revokedBeforeCommand = generation.IsRevoked;
         generation.Expire();
         var failure = Assert.Throws<VaultLockedException>(() => generation.Borrow());
@@ -95,6 +99,21 @@ public sealed class SessionLeaseOwnershipTests
     }
 
     [Fact]
+    public void TimeoutNotification_WhenOneSubscriberThrows_ThenRemainingSubscribersStillRun()
+    {
+        using var session = new VaultSession(Timeout.InfiniteTimeSpan);
+        session.Unlock(new byte[32]);
+        var notifications = 0;
+        session.AutoLocked += () => throw new InvalidOperationException("subscriber failure");
+        session.AutoLocked += () => notifications++;
+
+        session.InactivityTimeout = TimeSpan.FromTicks(1);
+
+        Assert.False(session.IsUnlocked);
+        Assert.Equal(1, notifications);
+    }
+
+    [Fact]
     public async Task ConcurrentLeaseDisposal_ClearsEveryBufferAndCompletesDrain()
     {
         using var session = new VaultSession(Timeout.InfiniteTimeSpan);
@@ -109,5 +128,23 @@ public sealed class SessionLeaseOwnershipTests
 
         Assert.All(buffers, buffer => Assert.Equal(new byte[32], buffer));
         Assert.True(drain.IsCompletedSuccessfully);
+    }
+
+    private sealed class AdjustableTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        private DateTimeOffset utcNow = utcNow;
+        private long timestamp;
+
+        public override DateTimeOffset GetUtcNow() => utcNow;
+        public override long GetTimestamp() => timestamp;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public void Advance(TimeSpan elapsed)
+        {
+            utcNow += elapsed;
+            timestamp += elapsed.Ticks;
+        }
+
+        public void AdjustUtc(TimeSpan adjustment) => utcNow += adjustment;
     }
 }

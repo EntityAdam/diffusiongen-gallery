@@ -40,6 +40,45 @@ public sealed class VisionCheckpointTests
         Assert.Equal(replacement, Assert.Single(session.State.Drafts));
     }
 
+    [Fact]
+    public async Task Checkpoint_openings_share_one_owner_per_unlocked_generation()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+
+        var first = await vault.Scope.Vision.OpenVisionCheckpointAsync();
+        var second = await vault.Scope.Vision.OpenVisionCheckpointAsync();
+        var draft = new VisionDraft("image", "Image", "Description", "tag", "model");
+        await first.StageAsync(draft);
+
+        Assert.Same(first, second);
+        Assert.Equal(draft, Assert.Single(second.State.Drafts));
+    }
+
+    [Fact]
+    public async Task Set_suggestion_cancels_when_its_unlocked_vault_generation_is_revoked()
+    {
+        var handler = new BlockingSetSuggestionHandler();
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault(vision: new VisionManager(client));
+        await vault.InitializeAsync();
+        var collection = await vault.Scope.Collections.CreateCollectionAsync("Source collection");
+        await vault.Scope.Collections.CreateSetAsync(collection.Id, "Source set");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "source-vault-description" });
+        await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
+
+        var suggestion = vault.Scope.Vision.SuggestDestinationSetAsync(collection.Id, [image.Id]);
+        var requestBody = await handler.RequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Contains("source-vault-description", requestBody);
+
+        await vault.Scope.Vault.SelectNewVaultAsync(Path.Combine(vault.Root, "next-vault"));
+        await vault.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestion.WaitAsync(TimeSpan.FromSeconds(10)));
+        await handler.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -687,6 +726,24 @@ public sealed class VisionCheckpointTests
         {
             Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A photo.\",\"tags\":[\"sunlit\"]}"}}]}""")
         };
+    }
+
+    private sealed class BlockingSetSuggestionHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource<string> RequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Canceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestStarted.TrySetResult(await request.Content!.ReadAsStringAsync(cancellationToken));
+            try { await Task.Delay(Timeout.Infinite, cancellationToken); }
+            catch (OperationCanceledException)
+            {
+                Canceled.TrySetResult();
+                throw;
+            }
+            return LaneVisionHandler.Success();
+        }
     }
 
     private sealed class InterruptibleVisionHandler : HttpMessageHandler

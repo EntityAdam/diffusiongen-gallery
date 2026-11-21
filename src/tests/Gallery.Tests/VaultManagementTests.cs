@@ -2,9 +2,11 @@ using System.Collections.Immutable;
 using System.IO.Compression;
 using System.Net.Sockets;
 using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
+using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Services;
 using Gallery.Web.Composition;
@@ -78,6 +80,57 @@ public sealed class VaultManagementTests
         lease.Dispose();
         using var checkout = await WaitForCheckoutReleaseAsync(fixture.Root);
         Assert.False(fixture.Scope.Vault.IsUnlocked);
+    }
+
+    [Fact]
+    public async Task Unlock_WhenLockArrivesBeforeAdmissionCompletes_ThenDoesNotReactivateTheVault()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var lifetime = (GalleryLifetime)typeof(GalleryScope)
+            .GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(fixture.Scope)!;
+
+        await lifetime.Gate.WaitAsync();
+        Task unlocking;
+        try
+        {
+            unlocking = fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            Assert.False(unlocking.IsCompleted);
+            fixture.Scope.Vault.LockVault();
+        }
+        finally { lifetime.Gate.Release(); }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => unlocking);
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
+        using var releasedCheckout = await WaitForCheckoutReleaseAsync(fixture.Root);
+    }
+
+    [Fact]
+    public async Task Unlock_WhenHistoryCannotBeWritten_ThenDoesNotActivateTheVault()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await fixture.Scope.Vault.CloseVaultAsync();
+        var historyPath = fixture.Root + "-state";
+        var lifetime = (GalleryLifetime)typeof(GalleryScope)
+            .GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(fixture.Scope)!;
+        lifetime.InitializeHistory(new VaultHistory(historyPath));
+        if (Directory.Exists(historyPath)) Directory.Delete(historyPath, recursive: true);
+        await File.WriteAllTextAsync(historyPath, "not a directory");
+
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(
+                () => fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+            Assert.False(fixture.Scope.Vault.IsUnlocked);
+        }
+        finally
+        {
+            if (File.Exists(historyPath)) File.Delete(historyPath);
+            await fixture.Scope.Vault.CloseVaultAsync();
+        }
     }
 
     [Theory]

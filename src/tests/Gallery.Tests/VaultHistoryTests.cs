@@ -38,6 +38,24 @@ public sealed class VaultHistoryTests : IDisposable
     }
 
     [Fact]
+    public void History_MalformedLegacySelection_DoesNotBlockValidGalleryListAndIsRepairedOnSave()
+    {
+        Directory.CreateDirectory(root);
+        var first = Path.Combine(root, "first");
+        var second = Path.Combine(root, "second");
+        File.WriteAllText(Path.Combine(root, "galleries.json"), JsonSerializer.Serialize(new[] { first }));
+        File.WriteAllText(Path.Combine(root, "last-vault.json"), "{not-json");
+
+        var history = new VaultHistory(root);
+
+        Assert.Null(history.Read());
+        Assert.Equal([first], history.ReadGalleries());
+        history.Save(second);
+        Assert.Equal(second, new VaultHistory(root).Read());
+        Assert.Equal([second, first], new VaultHistory(root).ReadGalleries());
+    }
+
+    [Fact]
     public async Task KnownGalleries_TracksCreatedAndOpenedGalleries_AndReadsCurrentNames()
     {
         var first = Path.Combine(root, "first");

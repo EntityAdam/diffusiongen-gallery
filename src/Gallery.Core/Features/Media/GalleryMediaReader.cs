@@ -16,6 +16,7 @@ namespace Gallery.Core.Features.Media;
 internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultSession vaultSession) : IGalleryMedia
 {
     private const string PngDataUrlPrefix = "data:image/png;base64,";
+    private const int FitMaxDimensionPixels = 1600;
 
     private IGalleryMediaStoreReader MediaStore => galleryLifetime.Current.GalleryStore;
 
@@ -49,10 +50,8 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
 
     internal static async Task<string> ReadPreviewAsync(
         IGalleryMediaStoreReader store, ImageRecord record, byte[] key, ImageResolution resolution)
-    {
-        if (record.IsVideo) return await ReadThumbnailAsync(store, record.Id, key);
-        return await CreatePreviewAsync(await StoredMediaProcessor.ReadAsync(record, key), resolution);
-    }
+        => await ReadImageOrVideoThumbnailAsync(store, record, key,
+            async () => await CreatePreviewAsync(await StoredMediaProcessor.ReadAsync(record, key), resolution));
 
     public async Task<string> ViewerImageAsync(string id, ImageResolution resolution)
     {
@@ -60,10 +59,14 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var store = MediaStore;
         var record = await store.ReadRecordAsync(id, key.Bytes);
-        if (record.IsVideo) return await ReadThumbnailAsync(store, id, key.Bytes);
-        return await CreateViewerImageAsync(record,
-            await StoredMediaProcessor.ReadAsync(record, key.Bytes), resolution);
+        return await ReadImageOrVideoThumbnailAsync(store, record, key.Bytes,
+            async () => await CreateViewerImageAsync(record,
+                await StoredMediaProcessor.ReadAsync(record, key.Bytes), resolution));
     }
+
+    private static Task<string> ReadImageOrVideoThumbnailAsync(
+        IGalleryMediaStoreReader store, ImageRecord record, byte[] key, Func<Task<string>> readStillImageAsync) =>
+        record.IsVideo ? ReadThumbnailAsync(store, record.Id, key) : readStillImageAsync();
 
     public async Task<(Stream Content, string ContentType)> OpenMediaAsync(string id)
     {
@@ -83,10 +86,11 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
     public async Task<ExportFile> ExportZipAsync(IEnumerable<string> ids)
     {
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
-        return await ExportComposer.ComposeZipAsync(ExportSelectionAsync(MediaStore, ids, keyLease.Bytes));
+        return await ExportComposer.ComposeZipAsync(EnumerateSelectionExports(MediaStore, ids, keyLease.Bytes));
     }
 
-    private static async IAsyncEnumerable<ExportFile> ExportSelectionAsync(IGalleryMediaStoreReader store, IEnumerable<string> ids, byte[] key)
+    private static async IAsyncEnumerable<ExportFile> EnumerateSelectionExports(
+        IGalleryMediaStoreReader store, IEnumerable<string> ids, byte[] key)
     {
         foreach (var id in ids.Distinct(StringComparer.Ordinal))
             yield return await ExportRecordAsync(await store.ReadRecordAsync(id, key), key);
@@ -116,7 +120,7 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
             if (resolution == ImageResolution.Fit)
                 image.Mutate(context => context.Resize(new ResizeOptions
                 {
-                    Size = new Size(1600, 1600), Mode = ResizeMode.Max
+                    Size = new Size(FitMaxDimensionPixels, FitMaxDimensionPixels), Mode = ResizeMode.Max
                 }));
             using var preview = new MemoryStream();
             await image.SaveAsPngAsync(preview, new PngEncoder { SkipMetadata = true });
@@ -139,7 +143,7 @@ internal sealed class GalleryMediaReader(GalleryLifetime galleryLifetime, VaultS
             using var image = Image.Load(plainImage);
             image.Mutate(context => context.Resize(new ResizeOptions
             {
-                Size = new Size(1600, 1600), Mode = ResizeMode.Max
+                Size = new Size(FitMaxDimensionPixels, FitMaxDimensionPixels), Mode = ResizeMode.Max
             }).BackgroundColor(Color.Black));
             using var preview = new MemoryStream();
             try

@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using Gallery.Core.Features.Tags;
 using Gallery.Core.Models;
@@ -12,14 +13,17 @@ internal sealed partial class TursoGalleryStore
         return text is null ? null : JsonSerializer.Deserialize<VisionAnalysis>(text);
     });
 
-    public Task CommitVisionAnalysisAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis analysis, byte[] key) => ExecuteAsync(key, async connection =>
+    public Task CommitVisionAnalysisAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis analysis, byte[] key) =>
+        ExecuteAsync(key, connection => CommitVisionAnalysisAsync(connection, record, catalog, analysis));
+
+    private static async Task CommitVisionAnalysisAsync(DbConnection connection, ImageRecord record,
+        TagCatalog catalog, VisionAnalysis analysis)
     {
         using var transaction = connection.BeginTransaction();
-        await WriteRecordAsync(connection, transaction, record, insert: false);
-        await NonQueryAsync(connection, "INSERT INTO settings(id,payload) VALUES($id,$payload) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", transaction,
-            ("$id", TagCatalog.SettingId), ("$payload", JsonSerializer.Serialize(catalog)));
+        await WriteRecordAsync(connection, transaction, record, RecordWriteMode.Update);
+        await UpsertSettingAsync(connection, transaction, TagCatalog.SettingId, catalog);
         await NonQueryAsync(connection, "INSERT INTO vision_analysis(image_id,payload) VALUES($id,$payload) ON CONFLICT(image_id) DO UPDATE SET payload=excluded.payload", transaction,
             ("$id", record.Id), ("$payload", JsonSerializer.Serialize(analysis)));
         transaction.Commit();
-    });
+    }
 }

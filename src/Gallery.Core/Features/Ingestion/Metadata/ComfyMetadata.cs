@@ -20,6 +20,11 @@ internal static partial class ComfyMetadata
     private const int MaxDepth = 32;
 
     internal sealed record Documents(string? ApiPrompt, string? Workflow);
+    private enum MalformedCandidateJsonPolicy
+    {
+        IgnoreMalformedJson,
+        RejectMalformedJson
+    }
 
     /// <summary>Keyword/value text entries from the metadata JSON stored on a record.</summary>
     public static IEnumerable<(string Keyword, string Value)> TextEntries(string metadataJson)
@@ -36,7 +41,7 @@ internal static partial class ComfyMetadata
         {
             string excerpt = JsonSerializer.Serialize(metadataJson[..Math.Min(metadataJson.Length, 80)]);
             throw new StoredMetadataFormatException($"Stored generation metadata is not valid JSON. Input excerpt: {excerpt}.",
-                GalleryLogEvent.ParseMetadata,
+                LogEventGallery.ParseMetadata,
                 new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Metadata.InputExcerpt", excerpt)), exception);
         }
     }
@@ -88,12 +93,21 @@ internal static partial class ComfyMetadata
         if (depth > 2) return;
         var text = NormalizeCandidateText(value, out var hasGenerationPrefix);
         if (!text.StartsWith('{')) return;
-        var jsonObject = ParseCandidateDocument(text, isGenerationSource || hasGenerationPrefix);
+        var malformedJsonPolicy = isGenerationSource || hasGenerationPrefix
+            ? MalformedCandidateJsonPolicy.RejectMalformedJson
+            : MalformedCandidateJsonPolicy.IgnoreMalformedJson;
+        var jsonObject = ParseCandidateDocument(text, malformedJsonPolicy);
         if (jsonObject is null) return;
 
         if (IsWorkflow(jsonObject)) { workflow ??= text; return; }
         if (IsApiPrompt(jsonObject)) { prompt ??= text; return; }
-        ClassifyNestedDocuments(jsonObject, ref prompt, ref workflow, depth);
+        foreach (var name in new[] { "prompt", "workflow" })
+        {
+            var inner = jsonObject[name];
+            if (inner is JsonObject innerObject) Classify(innerObject.ToJsonString(), true, ref prompt, ref workflow, depth + 1);
+            else if (inner is JsonValue innerValue && innerValue.TryGetValue<string>(out var innerText))
+                Classify(innerText, true, ref prompt, ref workflow, depth + 1);
+        }
     }
 
     private static string NormalizeCandidateText(string value, out bool hasGenerationPrefix)
@@ -105,28 +119,38 @@ internal static partial class ComfyMetadata
     }
 
     // Free-form text that merely starts with '{' is skipped; only identified generation documents report malformed JSON.
-    private static JsonObject? ParseCandidateDocument(string text, bool isGenerationSource)
+    private static JsonObject? ParseCandidateDocument(string text, MalformedCandidateJsonPolicy malformedJsonPolicy)
     {
-        try { return JsonNode.Parse(text) as JsonObject; }
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            if (ContainsDuplicateProperties(document.RootElement))
+                throw new JsonException("Embedded generation metadata contains duplicate JSON properties.");
+            return JsonNode.Parse(text) as JsonObject;
+        }
         catch (JsonException exception)
         {
-            if (!isGenerationSource) return null;
+            if (malformedJsonPolicy == MalformedCandidateJsonPolicy.IgnoreMalformedJson) return null;
             throw new StoredMetadataFormatException("Embedded generation metadata is not valid JSON.",
-                GalleryLogEvent.ParseMetadata, exception: exception);
+                LogEventGallery.ParseMetadata, exception: exception);
         }
     }
 
-    private static void ClassifyNestedDocuments(
-        JsonObject jsonObject, ref string? prompt, ref string? workflow, int depth)
+    private static bool ContainsDuplicateProperties(JsonElement element)
     {
-        // Video Helper Suite stores {"prompt": ..., "workflow": ...} in one comment tag; values may be objects or strings.
-        foreach (var name in new[] { "prompt", "workflow" })
+        if (element.ValueKind == JsonValueKind.Object)
         {
-            var inner = jsonObject[name];
-            if (inner is JsonObject innerObject) Classify(innerObject.ToJsonString(), true, ref prompt, ref workflow, depth + 1);
-            else if (inner is JsonValue innerValue && innerValue.TryGetValue<string>(out var innerText))
-                Classify(innerText, true, ref prompt, ref workflow, depth + 1);
+            var propertyNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+                if (!propertyNames.Add(property.Name) || ContainsDuplicateProperties(property.Value))
+                    return true;
         }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                if (ContainsDuplicateProperties(item)) return true;
+        }
+        return false;
     }
 
     private static bool IsWorkflow(JsonObject json) => json["nodes"] is JsonArray && json.ContainsKey("links");
@@ -145,10 +169,13 @@ internal static partial class ComfyMetadata
     public static GenerationInfo? Extract(string metadataJson)
     {
         var documents = Find(metadataJson);
-        if (documents.ApiPrompt is null && documents.Workflow is null) return null;
+        if (!HasGenerationDocuments(documents)) return null;
         var generationInfo = documents.ApiPrompt is null ? new GenerationInfo() : ParseApiPrompt(documents.ApiPrompt);
         return generationInfo with { HasWorkflow = documents.Workflow is not null, HasApiPrompt = documents.ApiPrompt is not null };
     }
+
+    private static bool HasGenerationDocuments(Documents documents) =>
+        documents.ApiPrompt is not null || documents.Workflow is not null;
 
     /// <summary>The document to save as a ComfyUI workflow: the UI workflow when present, otherwise the API prompt.</summary>
     public static string? WorkflowForExport(string metadataJson)

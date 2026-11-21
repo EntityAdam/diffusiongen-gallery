@@ -68,6 +68,21 @@ public sealed class CryptoTests
     }
 
     [Fact]
+    public void EnvelopeValidationAndDecryption_RejectShortInputsWithTheirBoundaryContext()
+    {
+        var shortEnvelope = "DPNG0001"u8.ToArray();
+        var key = RandomNumberGenerator.GetBytes(32);
+
+        var validationError = Assert.Throws<CryptographicException>(
+            () => VaultEnvelopeValidator.Validate(shortEnvelope, "vault header"));
+        var decryptionError = Assert.Throws<CryptographicException>(
+            () => VaultCrypto.Decrypt(shortEnvelope, key, "vault-check"));
+
+        Assert.Equal("Invalid encrypted file format from vault header.", validationError.Message);
+        Assert.Equal("Invalid encrypted file format.", decryptionError.Message);
+    }
+
+    [Fact]
     public void RecoveryPhrase_WhenCreatedAndNormalized_Has32WordsAndIgnoresWhitespace()
     {
         // Arrange
@@ -92,7 +107,7 @@ public sealed class CryptoTests
     {
         // Arrange
         using var fixture = new TestVault();
-        var (key, recovery) = await fixture.Vault.CreateAsync(TestVault.Passphrase);
+        var (key, recovery) = await fixture.Vault.CreateVaultAsync(TestVault.Passphrase);
         var restarted = new VaultStore(fixture.Vault.Root);
 
         // Act
@@ -105,7 +120,7 @@ public sealed class CryptoTests
         var rotatedKey = await restarted.UnlockWithPassphraseAsync("new strong secret passphrase");
         var rotatedRecoveryKey = await restarted.UnlockWithRecoveryPhraseAsync(recovery);
         var header = await File.ReadAllTextAsync(Path.Combine(fixture.Root, "vault.json"));
-        var repeatedCreation = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Vault.CreateAsync(TestVault.Passphrase));
+        var repeatedCreation = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Vault.CreateVaultAsync(TestVault.Passphrase));
 
         // Assert
         Assert.Equal(key, passphraseKey);

@@ -15,7 +15,7 @@ public sealed class ExceptionContractAssertionTests
         var expected = ExpectedExceptionContract.Create(typeof(ImportFolderException), ["cannot", "import"],
             HttpStatusCode.InternalServerError, Severity.Error, "One or more files could not be imported.",
             "Gallery.ImportFolder", new Dictionary<string, object?> { ["Import.Detail"] = nested });
-        var actual = CaptureThrown(new ImportFolderException("Cannot import this folder", new GalleryLogEvent("Gallery.ImportFolder"),
+        var actual = CaptureThrown(new ImportFolderException("Cannot import this folder", new LogEventGallery("Gallery.ImportFolder"),
             new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Import.Detail", nested)),
             new AggregateException(new InvalidOperationException("provider failure"))));
 

@@ -100,7 +100,11 @@ internal sealed partial class GalleryStore
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = DriveOperationCommandFactory.CreateFind(sqliteConnection, kind, target);
-        return (await ReadOperationsAsync(sqliteCommand)).SingleOrDefault();
+        var pendingDriveOperations = await ReadOperationsAsync(sqliteCommand);
+        if (pendingDriveOperations.Count == 0) return null;
+        if (pendingDriveOperations.Count > 1)
+            throw new InvalidOperationException($"Expected at most one pending drive operation of kind '{kind}', but found {pendingDriveOperations.Count}.");
+        return pendingDriveOperations[0];
     }
 
     private static async Task<List<DriveOperation>> ReadOperationsAsync(DbCommand sqliteCommand)

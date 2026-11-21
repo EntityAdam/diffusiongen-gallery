@@ -47,6 +47,9 @@ internal sealed class GalleryDriveQueue : IDisposable
 
     public void Start() => driveOperationPlayer.Start();
 
+    public Task StartAfterObservingPreviousFailureAsync() =>
+        driveOperationPlayer.StartAfterObservingPreviousFailureAsync();
+
     public Task StopAsync() => driveOperationPlayer.StopAsync();
 
     public void Dispose() => driveOperationPlayer.Dispose();
@@ -61,12 +64,14 @@ internal sealed class GalleryDriveQueue : IDisposable
         await galleryLifetime.Gate.WaitAsync();
         try
         {
+            using var keyLease = BorrowUnlockedKeyBeforeCheckout();
             galleryLifetime.EnsureCheckout();
             var galleryStore = galleryLifetime.Current.GalleryStore;
-            await driveOperationPlayer.StopAsync();
-            using var key = vaultSession.AcquireUnlockedSession().Borrow();
-            await galleryStore.CancelUnfinishedDriveOperationsAsync(key.Bytes);
-            await driveOperationPlayer.RefreshAsync();
+            await driveOperationPlayer.RunWhileStartAdmissionBlockedAsync(async () =>
+            {
+                await galleryStore.CancelUnfinishedDriveOperationsAsync(keyLease.Bytes);
+                await driveOperationPlayer.RefreshAsync();
+            });
         }
         finally { galleryLifetime.Gate.Release(); }
     }
@@ -76,10 +81,10 @@ internal sealed class GalleryDriveQueue : IDisposable
         await galleryLifetime.Gate.WaitAsync();
         try
         {
+            using var keyLease = BorrowUnlockedKeyBeforeCheckout();
             galleryLifetime.EnsureCheckout();
             var galleryStore = galleryLifetime.Current.GalleryStore;
-            using var key = vaultSession.AcquireUnlockedSession().Borrow();
-            await galleryStore.RetryFailedDriveOperationsAsync(key.Bytes);
+            await galleryStore.RetryFailedDriveOperationsAsync(keyLease.Bytes);
             driveOperationPlayer.Start();
             await driveOperationPlayer.RefreshAsync();
         }
@@ -101,19 +106,32 @@ internal sealed class GalleryDriveQueue : IDisposable
 
     private async Task<DriveQueueCounts> ReadDriveQueueCountsAsync()
     {
-        using var key = vaultSession.TryBorrowUnlockedKey(recordActivity: false);
+        using var keyLease = vaultSession.TryBorrowUnlockedKey(LeaseActivityPolicy.PreserveInactivityDeadline);
         var location = galleryLifetime.Current;
-        return location.VaultStore.Exists && key is not null
-            ? await location.GalleryStore.ReadDriveQueueCountsAsync(key.Bytes)
+        return location.VaultStore.Exists && keyLease is not null
+            ? await location.GalleryStore.ReadDriveQueueCountsAsync(keyLease.Bytes)
             : new DriveQueueCounts(0, 0, null);
     }
 
     private IDriveOperationSession? OpenDriveSession()
     {
-        var keyLease = vaultSession.TryBorrowUnlockedKey();
+        var keyLease = vaultSession.TryBorrowUnlockedKey(LeaseActivityPolicy.RefreshInactivityDeadline);
         if (keyLease is null) return null;
         var location = galleryLifetime.Current;
         return new DriveOperationSession(location.GalleryStore, Path.Combine(location.VaultStore.Root, "images"), keyLease, DriveRetryDelay);
+    }
+
+    private KeyLease BorrowUnlockedKeyBeforeCheckout()
+    {
+        try { return vaultSession.AcquireUnlockedSession().Borrow(); }
+        catch (VaultLockedException)
+        {
+            if (galleryLifetime.Current.Checkout is null)
+            {
+                using var checkoutProbe = VaultCheckout.Acquire(galleryLifetime.Current.VaultStore.Root);
+            }
+            throw;
+        }
     }
 
     private static long NowMilliseconds() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -142,6 +160,8 @@ internal sealed class GalleryDriveQueue : IDisposable
         IGalleryStore galleryStore, string imageRoot, KeyLease keyLease, TimeSpan retryDelay)
         : IDriveOperationSession
     {
+        private const string UnreadableFailureCategory = "unreadable";
+
         private byte[] Key => keyLease.Bytes;
 
         public async Task<DriveBatchReport> PlayBatchAsync(CancellationToken cancellationToken)
@@ -164,7 +184,7 @@ internal sealed class GalleryDriveQueue : IDisposable
             foreach (var driveOperation in dueDriveOperations)
             {
                 if (cancellationToken.IsCancellationRequested) break;
-                driveOperationResults.Add(await ExecuteAndRecordAsync(driveOperation));
+                driveOperationResults.Add(await ApplyDriveOperationAndClassifyOutcomeAsync(driveOperation));
                 activity = Describe(driveOperation.Kind);
             }
             return activity;
@@ -180,12 +200,12 @@ internal sealed class GalleryDriveQueue : IDisposable
             _ => "Processing"
         };
 
-        private async Task<DriveOperationResult> ExecuteAndRecordAsync(DriveOperation driveOperation)
+        private async Task<DriveOperationResult> ApplyDriveOperationAndClassifyOutcomeAsync(DriveOperation driveOperation)
         {
             DriveOperationPayload driveOperationPayload;
             try { driveOperationPayload = ReadPayload(driveOperation); }
             catch (Exception exception) when (exception is CryptographicException or JsonException)
-            { return Failed(driveOperation, "unreadable"); }
+            { return Failed(driveOperation, UnreadableFailureCategory); }
 
             try
             {
@@ -198,17 +218,23 @@ internal sealed class GalleryDriveQueue : IDisposable
             }
             catch (JsonException)
             {
-                return Failed(driveOperation, "unreadable");
+                return Failed(driveOperation, UnreadableFailureCategory);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 var category = exception is UnauthorizedAccessException ? "access" : "io";
-                var attempts = driveOperation.Attempts + 1;
-                if (attempts >= MaxDriveAttempts) return Failed(driveOperation, category, attempts);
-                var delay = retryDelay * Math.Pow(2, driveOperation.Attempts);
-                return new(driveOperation.Sequence, driveOperation.Revision, DriveOperationOutcome.Retry, attempts,
-                    NowMilliseconds() + (long)delay.TotalMilliseconds, category);
+                return RetryTransientFailure(driveOperation, category, retryDelay);
             }
+        }
+
+        private static DriveOperationResult RetryTransientFailure(
+            DriveOperation driveOperation, string category, TimeSpan baseRetryDelay)
+        {
+            var attempts = driveOperation.Attempts + 1;
+            if (attempts >= MaxDriveAttempts) return Failed(driveOperation, category, attempts);
+            var delay = baseRetryDelay * Math.Pow(2, driveOperation.Attempts);
+            return new(driveOperation.Sequence, driveOperation.Revision, DriveOperationOutcome.Retry, attempts,
+                NowMilliseconds() + (long)delay.TotalMilliseconds, category);
         }
 
         private DriveOperationPayload ReadPayload(DriveOperation driveOperation)
@@ -256,7 +282,9 @@ internal sealed class GalleryDriveQueue : IDisposable
         {
             var directoryEntries = EnumerateDirectoryEntries(driveOperationPayload.Path);
             var indexedFiles = CreateDirectoryIndex(directoryEntries);
-            var discoveredDriveOperations = CreateDiscoveredDriveOperations(directoryEntries, driveOperationPayload.Recursive);
+            var discoveredDriveOperations = CreateRecoveryDriveOperations(directoryEntries);
+            if (driveOperationPayload.Recursive)
+                discoveredDriveOperations.AddRange(CreateSubdirectoryScanOperations(directoryEntries));
             await galleryStore.ReplaceDirectoryIndexAsync(
                 VaultCrypto.PathFingerprint(Key, driveOperationPayload.Path), indexedFiles, discoveredDriveOperations, Key);
         }
@@ -287,19 +315,16 @@ internal sealed class GalleryDriveQueue : IDisposable
                 .Select(file => new IndexedFile(VaultCrypto.PathFingerprint(Key, file.FullName), file.Length))
                 .ToList();
 
-        private List<NewDriveOperation> CreateDiscoveredDriveOperations(
-            IReadOnlyCollection<FileSystemInfo> directoryEntries, bool recursive)
-        {
-            var files = directoryEntries.OfType<FileInfo>().ToArray();
-            var discoveredDriveOperations = files.Where(file => IsRemovalStagingFile(file.FullName))
+        private List<NewDriveOperation> CreateRecoveryDriveOperations(IEnumerable<FileSystemInfo> directoryEntries) =>
+            directoryEntries.OfType<FileInfo>().Where(file => IsRemovalStagingFile(file.FullName))
                 .Select(file => DriveOperationProcessor.Create(DriveOperationKind.RecoverStaged, file.FullName, null, Key))
                 .ToList();
-            if (recursive)
-                discoveredDriveOperations.AddRange(directoryEntries.OfType<DirectoryInfo>()
-                    .Select(directory => DriveOperationProcessor.Create(DriveOperationKind.ScanDirectory,
-                        directory.FullName, null, Key, operationIsRecursive: true)));
-            return discoveredDriveOperations;
-        }
+
+        private List<NewDriveOperation> CreateSubdirectoryScanOperations(IEnumerable<FileSystemInfo> directoryEntries) =>
+            directoryEntries.OfType<DirectoryInfo>()
+                .Select(directory => DriveOperationProcessor.Create(DriveOperationKind.ScanDirectory,
+                    directory.FullName, null, Key, operationIsRecursive: true))
+                .ToList();
 
         // Finishes removal recovery when ciphertext was staged before its catalog row was deleted.
         private async Task RecoverStagedAsync(string stagedFilePath)
@@ -347,7 +372,7 @@ internal sealed class GalleryDriveQueue : IDisposable
             catch (CryptographicException exception)
             {
                 throw new DriveOperationConflictException("Staged media is not authentic ciphertext.",
-                    GalleryLogEvent.DriveOperationConflict,
+                    LogEventGallery.DriveOperationConflict,
                     new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty
                         .Add("Image.Id", imageId)), exception);
             }

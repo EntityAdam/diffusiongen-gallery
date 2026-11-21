@@ -11,11 +11,14 @@ internal static class StoredImageMoveValidator
 
     public static void ValidateName(string name)
     {
-        if (name.Length == 0 || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-            || name.EndsWith('.') || name.EndsWith(' ') || name.Contains('/') || name.Contains('\\')
-            || name.StartsWith('.') && !name[1..].Contains('.'))
+        if (!IsValidDestinationName(name))
             throw new InvalidOperationException($"Invalid filename '{name}'. Enter a valid filename without a path or extension.");
     }
+
+    private static bool IsValidDestinationName(string name) =>
+        name.Length > 0 && name is not "." and not ".." && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+        && !name.EndsWith('.') && !name.EndsWith(' ') && !name.Contains('/') && !name.Contains('\\')
+        && (!name.StartsWith('.') || name[1..].Contains('.'));
 
     public static void ValidateDifferentPath(string source, string target)
     {

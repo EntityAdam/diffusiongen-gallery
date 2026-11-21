@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using Gallery.Core.Models;
 using SixLabors.ImageSharp;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Processors;
 
 internal static class ImportVerificationProcessor
 {

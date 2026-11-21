@@ -71,6 +71,24 @@ public sealed class NativeSasRestoreTests
         }
     }
 
+    [Fact]
+    public async Task SasListing_OmitsArchiveNamesThatCannotBeDownloaded()
+    {
+        var mediator = new TestMediatorAzureBackups("", new Dictionary<string, byte[]>
+        {
+            ["full.zip"] = [],
+            ["weekly:copy.zip"] = []
+        });
+        using var httpClient = new HttpClient(mediator.CreateHttpMessageHandler());
+        var target = new Gallery.Core.Features.Backups.Targets.BackupTargetAzure(
+            "https://account.blob.core.windows.net/backups?sr=c&sp=rl&sig=test-only",
+            httpClient: httpClient);
+
+        var names = await target.ListAsync();
+
+        Assert.Equal(["full.zip"], names);
+    }
+
     [Theory]
     [InlineData("../nightly")]
     [InlineData("nightly/./gallery")]

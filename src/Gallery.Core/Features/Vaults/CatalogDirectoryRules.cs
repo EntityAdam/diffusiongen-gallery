@@ -17,8 +17,8 @@ internal static class CatalogDirectoryRules
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory.Trim()));
         if (StorageFileSystem.PathEquals(root, Path.GetPathRoot(root)!))
             throw new InvalidOperationException("A filesystem or share root cannot be a gallery. Select a dedicated folder.");
-        for (var current = new DirectoryInfo(root); current is not null; current = current.Parent)
-            if (current.Exists && current.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        for (var directoryInfo = new DirectoryInfo(root); directoryInfo is not null; directoryInfo = directoryInfo.Parent)
+            if (directoryInfo.Exists && directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
                 throw new InvalidOperationException("Gallery directories cannot use symbolic links or directory junctions.");
         return root;
     }

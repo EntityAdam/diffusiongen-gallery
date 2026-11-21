@@ -13,6 +13,10 @@ namespace Gallery.Core.Infrastructure.Persistence.Sqlite;
 
 internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
 {
+    private const string GalleryLoadOperationName = "gallery.load";
+    private const string InvalidMediaRecordMessage = "Invalid media record.";
+    private const string MediaRecordIdentityMismatchMessage = "Media record identity mismatch.";
+
     private volatile bool catalogInitialized;
 
     private readonly string databasePath = Path.GetFullPath(databasePath);
@@ -47,7 +51,20 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     {
         await using var sqliteConnection = await OpenAsync();
         using var sqliteCommand = GalleryStoreCommandFactory.CreateReadStorageRevision(sqliteConnection);
-        return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync());
+        return await ReadRequiredStorageRevisionAsync(sqliteCommand, CancellationToken.None);
+    }
+
+    private static async Task<long> ReadRequiredStorageRevisionAsync(SqliteCommand sqliteCommand, CancellationToken token)
+    {
+        var result = await sqliteCommand.ExecuteScalarAsync(token);
+        if (result is null or DBNull)
+        {
+            var exception = new InvalidOperationException("Expected one storage revision row for singleton id 1, but found 0.");
+            exception.Data["CommandIdentity"] = "GalleryStoreCommandFactory.CreateReadStorageRevision";
+            exception.Data["ObservedRowCount"] = 0;
+            throw exception;
+        }
+        return Convert.ToInt64(result);
     }
 
     private Task<SqliteConnection> OpenAsync() => OpenAsync(SqliteOpenMode.ReadWriteCreate);
@@ -122,15 +139,19 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     public async Task<long> CountRecordsAsync(byte[] key, CancellationToken token = default)
     {
         await using var connection = await OpenExistingAsync();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM images";
+        return await ReadRecordCountAsync(connection, token);
+    }
+
+    private static async Task<long> ReadRecordCountAsync(SqliteConnection connection, CancellationToken token)
+    {
+        using var command = GalleryStoreCommandFactory.CreateCountRecords(connection);
         using var cancellation = token.Register(command.Cancel);
         return Convert.ToInt64(await command.ExecuteScalarAsync(token));
     }
 
     public async Task<List<ImageRecord>> ReadRecordsAsync(byte[] key)
     {
-        var activity = Activity.Current is { OperationName: "gallery.load", IsAllDataRequested: true } load ? load : null;
+        var activity = Activity.Current is { OperationName: GalleryLoadOperationName, IsAllDataRequested: true } load ? load : null;
         var openStarted = VaultOpenTelemetry.Start(activity);
         await using var sqliteConnection = await OpenAsync();
         VaultOpenTelemetry.Record(activity, "gallery.load.connection_open_ms", openStarted);
@@ -147,19 +168,31 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         using var cancellation = token.Register(sqliteCommand.Cancel);
         var queryStarted = VaultOpenTelemetry.Start(activity);
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync(token);
-        var imageRecords = new List<ImageRecord>();
         if (activity is null)
-        {
-            // Leave the ordinary application path free of per-row stopwatch work.
-            while (await sqliteDataReader.ReadAsync(token))
-            {
-                token.ThrowIfCancellationRequested();
-                var imageRecord = MapImageRecord(sqliteDataReader);
-                imageRecords.Add(DecodeRecord(imageRecord.Id, imageRecord.Record, key));
-            }
-            return imageRecords;
-        }
+            return await ReadUnmeasuredImageRecordsAsync(sqliteDataReader, key, token);
 
+        return await ReadMeasuredImageRecordsAsync(sqliteDataReader, key, activity, readStarted, pauseStarted, queryStarted, token);
+    }
+
+    private static async Task<List<ImageRecord>> ReadUnmeasuredImageRecordsAsync(
+        SqliteDataReader sqliteDataReader, byte[] key, CancellationToken token)
+    {
+        // Leave the ordinary application path free of per-row stopwatch work.
+        var imageRecords = new List<ImageRecord>();
+        while (await sqliteDataReader.ReadAsync(token))
+        {
+            token.ThrowIfCancellationRequested();
+            var imageRecord = MapImageRecord(sqliteDataReader);
+            imageRecords.Add(DecodeRecord(imageRecord.Id, imageRecord.Record, key));
+        }
+        return imageRecords;
+    }
+
+    private static async Task<List<ImageRecord>> ReadMeasuredImageRecordsAsync(
+        SqliteDataReader sqliteDataReader, byte[] key, Activity activity, long readStarted,
+        TimeSpan pauseStarted, long queryStarted, CancellationToken token)
+    {
+        var imageRecords = new List<ImageRecord>();
         double decryptMs = 0, deserializeMs = 0, materializeMs = 0;
         var queryMs = VaultOpenTelemetry.Elapsed(queryStarted);
         long recordBytes = 0;
@@ -201,10 +234,9 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         {
             started = Stopwatch.GetTimestamp();
             var record = JsonSerializer.Deserialize<ImageRecord>(plain)
-                ?? throw new InvalidOperationException("Invalid media record.");
+                ?? throw new InvalidOperationException(InvalidMediaRecordMessage);
             deserializeMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            if (record.Id != id) throw new CryptographicException("Media record identity mismatch.");
-            return record;
+            return RequireRecordIdentity(record, id);
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
@@ -249,7 +281,7 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     private static async Task<byte[]> ReadRequiredEncryptedThumbnailAsync(SqliteCommand sqliteCommand, string id) =>
         (byte[]?)await sqliteCommand.ExecuteScalarAsync()
             ?? throw new ThumbnailNotFoundException($"Expected one thumbnail for media item '{id}', but found 0.",
-                GalleryLogEvent.ReadThumbnail, new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Image.Id", id)));
+                LogEventGallery.ReadThumbnail, new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Image.Id", id)));
 
     private static ImageThumbnail DecodeThumbnail(byte[] encryptedThumbnail, byte[] key, string id, string envelopeDescription)
     {
@@ -327,7 +359,12 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         if (!await sqliteDataReader.ReadAsync())
-            throw new InvalidOperationException($"Expected one media item for verification '{id}', but found 0.");
+        {
+            var exception = new InvalidOperationException($"Expected one media item for verification '{id}', but found 0.");
+            exception.Data["CommandIdentity"] = "GalleryStoreCommandFactory.CreateReadVerification";
+            exception.Data["ObservedRowCount"] = 0;
+            throw exception;
+        }
         var imageRecord = DecodeRecord(id, sqliteDataReader.GetFieldValue<byte[]>(0), key);
         var encryptedThumbnail = sqliteDataReader.GetFieldValue<byte[]>(1);
         return (imageRecord, DecodeThumbnail(encryptedThumbnail, key, id, $"verification thumbnail '{id}'"));
@@ -342,7 +379,7 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         await using var sqliteConnection = await OpenAsync();
         using var sqliteTransaction = sqliteConnection.BeginTransaction();
         var recordsMissingFingerprints = await ReadRecordsMissingFingerprintsAsync(sqliteConnection, sqliteTransaction);
-        if (Activity.Current is { OperationName: "gallery.load" } activity)
+        if (Activity.Current is { OperationName: GalleryLoadOperationName } activity)
             activity.SetTag("gallery.load.backfill_fingerprint_count", recordsMissingFingerprints.Count);
         await UpdateMissingFingerprintsAsync(sqliteConnection, sqliteTransaction, recordsMissingFingerprints, key);
         sqliteTransaction.Commit();
@@ -378,16 +415,16 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         }
     }
 
-    public async Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key)
+    public async Task<bool> ContainsFingerprintAsync(string sourceSha256, byte[] key)
     {
         await using var sqliteConnection = await OpenAsync();
-        return await ContainsFingerprintAsync(sqliteConnection, contentSha256, key);
+        return await ContainsFingerprintAsync(sqliteConnection, sourceSha256, key);
     }
 
-    private static async Task<bool> ContainsFingerprintAsync(SqliteConnection sqliteConnection, string contentSha256, byte[] key,
+    private static async Task<bool> ContainsFingerprintAsync(SqliteConnection sqliteConnection, string sourceSha256, byte[] key,
         SqliteTransaction? sqliteTransaction = null)
     {
-        using var sqliteCommand = GalleryStoreCommandFactory.CreateContainsFingerprint(sqliteConnection, EncodeContentFingerprint(key, contentSha256));
+        using var sqliteCommand = GalleryStoreCommandFactory.CreateContainsFingerprint(sqliteConnection, EncodeContentFingerprint(key, sourceSha256));
         sqliteCommand.Transaction = sqliteTransaction;
         return Convert.ToInt64(await sqliteCommand.ExecuteScalarAsync()) != 0;
     }
@@ -413,6 +450,21 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
         var previous = DecodeRecord(imageRecord.Id, await ReadRequiredEncryptedRecordAsync(read, imageRecord.Id), key);
         await WriteUpdatedRecordAsync(connection, transaction, imageRecord, key, CancellationToken.None);
         await PreserveBrowseIndexAsync(connection, transaction, previous, imageRecord, key, CancellationToken.None);
+        transaction.Commit();
+    }
+
+    public async Task UpdateRecordsAsync(IReadOnlyList<ImageRecord> imageRecords, byte[] key)
+    {
+        await using var connection = await OpenAsync();
+        using var transaction = connection.BeginTransaction();
+        foreach (var imageRecord in imageRecords)
+        {
+            using var read = GalleryStoreCommandFactory.CreateReadRecord(connection, imageRecord.Id);
+            read.Transaction = transaction;
+            var previous = DecodeRecord(imageRecord.Id, await ReadRequiredEncryptedRecordAsync(read, imageRecord.Id), key);
+            await WriteUpdatedRecordAsync(connection, transaction, imageRecord, key, CancellationToken.None);
+            await PreserveBrowseIndexAsync(connection, transaction, previous, imageRecord, key, CancellationToken.None);
+        }
         transaction.Commit();
     }
 
@@ -487,8 +539,13 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     private static ImageRecord DecodeRecord(string id, byte[] encryptedRecord, byte[] key)
     {
         var imageRecord = DecodeSetting<ImageRecord>(encryptedRecord, $"record:{id}", key)
-            ?? throw new InvalidOperationException("Invalid media record.");
-        if (imageRecord.Id != id) throw new CryptographicException("Media record identity mismatch.");
+            ?? throw new InvalidOperationException(InvalidMediaRecordMessage);
+        return RequireRecordIdentity(imageRecord, id);
+    }
+
+    private static ImageRecord RequireRecordIdentity(ImageRecord imageRecord, string id)
+    {
+        if (imageRecord.Id != id) throw new CryptographicException(MediaRecordIdentityMismatchMessage);
         return imageRecord;
     }
 

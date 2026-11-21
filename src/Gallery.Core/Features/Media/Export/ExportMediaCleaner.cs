@@ -14,6 +14,9 @@ namespace Gallery.Core.Features.Media.Export;
 internal static class ExportMediaCleaner
 {
     private const int MaxDecompressedTextBytes = 64 * 1024 * 1024;
+    private const string PngFormatName = "PNG";
+    private const string JpegFormatName = "JPEG";
+    private const string WebPFormatName = "WebP";
     private static ReadOnlySpan<byte> PngSignature => [137, 80, 78, 71, 13, 10, 26, 10];
 
     private static readonly HashSet<string> KeptPngChunks =
@@ -48,74 +51,116 @@ internal static class ExportMediaCleaner
 
     private static void CleanPng(ReadOnlySpan<byte> content, MemoryStream memoryStream)
     {
-        if (!content.StartsWith(PngSignature)) throw Malformed("PNG");
+        if (!content.StartsWith(PngSignature)) throw Malformed(PngFormatName);
         memoryStream.Write(PngSignature);
         for (var offset = PngSignature.Length; ;)
         {
-            if (offset + 12 > content.Length) throw Malformed("PNG");
-            var length = BinaryPrimitives.ReadUInt32BigEndian(content[offset..]);
-            if (length > int.MaxValue || offset + 12L + length > content.Length) throw Malformed("PNG");
-            var type = Encoding.ASCII.GetString(content.Slice(offset + 4, 4));
-            var data = content.Slice(offset + 8, (int)length);
-            if (KeptPngChunks.Contains(type)) memoryStream.Write(content.Slice(offset, 12 + (int)length));
-            else if (type == "zTXt") WritePngTextFromZText(data, memoryStream);
-            else if (type == "iTXt") WriteUncompressedInternationalText(data, memoryStream);
-            if (type == "IEND") return;
-            offset += 12 + (int)length;
+            var pngChunk = ReadPngChunk(content, offset);
+            var chunkData = content.Slice(offset + 8, pngChunk.DataLength);
+            if (KeptPngChunks.Contains(pngChunk.Type))
+                memoryStream.Write(content.Slice(offset, pngChunk.TotalLength));
+            else if (pngChunk.Type == "zTXt") WritePngTextFromZText(chunkData, memoryStream);
+            else if (pngChunk.Type == "iTXt") WriteUncompressedInternationalText(chunkData, memoryStream);
+            if (pngChunk.Type == "IEND") return;
+            offset += pngChunk.TotalLength;
         }
+    }
+
+    private static PngChunk ReadPngChunk(ReadOnlySpan<byte> content, int offset)
+    {
+        if (offset + 12 > content.Length) throw Malformed(PngFormatName);
+        var length = BinaryPrimitives.ReadUInt32BigEndian(content[offset..]);
+        if (length > int.MaxValue || offset + 12L + length > content.Length) throw Malformed(PngFormatName);
+        return new(Encoding.ASCII.GetString(content.Slice(offset + 4, 4)), 12 + (int)length, (int)length);
     }
 
     private static void WritePngTextFromZText(ReadOnlySpan<byte> zTextChunkBytes, MemoryStream memoryStream)
     {
-        var keywordEnd = zTextChunkBytes.IndexOf((byte)0);
-        if (keywordEnd <= 0 || keywordEnd + 2 > zTextChunkBytes.Length || zTextChunkBytes[keywordEnd + 1] != 0) throw Malformed("PNG");
+        var keywordEnd = GetValidatedZTextKeywordEnd(zTextChunkBytes);
         var text = Inflate(zTextChunkBytes[(keywordEnd + 2)..]);
         try
         {
-            var chunk = new byte[keywordEnd + 1 + text.Length];
-            zTextChunkBytes[..(keywordEnd + 1)].CopyTo(chunk);
-            text.CopyTo(chunk, keywordEnd + 1);
-            WritePngChunk(memoryStream, "tEXt", chunk);
-            CryptographicOperations.ZeroMemory(chunk);
+            WriteUncompressedTextChunk(memoryStream, zTextChunkBytes[..(keywordEnd + 1)], text);
         }
         finally { CryptographicOperations.ZeroMemory(text); }
     }
 
+    private static int GetValidatedZTextKeywordEnd(ReadOnlySpan<byte> zTextChunkBytes)
+    {
+        var keywordEnd = zTextChunkBytes.IndexOf((byte)0);
+        if (!HasValidZTextHeader(zTextChunkBytes, keywordEnd)) throw Malformed(PngFormatName);
+        return keywordEnd;
+    }
+
+    private static bool HasValidZTextHeader(ReadOnlySpan<byte> zTextChunkBytes, int keywordEnd) =>
+        keywordEnd > 0 && keywordEnd + 2 <= zTextChunkBytes.Length && zTextChunkBytes[keywordEnd + 1] == 0;
+
     private static void WriteUncompressedInternationalText(ReadOnlySpan<byte> internationalTextChunkBytes, MemoryStream memoryStream)
     {
-        var keywordEnd = internationalTextChunkBytes.IndexOf((byte)0);
-        if (keywordEnd <= 0 || keywordEnd + 3 > internationalTextChunkBytes.Length) throw Malformed("PNG");
-        var compressed = internationalTextChunkBytes[keywordEnd + 1] == 1;
-        var languageEnd = internationalTextChunkBytes[(keywordEnd + 3)..].IndexOf((byte)0);
-        if (languageEnd < 0) throw Malformed("PNG");
-        var translatedStart = keywordEnd + 3 + languageEnd + 1;
-        var translatedEnd = internationalTextChunkBytes[translatedStart..].IndexOf((byte)0);
-        if (translatedEnd < 0) throw Malformed("PNG");
-        var textStart = translatedStart + translatedEnd + 1;
-        var text = compressed ? Inflate(internationalTextChunkBytes[textStart..]) : internationalTextChunkBytes[textStart..].ToArray();
+        var header = ParseInternationalTextHeader(internationalTextChunkBytes);
+        var text = header.IsCompressed
+            ? Inflate(internationalTextChunkBytes[header.TextStart..])
+            : internationalTextChunkBytes[header.TextStart..].ToArray();
         try
         {
-            var chunk = new byte[textStart + text.Length];
+            WriteUncompressedInternationalTextChunk(
+                memoryStream, internationalTextChunkBytes, header.TextStart, header.KeywordEnd, text);
+        }
+        finally { CryptographicOperations.ZeroMemory(text); }
+    }
+
+    private static InternationalTextHeader ParseInternationalTextHeader(ReadOnlySpan<byte> internationalTextChunkBytes)
+    {
+        var keywordEnd = internationalTextChunkBytes.IndexOf((byte)0);
+        if (keywordEnd <= 0 || keywordEnd + 3 > internationalTextChunkBytes.Length) throw Malformed(PngFormatName);
+        var isCompressed = internationalTextChunkBytes[keywordEnd + 1] == 1;
+        var languageEnd = internationalTextChunkBytes[(keywordEnd + 3)..].IndexOf((byte)0);
+        if (languageEnd < 0) throw Malformed(PngFormatName);
+        var translatedStart = keywordEnd + 3 + languageEnd + 1;
+        var translatedEnd = internationalTextChunkBytes[translatedStart..].IndexOf((byte)0);
+        if (translatedEnd < 0) throw Malformed(PngFormatName);
+        return new(translatedStart + translatedEnd + 1, isCompressed, keywordEnd);
+    }
+
+    private static void WriteUncompressedInternationalTextChunk(
+        MemoryStream memoryStream, ReadOnlySpan<byte> internationalTextChunkBytes, int textStart, int keywordEnd,
+        ReadOnlySpan<byte> text)
+    {
+        var chunk = new byte[textStart + text.Length];
+        try
+        {
             internationalTextChunkBytes[..textStart].CopyTo(chunk);
             chunk[keywordEnd + 1] = 0;
             chunk[keywordEnd + 2] = 0;
-            text.CopyTo(chunk, textStart);
+            text.CopyTo(chunk.AsSpan(textStart));
             WritePngChunk(memoryStream, "iTXt", chunk);
-            CryptographicOperations.ZeroMemory(chunk);
         }
-        finally { CryptographicOperations.ZeroMemory(text); }
+        finally { CryptographicOperations.ZeroMemory(chunk); }
+    }
+
+    private static void WriteUncompressedTextChunk(
+        MemoryStream memoryStream, ReadOnlySpan<byte> keyword, ReadOnlySpan<byte> text)
+    {
+        var chunk = new byte[keyword.Length + text.Length];
+        try
+        {
+            keyword.CopyTo(chunk);
+            text.CopyTo(chunk.AsSpan(keyword.Length));
+            WritePngChunk(memoryStream, "tEXt", chunk);
+        }
+        finally { CryptographicOperations.ZeroMemory(chunk); }
     }
 
     private static byte[] Inflate(ReadOnlySpan<byte> compressed)
     {
         var compressedCopy = compressed.ToArray();
         using var input = new MemoryStream(compressedCopy);
-        using var inflater = new ZLibStream(input, CompressionMode.Decompress);
+        using var zLibStream = new ZLibStream(input, CompressionMode.Decompress);
         using var text = new MemoryStream();
         try
         {
             var decompressedTextBytes = new byte[81920];
-            for (int read; (read = inflater.Read(decompressedTextBytes)) > 0;)
+            for (int read; (read = zLibStream.Read(decompressedTextBytes)) > 0;)
             {
                 if (text.Length + read > MaxDecompressedTextBytes)
                     throw new InvalidOperationException("Embedded PNG text is too large to export.");
@@ -146,15 +191,12 @@ internal static class ExportMediaCleaner
 
     private static void CleanJpeg(ReadOnlySpan<byte> content, MemoryStream memoryStream)
     {
-        if (content.Length < 4 || content[0] != 0xFF || content[1] != 0xD8) throw Malformed("JPEG");
+        if (!HasJpegStartMarker(content)) throw Malformed(JpegFormatName);
         memoryStream.Write(content[..2]);
         var offset = 2;
         while (true)
         {
-            if (offset >= content.Length || content[offset] != 0xFF) throw Malformed("JPEG");
-            while (offset < content.Length && content[offset] == 0xFF) offset++;
-            if (offset >= content.Length) throw Malformed("JPEG");
-            var marker = content[offset++];
+            var marker = ReadJpegMarker(content, ref offset);
             if (marker == 0xD9)
             {
                 memoryStream.Write([0xFF, 0xD9]);
@@ -165,15 +207,13 @@ internal static class ExportMediaCleaner
                 memoryStream.Write([0xFF, marker]);
                 continue;
             }
-            if (offset + 2 > content.Length) throw Malformed("JPEG");
-            var length = BinaryPrimitives.ReadUInt16BigEndian(content[offset..]);
-            if (length < 2 || offset + length > content.Length) throw Malformed("JPEG");
+            var segmentOffset = offset;
+            var length = ReadJpegSegmentLength(content, ref offset);
             if (IsKeptJpegSegment(marker))
             {
                 memoryStream.Write([0xFF, marker]);
-                memoryStream.Write(content.Slice(offset, length));
+                memoryStream.Write(content.Slice(segmentOffset, length));
             }
-            offset += length;
             if (marker == 0xDA)
             {
                 var scanEnd = EntropyCodedDataEnd(content, offset);
@@ -181,6 +221,26 @@ internal static class ExportMediaCleaner
                 offset = scanEnd;
             }
         }
+    }
+
+    private static bool HasJpegStartMarker(ReadOnlySpan<byte> content) =>
+        content.Length >= 4 && content[0] == 0xFF && content[1] == 0xD8;
+
+    private static byte ReadJpegMarker(ReadOnlySpan<byte> content, ref int offset)
+    {
+        if (offset >= content.Length || content[offset] != 0xFF) throw Malformed(JpegFormatName);
+        while (offset < content.Length && content[offset] == 0xFF) offset++;
+        if (offset >= content.Length) throw Malformed(JpegFormatName);
+        return content[offset++];
+    }
+
+    private static int ReadJpegSegmentLength(ReadOnlySpan<byte> content, ref int offset)
+    {
+        if (offset + 2 > content.Length) throw Malformed(JpegFormatName);
+        var length = BinaryPrimitives.ReadUInt16BigEndian(content[offset..]);
+        if (length < 2 || offset + length > content.Length) throw Malformed(JpegFormatName);
+        offset += length;
+        return length;
     }
 
     // APP0 (JFIF), APP1 (EXIF/XMP), APP2 (ICC) and APP14 (Adobe color transform) are standard; other APPn are private.
@@ -191,27 +251,27 @@ internal static class ExportMediaCleaner
     {
         for (var index = offset; index + 1 < content.Length; index++)
         {
-            if (content[index] != 0xFF) continue;
-            var next = content[index + 1];
-            if (next == 0x00 || next is >= 0xD0 and <= 0xD7 || next == 0xFF) continue;
-            return index;
+            if (!DoesNotTerminateEntropyCodedScan(content[index], index + 1 < content.Length ? content[index + 1] : (byte)0))
+                return index;
         }
-        throw Malformed("JPEG");
+        throw Malformed(JpegFormatName);
     }
+
+    private static bool DoesNotTerminateEntropyCodedScan(byte current, byte next) =>
+        current != 0xFF || next == 0x00 || next is >= 0xD0 and <= 0xD7 || next == 0xFF;
 
     private static void CleanWebP(ReadOnlySpan<byte> content, MemoryStream memoryStream)
     {
-        if (content.Length < 12 || !content[..4].SequenceEqual("RIFF"u8) || !content.Slice(8, 4).SequenceEqual("WEBP"u8))
-            throw Malformed("WebP");
+        if (!HasWebPRiffHeader(content)) throw Malformed(WebPFormatName);
         var riffEnd = 8L + BinaryPrimitives.ReadUInt32LittleEndian(content[4..]);
-        if (riffEnd > content.Length) throw Malformed("WebP");
+        if (riffEnd > content.Length) throw Malformed(WebPFormatName);
         memoryStream.Write(content[..12]);
         for (var offset = 12; offset < riffEnd;)
         {
-            if (offset + 8 > riffEnd) throw Malformed("WebP");
+            if (offset + 8 > riffEnd) throw Malformed(WebPFormatName);
             var size = BinaryPrimitives.ReadUInt32LittleEndian(content[(offset + 4)..]);
             var paddedEnd = offset + 8L + size + (size & 1);
-            if (offset + 8L + size > riffEnd) throw Malformed("WebP");
+            if (offset + 8L + size > riffEnd) throw Malformed(WebPFormatName);
             var chunkEnd = (int)Math.Min(paddedEnd, riffEnd);
             if (KeptWebPChunks.Contains(Encoding.ASCII.GetString(content.Slice(offset, 4))))
             {
@@ -221,9 +281,12 @@ internal static class ExportMediaCleaner
             offset = (int)paddedEnd;
         }
         var riffSize = memoryStream.Length - 8;
-        if (riffSize > uint.MaxValue) throw Malformed("WebP");
+        if (riffSize > uint.MaxValue) throw Malformed(WebPFormatName);
         BinaryPrimitives.WriteUInt32LittleEndian(memoryStream.GetBuffer().AsSpan(4, 4), (uint)riffSize);
     }
+
+    private static bool HasWebPRiffHeader(ReadOnlySpan<byte> content) =>
+        content.Length >= 12 && content[..4].SequenceEqual("RIFF"u8) && content.Slice(8, 4).SequenceEqual("WEBP"u8);
 
     // Sample tables hold absolute file offsets, so boxes are never removed or moved: unknown top-level boxes become
     // zero-filled 'free' boxes of the same size, free/skip padding is zeroed, and bytes after the last box are dropped.
@@ -262,6 +325,9 @@ internal static class ExportMediaCleaner
 
     private static InvalidOperationException Malformed(string format) =>
         new($"The stored {format} file is malformed and could not be cleaned for export.");
+
+    private readonly record struct PngChunk(string Type, int TotalLength, int DataLength);
+    private readonly record struct InternationalTextHeader(int TextStart, bool IsCompressed, int KeywordEnd);
 
     private static class Crc32
     {

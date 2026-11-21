@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Gallery.Core.Features.Vaults.Session;
+using Gallery.Core.Features.Vaults.Security;
 
 namespace Gallery.Core.Features.Vaults;
 
@@ -7,6 +8,7 @@ internal sealed class VaultAccess
 {
     private readonly GalleryLifetime galleryLifetime;
     private readonly VaultSession vaultSession;
+    private readonly object activationGate = new();
     private long explicitLockRequests;
 
     public VaultAccess(GalleryLifetime galleryLifetime, VaultSession vaultSession)
@@ -20,43 +22,72 @@ internal sealed class VaultAccess
 
     public void LockVault()
     {
-        Interlocked.Increment(ref explicitLockRequests);
-        vaultSession.Lock();
-        _ = ReleaseCheckoutAfterOperationsAsync();
+        VaultCheckout? expectedCheckout;
+        lock (activationGate)
+        {
+            explicitLockRequests++;
+            expectedCheckout = galleryLifetime.Current.Checkout;
+            vaultSession.Lock();
+        }
+        _ = ReleaseCheckoutAfterOperationsAsync(expectedCheckout);
     }
 
-    public long ExplicitLockRequests => Interlocked.Read(ref explicitLockRequests);
+    public long ExplicitLockRequests
+    {
+        get { lock (activationGate) return explicitLockRequests; }
+    }
 
     // A failed location change may resume the previous session unless a newer explicit lock superseded it.
     public void RestoreUnlockedSessionAfterFailure(byte[]? key, long lockRequestsAtStart)
     {
-        if (key is not null && !galleryLifetime.IsDisposed && ExplicitLockRequests == lockRequestsAtStart)
-            vaultSession.Unlock(key);
+        if (key is null) return;
+        lock (activationGate)
+            if (CanResumePreviousSession(galleryLifetime.IsDisposed, explicitLockRequests, lockRequestsAtStart))
+                vaultSession.Unlock(key);
     }
 
-    public Task UnlockWithPassphraseAsync(string passphrase) => UnlockAsync(passphrase, useRecovery: false);
-    public Task UnlockWithRecoveryPhraseAsync(string recoveryPhrase) => UnlockAsync(recoveryPhrase, useRecovery: true);
+    private static bool CanResumePreviousSession(bool isDisposed, long currentLockRequests, long lockRequestsAtStart) =>
+        !isDisposed && currentLockRequests == lockRequestsAtStart;
 
-    private async Task UnlockAsync(string credential, bool useRecovery)
+    public Task UnlockWithPassphraseAsync(string passphrase) =>
+        UnlockAsync(passphrase, VaultCredentialKind.Passphrase);
+
+    public Task UnlockWithRecoveryPhraseAsync(string recoveryPhrase) =>
+        UnlockAsync(recoveryPhrase, VaultCredentialKind.RecoveryPhrase);
+
+    private async Task UnlockAsync(string credential, VaultCredentialKind credentialKind)
     {
         using var activity = VaultOpenTelemetry.Source.StartActivity("vault.unlock");
-        activity?.SetTag("vault.unlock.method", useRecovery ? "recovery" : "passphrase");
+        activity?.SetTag("vault.unlock.method",
+            credentialKind == VaultCredentialKind.RecoveryPhrase ? "recovery" : "passphrase");
         var started = VaultOpenTelemetry.Start(activity);
-        if (useRecovery) credential = RecoveryPhraseValidator.Normalize(credential);
+        if (credentialKind == VaultCredentialKind.RecoveryPhrase)
+            credential = RecoveryPhraseValidator.Normalize(credential);
+        var lockRequestsAtAdmission = ExplicitLockRequests;
         await galleryLifetime.Gate.WaitAsync();
         VaultOpenTelemetry.Record(activity, "vault.unlock.gate_wait_ms", started);
         try
         {
+            if (ExplicitLockRequests != lockRequestsAtAdmission)
+                throw new InvalidOperationException("Vault unlock was superseded by an explicit lock request.");
             galleryLifetime.EnsureCheckout();
             var store = galleryLifetime.Current.VaultStore;
-            var key = useRecovery
+            var key = credentialKind == VaultCredentialKind.RecoveryPhrase
                 ? await store.UnlockWithRecoveryPhraseAsync(credential)
                 : await store.UnlockWithPassphraseAsync(credential);
-            try { vaultSession.Unlock(key); }
+            try
+            {
+                var historyStarted = VaultOpenTelemetry.Start(activity);
+                galleryLifetime.History?.Save(store.Root);
+                VaultOpenTelemetry.Record(activity, "vault.unlock.history_save_ms", historyStarted);
+                lock (activationGate)
+                {
+                    if (explicitLockRequests != lockRequestsAtAdmission)
+                        throw new InvalidOperationException("Vault unlock was superseded by an explicit lock request.");
+                    vaultSession.Unlock(key);
+                }
+            }
             finally { CryptographicOperations.ZeroMemory(key); }
-            var historyStarted = VaultOpenTelemetry.Start(activity);
-            galleryLifetime.History?.Save(store.Root);
-            VaultOpenTelemetry.Record(activity, "vault.unlock.history_save_ms", historyStarted);
         }
         finally
         {
@@ -67,18 +98,23 @@ internal sealed class VaultAccess
 
     private void HandleAutoLock()
     {
-        _ = ReleaseCheckoutAfterOperationsAsync();
-        AutoLocked?.Invoke();
+        _ = ReleaseCheckoutAfterOperationsAsync(galleryLifetime.Current.Checkout);
+        AutoLockNotificationPublisher.Publish(AutoLocked);
     }
 
     // Waits for leased work (ingestion, queued drive work) without holding the lifecycle gate, so the user can
     // unlock again while that work continues. The checkout is kept if the gallery was unlocked meanwhile.
     internal async Task ReleaseCheckoutAfterOperationsAsync()
     {
-        VaultCheckout? expectedCheckout;
         await galleryLifetime.Gate.WaitAsync();
+        VaultCheckout? expectedCheckout;
         try { expectedCheckout = galleryLifetime.Current.Checkout; }
         finally { galleryLifetime.Gate.Release(); }
+        await ReleaseCheckoutAfterOperationsAsync(expectedCheckout);
+    }
+
+    internal async Task ReleaseCheckoutAfterOperationsAsync(VaultCheckout? expectedCheckout)
+    {
         if (expectedCheckout is null) return;
         while (true)
         {

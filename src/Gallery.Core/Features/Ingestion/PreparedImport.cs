@@ -1,5 +1,7 @@
+using System.Collections.Immutable;
 using Gallery.Core.Models;
 
 namespace Gallery.Core.Features.Ingestion;
 
-internal sealed record PreparedImport(ImageRecord Record, byte[] EncryptedMedia, byte[] EncryptedThumbnail);
+internal sealed record PreparedImport(
+    ImageRecord Record, ImmutableArray<byte> EncryptedMedia, ImmutableArray<byte> EncryptedThumbnail);

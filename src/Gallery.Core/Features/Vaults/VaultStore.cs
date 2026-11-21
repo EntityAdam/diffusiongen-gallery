@@ -50,7 +50,7 @@ internal sealed class VaultStore
             ?? throw new InvalidOperationException(EmptyHeaderMessage)
         : "";
 
-    public async Task RenameAsync(string name)
+    public async Task RenameVaultAsync(string name)
     {
         await semaphoreSlim.WaitAsync();
         try { await ReplaceHeaderAsync((await ReadHeaderAsync()) with { Name = name }); }
@@ -77,7 +77,7 @@ internal sealed class VaultStore
     private void CopyExistingHeader(string destinationPath) =>
         File.Copy(HeaderPath, destinationPath, overwrite: false);
 
-    public async Task<(byte[] Key, string Recovery)> CreateAsync(string passphrase, string name = DefaultGalleryName, CatalogBackend backend = CatalogBackend.Sqlite)
+    public async Task<(byte[] Key, string Recovery)> CreateVaultAsync(string passphrase, string name = DefaultGalleryName, CatalogBackend backend = CatalogBackend.Sqlite)
     {
         await semaphoreSlim.WaitAsync();
         try { return await CreateWithOwnedKeyAsync(passphrase, name, backend); }

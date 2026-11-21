@@ -11,6 +11,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
 {
     private const string CreationMarkerFileName = ".vault-create.json";
     private const string CreationStagingPrefix = ".vault-create-";
+    private const string InvalidCreationReceiptMessage = "The interrupted gallery creation receipt is invalid; existing files were preserved.";
     private sealed record CreationPublication(string StagingDirectory, string CatalogSha256, string HeaderSha256);
 
     public async Task<string> CreateVaultAsync(
@@ -54,7 +55,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         {
             using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
             EnsureCheckout();
-            await galleryLifetime.Current.VaultStore.RenameAsync(galleryName);
+            await galleryLifetime.Current.VaultStore.RenameVaultAsync(galleryName);
         }
         finally { galleryLifetime.Gate.Release(); }
     }
@@ -70,7 +71,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         try
         {
             var stagedVaultStore = new VaultStore(staging);
-            var createdVault = await stagedVaultStore.CreateAsync(passphrase, galleryName, galleryLifetime.StoreFactory.NewCatalogBackend);
+            var createdVault = await stagedVaultStore.CreateVaultAsync(passphrase, galleryName, galleryLifetime.StoreFactory.NewCatalogBackend);
             createdKey = createdVault.Key;
             await InitializeStagedCatalogAsync(staging, storageOptions, createdKey);
             EnsureActive();
@@ -164,15 +165,12 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         try { publication = JsonSerializer.Deserialize<CreationPublication>(File.ReadAllText(markerPath)); }
         catch (JsonException exception)
         {
-            throw new IOException("The interrupted gallery creation receipt is invalid; existing files were preserved.", exception);
+            throw new IOException(InvalidCreationReceiptMessage, exception);
         }
-        if (publication is null || publication.StagingDirectory is null
-            || !publication.StagingDirectory.StartsWith(CreationStagingPrefix, StringComparison.Ordinal)
-            || !Guid.TryParseExact(publication.StagingDirectory[CreationStagingPrefix.Length..], "N", out _)
-            || !IsFileHash(publication.CatalogSha256) || !IsFileHash(publication.HeaderSha256))
-            throw new IOException("The interrupted gallery creation receipt is invalid; existing files were preserved.");
+        if (!HasValidCreationReceipt(publication))
+            throw new IOException(InvalidCreationReceiptMessage);
 
-        var staging = Path.Combine(vaultRoot, publication.StagingDirectory);
+        var staging = Path.Combine(vaultRoot, publication!.StagingDirectory);
         if (Directory.Exists(staging) && File.GetAttributes(staging).HasFlag(FileAttributes.ReparsePoint))
             throw new IOException("The interrupted gallery staging directory cannot be a symbolic link.");
         var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
@@ -200,6 +198,12 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
     private static bool IsFileHash(string? value) =>
         value is { Length: 64 } && value.All(char.IsAsciiHexDigit);
 
+    private static bool HasValidCreationReceipt(CreationPublication? publication) =>
+        publication is not null && publication.StagingDirectory is not null
+        && publication.StagingDirectory.StartsWith(CreationStagingPrefix, StringComparison.Ordinal)
+        && Guid.TryParseExact(publication.StagingDirectory[CreationStagingPrefix.Length..], "N", out _)
+        && IsFileHash(publication.CatalogSha256) && IsFileHash(publication.HeaderSha256);
+
     private static string FileHash(string path)
     {
         using var stream = File.OpenRead(path);
@@ -226,9 +230,12 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
 
     private static void ValidatePassphrase(string passphrase)
     {
-        if (string.IsNullOrWhiteSpace(passphrase) || passphrase.Length < 14)
+        if (!IsAcceptablePassphrase(passphrase))
             throw new InvalidOperationException("Use a passphrase of at least 14 characters; a long unique phrase is recommended.");
     }
+
+    private static bool IsAcceptablePassphrase(string passphrase) =>
+        !string.IsNullOrWhiteSpace(passphrase) && passphrase.Length >= 14;
 
     private static string NormalizeGalleryName(string galleryName)
     {

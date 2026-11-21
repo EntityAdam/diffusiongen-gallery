@@ -33,7 +33,7 @@ public sealed class BackupTargetBoundaryTests
         const string invalidConnection = "invalid connection credential";
 
         var failure = Assert.Throws<InvalidOperationException>(() =>
-            BackupTargetAzure.ValidateConnectionString(invalidConnection));
+            BackupTargetAzure.ValidateDestination(new StoredBackupSettings("azure", "", "container", "", invalidConnection, null, null)));
 
         Assert.IsType<FormatException>(failure.InnerException);
         AsserterExceptionContract.AssertMessageContains(["Azure", "connection string", "invalid"], failure.Message);
@@ -67,5 +67,43 @@ public sealed class BackupTargetBoundaryTests
         AsserterExceptionContract.AssertMessageContains(["filenames", "not paths"], failure.Message);
         Assert.False(File.Exists(destination),
             $"Expected downloaded archive at '{destination}' after rejected traversal: absent. Actual exists: {File.Exists(destination)}.");
+    }
+
+    [Fact]
+    public async Task LocalTarget_TransfersArchivesWithoutReplacingExistingFiles()
+    {
+        using var fixture = new TestVault();
+        var directory = Path.Combine(fixture.Root, "backups");
+        Directory.CreateDirectory(directory);
+        var archiveName = "full-20261121T000000000Z-0123456789abcdef0123456789abcdef.zip";
+        var source = Path.Combine(fixture.Root, "source.zip");
+        var downloaded = Path.Combine(fixture.Root, "downloaded.zip");
+        var contents = Enumerable.Range(0, 100_000).Select(value => (byte)(value % 251)).ToArray();
+        await File.WriteAllBytesAsync(source, contents);
+        var target = new BackupTargetLocal(directory);
+
+        await target.UploadAsync(archiveName, source);
+        await target.DownloadAsync(archiveName, downloaded);
+
+        Assert.Equal(contents, await File.ReadAllBytesAsync(downloaded));
+        await Assert.ThrowsAsync<IOException>(() => target.UploadAsync(archiveName, source));
+        await Assert.ThrowsAsync<IOException>(() => target.DownloadAsync(archiveName, downloaded));
+        Assert.Equal(contents, await File.ReadAllBytesAsync(Path.Combine(directory, archiveName)));
+    }
+
+    [Fact]
+    public async Task LocalTarget_ListingOmitsNamesRejectedByArchiveValidation()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        using var fixture = new TestVault();
+        var directory = Path.Combine(fixture.Root, "backups");
+        Directory.CreateDirectory(directory);
+        await File.WriteAllBytesAsync(Path.Combine(directory, "full.zip"), []);
+        await File.WriteAllBytesAsync(Path.Combine(directory, "weekly:copy.zip"), []);
+
+        var names = await new BackupTargetLocal(directory).ListAsync();
+
+        Assert.Equal(["full.zip"], names);
     }
 }

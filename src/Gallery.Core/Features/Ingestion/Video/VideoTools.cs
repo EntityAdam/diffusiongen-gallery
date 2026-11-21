@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
@@ -84,9 +85,8 @@ internal sealed class VideoTools
     }
 
     /// <summary>Decodes the first video frame as PNG bytes.</summary>
-    internal async Task<byte[]> FirstFrameAsync(string path, CancellationToken cancellationToken = default)
+    internal async Task<byte[]> FirstFrameAsync(string path, int streamIndex, CancellationToken cancellationToken = default)
     {
-        int streamIndex = (await ProbeAsync(path, cancellationToken)).StreamIndex;
         byte[] frameBytes = await RunAsync(FfmpegExecutable,
             CreateFrameArguments(path, streamIndex),
             cancellationToken);
@@ -128,7 +128,7 @@ internal sealed class VideoTools
         {
             if (stream.ValueKind != JsonValueKind.Object)
                 throw new InvalidOperationException($"ffprobe returned an invalid stream object '{stream.GetRawText()}'.");
-            if (ReadString(stream, "codec_type") != "video" || IsAttachedPicture(stream))
+            if (!IsPlayableVideoStream(stream))
             {
                 ordinal++;
                 continue;
@@ -141,6 +141,9 @@ internal sealed class VideoTools
         }
         return null;
     }
+
+    private static bool IsPlayableVideoStream(JsonElement stream) =>
+        ReadString(stream, "codec_type") == "video" && !IsAttachedPicture(stream);
 
     private static int ReadStreamIndex(JsonElement index) =>
         index.ValueKind == JsonValueKind.Number && index.TryGetInt32(out int parsed) && parsed >= 0
@@ -228,9 +231,21 @@ internal sealed class VideoTools
         CancellationToken cancellationToken)
     {
         string executable = ResolveToolPath(executableName) ?? throw new InvalidOperationException(MissingMessage);
-        using Process process = Process.Start(CreateProcessStartInfo(executable, arguments))
-            ?? throw new InvalidOperationException($"Could not start {executableName}.");
+        using Process process = StartProcess(CreateProcessStartInfo(executable, arguments), executableName);
         return await ExecuteProcessAsync(process, executableName, cancellationToken);
+    }
+
+    private static Process StartProcess(ProcessStartInfo processStartInfo, string executableName)
+    {
+        try
+        {
+            return Process.Start(processStartInfo)
+                ?? throw new InvalidOperationException($"Could not start {executableName}.");
+        }
+        catch (Win32Exception exception)
+        {
+            throw new InvalidOperationException($"Could not start {executableName}.", exception);
+        }
     }
 
     private static async Task<byte[]> ExecuteProcessAsync(Process process, string executableName,

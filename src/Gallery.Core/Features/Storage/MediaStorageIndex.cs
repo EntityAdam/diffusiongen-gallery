@@ -8,7 +8,8 @@ using Gallery.Core.Shared.Files;
 
 namespace Gallery.Core.Features.Storage;
 
-internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue driveQueue) : IGalleryStorage
+internal sealed class MediaStorageIndex(
+    GalleryLifetime galleryLifetime, VaultSession vaultSession, GalleryDriveQueue galleryDriveQueue) : IGalleryStorage
 {
     internal const string SettingId = "media-index";
     private const string SettingPurpose = "media-index:v1";
@@ -20,10 +21,10 @@ internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSe
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var store = galleryLifetime.Current.GalleryStore;
         var records = await store.ReadRecordsAsync(keyLease.Bytes);
-        await store.ClearMediaIndexAsync(keyLease.Bytes);
         await store.DeleteSettingsAsync(keyLease.Bytes, SettingId);
+        await store.ClearMediaIndexAsync(keyLease.Bytes);
         await ScheduleAsync(records, keyLease.Bytes);
-        driveQueue.Start();
+        galleryDriveQueue.Start();
     }
 
     /// <summary>Schedules the one-time scan that seeds the media index; later loads read the index instead of the drive.</summary>
@@ -35,9 +36,7 @@ internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSe
         var galleryStore = location.GalleryStore;
         if (await galleryStore.ReadSettingsAsync<MediaIndexMarker>(SettingId, SettingPurpose, key) is not null) return;
         var imageRoot = Path.Combine(location.VaultStore.Root, "images");
-        var scans = new List<NewDriveOperation> { DriveOperationProcessor.Create(DriveOperationKind.ScanDirectory, imageRoot, null, key, operationIsRecursive: true) };
-        scans.AddRange(ExternalMediaDirectories(records.Select(record => record.StoredPath), imageRoot)
-            .Select(directory => DriveOperationProcessor.Create(DriveOperationKind.ScanDirectory, directory, null, key)));
+        var scans = CreateScanPlan(imageRoot, records, key);
         await galleryStore.EnqueueDriveOperationsAsync(scans, key);
         await galleryStore.SaveSettingsAsync(new MediaIndexMarker(DateTimeOffset.UtcNow), SettingId, SettingPurpose, key);
         activity?.SetTag("gallery.load.media_index_scheduled", true);
@@ -55,10 +54,9 @@ internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSe
         using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
         var store = galleryLifetime.Current.GalleryStore;
         var overview = await store.ReadSettingsAsync<StorageOverview>(StorageOverview.SettingId, StorageOverview.SettingPurpose, keyLease.Bytes);
-        return overview is null ? null : overview with
-        {
-            IsStale = overview.CatalogRevision != await store.ReadStorageRevisionAsync(keyLease.Bytes)
-        };
+        if (overview is null) return null;
+        var currentRevision = await store.ReadStorageRevisionAsync(keyLease.Bytes);
+        return overview with { IsStale = IsStaleAtRevision(overview, currentRevision) };
     }
 
     public async Task<StorageOverview> RefreshStorageOverviewAsync()
@@ -68,21 +66,24 @@ internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSe
         var store = location.GalleryStore;
         var revision = await store.ReadStorageRevisionAsync(keyLease.Bytes);
         var records = await store.ReadRecordsAsync(keyLease.Bytes);
-        var indexedLengths = await store.ReadMediaIndexAsync(keyLease.Bytes);
+        var indexedLengthsByPathFingerprint = await store.ReadMediaIndexAsync(keyLease.Bytes);
         var indexPending = await IsPendingAsync(keyLease.Bytes);
-        var (overview, measured) = await Task.Run(() =>
-            MeasureStorage(location.VaultStore.Root, records, indexedLengths, keyLease.Bytes));
-        await store.IndexFilesAsync(measured, keyLease.Bytes);
+        StorageOverview overview;
+        List<(byte[] Directory, IndexedFile File)> measured;
+        (overview, measured) = await Task.Run(() =>
+            MeasureStorage(location.VaultStore.Root, records, indexedLengthsByPathFingerprint, keyLease.Bytes));
+        await IndexMeasurementsIfCurrentAsync(store, revision, measured, keyLease.Bytes);
         var storageOverview = overview with { IsIndexPending = indexPending, CatalogRevision = revision };
         await store.SaveSettingsAsync(storageOverview, StorageOverview.SettingId, StorageOverview.SettingPurpose, keyLease.Bytes);
-        return storageOverview with { IsStale = revision != await store.ReadStorageRevisionAsync(keyLease.Bytes) };
+        var currentRevision = await store.ReadStorageRevisionAsync(keyLease.Bytes);
+        return storageOverview with { IsStale = IsStaleAtRevision(storageOverview, currentRevision) };
     }
 
     private static (StorageOverview Overview, List<(byte[] Directory, IndexedFile File)> Measured) MeasureStorage(
-        string vaultRoot, IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
+        string vaultRoot, IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengthsByPathFingerprint, byte[] key)
     {
         var vaultMeasurement = MeasureVaultFiles(vaultRoot);
-        var imageMeasurement = MeasureImageFiles(records, indexedLengths, key);
+        var imageMeasurement = MeasureImageFiles(records, indexedLengthsByPathFingerprint, key);
         return (new(vaultMeasurement.DatabaseBytes, imageMeasurement.FileCount, imageMeasurement.Bytes,
             vaultMeasurement.FileCount, vaultMeasurement.Bytes, imageMeasurement.Missing, DateTimeOffset.UtcNow),
             imageMeasurement.Measured);
@@ -108,7 +109,7 @@ internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSe
 
     // Indexed files are counted from the database; only files the index has not seen are measured on disk.
     private static (int FileCount, long Bytes, int Missing, List<(byte[] Directory, IndexedFile File)> Measured) MeasureImageFiles(
-        IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengths, byte[] key)
+        IEnumerable<ImageRecord> records, Dictionary<string, long> indexedLengthsByPathFingerprint, byte[] key)
     {
         long imageBytes = 0;
         int imageFileCount = 0, missing = 0;
@@ -116,7 +117,7 @@ internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSe
         foreach (var path in records.Select(record => record.StoredPath).Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
         {
             var target = DriveOperationProcessor.PathFingerprint(key, path);
-            if (!indexedLengths.TryGetValue(Convert.ToHexString(target), out var length))
+            if (!indexedLengthsByPathFingerprint.TryGetValue(Convert.ToHexString(target), out var length))
             {
                 var measuredLength = StorageFileSystem.FileLength(path);
                 if (measuredLength is null) { missing++; continue; }
@@ -127,6 +128,35 @@ internal sealed class MediaStorageIndex(GalleryLifetime galleryLifetime, VaultSe
             imageBytes += length;
         }
         return (imageFileCount, imageBytes, missing, measured);
+    }
+
+    internal static async Task IndexMeasurementsIfCurrentAsync(
+        IGalleryStore store, long snapshotRevision,
+        IReadOnlyCollection<(byte[] Directory, IndexedFile File)> measuredFiles, byte[] key)
+    {
+        if (measuredFiles.Count == 0) return;
+        await store.Gate.WaitAsync();
+        try
+        {
+            if (await store.ReadStorageRevisionAsync(key) == snapshotRevision)
+                await store.IndexFilesAsync(measuredFiles, key);
+        }
+        finally { store.Gate.Release(); }
+    }
+
+    private static bool IsStaleAtRevision(StorageOverview storageOverview, long currentRevision) =>
+        storageOverview.CatalogRevision != currentRevision;
+
+    private static List<NewDriveOperation> CreateScanPlan(
+        string imageRoot, IReadOnlyCollection<ImageRecord> records, byte[] key)
+    {
+        var scans = new List<NewDriveOperation>
+        {
+            DriveOperationProcessor.Create(DriveOperationKind.ScanDirectory, imageRoot, null, key, operationIsRecursive: true)
+        };
+        scans.AddRange(ExternalMediaDirectories(records.Select(record => record.StoredPath), imageRoot)
+            .Select(directory => DriveOperationProcessor.Create(DriveOperationKind.ScanDirectory, directory, null, key)));
+        return scans;
     }
 
     internal static IEnumerable<string> ExternalMediaDirectories(IEnumerable<string> storedPaths, string imageRoot) =>

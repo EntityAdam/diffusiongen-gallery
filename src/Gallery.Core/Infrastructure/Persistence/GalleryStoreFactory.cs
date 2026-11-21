@@ -15,8 +15,8 @@ internal sealed class GalleryStoreFactory(CatalogBackend newCatalogBackend = Cat
 
     public IGalleryStore Create(string vaultRoot)
     {
-        var vault = new VaultStore(vaultRoot);
-        return Create(vaultRoot, vault.Exists ? vault.CatalogBackend : NewCatalogBackend);
+        var vaultStore = new VaultStore(vaultRoot);
+        return Create(vaultRoot, vaultStore.Exists ? vaultStore.CatalogBackend : NewCatalogBackend);
     }
 
     public IGalleryStore Create(string vaultRoot, CatalogBackend backend) =>

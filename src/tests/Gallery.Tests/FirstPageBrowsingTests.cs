@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Gallery.Core.Features.Ingestion.Metadata;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Infrastructure.Persistence;
@@ -115,6 +116,131 @@ public sealed class FirstPageBrowsingTests
         Assert.Equal(bootstrap.Records.Select(record => record.Id).Order(), cached.Records.Select(record => record.Id).Order());
     }
 
+    [Fact]
+    public async Task Browse_record_reads_batch_large_id_sets_and_preserve_distinct_request_order()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var records = await SeedAsync(fixture, 3);
+        var requestedIds = Enumerable.Range(0, 40000).Select(index => $"missing-{index}")
+            .Concat([records[2].Id, records[0].Id, records[2].Id, "missing-final", records[1].Id]).ToArray();
+
+        var actual = await fixture.Store.ReadBrowseRecordsAsync(requestedIds, fixture.Session.Key, CancellationToken.None);
+
+        Assert.Equal(new[] { records[2].Id, records[0].Id, records[1].Id }, actual.Select(record => record.Id));
+    }
+
+    [Fact]
+    public async Task Browse_index_written_with_array_members_remains_readable()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var records = await SeedAsync(fixture, 3);
+        var revision = await fixture.Store.ReadStorageRevisionAsync(fixture.Session.Key);
+        var orderedIds = records.OrderByDescending(record => record.ImportedAt).Select(record => record.Id).ToArray();
+        var legacyIndex = new
+        {
+            Version = 1,
+            Revision = revision,
+            TotalRecords = records.Count,
+            All = orderedIds,
+            Active = orderedIds,
+            Marked = Array.Empty<string>()
+        };
+        var payload = VaultCrypto.Encrypt(JsonSerializer.SerializeToUtf8Bytes(legacyIndex),
+            fixture.Session.Key, "browse-first-page:v1");
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(fixture.Root, "gallery.db"),
+            Pooling = false
+        }.ToString()))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO settings (id, payload) VALUES ('browse-first-page', $payload)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
+                """;
+            command.Parameters.AddWithValue("$payload", payload);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var page = await fixture.Store.ReadInitialPageAsync(12, InitialPageMode.Active,
+            fixture.Session.Key, CancellationToken.None);
+
+        Assert.NotNull(page);
+        Assert.True(page.IsComplete);
+        Assert.True(page.CacheHit);
+        Assert.Equal(orderedIds, page.Records.Select(record => record.Id));
+    }
+
+    [Fact]
+    public async Task Partial_browse_index_selects_active_or_marked_mode()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var records = await SeedAsync(fixture, 3);
+        var marked = records[1] with { IsMarkedForDeletion = true };
+        await fixture.Store.UpdateAsync(marked, fixture.Session.Key);
+        var revision = await fixture.Store.ReadStorageRevisionAsync(fixture.Session.Key);
+        var index = new
+        {
+            Version = 1,
+            Revision = revision,
+            TotalRecords = records.Count,
+            All = new[] { records[0].Id, marked.Id },
+            Active = new[] { records[0].Id, records[2].Id },
+            Marked = new[] { marked.Id }
+        };
+        var payload = VaultCrypto.Encrypt(JsonSerializer.SerializeToUtf8Bytes(index),
+            fixture.Session.Key, "browse-first-page:v1");
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(fixture.Root, "gallery.db"),
+            Pooling = false
+        }.ToString()))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO settings (id, payload) VALUES ('browse-first-page', $payload)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
+                """;
+            command.Parameters.AddWithValue("$payload", payload);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var activePage = await fixture.Store.ReadInitialPageAsync(1, InitialPageMode.Active, fixture.Session.Key, CancellationToken.None);
+        var markedPage = await fixture.Store.ReadInitialPageAsync(1, InitialPageMode.Marked, fixture.Session.Key, CancellationToken.None);
+
+        Assert.False(activePage!.IsComplete);
+        Assert.Equal(records[0].Id, Assert.Single(activePage.Records).Id);
+        Assert.False(markedPage!.IsComplete);
+        Assert.Equal(marked.Id, Assert.Single(markedPage.Records).Id);
+    }
+
+    [Fact]
+    public async Task Unreadable_browse_cache_falls_back_and_rebuilds_but_authoritative_record_failures_remain_fatal()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = Assert.Single(await SeedAsync(fixture, 1));
+        await fixture.Scope.Catalog.LoadInitialPageAsync(12);
+        await MakeBrowseIndexUnreadableAsync(fixture);
+
+        await fixture.Store.UpdateAsync(record with { Rating = 5 }, fixture.Session.Key);
+        var fallback = await fixture.Scope.Catalog.LoadInitialPageAsync(12);
+
+        Assert.False(fallback.CacheHit);
+        Assert.Equal(5, Assert.Single(fallback.Records).Rating);
+        Assert.True((await fixture.Scope.Catalog.LoadInitialPageAsync(12)).CacheHit);
+
+        await MakeBrowseIndexUnreadableAsync(fixture);
+        await fixture.RawStore.UpdateAsync(record.Id, new byte[40]);
+        await MakeBrowseIndexUnreadableAsync(fixture);
+        await Assert.ThrowsAsync<CryptographicException>(() => fixture.Scope.Catalog.LoadInitialPageAsync(12));
+    }
+
     private static async Task<List<ImageRecord>> SeedAsync(TestVault fixture, int count = 1030, int offset = 0)
     {
         Directory.CreateDirectory(Path.Combine(fixture.Root, "images"));
@@ -130,5 +256,19 @@ public sealed class FirstPageBrowsingTests
         var entries = rows.Select(row => new ImportCatalogEntry(row, VaultCrypto.Encrypt(png, key.Bytes, $"thumbnail:{row.Id}"))).ToArray();
         await fixture.Store.CommitImportsAsync(entries, key.Bytes);
         return rows;
+    }
+
+    private static async Task MakeBrowseIndexUnreadableAsync(TestVault fixture)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(fixture.Root, "gallery.db"),
+            Pooling = false
+        }.ToString());
+        await connection.OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE settings SET payload = $payload WHERE id = 'browse-first-page'";
+        command.Parameters.AddWithValue("$payload", new byte[40]);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
     }
 }

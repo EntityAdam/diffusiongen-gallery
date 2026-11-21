@@ -287,7 +287,7 @@ public sealed class GalleryIngestionTests
         Assert.Equal(3, report.Stages.Single(stage => stage.Stage == IngestionStage.File).Count);
         // Parallel workers can both decode the duplicate before one is rejected at persist time.
         Assert.InRange(report.Stages.Single(stage => stage.Stage == IngestionStage.Decode).Count, 2, 3);
-        Assert.Equal(2, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogInsert).Count);
+        Assert.Equal(1, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogInsert).Count);
         Assert.Equal(bytes.Length * 2L + MakePng(30, 18).Length, report.SourceBytes);
         Assert.True(report.WallMs > 0, $"Expected ingestion wall time greater than 0 ms; Actual: {report.WallMs} ms.");
         foreach (var forbidden in new[] { "secret-folder-name", "private-", fixture.Root, Path.GetTempPath() })
