@@ -162,6 +162,24 @@ public sealed class GalleryStoreAtomicityTests
     }
 
     [Fact]
+    public async Task Drive_queue_counts_WhenSyntheticCommandReturnsNoRows_ThenIncludesCommandAndObservedShape()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 WHERE 0";
+
+        var readQueueCounts = typeof(GalleryStore).GetMethod(
+            "ReadQueueCountsAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => (Task)readQueueCounts.Invoke(null, [command])!);
+
+        Assert.Equal("Expected one drive queue count row, but found 0.", exception.Message);
+        Assert.Equal("DriveOperationCommandFactory.CreateCounts", exception.Data["CommandIdentity"]);
+        Assert.Equal(0, exception.Data["ObservedRowCount"]);
+    }
+
+    [Fact]
     public async Task Pending_drive_lookup_ExplicitlyHandlesAbsenceAndReturnsOneMatch()
     {
         using var fixture = new TestVault();

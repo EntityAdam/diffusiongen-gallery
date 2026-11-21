@@ -147,7 +147,12 @@ internal sealed partial class GalleryStore
     {
         await using var sqliteDataReader = await sqliteCommand.ExecuteReaderAsync();
         if (!await sqliteDataReader.ReadAsync())
-            throw new InvalidOperationException("Expected one drive queue count row, but found 0.");
+        {
+            var exception = new InvalidOperationException("Expected one drive queue count row, but found 0.");
+            exception.Data["CommandIdentity"] = "DriveOperationCommandFactory.CreateCounts";
+            exception.Data["ObservedRowCount"] = 0;
+            throw exception;
+        }
         return new(sqliteDataReader.GetInt32(0), sqliteDataReader.GetInt32(1), sqliteDataReader.IsDBNull(2) ? null : sqliteDataReader.GetInt64(2));
     }
 
