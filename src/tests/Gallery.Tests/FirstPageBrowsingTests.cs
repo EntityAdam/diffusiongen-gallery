@@ -37,7 +37,12 @@ public sealed class FirstPageBrowsingTests
         Assert.Equal(changed.UserDescription, fresh.Records[0].UserDescription);
         var trash = await fixture.Scope.Catalog.LoadInitialPageAsync(12, markedOnly: true);
         Assert.Equal(fixture.Scope.Catalog.Filter(all, new() { Deletion = "marked" }).Take(12).Select(r => r.Id), trash.Records.Select(r => r.Id));
-        await using var db = new SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")};Mode=ReadOnly");
+        await using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(fixture.Root, "gallery.db"),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString());
         await db.OpenAsync();
         using var command = db.CreateCommand(); command.CommandText = "SELECT payload FROM settings WHERE id='browse-first-page'";
         var blob = (byte[])(await command.ExecuteScalarAsync())!;
@@ -164,6 +169,51 @@ public sealed class FirstPageBrowsingTests
         var actual = await fixture.Store.ReadBrowseRecordsAsync(requestedIds, fixture.Session.Key, CancellationToken.None);
 
         Assert.Equal(new[] { records[2].Id, records[0].Id, records[1].Id }, actual.Select(record => record.Id));
+    }
+
+    [Fact]
+    public async Task First_page_read_reports_the_encrypted_record_bytes_scanned()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await SeedAsync(fixture, 3);
+        await fixture.Scope.Catalog.LoadInitialPageAsync(12);
+
+        long expectedBytes;
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(fixture.Root, "gallery.db"),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString()))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT SUM(length(record)) FROM images";
+            expectedBytes = Convert.ToInt64(await command.ExecuteScalarAsync());
+        }
+
+        using var trace = new Activity("first-page-byte-metric").Start();
+        var traceId = trace.TraceId;
+        long? observedBytes = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == VaultOpenTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+                options.TraceId == traceId ? ActivitySamplingResult.AllData : ActivitySamplingResult.None,
+            ActivityStopped = activity =>
+            {
+                if (activity.TraceId == traceId && activity.OperationName == "gallery.first_page")
+                    observedBytes = (long?)activity.GetTagItem("gallery.first_page.record_bytes");
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var page = await fixture.Store.ReadInitialPageAsync(12, InitialPageMode.Active,
+            fixture.Session.Key, CancellationToken.None);
+
+        Assert.NotNull(page);
+        Assert.Equal(expectedBytes, observedBytes);
     }
 
     [Fact]

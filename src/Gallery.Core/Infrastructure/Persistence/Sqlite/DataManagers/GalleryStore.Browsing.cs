@@ -20,6 +20,10 @@ internal sealed partial class GalleryStore
     private sealed record BrowseIndex(int Version, long Revision, int TotalRecords,
         ImmutableArray<string> All, ImmutableArray<string> Active, ImmutableArray<string> Marked);
 
+    private sealed record BrowsePageSelection(BrowseIndex Index, long Revision, string[] Ids);
+    private sealed record BrowseRecordBatchScan(
+        Dictionary<string, ImageRecord> RecordsById, long EncryptedRecordBytes);
+
     private sealed class BrowseIndexRevisionConflictException(long expectedRevision, long actualRevision)
         : InvalidOperationException($"Browse index revision changed from {expectedRevision} to {actualRevision} before it could be saved.");
 
@@ -27,21 +31,49 @@ internal sealed partial class GalleryStore
     {
         await using var connection = await OpenAsync();
         using var transaction = connection.BeginTransaction(deferred: true);
+        var selection = await SelectUsableBrowsePageAsync(connection, transaction, pageSize, mode, key, token);
+        if (selection is null) return null;
+        using var activity = VaultOpenTelemetry.Source.StartActivity("gallery.first_page");
+        var records = await TryReadSelectedBrowsePageAsync(connection, transaction, selection, key, token, activity);
+        if (records is null) return null;
+        transaction.Commit();
+        RecordInitialPageMetrics(activity, selection.Index.TotalRecords, records.Count);
+        return new(records, selection.Revision, selection.Index.TotalRecords,
+            selection.Index.TotalRecords == selection.Index.All.Length, true, true);
+    }
+
+    private static async Task<BrowsePageSelection?> SelectUsableBrowsePageAsync(SqliteConnection connection,
+        SqliteTransaction transaction, int pageSize, InitialPageMode mode, byte[] key, CancellationToken token)
+    {
         var revision = await ReadBrowseRevisionAsync(connection, transaction, token);
         var index = await ReadBrowseIndexAsync(connection, transaction, key, token);
         if (!IsUsableBrowseIndex(index, revision)) return null;
+
         var usableIndex = index!;
-        var indexCoversCatalog = usableIndex.TotalRecords == usableIndex.All.Length;
         var ids = SelectInitialPageIds(usableIndex, pageSize, mode);
-        if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) throw new InvalidOperationException("Invalid encrypted browse index.");
-        using var activity = VaultOpenTelemetry.Source.StartActivity("gallery.first_page");
-        var records = await ReadBrowseRecordsAsync(connection, transaction, ids, key, token, activity);
+        EnsureInitialPageIdsAreUnique(ids);
+        return new BrowsePageSelection(usableIndex, revision, ids);
+    }
+
+    private static void EnsureInitialPageIdsAreUnique(IReadOnlyCollection<string> ids)
+    {
+        if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Count)
+            throw new InvalidOperationException("Invalid encrypted browse index.");
+    }
+
+    private static async Task<List<ImageRecord>?> TryReadSelectedBrowsePageAsync(SqliteConnection connection,
+        SqliteTransaction transaction, BrowsePageSelection selection, byte[] key, CancellationToken token,
+        Activity? activity)
+    {
+        var records = await ReadBrowseRecordsAsync(connection, transaction, selection.Ids, key, token, activity);
         // An authenticated but inconsistent index must never serve a stale/deleted record.
-        if (records.Count != ids.Length) return null;
-        transaction.Commit();
-        activity?.SetTag("gallery.first_page.record_count", records.Count);
-        activity?.SetTag("gallery.first_page.catalog_count", usableIndex.TotalRecords);
-        return new(records, revision, usableIndex.TotalRecords, indexCoversCatalog, true, true);
+        return records.Count == selection.Ids.Length ? records : null;
+    }
+
+    private static void RecordInitialPageMetrics(Activity? activity, int catalogCount, int recordCount)
+    {
+        activity?.SetTag("gallery.first_page.record_count", recordCount);
+        activity?.SetTag("gallery.first_page.catalog_count", catalogCount);
     }
 
     public async Task<GalleryCatalog> ReadCatalogSnapshotAsync(byte[] key, CancellationToken token)
@@ -68,16 +100,28 @@ internal sealed partial class GalleryStore
     {
         await using var connection = await OpenAsync();
         using var transaction = connection.BeginTransaction(deferred: true);
-        var records = await ReadBrowseRecordsAsync(connection, transaction, ids.Distinct(StringComparer.Ordinal).ToArray(), key, token, null);
+        var distinctIds = SelectDistinctBrowseRecordIds(ids);
+        var records = await ReadBrowseRecordsAsync(connection, transaction, distinctIds, key, token, null);
         transaction.Commit();
         return records;
     }
 
+    private static string[] SelectDistinctBrowseRecordIds(IEnumerable<string> ids) =>
+        ids.Distinct(StringComparer.Ordinal).ToArray();
+
     private static async Task<List<ImageRecord>> ReadBrowseRecordsAsync(SqliteConnection connection, SqliteTransaction transaction,
         IReadOnlyList<string> ids, byte[] key, CancellationToken token, Activity? activity)
     {
-        var records = new List<ImageRecord>(ids.Count);
-        if (ids.Count == 0) return records;
+        if (ids.Count == 0) return [];
+        var scan = await ScanBrowseRecordBatchesAsync(connection, transaction, ids, key, token);
+        var records = SelectBrowseRecordsInRequestedOrder(ids, scan.RecordsById);
+        activity?.SetTag("gallery.first_page.record_bytes", scan.EncryptedRecordBytes);
+        return records;
+    }
+
+    private static async Task<BrowseRecordBatchScan> ScanBrowseRecordBatchesAsync(SqliteConnection connection,
+        SqliteTransaction transaction, IReadOnlyList<string> ids, byte[] key, CancellationToken token)
+    {
         var imageRecordsById = new Dictionary<string, ImageRecord>(StringComparer.Ordinal);
         long bytes = 0;
         for (var batchStart = 0; batchStart < ids.Count; batchStart += BrowseQueryBatchSize)
@@ -94,9 +138,7 @@ internal sealed partial class GalleryStore
                 imageRecordsById.Add(row.Id, DecodeRecord(row.Id, row.Record, key));
             }
         }
-        AddBrowseRecordsInRequestedOrder(ids, imageRecordsById, records);
-        activity?.SetTag("gallery.first_page.record_bytes", bytes);
-        return records;
+        return new BrowseRecordBatchScan(imageRecordsById, bytes);
     }
 
     private static SqliteCommand CreateBrowseRecordsCommand(SqliteConnection connection, SqliteTransaction transaction,
@@ -116,12 +158,14 @@ internal sealed partial class GalleryStore
         return command;
     }
 
-    private static void AddBrowseRecordsInRequestedOrder(IReadOnlyList<string> ids,
-        IReadOnlyDictionary<string, ImageRecord> imageRecordsById, List<ImageRecord> records)
+    private static List<ImageRecord> SelectBrowseRecordsInRequestedOrder(IReadOnlyList<string> ids,
+        IReadOnlyDictionary<string, ImageRecord> imageRecordsById)
     {
+        var records = new List<ImageRecord>(ids.Count);
         foreach (var id in ids)
             if (imageRecordsById.TryGetValue(id, out var imageRecord))
                 records.Add(imageRecord);
+        return records;
     }
 
     private static bool IsUsableBrowseIndex(BrowseIndex? index, long revision) =>
