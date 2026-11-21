@@ -350,8 +350,15 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
                     timings?.Record(IngestionStage.Verify, start);
 
                     start = Stopwatch.GetTimestamp();
-                    current = await PendingImportOperations.DeleteVerifiedSourceAsync(
-                        current, Update, record.Sha256, timings);
+                    if (current.OpenedSource is { CanDeleteByHandle: true } openedSource)
+                    {
+                        openedSource.DeleteVerified();
+                    }
+                    else
+                    {
+                        current = await PendingImportOperations.CloseSourceAsync(current, Update, timings);
+                        await ImportSource.DeleteVerifiedPathAsync(current.Path, record.Sha256);
+                    }
                     timings?.Record(IngestionStage.DeleteSource, start);
                 }
             }
@@ -498,20 +505,6 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
 
         public static PendingImport AcceptCommit(PendingImport item, StagedImport stagedImport) =>
             item with { UncommittedStagedImport = null, CommittedRecord = stagedImport.Entry.Record };
-
-        public static async Task<PendingImport> DeleteVerifiedSourceAsync(
-            PendingImport item, Action<PendingImport> update, string sha256, IngestionTimings? timings)
-        {
-            if (item.OpenedSource is { CanDeleteByHandle: true } openedSource)
-            {
-                openedSource.DeleteVerified();
-                return item;
-            }
-
-            item = await CloseSourceAsync(item, update, timings);
-            await ImportSource.DeleteVerifiedPathAsync(item.Path, sha256);
-            return item;
-        }
 
         public static async Task<PendingImport> CloseSourceAsync(
             PendingImport item, Action<PendingImport> update, IngestionTimings? timings)
