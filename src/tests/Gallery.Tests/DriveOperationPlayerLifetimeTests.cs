@@ -327,6 +327,79 @@ public sealed class DriveOperationPlayerLifetimeTests
         Assert.Equal(DriveQueueState.Idle, player.Status.State);
     }
 
+    [Fact]
+    public async Task PauseAndResume_WhenRunIsStopping_ThenReplacementIsExclusiveAndStartsWithFreshCount()
+    {
+        var firstBatchStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementCountPublished = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessions = 0;
+        var activeSessions = 0;
+        var maximumOpenSessions = 0;
+        var processed = 0;
+        Session? firstSession = null;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            var firstRun = Interlocked.Increment(ref sessions) == 1;
+            if (!firstRun) Assert.True(firstSession!.IsDisposed);
+            var active = Interlocked.Increment(ref activeSessions);
+            var maximum = Volatile.Read(ref maximumOpenSessions);
+            while (active > maximum)
+            {
+                var previous = Interlocked.CompareExchange(ref maximumOpenSessions, active, maximum);
+                if (previous == maximum) break;
+                maximum = previous;
+            }
+            var session = new Session(async token =>
+            {
+                if (firstRun)
+                {
+                    firstBatchStarted.TrySetResult(token);
+                    await releaseFirstBatch.Task;
+                    return new(1, 7, "finished while stopping");
+                }
+                return Interlocked.Exchange(ref processed, 1) == 0
+                    ? new(1, 2, "replacement batch")
+                    : new(0, 0, "");
+            }, () => Interlocked.Decrement(ref activeSessions));
+            if (firstRun) firstSession = session;
+            return session;
+        }, () => Task.FromResult(new DriveQueueCounts(Volatile.Read(ref processed) == 0 ? 1 : 0, 0, null)));
+        player.Changed += () =>
+        {
+            var status = player.Status;
+            if (status.State == DriveQueueState.Running && status.Completed == 2)
+                replacementCountPublished.TrySetResult(status.Completed);
+        };
+        Task? pause = null;
+
+        try
+        {
+            player.Start();
+            var originalToken = await firstBatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            pause = player.PauseAsync();
+            Assert.True(originalToken.IsCancellationRequested);
+            player.Resume();
+            releaseFirstBatch.SetResult();
+
+            var replacementCount = await replacementCountPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await pause.WaitAsync(TimeSpan.FromSeconds(5));
+            await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(2, replacementCount);
+            Assert.Equal(2, sessions);
+            Assert.Equal(1, maximumOpenSessions);
+            Assert.Equal(0, activeSessions);
+            Assert.Equal(DriveQueueState.Idle, player.Status.State);
+        }
+        finally
+        {
+            releaseFirstBatch.TrySetResult();
+            if (pause is not null) await pause.WaitAsync(TimeSpan.FromSeconds(5));
+            await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -447,11 +520,16 @@ public sealed class DriveOperationPlayerLifetimeTests
     }
 
     // One test-owned session serially invokes its scripted batch behavior and exposes only disposal evidence.
-    private sealed class Session(Func<CancellationToken, Task<DriveBatchReport>> play) : IDriveOperationSession
+    private sealed class Session(Func<CancellationToken, Task<DriveBatchReport>> play, Action? disposed = null) : IDriveOperationSession
     {
         internal bool IsDisposed { get; private set; }
         public Task<DriveBatchReport> PlayBatchAsync(CancellationToken cancellationToken) => play(cancellationToken);
-        public void Dispose() => IsDisposed = true;
+        public void Dispose()
+        {
+            if (IsDisposed) return;
+            IsDisposed = true;
+            disposed?.Invoke();
+        }
     }
 
     private sealed class QueuedSynchronizationContext : SynchronizationContext
