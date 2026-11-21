@@ -1,5 +1,5 @@
+using Gallery.Core.Features.Media.Removal.Managers;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;

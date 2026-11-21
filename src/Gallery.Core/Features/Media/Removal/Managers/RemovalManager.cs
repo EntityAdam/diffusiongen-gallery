@@ -1,3 +1,7 @@
+using Gallery.Core.Features.Media.Removal.Managers.Validators;
+using Gallery.Core.Features.Media.Removal.Managers.Diagnostics;
+using Gallery.Core.Features.Media.Processors;
+using Gallery.Core.Features.Media.Formatters;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
@@ -11,7 +15,7 @@ using Gallery.Core.Models;
 using Gallery.Core.Shared.Diagnostics;
 using SixLabors.ImageSharp;
 
-namespace Gallery.Core.Features.Media.Removal;
+namespace Gallery.Core.Features.Media.Removal.Managers;
 
 internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSession vaultSession, Action startDriveQueue)
 {

@@ -1,3 +1,4 @@
+using Gallery.Core.Features.Media.Removal.Managers;
 using Gallery.Core.Features.Backups;
 using Gallery.Core.Features.Browsing;
 using Gallery.Core.Features.Collections;
@@ -7,7 +8,6 @@ using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Ingestion.Normalizers;
 using Gallery.Core.Features.Ingestion.Workflows;
 using Gallery.Core.Features.Media.Movement.Managers;
-using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Features.Settings;
 using Gallery.Core.Features.Storage.DriveOperations;

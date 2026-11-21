@@ -3,7 +3,7 @@ using Gallery.Core.Features.Ingestion.Processors;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Media;
+namespace Gallery.Core.Features.Media.Processors;
 
 internal static class StoredMediaProcessor
 {

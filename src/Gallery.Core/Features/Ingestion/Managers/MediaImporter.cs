@@ -1,3 +1,4 @@
+using Gallery.Core.Features.Media.Processors;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics;

@@ -1,3 +1,4 @@
+using Gallery.Core.Features.Media.Processors;
 using System.Security.Cryptography;
 using Gallery.Core.Features.Backups.Targets;
 using Gallery.Core.Features.Backups;

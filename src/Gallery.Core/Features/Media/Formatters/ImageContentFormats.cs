@@ -1,4 +1,4 @@
-namespace Gallery.Core.Features.Media;
+namespace Gallery.Core.Features.Media.Formatters;
 
 /// <summary>Image formats whose original bytes are stored unchanged and that browsers can display directly.</summary>
 internal static class ImageContentFormats

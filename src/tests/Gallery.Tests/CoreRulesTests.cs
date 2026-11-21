@@ -1,8 +1,8 @@
+using Gallery.Core.Features.Media.Removal.Managers.Validators;
 using Gallery.Core.Features.Browsing;
 using Gallery.Core.Features.Browsing.Filtering;
 using Gallery.Core.Features.Curation;
 using Gallery.Core.Features.Duplicates;
-using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Models;
 
 namespace Gallery.Tests;

@@ -1,6 +1,6 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Media.Removal;
+namespace Gallery.Core.Features.Media.Removal.Managers.Validators;
 
 internal static class RemovalRules
 {

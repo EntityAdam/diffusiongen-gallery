@@ -1,3 +1,4 @@
+using Gallery.Core.Features.Media.Processors;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Gallery.Core.Features.Backups;

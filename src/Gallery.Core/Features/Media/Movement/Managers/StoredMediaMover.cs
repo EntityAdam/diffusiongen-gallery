@@ -1,3 +1,4 @@
+using Gallery.Core.Features.Media.Processors;
 using Gallery.Core.Features.Media.Movement.Managers.Models;
 using Gallery.Core.Features.Media.Movement.Managers.Processors;
 using Gallery.Core.Features.Media.Movement.Managers.Validators;
