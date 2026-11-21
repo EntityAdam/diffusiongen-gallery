@@ -559,6 +559,32 @@ public sealed class BrowsingProjectionTests
         });
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Changing_view_starts_a_new_range(bool inTrash, bool resetFilters)
+    {
+        using var vault = new TestVault();
+        var records = CreateImages(4).Select(r => r with { IsMarkedForDeletion = inTrash }).ToList();
+        using var session = await OpenSessionAsync(vault, records);
+        var browser = session.Browser;
+        if (inTrash) await browser.SetActiveToolAsync("trash");
+        var selection = () => inTrash ? browser.RemovalSelection : browser.LibrarySelection;
+        var first = browser.Filtered[0].Id;
+        var next = browser.Filtered[^1].Id;
+        browser.SelectCard(first, range: false);
+        Assert.Equal(first, Assert.Single(selection()));
+
+        if (resetFilters) await browser.ResetFiltersAsync();
+        else await browser.SetSortAsync("name");
+
+        Assert.Empty(selection());
+        browser.SelectCard(next, range: true);
+        Assert.Equal(next, Assert.Single(selection()));
+    }
+
     [Fact]
     public async Task TrashSelection_WhenASelectedCardIsClicked_ThenRemovesOnlyThatCard()
     {

@@ -10,5 +10,6 @@
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
     <ProjectReference Include="../../Gallery.Core/Gallery.Core.csproj" />
     <InternalsVisibleTo Include="Gallery.Tests" />
+    <InternalsVisibleTo Include="Gallery.BrowserTests" />
   </ItemGroup>
 </Project>

@@ -41,6 +41,19 @@ move destinations must be local; UNC and mapped network drives are rejected.
 Existing network catalogs can be opened for migration, but local catalogs are
 recommended.
 
+## Gallery browsing tests
+
+Run the component and state tests with `dotnet test src/tests/Gallery.Tests` from
+the repository root. The keyboard-to-save test uses a real Chromium browser and
+starts its own loopback server with a temporary gallery; no running app or
+personal gallery is needed. To run it:
+
+```powershell
+dotnet build .\src\tests\Gallery.BrowserTests
+pwsh .\src\tests\Gallery.BrowserTests\bin\Debug\net10.0\playwright.ps1 install chromium
+dotnet test .\src\tests\Gallery.BrowserTests --no-build
+```
+
 ## Experimental Turso catalog adapter
 
 SQLite remains the default storage adapter. To create an experimental local

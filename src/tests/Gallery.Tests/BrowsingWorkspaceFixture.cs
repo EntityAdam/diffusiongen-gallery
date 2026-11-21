@@ -75,7 +75,7 @@ internal static class BrowsingWorkspaceFixture
         public List<DiffusionModelGroup> GroupByDiffusionModel(IEnumerable<ImageRecord> records) => projections.GroupByDiffusionModel(records);
     }
 
-    private sealed class ThumbnailMedia : IGalleryMedia
+    internal sealed class ThumbnailMedia : IGalleryMedia
     {
         public Task<string> ThumbnailAsync(string id) => Task.FromResult("");
         public Task<Stream> OpenThumbnailAsync(string id) => Task.FromResult<Stream>(new MemoryStream());
