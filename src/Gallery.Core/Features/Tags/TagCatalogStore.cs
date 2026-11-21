@@ -25,12 +25,19 @@ internal static class TagCatalogStore
 
     private static bool HasInitializedNames(TagCatalog tagCatalog) => !tagCatalog.Names.IsDefault;
 
-    public static async Task<TagCatalog> ReadAsync(IGalleryStore store, byte[] key, IReadOnlyList<ImageRecord>? records = null)
+    public static async Task<(TagCatalog Catalog, bool IsInitialized)> ReadSnapshotAsync(
+        IGalleryStore store, byte[] key, IReadOnlyList<ImageRecord>? records = null)
     {
         var catalog = await store.ReadSettingsAsync<TagCatalog>(TagCatalog.SettingId, TagCatalog.SettingPurpose, key);
-        if (catalog is { } saved && HasInitializedNames(saved)) return saved;
+        if (catalog is { } saved && HasInitializedNames(saved)) return (saved, true);
         catalog = new(NormalizeTagNames((records ?? await store.ReadRecordsAsync(key)).SelectMany(TagsOf)));
-        await store.CommitTagCatalogAsync([], catalog, null, key);
+        return (catalog, false);
+    }
+
+    public static async Task<TagCatalog> ReadAsync(IGalleryStore store, byte[] key, IReadOnlyList<ImageRecord>? records = null)
+    {
+        var (catalog, isInitialized) = await ReadSnapshotAsync(store, key, records);
+        if (!isInitialized) await store.CommitTagCatalogAsync([], catalog, null, key);
         return catalog;
     }
 

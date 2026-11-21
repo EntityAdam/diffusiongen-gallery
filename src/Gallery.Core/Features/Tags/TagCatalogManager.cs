@@ -101,13 +101,14 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
         try
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
-            var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
+            var (catalog, isInitialized) = await TagCatalogStore.ReadSnapshotAsync(store, key.Bytes, records);
             var names = TagCatalogStore.ReconcileNames(catalog, records);
             var imported = TagCsvProcessor.ValidateRows(importedRows, names);
             var next = TagCatalogStore.NormalizeTagNames(names.Concat(imported));
             var added = next.Length - names.Length;
             unlockedVaultSession.RevocationToken.ThrowIfCancellationRequested();
-            if (!next.SequenceEqual(catalog.Names)) await store.CommitTagCatalogAsync([], new(next), null, key.Bytes);
+            if (!isInitialized || !next.SequenceEqual(catalog.Names))
+                await store.CommitTagCatalogAsync([], new(next), null, key.Bytes);
             return (added, imported.Length - added);
         }
         finally { store.Gate.Release(); }
@@ -136,7 +137,7 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
     public async Task CommitEditedTagsAsync(
         IGalleryStore store, ImageRecord imageRecordForTagRetention, ImageRecord imageRecordToCommit, byte[] key)
     {
-        var catalog = await TagCatalogStore.ReadAsync(store, key);
+        var (catalog, _) = await TagCatalogStore.ReadSnapshotAsync(store, key);
         var nextCatalog = TagCatalogStore.MergeEditedTags(catalog, imageRecordForTagRetention, imageRecordToCommit);
         await store.CommitTagCatalogAsync([imageRecordToCommit], nextCatalog, null, key);
     }
