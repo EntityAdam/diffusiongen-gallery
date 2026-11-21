@@ -64,11 +64,7 @@ That is **33 native opens per 16 files**, serialized through the adapter. At the
 
 The command's `--catalog-batch 16` batches writes, but it does not batch duplicate checks or verification reads. `--batch-files 50000` is a different setting: it controls the harness's generation/checkpoint/progress unit.
 
-## Why progress and resume are misleading
-
-The harness generates the entire pending batch before ingestion. Its production import progress callback checks cancellation but discards the progress text/counts. Its only completed-batch console message, timing result, and checkpoint advance occur after every source in the 50,000-file batch has finished.
-
-On resume, `Pending` takes precedence over the new `--batch-files` value. The code regenerates every pending source, loads the existing catalog for reconciliation, and verifies committed media one item at a time before deleting regenerated sources. The same native-open cost therefore affects recovery. Repeated restarts can add considerable work without advancing the completed-batch checkpoint.
+## Pending-batch recovery precaution
 
 Do not delete the WAL, reset the checkpoint, or run cleanup against this partially built gallery as a performance workaround. The database contains committed records beyond the checkpoint. Reducing `--batch-files` on a resumed command does not split the already-pending 50,000-file batch.
 

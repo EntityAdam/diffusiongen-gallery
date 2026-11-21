@@ -75,23 +75,9 @@ Allocations are cumulative allocation traffic, **not peak resident memory**. Rec
 
 7. The current nonempty text-search predicate concatenates names, raw metadata, descriptions, and tags into a new string for each candidate record (`GalleryFilterProcessor.cs:13`). Once search is enabled, that can create another large allocation burst. Removing that concatenation requires preserving existing matching semantics, including matches across joined field boundaries. Fast opening alone does not solve search responsiveness.
 
-## Options
+## Follow-up options
 
-### 1. Open the first page from a small encrypted index; finish the catalog in the background
-
-**Recommended first implementation for the selected readiness definition.**
-
-Persist an authenticated, encrypted index of the actual first-page IDs in default browse order. Read that small index after unlock and batch-read only those records from the authoritative catalog. At this dataset's mean record size, 49 full records represent roughly 1.9 MB of encrypted record data rather than 7.7 GB at 200k items. This is a data-volume comparison, not a measured speedup.
-
-The existing encrypted settings table could store this derived index, avoiding a table rewrite for an initial implementation. The index must carry a format version and catalog revision and be maintained or invalidated atomically with imports, edits, removals, and restores. Capture the page IDs and revision from one consistent database snapshot. Fetch page records under an appropriate read snapshot as well. An invalid or missing index must trigger a safe rebuild; the first open after upgrade may still pay the current full-load cost. Never silently use stale IDs or show deleted records.
-
-Use full `ImageRecord` objects for those page items so existing actions do not receive truncated records. Represent the UI's catalog completeness explicitly; page-local counts must never masquerade as library-wide counts. Load the remaining catalog under a bounded, cancellable background operation and publish global counts/search when ready. Background work must not saturate the UI thread or produce repeated full-list sorts/renders. Microsoft.Data.Sqlite executes its async database methods synchronously; merely dropping an `await` does not move the scan off the Blazor dispatcher. Use an owned background worker with bounded work and explicit UI publication. See [Microsoft.Data.Sqlite async limitations](https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/async).
-
-This removes full-library loading from the opening milestone. It **does not eliminate eventual full-catalog memory consumption** if the background path still retains all full records. It is the shortest route to a useful first page, followed by option 2 if large-library memory remains unacceptable.
-
-Do not substitute `ORDER BY rowid DESC LIMIT 49` for the current `ImportedAt` ordering: commit order and timestamps are not guaranteed to agree. A bare `LIMIT` also cannot implement the existing encrypted deletion/filter rules.
-
-### 2. Separate compact browse summaries from full record details
+### Separate compact browse summaries from full record details
 
 **Preferred structural follow-up for sustained use at hundreds of thousands or millions of items.**
 
@@ -105,21 +91,20 @@ All derived metadata remains encrypted. A plaintext SQLite index on timestamps, 
 
 Separating thumbnail storage may improve record-scan locality, but the supplied data does not isolate that benefit. Treat it as a separate experiment rather than bundling a large database rewrite into the first-page change. On this nearly full disk, avoid a wholesale catalog copy or `VACUUM` as part of investigation.
 
-### 3. Tune the existing full-load implementation
+### Tune the existing full-load implementation
 
-Bounded parallel decrypt/deserialize, reusable zeroed buffers, and connection/migration improvements are experiments with smaller implementation scope. They retain the requirement to read and materialize the entire library before opening unless combined with option 1.
+Bounded parallel decrypt/deserialize, reusable zeroed buffers, and connection/migration improvements are experiments with smaller implementation scope. The background load would still read and materialize the entire library.
 
 Try a bounded producer/consumer pipeline with a small worker count, preserve result ordering, and cap in-flight bytes. More workers can worsen allocation and memory pressure. Pooled plaintext must be zeroed on success, failure, and cancellation, and never published after its lease ends. Measure changes independently so a cache-warming effect is not mistaken for a code improvement.
 
-A no-schema experiment can deserialize a separate lightweight browse DTO that skips heavy strings. It still reads/decrypts/authenticates every full encrypted record, so it can reduce allocation without eliminating full-record I/O. It is useful for isolating the cost of retaining raw metadata before committing to option 2.
+A no-schema experiment can deserialize a separate lightweight browse DTO that skips heavy strings. It still reads/decrypts/authenticates every full encrypted record, so it can reduce allocation without eliminating full-record I/O. It is useful for isolating the cost of retaining raw metadata before committing to separate browse summaries.
 
 ## Recommended implementation sequence
 
 1. **Make the comparison reliable.** Preserve the supplied baseline. Record effective GC mode, GC pause duration, live heap, and supported macOS memory/process-I/O data; render unavailable measurements as unavailable. Separate query stepping, blob copying, and other loop work. Match the web app's GC configuration, while keeping different modes in separate report series.
 2. **Add useful milestones shared with the UI.** Measure `key_unlocked`, `first_page_ready`, `first_page_rendered`, `thumbnails_ready`, and `catalog_ready`. Browser rendering requires UI instrumentation; an in-process Core timer cannot establish it. Keep thumbnail time out of the main opening target.
-3. **Implement option 1.** Add a generation-bound browse-opening API, transactional encrypted first-page index, batched page-record read, and explicit UI background-loading state. Use a configurable initial page size and preserve the current default sort and active-image rules.
-4. **Validate on the existing gallery.** No further synthetic generation is needed. Measure a bounded subset for diagnostics and the existing 350k gallery once resource headroom is appropriate. A third size adds evidence, but it must be labelled with the actual count and GC mode rather than mixed into old series. Do not copy the 49.5 GB catalog just to obtain that point.
-5. **Implement option 2 if background memory/latency remains high.** The long-term target is bounded initial work and on-demand full details, not merely moving a very large allocation burst behind the grid.
+3. **Validate on the existing gallery.** No further synthetic generation is needed. Measure a bounded subset for diagnostics and the existing 350k gallery once resource headroom is appropriate. A third size adds evidence, but it must be labelled with the actual count and GC mode rather than mixed into old series. Do not copy the 49.5 GB catalog just to obtain that point.
+4. **Separate browse summaries if background memory/latency remains high.** The long-term target is bounded initial work and on-demand full details, not merely moving a very large allocation burst behind the grid.
 
 Proposed acceptance goal: warm passphrase-submit to first usable page **p95 below 2 seconds** at 100k, 200k, and 350k. This is a product target to test, not a prediction from the old data. Opening work should read only the index, settings, and first-page records. Search/count readiness and background memory should be reported independently.
 
