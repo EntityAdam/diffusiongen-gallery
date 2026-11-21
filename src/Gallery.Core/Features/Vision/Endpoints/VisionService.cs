@@ -25,6 +25,7 @@ internal sealed partial class VisionService
     private const string SetSuggestionSystemPromptLabel = "Set suggestion system prompt";
     private const int MaximumSummaryCharacters = 160;
     private const int MaximumResponseBytes = StructuredVision.MaximumDocumentBytes * 8;
+    private const int MaximumModelListResponseBytes = 1024 * 1024;
     private const int ResponseReadBufferSize = 81920;
 
     public static Uri Validate(VisionSettings visionSettings)
@@ -128,7 +129,8 @@ internal sealed partial class VisionService
 
     private static async Task<IReadOnlyList<string>> ReadModelsAsync(HttpResponseMessage httpResponseMessage, CancellationToken cancellationToken)
     {
-        using var jsonDocument = JsonDocument.Parse(await httpResponseMessage.Content.ReadAsStringAsync(cancellationToken));
+        var body = await ReadBoundedResponseTextAsync(httpResponseMessage.Content, MaximumModelListResponseBytes, cancellationToken);
+        using var jsonDocument = JsonDocument.Parse(body);
         if (!jsonDocument.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException(
                 $"The endpoint returned '{Summarize(jsonDocument.RootElement)}'; expected an OpenAI-compatible object with a data array.");
@@ -341,11 +343,7 @@ internal sealed partial class VisionService
 
     private static async Task<JsonDocument> ReadCompletionAsync(HttpResponseMessage httpResponseMessage, CancellationToken cancellationToken)
     {
-        using var responseBody = await ReadBoundedResponseAsync(httpResponseMessage.Content, cancellationToken);
-        using var boundedContent = new StreamContent(responseBody);
-        if (httpResponseMessage.Content.Headers.TryGetValues("Content-Type", out var contentTypes))
-            boundedContent.Headers.TryAddWithoutValidation("Content-Type", contentTypes);
-        var body = await boundedContent.ReadAsStringAsync(cancellationToken);
+        var body = await ReadBoundedResponseTextAsync(httpResponseMessage.Content, MaximumResponseBytes, cancellationToken);
         if (string.IsNullOrWhiteSpace(body))
             throw new InvalidOperationException("The LLM endpoint returned an empty response. Check the model and server logs.");
         JsonDocument parsed;
@@ -381,9 +379,18 @@ internal sealed partial class VisionService
         }
     }
 
-    private static async Task<MemoryStream> ReadBoundedResponseAsync(HttpContent content, CancellationToken cancellationToken)
+    private static async Task<string> ReadBoundedResponseTextAsync(HttpContent content, int maximumBytes, CancellationToken cancellationToken)
     {
-        if (content.Headers.ContentLength > MaximumResponseBytes)
+        using var responseBody = await ReadBoundedResponseAsync(content, maximumBytes, cancellationToken);
+        using var boundedContent = new StreamContent(responseBody);
+        if (content.Headers.TryGetValues("Content-Type", out var contentTypes))
+            boundedContent.Headers.TryAddWithoutValidation("Content-Type", contentTypes);
+        return await boundedContent.ReadAsStringAsync(cancellationToken);
+    }
+
+    private static async Task<MemoryStream> ReadBoundedResponseAsync(HttpContent content, int maximumBytes, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > maximumBytes)
             throw new InvalidOperationException("The LLM response exceeds the response size limit.");
         var capacity = content.Headers.ContentLength is { } contentLength ? (int)contentLength : 0;
         var responseBody = new MemoryStream(capacity);
@@ -393,11 +400,11 @@ internal sealed partial class VisionService
             var buffer = new byte[ResponseReadBufferSize];
             while (true)
             {
-                var remaining = MaximumResponseBytes + 1L - responseBody.Length;
+                var remaining = maximumBytes + 1L - responseBody.Length;
                 var readSize = (int)Math.Min(buffer.Length, remaining);
                 var bytesRead = await stream.ReadAsync(buffer.AsMemory(0, readSize), cancellationToken);
                 if (bytesRead == 0) break;
-                if (responseBody.Length + bytesRead > MaximumResponseBytes)
+                if (responseBody.Length + bytesRead > maximumBytes)
                     throw new InvalidOperationException("The LLM response exceeds the response size limit.");
                 await responseBody.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
             }

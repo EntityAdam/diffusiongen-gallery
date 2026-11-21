@@ -98,6 +98,20 @@ public static class VisionTests
         Assert.Equal(StructuredVision.MaximumDocumentBytes * 8L + 1, content.BytesRead);
     }
 
+    [Fact]
+    public static async Task Analysis_WhenResponseReachesFourMiB_ThenKeepsItsOwnLimit()
+    {
+        const string prefix = """{"choices":[{"message":{"content":"{\"description\":\"valid\",\"tags\":[]}"}}]}""";
+        var body = prefix + new string(' ', 4 * 1024 * 1024 - prefix.Length);
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) })));
+        var service = new VisionService(client, new VisionSettings());
+
+        var result = await service.AnalyzeImageAsync("vision", 180, "image");
+
+        Assert.Equal("valid", result.Description);
+    }
+
     [Theory]
     [InlineData("utf-8", false, true)]
     [InlineData("utf-8", true, false)]
@@ -399,6 +413,78 @@ public static class VisionTests
             new Dictionary<string, object?> { ["models"] = models });
     }
 
+    [Theory]
+    [InlineData(1024 * 1024, true)]
+    [InlineData(1024 * 1024 + 1, false)]
+    public static async Task ModelDiscovery_WhenResponseHasDeclaredLength_ThenEnforcesOneMiBBoundary(int byteCount, bool accepted)
+    {
+        const string prefix = """{"data":[{"id":"vision"}]}""";
+        var body = prefix + new string(' ', byteCount - prefix.Length);
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) })));
+        var service = new VisionService(client, new VisionSettings());
+
+        if (accepted)
+            Assert.Equal(["vision"], await service.GetModelsAsync(180));
+        else
+            Assert.Contains("response size limit", (await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.GetModelsAsync(180))).Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenResponseHasNoLength_ThenStopsAtOneMiBPlusOneByte()
+    {
+        var content = new OversizedStreamingContent();
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = content })));
+        var service = new VisionService(client, new VisionSettings());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetModelsAsync(180));
+
+        Assert.Contains("response size limit", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1024 * 1024 + 1L, content.BytesRead);
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenUnspecifiedLengthReachesOneMiB_ThenAcceptsIt()
+    {
+        const string prefix = """{"data":[{"id":"vision"}]}""";
+        var body = prefix + new string(' ', 1024 * 1024 - prefix.Length);
+        var content = new UnknownLengthContent(Encoding.UTF8.GetBytes(body));
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = content })));
+        var service = new VisionService(client, new VisionSettings());
+
+        Assert.Equal(["vision"], await service.GetModelsAsync(180));
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenBodyReadTimesOut_ThenStopsReading()
+    {
+        var stream = new BlockingResponseStream();
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(stream) })));
+        var service = new VisionService(client, new VisionSettings());
+
+        var request = service.GetModelsAsync(10);
+        await stream.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => request.WaitAsync(TimeSpan.FromSeconds(15)));
+
+        Assert.Contains("timed out", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenResponseDeclaresUtf16_ThenDecodesIt()
+    {
+        var content = new ByteArrayContent(Encoding.Unicode.GetBytes("""{"data":[{"id":"café"}]}"""));
+        content.Headers.ContentType = new("application/json") { CharSet = "utf-16" };
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = content })));
+        var service = new VisionService(client, new VisionSettings());
+
+        Assert.Equal(["café"], await service.GetModelsAsync(180));
+    }
+
     // Every malformed model-list envelope is rejected with the invalid shape or identifier.
     [Theory]
     [InlineData("""{"models":[]}""")]
@@ -571,6 +657,21 @@ public static class VisionTests
 
         protected override Task<Stream> CreateContentReadStreamAsync() =>
             Task.FromResult<Stream>(new OversizedResponseStream(count => BytesRead += count));
+    }
+
+    private sealed class UnknownLengthContent(byte[] bytes) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            throw new NotSupportedException();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() =>
+            Task.FromResult<Stream>(new MemoryStream(bytes, writable: false));
     }
 
     private sealed class BlockingResponseStream : MemoryStream
