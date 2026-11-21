@@ -65,6 +65,24 @@ public sealed class DomainArchitectureTests
     }
 
     [Fact]
+    public void VaultSource_SeparatesAccessAndPersistenceFromOrchestration()
+    {
+        var vaultRoot = Path.Combine(SourceRoot(), "Gallery.Core", "Features", "Vaults");
+        foreach (var (folder, name) in new[]
+        {
+            ("Security", "VaultAccess"),
+            ("Security", "VaultCredentialKind"),
+            ("Persistence", "VaultHistory"),
+            ("Persistence", "VaultStore")
+        })
+        {
+            Assert.True(File.Exists(Path.Combine(vaultRoot, folder, name + ".cs")));
+            Assert.False(File.Exists(Path.Combine(vaultRoot, name + ".cs")));
+            Assert.NotNull(typeof(GalleryScope).Assembly.GetType("Gallery.Core.Features.Vaults." + name));
+        }
+    }
+
+    [Fact]
     public void ProjectBoundary_HasNoHostFriendAccessOrLinkedDomainSource()
     {
         var sourceRoot = SourceRoot();
