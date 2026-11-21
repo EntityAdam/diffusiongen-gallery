@@ -1,10 +1,11 @@
 using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Gallery.Core.Features.Ingestion.Managers.Models;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Managers.Scanners;
 
 internal static class IngestionSourceScanner
 {

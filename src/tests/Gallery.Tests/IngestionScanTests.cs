@@ -1,4 +1,4 @@
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Scanners;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
 

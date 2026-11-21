@@ -2,7 +2,7 @@ using System.Diagnostics;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Managers.Reporters;
 
 internal enum ProgressReportMode
 {

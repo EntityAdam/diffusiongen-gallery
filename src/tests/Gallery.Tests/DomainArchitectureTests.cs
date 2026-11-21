@@ -7,7 +7,7 @@ using Gallery.Core.Features.Curation;
 using Gallery.Core.Features.Duplicates;
 using Gallery.Core.Features.Ingestion.Metadata;
 using Gallery.Core.Features.Ingestion.Gateways;
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Reporters;
 using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;

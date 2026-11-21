@@ -5,6 +5,9 @@ using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Ingestion.Metadata;
 using Gallery.Core.Features.Ingestion.Gateways;
+using Gallery.Core.Features.Ingestion.Managers.Reporters;
+using Gallery.Core.Features.Ingestion.Managers.Scanners;
+using Gallery.Core.Features.Ingestion.Managers.Validators;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
@@ -16,7 +19,7 @@ using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Processors;
 
 internal sealed class ImportMediaPreparer(VideoTools? videoTools)
 {

@@ -1,4 +1,4 @@
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Managers.Models;
 
 [Flags]
 internal enum IngestionMediaSelection

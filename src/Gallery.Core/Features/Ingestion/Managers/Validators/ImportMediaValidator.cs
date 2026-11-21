@@ -1,7 +1,7 @@
 using Gallery.Core.Features.Ingestion.Gateways;
 using SixLabors.ImageSharp.Formats;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Managers.Validators;
 
 internal static class ImportMediaValidator
 {

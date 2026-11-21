@@ -1,6 +1,6 @@
 using Gallery.Core.Models;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Managers.Validators;
 
 internal static class IngestionOptionsValidator
 {

@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using Gallery.Core.Features.Backups;
 using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Scanners;
 using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Storage;

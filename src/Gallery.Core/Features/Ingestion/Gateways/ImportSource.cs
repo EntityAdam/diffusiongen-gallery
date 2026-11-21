@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Gateways;
 
 /// <summary>Opens import sources and supports deleting the verified source by handle or by path.</summary>
 internal sealed class ImportSource : IAsyncDisposable

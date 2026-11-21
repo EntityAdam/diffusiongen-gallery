@@ -4,13 +4,18 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Media;
-using Gallery.Core.Features.Ingestion.Processors;
+using Gallery.Core.Features.Ingestion.Gateways;
+using Gallery.Core.Features.Ingestion.Managers.Models;
+using Gallery.Core.Features.Ingestion.Managers.Reporters;
+using Gallery.Core.Features.Ingestion.Managers.Scanners;
+using Gallery.Core.Features.Ingestion.Managers.Validators;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
+using Gallery.Core.Features.Ingestion.Processors;
 using SixLabors.ImageSharp;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Managers;
 
 /// <summary>Runs ingestion against the catalog selected by the caller's vault lease.</summary>
 internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreSlim catalogGate, ImportMediaPreparer mediaPreparer)

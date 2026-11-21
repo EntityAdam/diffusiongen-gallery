@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using Gallery.Core.Services;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Managers.Reporters;
 
 internal readonly record struct IngestionTimingObservation(
     IngestionStage? Stage = null,

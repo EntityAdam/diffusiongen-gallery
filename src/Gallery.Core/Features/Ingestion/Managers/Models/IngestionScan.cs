@@ -1,5 +1,5 @@
 using System.Collections.Immutable;
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Models;
 
 namespace Gallery.Core.Models;
 

@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Models;
+using Gallery.Core.Features.Ingestion.Managers.Scanners;
 using Gallery.Core.Models;
 using Gallery.Web.Components.Features.Ingestion;
 

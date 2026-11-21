@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Processors;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Features.Media.Export.Composers;
 using Gallery.Core.Features.Media.Export.Composers.Formatters;

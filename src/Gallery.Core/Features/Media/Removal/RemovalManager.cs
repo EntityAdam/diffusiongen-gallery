@@ -3,7 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;

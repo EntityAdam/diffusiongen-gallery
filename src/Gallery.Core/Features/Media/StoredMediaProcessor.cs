@@ -1,5 +1,5 @@
 using System.Security.Cryptography;
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Processors;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
 

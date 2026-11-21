@@ -5,7 +5,7 @@ using Gallery.Core.Features.Curation;
 using Gallery.Core.Features.Duplicates;
 using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Ingestion.Normalizers;
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Workflows;
 using Gallery.Core.Features.Media.Movement.Managers;
 using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Features.Media;

@@ -1,4 +1,9 @@
 using Gallery.Core.Features.Ingestion.Gateways;
+using Gallery.Core.Features.Ingestion.Managers;
+using Gallery.Core.Features.Ingestion.Managers.Models;
+using Gallery.Core.Features.Ingestion.Managers.Scanners;
+using Gallery.Core.Features.Ingestion.Managers.Validators;
+using Gallery.Core.Features.Ingestion.Processors;
 using Gallery.Core.Features.Settings;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;
@@ -6,7 +11,7 @@ using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Core.Shared.Validation;
 
-namespace Gallery.Core.Features.Ingestion;
+namespace Gallery.Core.Features.Ingestion.Workflows;
 
 internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, VaultSession vaultSession, VideoTools? videoTools) : IGalleryIngestion
 {

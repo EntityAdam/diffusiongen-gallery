@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using Gallery.Core.Features.Tags.CatalogProjectors;
 using Gallery.Core.Features.Tags.CatalogStores;
 using Gallery.Core.Features.Tags.CsvProcessors;
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Validators;
 using Gallery.Core.Features.Tags.TagNameValidators;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;

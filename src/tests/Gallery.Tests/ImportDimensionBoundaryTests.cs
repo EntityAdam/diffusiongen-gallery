@@ -1,4 +1,4 @@
-using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Validators;
 
 
 namespace Gallery.Tests;
