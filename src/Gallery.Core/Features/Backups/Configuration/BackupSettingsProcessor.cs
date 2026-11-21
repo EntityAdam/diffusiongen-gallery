@@ -29,14 +29,23 @@ internal static class BackupSettingsProcessor
         string azurePrefix, string azureConnectionString, StoredBackupSettings? current)
     {
         var connectionString = azureConnectionString.Trim();
-        if (type == LocalDestinationType)
-        {
-            if (localDirectory.Length == 0)
-                throw new InvalidOperationException("Enter a local folder or SMB network share path.");
-            return new(LocalDestinationType, Path.GetFullPath(localDirectory),
-                azureContainer, azurePrefix, connectionString, null, null);
-        }
+        return type == LocalDestinationType
+            ? PrepareLocal(localDirectory, azureContainer, azurePrefix, connectionString)
+            : PrepareAzure(localDirectory, azureContainer, azurePrefix, connectionString, current);
+    }
 
+    private static StoredBackupSettings PrepareLocal(
+        string localDirectory, string azureContainer, string azurePrefix, string connectionString)
+    {
+        if (localDirectory.Length == 0)
+            throw new InvalidOperationException("Enter a local folder or SMB network share path.");
+        return new(LocalDestinationType, Path.GetFullPath(localDirectory),
+            azureContainer, azurePrefix, connectionString, null, null);
+    }
+
+    private static StoredBackupSettings PrepareAzure(string localDirectory, string azureContainer,
+        string azurePrefix, string connectionString, StoredBackupSettings? current)
+    {
         if (azureContainer.Length == 0)
             throw new InvalidOperationException("Enter the Azure Blob container name.");
         if (connectionString.Length == 0 && current?.DestinationType == AzureDestinationType)

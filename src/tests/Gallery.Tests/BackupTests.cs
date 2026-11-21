@@ -437,6 +437,30 @@ public sealed class BackupTests
         Assert.True(loaded.HasAzureCredentials);
         Assert.Equal("azure", loaded.DestinationType);
         Assert.DoesNotContain(connectionString, ciphertext, StringComparison.Ordinal);
+
+        var savedWithExistingCredentials = await fixture.Scope.Backup.SaveBackupOptionsAsync(
+            "azure", "", "gallery-backups", "nightly", "");
+        Assert.True(savedWithExistingCredentials.HasAzureCredentials);
+    }
+
+    [Theory]
+    [InlineData("local", "", "", "..", "", "Azure backup prefixes")]
+    [InlineData("local", "", "", "", "invalid", "local folder")]
+    [InlineData("azure", "", "", "", "", "container name")]
+    [InlineData("azure", "", "bad!", "", "", "connection string")]
+    [InlineData("azure", "", "bad!", "", "invalid", "only lowercase")]
+    [InlineData("azure", "", "valid-name", "", "invalid", "connection string is invalid")]
+    public async Task BackupOptions_WhenMultipleFieldsAreInvalid_PreservesValidationOrder(
+        string type, string localDirectory, string container, string prefix, string connection, string expectedMessage)
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Backup.SaveBackupOptionsAsync(type, localDirectory, container, prefix, connection));
+
+        Assert.Contains(expectedMessage, failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False((await fixture.Scope.Backup.LoadBackupOptionsAsync()).HasAzureCredentials);
     }
 
     private static int ReadMediaEntries(string archivePath)
