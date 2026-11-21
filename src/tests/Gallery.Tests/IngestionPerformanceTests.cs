@@ -1,6 +1,8 @@
+using System.Collections.Immutable;
 using System.Net;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Models;
 using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
@@ -140,6 +142,30 @@ public sealed class IngestionPerformanceTests
         Assert.Equal(2, (await fixture.Scope.Catalog.ListAsync()).Count);
         Assert.Equal(2, Directory.EnumerateFiles(folder).Count());
         Assert.Equal(2, Directory.EnumerateFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories).Count());
+    }
+
+    [Fact]
+    public async Task FolderImport_WhenLaterBatchHasInvalidMedia_UsesBatchLocalStateSlots()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = await CreateSourcesAsync(fixture, 1);
+        var invalidPath = Path.Combine(folder, "image-1.png");
+        await File.WriteAllTextAsync(invalidPath, "not an image");
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
+        var orderedScan = new IngestionScan(scan.Folder, scan.SearchScope, scan.CatalogRoot, scan.MediaRoot,
+            scan.Files.OrderBy(file => file.Path, StringComparer.Ordinal).ToImmutableArray());
+
+        var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, scan.SearchScope, scan: orderedScan,
+                options: new() { Workers = 1, CatalogBatchSize = 1 }));
+
+        var fileFailure = Assert.Single(failure.Failures.InnerExceptions);
+        Assert.Contains(invalidPath, fileFailure.Message, StringComparison.Ordinal);
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
+        Assert.Equal(2, Directory.EnumerateFiles(folder).Count());
+        Assert.Single(Directory.EnumerateFiles(Path.Combine(fixture.Root, "images"), "*.dpng",
+            SearchOption.AllDirectories));
     }
 
     [Fact]

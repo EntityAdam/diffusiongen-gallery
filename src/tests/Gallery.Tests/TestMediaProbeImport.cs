@@ -167,5 +167,25 @@ public sealed class TestMediaProbeImport
         Assert.Empty(publishedFiles);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task VideoImport_WhenProbeOrFrameFails_CleansTemporaryPlaintext(bool failDuringFrame)
+    {
+        var metadata = failDuringFrame ? MakeProbeMetadata().ToJsonString() : "{}";
+        using var transport = new MediaProcessTransport(metadata,
+            failDuringFrame ? [1, 2, 3] : null);
+        using var fixture = new TestVault(transport.VideoTools);
+        await fixture.InitializeAsync();
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            fixture.Scope.Ingestion.ImportAsync(
+                new MemoryStream([0, 0, 0, 24, 102, 116, 121, 112]), "failed-video.mp4", "folder"));
+
+        var temporaryVideoPath = transport.LastInputPath;
+        Assert.EndsWith(".mp4", temporaryVideoPath, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(temporaryVideoPath));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(temporaryVideoPath)));
+    }
 
 }

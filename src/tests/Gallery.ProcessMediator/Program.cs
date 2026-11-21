@@ -35,6 +35,9 @@ if (args is ["checkout", var root])
 // The process transport supplies controlled provider bytes. The production gateway, parser,
 // import validation, encryption and persistence remain in the application under test.
 var executableName = Path.GetFileNameWithoutExtension(Environment.ProcessPath);
+var inputArgumentIndex = Array.IndexOf(args, "-i");
+if (inputArgumentIndex >= 0 && inputArgumentIndex + 1 < args.Length)
+    File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "last-input-path.txt"), args[inputArgumentIndex + 1]);
 var payloadName = executableName == "ffprobe" ? "probe.json" : "frame.png";
 await using var payload = File.OpenRead(Path.Combine(AppContext.BaseDirectory, payloadName));
 await payload.CopyToAsync(Console.OpenStandardOutput());

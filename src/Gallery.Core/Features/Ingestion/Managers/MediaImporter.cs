@@ -277,7 +277,8 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
         foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
         {
-            var pending = indices.Select(index => new PendingImport(index, mediaPaths[index])).ToArray();
+            var pending = indices.Select((index, batchSlot) =>
+                new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
             Exception? interruption = null;
             try
             {
@@ -310,22 +311,25 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
     {
         await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
         {
+            var current = item;
             try
             {
                 await reportFolderProgress($"Importing {item.Name}...", ProgressReportMode.Throttled, item.Name);
                 var start = Stopwatch.GetTimestamp();
-                var source = item.OpenSource(sourceRetention);
+                current = PendingImportOperations.OpenSource(current, sourceRetention);
+                pending[current.BatchSlot] = current;
                 timings?.Record(IngestionStage.OpenSource, start);
                 ValidateImportName(item.Name);
-                var prepared = await PrepareImportAsync(source.Stream, item.Name, Path.GetDirectoryName(item.Path)!,
+                var prepared = await PrepareImportAsync(current.OpenedSource!.Stream, item.Name, Path.GetDirectoryName(item.Path)!,
                     item.Path, key, timings, mediaRoot);
                 start = Stopwatch.GetTimestamp();
-                await item.StageAsync(prepared);
+                current = await PendingImportOperations.StageAsync(current, prepared);
+                pending[current.BatchSlot] = current;
                 timings?.Record(IngestionStage.WriteMedia, start);
             }
             catch (Exception exception) when (IsImportFailure(exception))
             {
-                item.Failure = exception;
+                pending[current.BatchSlot] = current with { Failure = exception };
             }
         });
     }
@@ -336,13 +340,14 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         Func<string, ProgressReportMode, string?, Task> reportFolderProgress, Exception?[] failuresByPathIndex) =>
         await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
         {
-            await FinalizeBatchItemAsync(item, sourceRetention, key, timings);
-            if (item.Failure is not null)
-                failuresByPathIndex[item.Index] = new IOException($"Failed to import '{item.Path}'.", item.Failure);
-            await recordCompletion(item.CommittedRecord is not null, item.Failure is not null);
-            await reportFolderProgress($"Processed {item.Name}",
-                item.Failure is not null ? ProgressReportMode.Immediate : ProgressReportMode.Throttled, null);
-            timings?.Record(IngestionStage.File, item.Started);
+            var finalized = await FinalizeBatchItemAsync(pending, item, sourceRetention, key, timings);
+            pending[finalized.BatchSlot] = finalized;
+            if (finalized.Failure is not null)
+                failuresByPathIndex[finalized.Index] = new IOException($"Failed to import '{finalized.Path}'.", finalized.Failure);
+            await recordCompletion(finalized.CommittedRecord is not null, finalized.Failure is not null);
+            await reportFolderProgress($"Processed {finalized.Name}",
+                finalized.Failure is not null ? ProgressReportMode.Immediate : ProgressReportMode.Throttled, null);
+            timings?.Record(IngestionStage.File, finalized.Started);
         });
 
     private async Task CommitBatchAsync(PendingImport[] pending, byte[] key, IngestionTimings? timings)
@@ -356,12 +361,16 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
             var result = await galleryStore.CommitImportsAsync(
                 ready.Select(candidate => candidate.Staged.Entry).ToArray(), key);
             timings?.Record(IngestionStage.CatalogCommit, start);
-            if (ApplyCommitResult(ready, result.DuplicateIds) > 0)
+            if (ApplyCommitResult(pending, ready, result.DuplicateIds) > 0)
                 timings?.Record(IngestionStage.CatalogInsert, start);
         }
         catch (Exception exception) when (IsImportFailure(exception))
         {
-            foreach (var candidate in ready) candidate.Item.Failure ??= exception;
+            foreach (var candidate in ready)
+            {
+                var item = pending[candidate.Item.BatchSlot];
+                pending[item.BatchSlot] = item with { Failure = item.Failure ?? exception };
+            }
         }
     }
 
@@ -375,74 +384,100 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
     }
 
     private static int ApplyCommitResult(
-        List<(PendingImport Item, StagedImport Staged)> candidates, ImmutableArray<string> duplicateIds)
+        PendingImport[] pending, List<(PendingImport Item, StagedImport Staged)> candidates,
+        ImmutableArray<string> duplicateIds)
     {
         var committedCount = 0;
         foreach (var candidate in candidates)
         {
-            PendingImport item = candidate.Item;
+            var item = candidate.Item;
             StagedImport stagedImport = candidate.Staged;
             ImportCatalogEntry entry = stagedImport.Entry;
             if (duplicateIds.Contains(entry.Record.Id))
             {
-                item.Failure = new InvalidOperationException($"'{item.Name}' is already in the gallery.");
+                pending[item.BatchSlot] = item with
+                {
+                    Failure = new InvalidOperationException($"'{item.Name}' is already in the gallery.")
+                };
             }
             else
             {
-                item.AcceptCommit(stagedImport);
+                pending[item.BatchSlot] = PendingImportOperations.AcceptCommit(item, stagedImport);
                 committedCount++;
             }
         }
         return committedCount;
     }
 
-    private async Task FinalizeBatchItemAsync(PendingImport item, SourceRetention sourceRetention, byte[] key,
+    private async Task<PendingImport> FinalizeBatchItemAsync(PendingImport[] pending, PendingImport item,
+        SourceRetention sourceRetention, byte[] key,
         IngestionTimings? timings)
     {
+        var current = item;
+        void Update(PendingImport updated)
+        {
+            current = updated;
+            pending[updated.BatchSlot] = updated;
+        }
+
         try
         {
-            if (item.CommittedRecord is { } record && sourceRetention == SourceRetention.DeleteAfterVerification)
+            if (current.CommittedRecord is { } record && sourceRetention == SourceRetention.DeleteAfterVerification)
             {
                 var start = Stopwatch.GetTimestamp();
                 await VerifyImportedAsync(record.Id, key);
                 timings?.Record(IngestionStage.Verify, start);
 
                 start = Stopwatch.GetTimestamp();
-                await item.DeleteVerifiedSourceAsync(item.OpenedSource, record.Sha256, timings);
+                current = await PendingImportOperations.DeleteVerifiedSourceAsync(
+                    current, Update, record.Sha256, timings);
                 timings?.Record(IngestionStage.DeleteSource, start);
             }
         }
         catch (Exception exception) when (IsImportFailure(exception))
         {
-            item.Failure = exception;
+            current = current with { Failure = exception };
+            pending[current.BatchSlot] = current;
         }
         finally
         {
-            try { await item.CloseSourceAsync(timings); }
-            catch (IOException exception) { item.Failure = exception; }
+            try { current = await PendingImportOperations.CloseSourceAsync(current, Update, timings); }
+            catch (IOException exception) { Update(current with { Failure = exception }); }
         }
 
-        try { item.RemoveUncommittedMedia(); }
+        try { current = PendingImportOperations.RemoveUncommittedMedia(current, Update); }
         catch (Exception cleanupFailure) when (cleanupFailure is IOException or UnauthorizedAccessException)
         {
-            item.Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
-                item.Failure ?? new IOException("Catalog commit failed."), cleanupFailure);
+            Update(current with
+            {
+                Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
+                    current.Failure ?? new IOException("Catalog commit failed."), cleanupFailure)
+            });
         }
+
+        return current;
     }
 
     private static async Task CleanupBatchAsync(
         PendingImport[] pending, IngestionTimings? timings, Exception? interruption)
     {
         var failures = new List<Exception>();
-        foreach (var item in pending)
+        foreach (var initialItem in pending)
         {
-            try { await item.CloseSourceAsync(timings); }
+            var item = initialItem;
+            void Update(PendingImport updated)
+            {
+                item = updated;
+                pending[updated.BatchSlot] = updated;
+            }
+
+            try { item = await PendingImportOperations.CloseSourceAsync(item, Update, timings); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 failures.Add(exception);
             }
 
-            try { item.RemoveUncommittedMedia(); }
+            try { item = PendingImportOperations.RemoveUncommittedMedia(item, Update); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 failures.Add(exception);
@@ -457,60 +492,61 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         or UnauthorizedAccessException or GalleryException or CryptographicException or UnknownImageFormatException
         or InvalidImageContentException;
 
-    private sealed class PendingImport(int index, string path)
+    private sealed record PendingImport(int Index, int BatchSlot, string Path)
     {
-        public int Index { get; } = index;
-        public string Path { get; } = path;
-        public string Name { get; } = System.IO.Path.GetFileName(path);
-        public long Started { get; } = Stopwatch.GetTimestamp();
-        private ImportSource? source;
+        public string Name => System.IO.Path.GetFileName(Path);
+        public long Started { get; init; } = Stopwatch.GetTimestamp();
+        public StagedImport? UncommittedStagedImport { get; init; }
+        public ImportSource? OpenedSource { get; init; }
+        public ImageRecord? CommittedRecord { get; init; }
+        public Exception? Failure { get; init; }
+    }
 
-        private StagedImport? staged;
+    private static class PendingImportOperations
+    {
+        public static PendingImport OpenSource(PendingImport item, SourceRetention retention) =>
+            item with { OpenedSource = new ImportSource(item.Path, retention == SourceRetention.DeleteAfterVerification) };
 
-        public StagedImport? UncommittedStagedImport => staged;
-        public ImportSource? OpenedSource => source;
-        public ImageRecord? CommittedRecord { get; private set; }
-        public Exception? Failure { get; set; }
+        public static async Task<PendingImport> StageAsync(PendingImport item, PreparedImport prepared) =>
+            item with { UncommittedStagedImport = await StagedImportWriter.WriteAsync(prepared) };
 
-        public ImportSource OpenSource(SourceRetention retention) =>
-            source = new ImportSource(Path, retention == SourceRetention.DeleteAfterVerification);
+        public static PendingImport AcceptCommit(PendingImport item, StagedImport stagedImport) =>
+            item with { UncommittedStagedImport = null, CommittedRecord = stagedImport.Entry.Record };
 
-        public async Task StageAsync(PreparedImport prepared) =>
-            staged = await StagedImportWriter.WriteAsync(prepared);
-
-        public void AcceptCommit(StagedImport stagedImport)
+        public static async Task<PendingImport> DeleteVerifiedSourceAsync(
+            PendingImport item, Action<PendingImport> update, string sha256, IngestionTimings? timings)
         {
-            staged = null;
-            CommittedRecord = stagedImport.Entry.Record;
-        }
-
-        public async Task DeleteVerifiedSourceAsync(
-            ImportSource? openedSource, string sha256, IngestionTimings? timings)
-        {
-            if (openedSource is { CanDeleteByHandle: true })
+            if (item.OpenedSource is { CanDeleteByHandle: true } openedSource)
             {
                 openedSource.DeleteVerified();
-                return;
+                return item;
             }
 
-            await CloseSourceAsync(timings);
-            await ImportSource.DeleteVerifiedPathAsync(Path, sha256);
+            item = await CloseSourceAsync(item, update, timings);
+            await ImportSource.DeleteVerifiedPathAsync(item.Path, sha256);
+            return item;
         }
 
-        public async Task CloseSourceAsync(IngestionTimings? timings)
+        public static async Task<PendingImport> CloseSourceAsync(
+            PendingImport item, Action<PendingImport> update, IngestionTimings? timings)
         {
-            if (source is not { } openedSource) return;
-            source = null;
+            if (item.OpenedSource is not { } openedSource) return item;
+            var closed = item with { OpenedSource = null };
+            update(closed);
             var start = Stopwatch.GetTimestamp();
             try { await openedSource.DisposeAsync(); }
             finally { timings?.Record(IngestionStage.CloseSource, start); }
+            return closed;
         }
 
-        public void RemoveUncommittedMedia()
+        public static PendingImport RemoveUncommittedMedia(PendingImport item, Action<PendingImport> update)
         {
-            var stagedImport = staged;
-            staged = null;
-            if (stagedImport is not null) StagedImportWriter.RemoveUncommitted(stagedImport);
+            if (item.UncommittedStagedImport is not { } stagedImport)
+                return item;
+            var removed = item with { UncommittedStagedImport = null };
+            update(removed);
+            StagedImportWriter.RemoveUncommitted(stagedImport);
+            return removed;
         }
     }
 }
