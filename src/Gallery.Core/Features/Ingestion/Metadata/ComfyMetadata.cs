@@ -78,7 +78,10 @@ internal static partial class ComfyMetadata
         string? prompt = null, workflow = null;
         foreach (var textEntry in textEntries)
         {
-            Classify(textEntry.Value, IsGenerationKeyword(textEntry.Keyword), ref prompt, ref workflow, 0);
+            var malformedJsonPolicy = IsGenerationKeyword(textEntry.Keyword)
+                ? MalformedCandidateJsonPolicy.RejectMalformedJson
+                : MalformedCandidateJsonPolicy.IgnoreMalformedJson;
+            Classify(textEntry.Value, malformedJsonPolicy, ref prompt, ref workflow, 0);
             if (prompt is not null && workflow is not null) break;
         }
         return new(prompt, workflow);
@@ -88,14 +91,13 @@ internal static partial class ComfyMetadata
         keyword.Equals("prompt", StringComparison.OrdinalIgnoreCase)
         || keyword.Equals("workflow", StringComparison.OrdinalIgnoreCase);
 
-    private static void Classify(string value, bool isGenerationSource, ref string? prompt, ref string? workflow, int depth)
+    private static void Classify(
+        string value, MalformedCandidateJsonPolicy malformedJsonPolicy, ref string? prompt, ref string? workflow, int depth)
     {
         if (depth > 2) return;
         var text = NormalizeCandidateText(value, out var hasGenerationPrefix);
         if (!text.StartsWith('{')) return;
-        var malformedJsonPolicy = isGenerationSource || hasGenerationPrefix
-            ? MalformedCandidateJsonPolicy.RejectMalformedJson
-            : MalformedCandidateJsonPolicy.IgnoreMalformedJson;
+        if (hasGenerationPrefix) malformedJsonPolicy = MalformedCandidateJsonPolicy.RejectMalformedJson;
         var jsonObject = ParseCandidateDocument(text, malformedJsonPolicy);
         if (jsonObject is null) return;
 
@@ -104,9 +106,10 @@ internal static partial class ComfyMetadata
         foreach (var name in new[] { "prompt", "workflow" })
         {
             var inner = jsonObject[name];
-            if (inner is JsonObject innerObject) Classify(innerObject.ToJsonString(), true, ref prompt, ref workflow, depth + 1);
+            if (inner is JsonObject innerObject)
+                Classify(innerObject.ToJsonString(), MalformedCandidateJsonPolicy.RejectMalformedJson, ref prompt, ref workflow, depth + 1);
             else if (inner is JsonValue innerValue && innerValue.TryGetValue<string>(out var innerText))
-                Classify(innerText, true, ref prompt, ref workflow, depth + 1);
+                Classify(innerText, MalformedCandidateJsonPolicy.RejectMalformedJson, ref prompt, ref workflow, depth + 1);
         }
     }
 
