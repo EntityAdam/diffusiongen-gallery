@@ -20,11 +20,6 @@ internal static partial class ComfyMetadata
     private const int MaxDepth = 32;
 
     internal sealed record Documents(string? ApiPrompt, string? Workflow);
-    private enum MalformedCandidateJsonPolicy
-    {
-        IgnoreMalformedJson,
-        RejectMalformedJson
-    }
 
     /// <summary>Keyword/value text entries from the metadata JSON stored on a record.</summary>
     public static IEnumerable<(string Keyword, string Value)> TextEntries(string metadataJson)
@@ -78,28 +73,18 @@ internal static partial class ComfyMetadata
         string? prompt = null, workflow = null;
         foreach (var textEntry in textEntries)
         {
-            var malformedJsonPolicy = IsGenerationKeyword(textEntry.Keyword)
-                ? MalformedCandidateJsonPolicy.RejectMalformedJson
-                : MalformedCandidateJsonPolicy.IgnoreMalformedJson;
-            Classify(textEntry.Value, malformedJsonPolicy, ref prompt, ref workflow, 0);
+            Classify(textEntry.Value, ref prompt, ref workflow, 0);
             if (prompt is not null && workflow is not null) break;
         }
         return new(prompt, workflow);
     }
 
-    private static bool IsGenerationKeyword(string keyword) =>
-        keyword.Equals("prompt", StringComparison.OrdinalIgnoreCase)
-        || keyword.Equals("workflow", StringComparison.OrdinalIgnoreCase);
-
-    private static void Classify(
-        string value, MalformedCandidateJsonPolicy malformedJsonPolicy, ref string? prompt, ref string? workflow, int depth)
+    private static void Classify(string value, ref string? prompt, ref string? workflow, int depth)
     {
         if (depth > 2) return;
-        var text = NormalizeCandidateText(value, out var hasGenerationPrefix);
+        var text = NormalizeCandidateText(value);
         if (!text.StartsWith('{')) return;
-        if (hasGenerationPrefix) malformedJsonPolicy = MalformedCandidateJsonPolicy.RejectMalformedJson;
-        var jsonObject = ParseCandidateDocument(text, malformedJsonPolicy);
-        if (jsonObject is null) return;
+        var jsonObject = ParseCandidateDocument(text);
 
         if (IsWorkflow(jsonObject)) { workflow ??= text; return; }
         if (IsApiPrompt(jsonObject)) { prompt ??= text; return; }
@@ -107,33 +92,32 @@ internal static partial class ComfyMetadata
         {
             var inner = jsonObject[name];
             if (inner is JsonObject innerObject)
-                Classify(innerObject.ToJsonString(), MalformedCandidateJsonPolicy.RejectMalformedJson, ref prompt, ref workflow, depth + 1);
+                Classify(innerObject.ToJsonString(), ref prompt, ref workflow, depth + 1);
             else if (inner is JsonValue innerValue && innerValue.TryGetValue<string>(out var innerText))
-                Classify(innerText, MalformedCandidateJsonPolicy.RejectMalformedJson, ref prompt, ref workflow, depth + 1);
+                Classify(innerText, ref prompt, ref workflow, depth + 1);
         }
     }
 
-    private static string NormalizeCandidateText(string value, out bool hasGenerationPrefix)
+    private static string NormalizeCandidateText(string value)
     {
         var text = value.Trim();
         var match = PrefixedJson().Match(text);
-        hasGenerationPrefix = match.Success;
         return match.Success ? text[match.Length..] : text;
     }
 
-    // Free-form text that merely starts with '{' is skipped; only identified generation documents report malformed JSON.
-    private static JsonObject? ParseCandidateDocument(string text, MalformedCandidateJsonPolicy malformedJsonPolicy)
+    // Candidate metadata that starts with '{' is treated as JSON and must be valid.
+    private static JsonObject ParseCandidateDocument(string text)
     {
         try
         {
             using var document = JsonDocument.Parse(text);
             if (ContainsDuplicateProperties(document.RootElement))
                 throw new JsonException("Embedded generation metadata contains duplicate JSON properties.");
-            return JsonNode.Parse(text) as JsonObject;
+            return JsonNode.Parse(text) as JsonObject
+                ?? throw new JsonException("Embedded generation metadata is not a JSON object.");
         }
         catch (JsonException exception)
         {
-            if (malformedJsonPolicy == MalformedCandidateJsonPolicy.IgnoreMalformedJson) return null;
             throw new StoredMetadataFormatException("Embedded generation metadata is not valid JSON.",
                 LogEventGallery.ParseMetadata, exception: exception);
         }

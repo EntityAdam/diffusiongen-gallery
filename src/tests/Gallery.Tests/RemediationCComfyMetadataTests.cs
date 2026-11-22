@@ -33,36 +33,29 @@ public sealed class RemediationCComfyMetadataTests
     }
 
     [Fact]
-    public void Extract_WhenFreeFormTextStartsWithBrace_ThenImportsWithoutGeneration()
+    public void Extract_WhenFreeFormTextStartsWithBrace_ThenReportsMetadataFormatFailure()
     {
         // Arrange
         var metadata = CreatePngMetadata(("Title", "{holiday}"));
 
         // Act
-        var generationInfo = ComfyMetadata.Extract(metadata);
+        var error = Assert.Throws<StoredMetadataFormatException>(() => ComfyMetadata.Extract(metadata));
 
         // Assert
-        Assert.Null(generationInfo);
+        Assert.IsAssignableFrom<JsonException>(error.InnerException);
     }
 
     [Fact]
-    public void Extract_WhenFreeFormBraceTextPrecedesComfyDocuments_ThenDocumentsAreStillFound()
+    public void Extract_WhenFreeFormBraceTextPrecedesComfyDocuments_ThenReportsMetadataFormatFailure()
     {
         // Arrange
         var metadata = CreatePngMetadata(("Title", "{holiday}"), ("prompt", ApiPrompt), ("workflow", Workflow));
 
         // Act
-        var generationInfo = ComfyMetadata.Extract(metadata);
-        var documents = ComfyMetadata.Find(metadata);
+        var error = Assert.Throws<StoredMetadataFormatException>(() => ComfyMetadata.Extract(metadata));
 
         // Assert
-        Assert.NotNull(generationInfo);
-        Assert.Equal("a cat", generationInfo.Prompt);
-        Assert.Equal(7.5, generationInfo.Cfg);
-        Assert.True(generationInfo.HasApiPrompt);
-        Assert.True(generationInfo.HasWorkflow);
-        Assert.Equal(ApiPrompt, documents.ApiPrompt);
-        Assert.Equal(Workflow, documents.Workflow);
+        Assert.IsAssignableFrom<JsonException>(error.InnerException);
     }
 
     [Theory]
