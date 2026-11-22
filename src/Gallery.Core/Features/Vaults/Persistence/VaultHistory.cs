@@ -61,13 +61,45 @@ internal sealed class VaultHistory(string directory)
                 ? JsonSerializer.Deserialize<List<string>>(File.ReadAllText(GalleriesPath)) ?? []
                 : [];
         }
-        catch (JsonException) { roots = []; }
+        catch (JsonException exception)
+        {
+            PreserveMalformedGalleriesHistory(exception);
+            roots = [];
+        }
         // Preserve the previous single-gallery history when upgrading.
         var previous = Read();
         if (!string.IsNullOrWhiteSpace(previous) && !roots.Contains(previous, PathComparer))
             roots.Add(previous);
         return roots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(PathComparer).ToList();
     }
+
+    private void PreserveMalformedGalleriesHistory(JsonException exception)
+    {
+        Trace.TraceWarning("Preserving malformed galleries history ({0}).", exception.GetType().FullName);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(GalleriesPath)) return;
+                File.Move(GalleriesPath, CreateCorruptGalleriesPath(), overwrite: false);
+                return;
+            }
+            catch (IOException ioException)
+            {
+                Trace.TraceWarning("Could not preserve malformed galleries history ({0}).",
+                    ioException.GetType().FullName);
+            }
+            catch (UnauthorizedAccessException accessException)
+            {
+                Trace.TraceWarning("Could not preserve malformed galleries history ({0}).",
+                    accessException.GetType().FullName);
+                return;
+            }
+        }
+    }
+
+    private string CreateCorruptGalleriesPath() =>
+        Path.Combine(directory, $"galleries.json.corrupt.{DateTime.UtcNow:yyyyMMddTHHmmssfffZ}.{Guid.NewGuid():N}.json");
 
     private void WriteHistoryAtomically(string root) =>
         WriteAtomically(HistoryPath, JsonSerializer.Serialize(root));
