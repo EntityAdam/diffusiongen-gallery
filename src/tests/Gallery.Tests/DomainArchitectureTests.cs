@@ -9,6 +9,7 @@ using Gallery.Core.Features.Duplicates;
 using Gallery.Core.Features.Ingestion.Metadata;
 using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Ingestion.Managers.Reporters;
+using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;
@@ -128,6 +129,12 @@ public sealed class DomainArchitectureTests
         Assert.DoesNotContain(type.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static),
             method => method.Name is "ToRecord" or "Capture");
         Assert.Same(typeof(GalleryScope).Assembly, type.Assembly);
+    }
+
+    [Fact]
+    public void DriveOperationConflictException_IsPublic()
+    {
+        Assert.True(typeof(DriveOperationConflictException).IsPublic);
     }
 
     private static void AssertPublicContract(Type type, Assembly core)

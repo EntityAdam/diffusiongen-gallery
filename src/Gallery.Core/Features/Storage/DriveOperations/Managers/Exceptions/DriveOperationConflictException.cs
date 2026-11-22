@@ -4,7 +4,7 @@ using Gallery.Core.Exceptions;
 namespace Gallery.Core.Features.Storage.DriveOperations;
 
 [ExcludeFromCodeCoverage]
-internal sealed class DriveOperationConflictException : GalleryTechnicalException
+public sealed class DriveOperationConflictException : GalleryTechnicalException
 {
     public DriveOperationConflictException() { }
     public DriveOperationConflictException(string message) : base(message) { }
