@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Security.Cryptography;
 using Gallery.Core.Features.Tags.CatalogProjectors;
 using Gallery.Core.Features.Tags.CatalogStores;
@@ -56,13 +57,7 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
         {
             var records = await store.ReadRecordsAsync(key.Bytes);
             var catalog = await TagCatalogStore.ReadAsync(store, key.Bytes, records);
-            var names = TagCatalogStore.ReconcileNames(catalog, records);
-            if (original is not null && !names.Contains(original, StringComparer.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"Tag '{original}' does not exist.");
-            var target = replacement is null ? null : names.FirstOrDefault(name => name.Equals(replacement, StringComparison.OrdinalIgnoreCase)
-                && !name.Equals(original, StringComparison.OrdinalIgnoreCase)) ?? replacement;
-            var nextNames = TagCatalogStore.NormalizeTagNames(names.Where(name => !name.Equals(original, StringComparison.OrdinalIgnoreCase))
-                .Concat(target is null ? [] : new[] { target }));
+            var (nextNames, target) = ReconcileCatalogChange(catalog, records, original, replacement);
             var changedRecords = original is null ? [] : PrepareChangedTagAssignments(records, original, target);
             // Renames follow exact-tag saved filters. Deletion retains those filters so it cannot silently broaden their results.
             IReadOnlyList<SavedView>? views = original is not null && target is not null
@@ -71,6 +66,19 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
             await store.CommitTagCatalogAsync(changedRecords, new(nextNames), views, key.Bytes);
         }
         finally { store.Gate.Release(); }
+    }
+
+    private static (ImmutableArray<string> Names, string? Target) ReconcileCatalogChange(
+        TagCatalog catalog, IReadOnlyList<ImageRecord> records, string? original, string? replacement)
+    {
+        var names = TagCatalogStore.ReconcileNames(catalog, records);
+        if (original is not null && !names.Contains(original, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Tag '{original}' does not exist.");
+        var target = replacement is null ? null : names.FirstOrDefault(name => name.Equals(replacement, StringComparison.OrdinalIgnoreCase)
+            && !name.Equals(original, StringComparison.OrdinalIgnoreCase)) ?? replacement;
+        var nextNames = TagCatalogStore.NormalizeTagNames(names.Where(name => !name.Equals(original, StringComparison.OrdinalIgnoreCase))
+            .Concat(target is null ? [] : new[] { target }));
+        return (nextNames, target);
     }
 
     private static ImageRecord[] PrepareChangedTagAssignments(IReadOnlyList<ImageRecord> records, string original, string? target) =>
