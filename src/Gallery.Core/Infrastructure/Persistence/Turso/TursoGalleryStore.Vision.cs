@@ -24,10 +24,16 @@ internal sealed partial class TursoGalleryStore
         await WriteRecordAsync(connection, transaction, record, RecordWriteMode.Update);
         await UpsertSettingAsync(connection, transaction, TagCatalog.SettingId, catalog);
         if (analysis is not null)
-            await NonQueryAsync(connection, "INSERT INTO vision_analysis(image_id,payload) VALUES($id,$payload) ON CONFLICT(image_id) DO UPDATE SET payload=excluded.payload", transaction,
-                ("$id", record.Id), ("$payload", JsonSerializer.Serialize(analysis)));
+            await UpsertVisionAnalysisAsync(connection, transaction, record.Id, analysis);
         if (checkpoint is not null)
             await UpsertSettingAsync(connection, transaction, VisionCheckpoint.SettingId, checkpoint);
         transaction.Commit();
+    }
+
+    private static async Task UpsertVisionAnalysisAsync(DbConnection connection, DbTransaction transaction,
+        string id, VisionAnalysis analysis)
+    {
+        await NonQueryAsync(connection, "INSERT INTO vision_analysis(image_id,payload) VALUES($id,$payload) ON CONFLICT(image_id) DO UPDATE SET payload=excluded.payload", transaction,
+            ("$id", id), ("$payload", JsonSerializer.Serialize(analysis)));
     }
 }
