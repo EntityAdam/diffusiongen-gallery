@@ -104,6 +104,43 @@ public sealed class VisionCheckpointTests
         Assert.Equal(draft, Assert.Single(second.State.Drafts));
     }
 
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task Checkpoint_handles_preserve_both_staged_drafts_across_scope_handoff(CatalogBackend backend)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vision-handoff-" + Guid.NewGuid().ToString("N"));
+        var options = new GalleryRuntimeOptions { CatalogBackend = backend, StateDirectory = root + "-state" };
+        try
+        {
+            using var firstScope = GalleryScope.Create(root, options, new HttpClient());
+            using var secondScope = GalleryScope.Create(root, options, new HttpClient());
+            await firstScope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+            var seed = await firstScope.Vision.OpenVisionCheckpointAsync();
+            await seed.UpdateAsync(state => state with { Queue = [new("first"), new("second"), new("pending")] });
+            await firstScope.Vault.CloseVaultAsync();
+            await firstScope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+
+            var openings = await Task.WhenAll(firstScope.Vision.OpenVisionCheckpointAsync(),
+                firstScope.Vision.OpenVisionCheckpointAsync());
+            await Assert.ThrowsAsync<IOException>(() => secondScope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+            await openings[0].StageAsync(new("first", "First", "First draft", "", "model"));
+            await openings[1].StageAsync(new("second", "Second", "Second draft", "", "model"));
+            await firstScope.Vault.CloseVaultAsync();
+            await secondScope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+
+            var persisted = (await secondScope.Vision.OpenVisionCheckpointAsync()).State;
+            Assert.Equal(new[] { "first", "second" }, persisted.Drafts.Select(draft => draft.Id));
+            Assert.Equal("pending", Assert.Single(persisted.Queue).Id);
+            await secondScope.Vault.CloseVaultAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+            if (Directory.Exists(root + "-state")) Directory.Delete(root + "-state", true);
+        }
+    }
+
     [Fact]
     public async Task Set_suggestion_returns_a_set_from_the_configured_endpoint()
     {
