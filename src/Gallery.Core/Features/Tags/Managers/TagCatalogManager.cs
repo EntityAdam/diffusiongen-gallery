@@ -137,7 +137,12 @@ internal sealed class TagCatalogManager(GalleryLifetime galleryLifetime, VaultSe
             var names = TagCatalogStore.ReconcileNames(catalog, records);
             unlockedVaultSession.RevocationToken.ThrowIfCancellationRequested();
             var csv = TagCsvProcessor.Write(names);
-            try { return new("tags.csv", "text/csv;charset=utf-8", csv); }
+            try
+            {
+                if (csv.LongLength > MaxTagCsvBytes)
+                    throw new InvalidOperationException("The tag catalog is too large to export as a CSV. Tag CSV files must be 10 MiB or smaller.");
+                return new("tags.csv", "text/csv;charset=utf-8", csv);
+            }
             finally { CryptographicOperations.ZeroMemory(csv); }
         }
         finally { store.Gate.Release(); }

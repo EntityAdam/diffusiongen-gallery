@@ -6,7 +6,7 @@
 <Card Class="mb-6 space-y-4 p-5 md:p-6">
     <section class="space-y-2" aria-labelledby="tag-csv-heading">
         <h3 id="tag-csv-heading">Import and export tags</h3>
-        <p class="text-muted-foreground text-sm">Use a UTF-8 CSV with one column headed <code>tag</code> and one tag per row (up to 10 MiB). Import adds tag definitions and skips duplicates; media assignments stay unchanged. Export includes all tags, including unused ones.</p>
+        <p class="text-muted-foreground text-sm">Use a UTF-8 CSV with one column headed <code>tag</code> and one tag per row (up to 10 MiB). Import adds tag definitions and skips duplicates; media assignments stay unchanged. Export includes all tags, including unused ones, and fails if the CSV would exceed 10 MiB.</p>
         <Label For="tag-csv-file">Choose a tag CSV</Label>
         <InputFile @key="csvInputRevision" id="tag-csv-file" accept=".csv,text/csv" OnChange="CsvSelected" disabled="@working" />
         <div class="flex flex-wrap gap-2">

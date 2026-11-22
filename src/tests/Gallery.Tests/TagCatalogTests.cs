@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -375,6 +376,38 @@ public sealed class TagCatalogTests
             Assert.Equal((0, 0), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
         }
         finally { file.ClearContent(); }
+    }
+
+    [Fact]
+    public async Task TagCsvExport_AcceptsLimitAndRejectsOneAdditionalUtf8Byte()
+    {
+        using var fixture = new SnapshotFixture(CatalogBackend.Sqlite);
+        await fixture.InitializeAsync(false);
+        var names = Enumerable.Range(0, 100824)
+            .Select(index => $"{index:D6}{new string('a', 94)}")
+            .Append(new string('z', 52))
+            .ToImmutableArray();
+        await fixture.Store.CommitTagCatalogAsync([], new TagCatalog(names), null, fixture.Key);
+
+        var file = await fixture.Scope.Tags.ExportTagsCsvAsync();
+        try
+        {
+            var bytes = file.CopyContentBytes();
+            try
+            {
+                Assert.Equal(IGalleryTags.MaxCsvBytes, bytes.LongLength);
+                using var input = new MemoryStream(bytes);
+                Assert.Equal((0, names.Length), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
+            }
+            finally { CryptographicOperations.ZeroMemory(bytes); }
+        }
+        finally { file.ClearContent(); }
+
+        names = names.SetItem(names.Length - 1, new string('z', 51) + "é");
+        await fixture.Store.CommitTagCatalogAsync([], new TagCatalog(names), null, fixture.Key);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Tags.ExportTagsCsvAsync());
+        Assert.Contains("10 MiB", exception.Message);
+        Assert.Equal(names.Length, (await fixture.Scope.Tags.LoadTagNamesAsync()).Count);
     }
 
     private sealed class SnapshotFixture : IDisposable

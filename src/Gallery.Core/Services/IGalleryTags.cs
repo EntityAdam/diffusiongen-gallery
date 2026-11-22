@@ -13,5 +13,6 @@ public interface IGalleryTags
     Task RenameTagAsync(string name, string replacement);
     Task DeleteTagAsync(string name);
     Task<(int Added, int Skipped)> ImportTagsCsvAsync(Stream input);
+    /// <summary>Exports tags as CSV, rejecting output larger than <see cref="MaxCsvBytes"/>.</summary>
     Task<ExportFile> ExportTagsCsvAsync();
 }
