@@ -38,9 +38,11 @@ internal sealed class VaultHistory(string directory)
 
     private void WriteUpdatedGalleries(string root)
     {
-        var roots = ReadRoots();
+        var read = ReadRootsWithRewritePolicy();
+        var roots = read.Roots;
         roots.RemoveAll(path => PathComparer.Equals(path, root));
         roots.Insert(0, root);
+        if (!read.CanRewriteGalleries) return;
         WriteAtomically(GalleriesPath, JsonSerializer.Serialize(roots));
     }
 
@@ -49,12 +51,13 @@ internal sealed class VaultHistory(string directory)
 
     public IReadOnlyList<string> ReadGalleries()
     {
-        lock (gate) return ReadRoots();
+        lock (gate) return ReadRootsWithRewritePolicy().Roots;
     }
 
-    private List<string> ReadRoots()
+    private (List<string> Roots, bool CanRewriteGalleries) ReadRootsWithRewritePolicy()
     {
         List<string> roots;
+        var canRewriteGalleries = true;
         try
         {
             roots = File.Exists(GalleriesPath)
@@ -63,26 +66,27 @@ internal sealed class VaultHistory(string directory)
         }
         catch (JsonException exception)
         {
-            PreserveMalformedGalleriesHistory(exception);
+            canRewriteGalleries = PreserveMalformedGalleriesHistory(exception);
             roots = [];
         }
         // Preserve the previous single-gallery history when upgrading.
         var previous = Read();
         if (!string.IsNullOrWhiteSpace(previous) && !roots.Contains(previous, PathComparer))
             roots.Add(previous);
-        return roots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(PathComparer).ToList();
+        return (roots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(PathComparer).ToList(),
+            canRewriteGalleries);
     }
 
-    private void PreserveMalformedGalleriesHistory(JsonException exception)
+    private bool PreserveMalformedGalleriesHistory(JsonException exception)
     {
         Trace.TraceWarning("Preserving malformed galleries history ({0}).", exception.GetType().FullName);
         for (var attempt = 0; attempt < 3; attempt++)
         {
             try
             {
-                if (!File.Exists(GalleriesPath)) return;
+                if (!File.Exists(GalleriesPath)) return true;
                 File.Move(GalleriesPath, CreateCorruptGalleriesPath(), overwrite: false);
-                return;
+                return true;
             }
             catch (IOException ioException)
             {
@@ -93,9 +97,10 @@ internal sealed class VaultHistory(string directory)
             {
                 Trace.TraceWarning("Could not preserve malformed galleries history ({0}).",
                     accessException.GetType().FullName);
-                return;
+                return false;
             }
         }
+        return false;
     }
 
     private string CreateCorruptGalleriesPath() =>

@@ -76,6 +76,24 @@ public sealed class VaultHistoryTests : IDisposable
     }
 
     [Fact]
+    public void History_Save_DoesNotOverwriteMalformedGalleries_WhenPreservationFails()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Directory.CreateDirectory(root);
+        var malformed = "{not-json";
+        var galleriesPath = Path.Combine(root, "galleries.json");
+        File.WriteAllText(galleriesPath, malformed);
+        File.WriteAllText(Path.Combine(root, "last-vault.json"), JsonSerializer.Serialize(Path.Combine(root, "first")));
+        using var lockHandle = new FileStream(galleriesPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var history = new VaultHistory(root);
+
+        history.Save(Path.Combine(root, "second"));
+
+        Assert.Equal(malformed, File.ReadAllText(galleriesPath));
+        Assert.Empty(Directory.GetFiles(root, "galleries.json.corrupt.*.json"));
+    }
+
+    [Fact]
     public async Task KnownGalleries_TracksCreatedAndOpenedGalleries_AndReadsCurrentNames()
     {
         var first = Path.Combine(root, "first");
