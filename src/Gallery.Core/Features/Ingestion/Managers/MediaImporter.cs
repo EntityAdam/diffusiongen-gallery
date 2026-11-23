@@ -10,6 +10,7 @@ using Gallery.Core.Features.Ingestion.Managers.Models;
 using Gallery.Core.Features.Ingestion.Managers.Reporters;
 using Gallery.Core.Features.Ingestion.Managers.Scanners;
 using Gallery.Core.Features.Ingestion.Managers.Validators;
+using Gallery.Core.Features.Validators;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;

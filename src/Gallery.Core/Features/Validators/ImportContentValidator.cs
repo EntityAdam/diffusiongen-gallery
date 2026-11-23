@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace Gallery.Core.Features.Ingestion.Managers.Validators;
+namespace Gallery.Core.Features.Validators;
 
 internal static class ImportContentValidator
 {
