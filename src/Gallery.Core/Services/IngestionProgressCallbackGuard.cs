@@ -6,13 +6,18 @@ internal static class IngestionProgressCallbackGuard
 {
     private static readonly AsyncLocal<GuardScope?> currentScope = new();
 
-    private sealed record GuardScope(string VaultRoot, GuardScope? Parent);
+    private sealed class GuardScope(string vaultRoot, GuardScope? parent)
+    {
+        internal string VaultRoot { get; } = vaultRoot;
+        internal GuardScope? Parent { get; } = parent;
+        internal int Active = 1;
+    }
 
     internal static bool IsActive(string vaultRoot)
     {
         for (var scope = currentScope.Value; scope is not null; scope = scope.Parent)
         {
-            if (PathsEqual(scope.VaultRoot, vaultRoot)) return true;
+            if (Volatile.Read(ref scope.Active) != 0 && PathsEqual(scope.VaultRoot, vaultRoot)) return true;
         }
         return false;
     }
@@ -45,7 +50,11 @@ internal static class IngestionProgressCallbackGuard
         return scope;
     }
 
-    private static void Exit(GuardScope scope) => currentScope.Value = scope.Parent;
+    private static void Exit(GuardScope scope)
+    {
+        Interlocked.Exchange(ref scope.Active, 0);
+        currentScope.Value = scope.Parent;
+    }
 
     private static bool PathsEqual(string left, string right) =>
         OperatingSystem.IsWindows()

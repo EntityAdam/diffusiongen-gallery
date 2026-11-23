@@ -356,6 +356,34 @@ public sealed class GalleryIngestionTests
     }
 
     [Fact]
+    public async Task FolderImport_WhenCallbackSpawnsVaultOperation_ThenGuardExpiresAfterCallbackReturns()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+        var releaseOperation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? spawnedOperation = null;
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            reportProgress: _ =>
+            {
+                spawnedOperation ??= Task.Run(async () =>
+                {
+                    await releaseOperation.Task;
+                    fixture.Scope.Vault.LockVault();
+                });
+                return Task.CompletedTask;
+            });
+
+        releaseOperation.SetResult();
+        await (spawnedOperation ?? throw new Xunit.Sdk.XunitException("Expected a callback-spawned operation."));
+
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
+    }
+
+    [Fact]
     public async Task FolderImport_WhenTimingsAreRecorded_ReportsStagesWithoutFileOrFolderNames()
     {
         // Arrange
