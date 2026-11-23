@@ -111,6 +111,33 @@ public sealed class MediaConfirmedFindingsTests
     }
 
     [Fact]
+    public async Task Removal_WhenRestorationStageHasDifferentContent_ThenPreservesStageAndGalleryEntry()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var record = await fixture.Scope.Ingestion.ImportAsync(
+            new MemoryStream(GalleryTests.MakePng()), "missing.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([record.Id]);
+        var target = Path.Combine(fixture.Root, record.Id + ".png");
+        var stagingPath = target + ".restoring";
+        byte[] stagingBytes = [1, 2, 3];
+        await File.WriteAllBytesAsync(stagingPath, stagingBytes);
+        var receipts = new List<Gallery.Core.Models.RemovalResult>();
+
+        var removalError = await Record.ExceptionAsync(() => fixture.Scope.MediaMaintenance.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.RestorePng, fixture.Root, receipts.Add));
+        var stageAfter = await File.ReadAllBytesAsync(stagingPath);
+        var records = await fixture.Scope.Catalog.ListAsync();
+
+        Assert.IsType<AggregateException>(removalError);
+        Assert.False(Assert.Single(receipts).WasRemoved);
+        Assert.Equal(stagingBytes, stageAfter);
+        Assert.False(File.Exists(target));
+        Assert.Equal(record.Id, Assert.Single(records).Id);
+    }
+
+    [Fact]
     public async Task VideoPreviewAndViewer_WhenVideoIsSelected_ThenUseTheSameThumbnail()
     {
         using var transport = new MediaProcessTransport(MediaAndComfyTests.MakeProbeMetadata().ToJsonString());
