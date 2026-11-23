@@ -520,6 +520,31 @@ public sealed class RemovalTests
     }
 
     [Fact]
+    public async Task Removal_WhenVerifiedRestoreAlreadyExists_ThenRetryRemovesCatalogEntry()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var bytes = GalleryTests.MakePng();
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(bytes), "source.jpg", "browser-folder");
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([record.Id]);
+        var restoredPath = Path.Combine(fixture.Root, record.Id + ".png");
+        await File.WriteAllBytesAsync(restoredPath, bytes);
+
+        var results = new List<RemovalResult>();
+        await fixture.Scope.MediaMaintenance.RemoveAsync(plan, ExistingOriginalAction.Retain,
+            MissingOriginalAction.RestorePng, fixture.Root, results.Add);
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+
+        var result = Assert.Single(results);
+        Assert.True(result.WasRemoved);
+        Assert.Null(result.Error);
+        Assert.Equal(restoredPath, result.RestoredPath);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(restoredPath));
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
     public async Task RemovalPreview_WhenImageIsUnmarked_ThenRejectsIt()
     {
         // Arrange
