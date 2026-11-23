@@ -92,6 +92,9 @@ internal static class VaultCreationPublication
     internal static void DeleteStaging(string staging)
     {
         try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
+        // Cleanup runs in finally after create/publish. We intentionally swallow filesystem cleanup
+        // failures here and avoid logging paths by design: preserving the primary outcome matters more,
+        // and the worst case is leftover staging files/directories that can be removed manually.
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
