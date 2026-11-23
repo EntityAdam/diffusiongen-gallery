@@ -237,8 +237,9 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         var reportStart = Stopwatch.GetTimestamp();
         try
         {
-            await reportProgress(new ImportProgress(null, 0, 0, 0,
-                scan is null ? "Scanning selected folder..." : "Checking scanned files and disk space..."));
+            await IngestionProgressCallbackGuard.RunAsync(() =>
+                reportProgress(new ImportProgress(null, 0, 0, 0,
+                    scan is null ? "Scanning selected folder..." : "Checking scanned files and disk space...")));
         }
         finally { timings?.Record(IngestionStage.ReportProgress, reportStart); }
     }

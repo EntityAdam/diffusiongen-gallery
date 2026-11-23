@@ -36,7 +36,8 @@ internal static class FolderImportProgress
         if (reportProgress is null || !ShouldEmitProgress(reportMode, snapshot.LastReportTimestamp, now))
             return snapshot;
 
-        await reportProgress(new ImportProgress(snapshot.Total, snapshot.Completed, snapshot.Imported, snapshot.Failed, status));
+        await IngestionProgressCallbackGuard.RunAsync(() =>
+            reportProgress(new ImportProgress(snapshot.Total, snapshot.Completed, snapshot.Imported, snapshot.Failed, status)));
         return snapshot with { LastReportTimestamp = Stopwatch.GetTimestamp() };
     }
 

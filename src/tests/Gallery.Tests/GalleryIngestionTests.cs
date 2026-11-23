@@ -298,6 +298,23 @@ public sealed class GalleryIngestionTests
     }
 
     [Fact]
+    public async Task FolderImport_WhenProgressCallbackClosesVault_ThenFailsFastWithGuidance()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                reportProgress: async _ => await fixture.Scope.Vault.CloseVaultAsync()));
+
+        Assert.Contains("ingestion progress callback", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+    }
+
+    [Fact]
     public async Task FolderImport_WhenTimingsAreRecorded_ReportsStagesWithoutFileOrFolderNames()
     {
         // Arrange
