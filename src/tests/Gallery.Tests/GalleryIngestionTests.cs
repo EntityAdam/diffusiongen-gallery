@@ -315,6 +315,47 @@ public sealed class GalleryIngestionTests
     }
 
     [Fact]
+    public async Task FolderImport_WhenFileProgressCallbackLocksVault_ThenFailsFastWithGuidance()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+
+        var error = await Assert.ThrowsAsync<ImportFolderException>(() =>
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                progress: _ => fixture.Scope.Vault.LockVault()));
+
+        var fileFailure = Assert.Single(error.Failures.InnerExceptions);
+        var guardFailure = Assert.IsType<InvalidOperationException>(fileFailure.InnerException);
+        Assert.Contains("ingestion progress callback", guardFailure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+    }
+
+    [Fact]
+    public async Task FolderImport_WhenProgressCallbackTouchesDifferentVault_ThenImportCanContinue()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        using var other = new TestVault();
+        await other.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            reportProgress: _ =>
+            {
+                other.Scope.Vault.LockVault();
+                return Task.CompletedTask;
+            });
+
+        Assert.False(other.Scope.Vault.IsUnlocked);
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
     public async Task FolderImport_WhenTimingsAreRecorded_ReportsStagesWithoutFileOrFolderNames()
     {
         // Arrange

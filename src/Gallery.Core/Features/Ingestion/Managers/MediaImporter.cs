@@ -143,7 +143,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         var timings = observations is null ? null : new IngestionTimings(observations.Enqueue);
         try
         {
-            await ReportInitialProgressAsync(reportProgress, scan, timings);
+            await ReportInitialProgressAsync(reportProgress, scan, timings, catalogRoot);
             var mediaPaths = await ResolveMediaPathsAsync(folder, searchScope, scan, mediaSelection, timings);
             var stageStart = Stopwatch.GetTimestamp();
             await PrepareFingerprintIndexAsync(key);
@@ -158,7 +158,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
                 try
                 {
                     progressSnapshot = await FolderImportProgress.ReportAsync(
-                        progressSnapshot, progress, reportProgress, status, reportMode, name);
+                        progressSnapshot, progress, reportProgress, status, reportMode, name, catalogRoot);
                 }
                 finally
                 {
@@ -231,13 +231,13 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
     }
 
     private static async Task ReportInitialProgressAsync(
-        Func<ImportProgress, Task>? reportProgress, IngestionScan? scan, IngestionTimings? timings)
+        Func<ImportProgress, Task>? reportProgress, IngestionScan? scan, IngestionTimings? timings, string vaultRoot)
     {
         if (reportProgress is null) return;
         var reportStart = Stopwatch.GetTimestamp();
         try
         {
-            await IngestionProgressCallbackGuard.RunAsync(() =>
+            await IngestionProgressCallbackGuard.RunAsync(vaultRoot, () =>
                 reportProgress(new ImportProgress(null, 0, 0, 0,
                     scan is null ? "Scanning selected folder..." : "Checking scanned files and disk space...")));
         }

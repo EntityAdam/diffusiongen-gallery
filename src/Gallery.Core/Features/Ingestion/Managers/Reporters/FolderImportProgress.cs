@@ -29,14 +29,16 @@ internal static class FolderImportProgress
 
     public static async Task<FolderImportProgressSnapshot> ReportAsync(
         FolderImportProgressSnapshot snapshot, Action<string>? reportFile,
-        Func<ImportProgress, Task>? reportProgress, string status, ProgressReportMode reportMode, string? name)
+        Func<ImportProgress, Task>? reportProgress, string status, ProgressReportMode reportMode, string? name,
+        string vaultRoot)
     {
-        if (name is not null) reportFile?.Invoke(name);
+        if (name is not null)
+            IngestionProgressCallbackGuard.Run(vaultRoot, () => reportFile?.Invoke(name));
         var now = Stopwatch.GetTimestamp();
         if (reportProgress is null || !ShouldEmitProgress(reportMode, snapshot.LastReportTimestamp, now))
             return snapshot;
 
-        await IngestionProgressCallbackGuard.RunAsync(() =>
+        await IngestionProgressCallbackGuard.RunAsync(vaultRoot, () =>
             reportProgress(new ImportProgress(snapshot.Total, snapshot.Completed, snapshot.Imported, snapshot.Failed, status)));
         return snapshot with { LastReportTimestamp = Stopwatch.GetTimestamp() };
     }

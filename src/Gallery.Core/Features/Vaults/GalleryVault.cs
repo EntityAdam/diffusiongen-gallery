@@ -8,8 +8,8 @@ namespace Gallery.Core.Features.Vaults;
 internal sealed class GalleryVault(GalleryLifetime galleryLifetime, VaultSession vaultSession, VaultAccess vaultAccess,
     VaultManager vaultManager, VaultLocationCoordinator vaultLocations) : IGalleryVault
 {
-    private static void GuardIngestionProgressCallback(string operation) =>
-        IngestionProgressCallbackGuard.ThrowIfActive(operation);
+    private void GuardIngestionProgressCallback(string operation) =>
+        IngestionProgressCallbackGuard.ThrowIfActive(operation, galleryLifetime.Current.VaultStore.Root);
 
     public bool CatalogIsOnNetworkDrive => CatalogDirectoryRules.IsNetworkDirectory(VaultRoot);
 
