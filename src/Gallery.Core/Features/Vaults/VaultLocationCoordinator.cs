@@ -485,17 +485,10 @@ internal sealed class VaultLocationCoordinator(
 
     private static void DeleteVaultData(string root, IEnumerable<ImageRecord> records)
     {
+        // Delete only catalog-owned encrypted media paths; leave unknown orphan files for manual handling.
         var media = records.Select(record => record.StoredPath).ToHashSet(
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var imagesDirectory = Path.Combine(root, "images");
-        if (Directory.Exists(imagesDirectory))
-        {
-            var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
-            foreach (var path in Directory.EnumerateFiles(imagesDirectory, "*", options))
-                if (Path.GetExtension(path) is ".dpng" or ".dmp4"
-                    || path.Contains(GalleryDriveQueue.RemovalStagingMarker, StringComparison.Ordinal))
-                    media.Add(path);
-        }
         foreach (var path in media) File.Delete(path);
         if (Directory.Exists(imagesDirectory))
         {

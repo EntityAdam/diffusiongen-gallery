@@ -191,6 +191,31 @@ public sealed class VaultManagementTests
     }
 
     [Fact]
+    public async Task Move_PreservesSourceOrphanEncryptedFiles_NotOwnedByCatalog()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Travel vault");
+        await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        var destination = NewTemporaryDirectory();
+        var orphanDirectory = Path.Combine(fixture.Root, "images", "orphan-shard");
+        var orphanPath = Path.Combine(orphanDirectory, "orphan.dpng");
+        Directory.CreateDirectory(orphanDirectory);
+        await File.WriteAllBytesAsync(orphanPath, [1, 2, 3]);
+        try
+        {
+            await fixture.Scope.Vault.MoveVaultAsync(destination);
+            Assert.True(File.Exists(orphanPath));
+            await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            Assert.Single(await fixture.Scope.Catalog.ListAsync());
+        }
+        finally
+        {
+            await fixture.Scope.Vault.CloseVaultAsync();
+            DeleteTemporaryDirectory(destination);
+        }
+    }
+
+    [Fact]
     public async Task Move_RejectsNonemptyAndOverlappingDestinations_WithoutChangingSource()
     {
         using var fixture = new TestVault();
