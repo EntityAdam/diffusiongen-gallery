@@ -74,7 +74,6 @@ internal static partial class ComfyMetadata
         foreach (var textEntry in textEntries)
         {
             Classify(textEntry.Value, ref prompt, ref workflow, 0);
-            if (prompt is not null && workflow is not null) break;
         }
         return new(prompt, workflow);
     }

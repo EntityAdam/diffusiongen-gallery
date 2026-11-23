@@ -58,6 +58,32 @@ public sealed class RemediationCComfyMetadataTests
         Assert.IsAssignableFrom<JsonException>(error.InnerException);
     }
 
+    [Fact]
+    public void Extract_WhenMalformedBraceCandidateFollowsComfyDocuments_ThenReportsMetadataFormatFailure()
+    {
+        // Arrange
+        var metadata = CreatePngMetadata(("prompt", ApiPrompt), ("workflow", Workflow), ("Title", "{broken"));
+
+        // Act
+        var error = Assert.Throws<StoredMetadataFormatException>(() => ComfyMetadata.Extract(metadata));
+
+        // Assert
+        Assert.IsAssignableFrom<JsonException>(error.InnerException);
+    }
+
+    [Fact]
+    public void WorkflowForExport_WhenMalformedBraceCandidateFollowsWorkflow_ThenReportsMetadataFormatFailure()
+    {
+        // Arrange
+        var metadata = CreatePngMetadata(("workflow", Workflow), ("Title", "{broken"));
+
+        // Act
+        var error = Assert.Throws<StoredMetadataFormatException>(() => ComfyMetadata.WorkflowForExport(metadata));
+
+        // Assert
+        Assert.IsAssignableFrom<JsonException>(error.InnerException);
+    }
+
     [Theory]
     [InlineData("Prompt", "{broken")]
     [InlineData("Description", "Prompt: {broken")]
