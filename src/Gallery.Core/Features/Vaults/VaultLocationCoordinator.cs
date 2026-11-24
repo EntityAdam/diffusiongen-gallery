@@ -134,7 +134,7 @@ internal sealed class VaultLocationCoordinator(
         var stagedStore = galleryLifetime.StoreFactory.Create(staging);
         await CopyVaultMediaToStageAsync(records, staging, location.Destination, stagedStore, key);
         await ClearLocationSettingsAsync(stagedStore, key);
-        return (stagedStore, staging, () => DeleteVaultData(sourceRoot, records));
+        return (stagedStore, staging, () => DeleteVaultData(sourceRoot, records, includeUncataloguedMedia: false));
     }
 
     public async Task PurgeVaultAsync(string confirmation)
@@ -149,7 +149,7 @@ internal sealed class VaultLocationCoordinator(
             key = vaultSession.Key;
             await StopDriveAndDrainSessionAsync();
             var records = await ReadValidatedVaultRecordsAsync(key);
-            DeleteVaultData(VaultRoot, records);
+            DeleteVaultData(VaultRoot, records, includeUncataloguedMedia: true);
         }
         finally
         {
@@ -483,12 +483,19 @@ internal sealed class VaultLocationCoordinator(
             throw new InvalidOperationException("Encrypted media cannot be a symbolic link.");
     }
 
-    private static void DeleteVaultData(string root, IEnumerable<ImageRecord> records)
+    private static void DeleteVaultData(string root, IEnumerable<ImageRecord> records, bool includeUncataloguedMedia)
     {
-        // Delete only catalog-owned encrypted media paths; leave unknown orphan files for manual handling.
         var media = records.Select(record => record.StoredPath).ToHashSet(
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var imagesDirectory = Path.Combine(root, "images");
+        if (includeUncataloguedMedia && Directory.Exists(imagesDirectory))
+        {
+            var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
+            foreach (var path in Directory.EnumerateFiles(imagesDirectory, "*", options))
+                if (Path.GetExtension(path) is ".dpng" or ".dmp4"
+                    || path.Contains(GalleryDriveQueue.RemovalStagingMarker, StringComparison.Ordinal))
+                    media.Add(path);
+        }
         foreach (var path in media) File.Delete(path);
         if (Directory.Exists(imagesDirectory))
         {

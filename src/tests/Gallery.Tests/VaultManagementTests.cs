@@ -216,6 +216,27 @@ public sealed class VaultManagementTests
     }
 
     [Fact]
+    public async Task Purge_DeletesOrphanedEncryptedAndRemovalStagingFiles_ButRetainsUnrelatedFiles()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Travel vault");
+        var images = Path.Combine(fixture.Root, "images", "orphan-shard");
+        Directory.CreateDirectory(images);
+        var orphanPath = Path.Combine(images, "orphan.dpng");
+        var stagedPath = Path.Combine(images, "pending.dpng.removing-queued");
+        var unrelatedPath = Path.Combine(images, "notes.txt");
+        await File.WriteAllBytesAsync(orphanPath, [1, 2, 3]);
+        await File.WriteAllBytesAsync(stagedPath, [4, 5, 6]);
+        await File.WriteAllTextAsync(unrelatedPath, "keep");
+
+        await fixture.Scope.Vault.PurgeVaultAsync("PURGE");
+
+        Assert.False(File.Exists(orphanPath));
+        Assert.False(File.Exists(stagedPath));
+        Assert.Equal("keep", await File.ReadAllTextAsync(unrelatedPath));
+    }
+
+    [Fact]
     public async Task Move_RejectsNonemptyAndOverlappingDestinations_WithoutChangingSource()
     {
         using var fixture = new TestVault();
