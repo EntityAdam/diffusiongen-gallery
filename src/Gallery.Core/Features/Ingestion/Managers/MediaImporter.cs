@@ -144,78 +144,88 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         var timings = observations is null ? null : new IngestionTimings(observations.Enqueue);
         try
         {
-            await ReportInitialProgressAsync(reportProgress, scan, timings, catalogRoot);
-            var mediaPaths = await ResolveMediaPathsAsync(folder, searchScope, scan, mediaSelection, timings);
-            var stageStart = Stopwatch.GetTimestamp();
-            await PrepareFingerprintIndexAsync(key);
-            timings?.Record(IngestionStage.Backfill, stageStart);
-
-            using var progressGate = new SemaphoreSlim(1);
-            var progressSnapshot = FolderImportProgress.CreateSnapshot(mediaPaths.Length);
-            async Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name)
-            {
-                var start = Stopwatch.GetTimestamp();
-                await progressGate.WaitAsync();
-                try
-                {
-                    progressSnapshot = await FolderImportProgress.ReportAsync(
-                        progressSnapshot, progress, reportProgress, status, reportMode, name, catalogRoot);
-                }
-                finally
-                {
-                    progressGate.Release();
-                    timings?.Record(IngestionStage.ReportProgress, start);
-                }
-            }
-
-            async Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed)
-            {
-                await progressGate.WaitAsync();
-                try
-                {
-                    progressSnapshot = FolderImportProgress.RecordCompletion(
-                        progressSnapshot, fileImportWasCommitted, fileImportFailed);
-                }
-                finally { progressGate.Release(); }
-            }
-
-            var failuresByPathIndex = new Exception?[mediaPaths.Length];
-            var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
-            timings?.SetFiles(mediaPaths.Length, options.Workers);
-            await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
-            foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
-            {
-                var pending = indices.Select((index, batchSlot) =>
-                    new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
-                Exception? interruption = null;
-                try
-                {
-                    await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
-                        ReportFolderProgressAsync);
-                    await CommitBatchAsync(pending, key, timings);
-                    await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
-                        RecordCompletionAsync, ReportFolderProgressAsync, failuresByPathIndex);
-                }
-                catch (Exception exception)
-                {
-                    interruption = exception;
-                    throw;
-                }
-                finally
-                {
-                    await CleanupBatchAsync(pending, timings, interruption);
-                }
-            }
-            FolderImportProgress.RecordOutcome(progressSnapshot, timings);
-            await ReportFolderProgressAsync(
-                mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.",
-                ProgressReportMode.Immediate, null);
-            ThrowImportFailures(folder, failuresByPathIndex);
+            await RunFolderImportAsync(folder, searchScope, progress, sourceRetention, reportProgress,
+                options, scan, mediaSelection, catalogRoot, mediaRoot, key, timings);
         }
         finally
         {
             CompleteTimingReport(reportTimings, measurementStart, observations, catalogRoot);
         }
+    }
+
+    private async Task RunFolderImportAsync(string folder, FolderSearchScope searchScope, Action<string>? progress,
+        SourceRetention sourceRetention, Func<ImportProgress, Task>? reportProgress, IngestionOptions options,
+        IngestionScan? scan, IngestionMediaSelection mediaSelection, string catalogRoot, string mediaRoot,
+        byte[] key, IngestionTimings? timings)
+    {
+        await ReportInitialProgressAsync(reportProgress, scan, timings, catalogRoot);
+        var mediaPaths = await ResolveMediaPathsAsync(folder, searchScope, scan, mediaSelection, timings);
+        var stageStart = Stopwatch.GetTimestamp();
+        await PrepareFingerprintIndexAsync(key);
+        timings?.Record(IngestionStage.Backfill, stageStart);
+
+        using var progressGate = new SemaphoreSlim(1);
+        var progressSnapshot = FolderImportProgress.CreateSnapshot(mediaPaths.Length);
+        async Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name)
+        {
+            var start = Stopwatch.GetTimestamp();
+            await progressGate.WaitAsync();
+            try
+            {
+                progressSnapshot = await FolderImportProgress.ReportAsync(
+                    progressSnapshot, progress, reportProgress, status, reportMode, name, catalogRoot);
+            }
+            finally
+            {
+                progressGate.Release();
+                timings?.Record(IngestionStage.ReportProgress, start);
+            }
+        }
+
+        async Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed)
+        {
+            await progressGate.WaitAsync();
+            try
+            {
+                progressSnapshot = FolderImportProgress.RecordCompletion(
+                    progressSnapshot, fileImportWasCommitted, fileImportFailed);
+            }
+            finally { progressGate.Release(); }
+        }
+
+        var failuresByPathIndex = new Exception?[mediaPaths.Length];
+        var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
+        timings?.SetFiles(mediaPaths.Length, options.Workers);
+        await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
+        foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
+        {
+            var pending = indices.Select((index, batchSlot) =>
+                new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
+            Exception? interruption = null;
+            try
+            {
+                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
+                    ReportFolderProgressAsync);
+                await CommitBatchAsync(pending, key, timings);
+                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
+                    RecordCompletionAsync, ReportFolderProgressAsync, failuresByPathIndex);
+            }
+            catch (Exception exception)
+            {
+                interruption = exception;
+                throw;
+            }
+            finally
+            {
+                await CleanupBatchAsync(pending, timings, interruption);
+            }
+        }
+
+        FolderImportProgress.RecordOutcome(progressSnapshot, timings);
+        await ReportFolderProgressAsync(
+            mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.",
+            ProgressReportMode.Immediate, null);
+        ThrowImportFailures(folder, failuresByPathIndex);
     }
 
     private static string ResolveImportFolder(string folder)
