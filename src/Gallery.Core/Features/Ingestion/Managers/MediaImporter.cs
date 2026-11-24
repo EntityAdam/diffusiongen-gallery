@@ -214,7 +214,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         }
         finally
         {
-            CompleteTimingReport(reportTimings, measurementStart, observations);
+            CompleteTimingReport(reportTimings, measurementStart, observations, catalogRoot);
         }
     }
 
@@ -271,12 +271,17 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
     }
 
     private static void CompleteTimingReport(Action<IngestionTimingReport>? reportTimings,
-        IngestionMeasurementStart? measurementStart, ConcurrentQueue<IngestionTimingObservation>? observations)
+        IngestionMeasurementStart? measurementStart, ConcurrentQueue<IngestionTimingObservation>? observations,
+        string catalogRoot)
     {
         if (measurementStart is null || observations is null) return;
         var completedMeasurement = new CompletedIngestionMeasurement(measurementStart,
             Stopwatch.GetTimestamp(), observations.ToImmutableArray());
-        try { reportTimings!(IngestionTimingReports.CreateReport(completedMeasurement)); }
+        try
+        {
+            IngestionProgressCallbackGuard.Run(catalogRoot,
+                () => reportTimings!(IngestionTimingReports.CreateReport(completedMeasurement)));
+        }
         catch (Exception exception) when (exception is not OutOfMemoryException and not AccessViolationException)
         {
             // Timing is diagnostic; an observer failure must not replace the import outcome.

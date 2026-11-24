@@ -384,6 +384,25 @@ public sealed class GalleryIngestionTests
     }
 
     [Fact]
+    public async Task FolderImport_WhenTimingCallbackClosesVault_ThenGuardPreventsReentry()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+        Task? closeTask = null;
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            reportTimings: _ => closeTask = fixture.Scope.Vault.CloseVaultAsync());
+
+        if (closeTask is not null) await closeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(closeTask);
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
     public async Task FolderImport_WhenTimingsAreRecorded_ReportsStagesWithoutFileOrFolderNames()
     {
         // Arrange
