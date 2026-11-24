@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Ingestion.Managers.Scanners;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
@@ -37,6 +39,169 @@ public sealed class IngestionScanTests
         Assert.True(images.MediaAvailableBytes > 0);
         Assert.True(images.CatalogAvailableBytes > 0);
         Assert.True(images.RequiredBytes > images.SelectedSourceBytes);
+    }
+
+    [Fact]
+    public async Task Scan_ReconcilesCrashLeftStageForCommittedSource()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "sources");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, "committed.png");
+        await File.WriteAllBytesAsync(sourcePath, GalleryTests.MakePng());
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder);
+        var stagedPath = StageSourceForDeletion(sourcePath);
+
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
+
+        Assert.Equal(0, scan.ImageCount);
+        Assert.False(File.Exists(stagedPath));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(stagedPath)));
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
+    public async Task Scan_RestoresCrashLeftStageWhenNoCatalogSourceExists()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "sources");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, "uncommitted.png");
+        var content = GalleryTests.MakePng();
+        await File.WriteAllBytesAsync(sourcePath, content);
+        var stagedPath = StageSourceForDeletion(sourcePath);
+
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
+
+        Assert.Equal(1, scan.ImageCount);
+        Assert.Equal(content, await File.ReadAllBytesAsync(sourcePath));
+        Assert.False(File.Exists(stagedPath));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(stagedPath)));
+    }
+
+    [Fact]
+    public async Task FolderImport_RestoresCrashLeftStageBeforeDiscovery()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "sources");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, "uncommitted.png");
+        var content = GalleryTests.MakePng();
+        await File.WriteAllBytesAsync(sourcePath, content);
+        var stagedPath = StageSourceForDeletion(sourcePath);
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder);
+
+        Assert.Equal(content, await File.ReadAllBytesAsync(sourcePath));
+        Assert.False(File.Exists(stagedPath));
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
+    public async Task SingleFileImport_RestoresCrashLeftStageBeforePersistingSourcePath()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "sources");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, "uncommitted.png");
+        var content = GalleryTests.MakePng();
+        await File.WriteAllBytesAsync(sourcePath, content);
+        var stagedPath = StageSourceForDeletion(sourcePath);
+
+        await using var input = new MemoryStream(content);
+        var record = await fixture.Scope.Ingestion.ImportAsync(input, "uncommitted.png", folder, sourcePath);
+
+        Assert.Equal(sourcePath, record.SourcePath);
+        Assert.Equal(content, await File.ReadAllBytesAsync(sourcePath));
+        Assert.False(File.Exists(stagedPath));
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
+    public async Task Scan_PreservesCrashLeftStageWhenCatalogHashDoesNotMatch()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "sources");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, "committed.png");
+        await File.WriteAllBytesAsync(sourcePath, GalleryTests.MakePng());
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder);
+        var stagedPath = StageSourceForDeletion(sourcePath);
+        var stagedContent = new byte[] { 1, 2, 3 };
+        await File.WriteAllBytesAsync(stagedPath, stagedContent);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder));
+
+        Assert.Contains("manual attention", error.Message);
+        Assert.Equal(stagedContent, await File.ReadAllBytesAsync(stagedPath));
+        Assert.False(File.Exists(sourcePath));
+    }
+
+    [Fact]
+    public async Task Scan_PreservesCrashLeftStageWhenOriginalPathIsOccupied()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "sources");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, "uncommitted.png");
+        var stagedContent = GalleryTests.MakePng();
+        var replacementContent = new byte[] { 9, 8, 7 };
+        await File.WriteAllBytesAsync(sourcePath, stagedContent);
+        var stagedPath = StageSourceForDeletion(sourcePath);
+        await File.WriteAllBytesAsync(sourcePath, replacementContent);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder));
+
+        Assert.Contains("manual attention", error.Message);
+        Assert.Equal(stagedContent, await File.ReadAllBytesAsync(stagedPath));
+        Assert.Equal(replacementContent, await File.ReadAllBytesAsync(sourcePath));
+    }
+
+    [Fact]
+    public async Task Scan_RestoresLegacyCrashLeftStageFile()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "sources");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, "legacy.png");
+        var content = GalleryTests.MakePng();
+        await File.WriteAllBytesAsync(sourcePath, content);
+        var stagedPath = sourcePath + ImportSource.StagingDirectoryPrefix + Guid.NewGuid().ToString("N");
+        File.Move(sourcePath, stagedPath);
+
+        var scan = await fixture.Scope.Ingestion.ScanFolderAsync(folder, FolderSearchScope.SelectedFolder);
+
+        Assert.Equal(1, scan.ImageCount);
+        Assert.Equal(content, await File.ReadAllBytesAsync(sourcePath));
+        Assert.False(File.Exists(stagedPath));
+    }
+
+    [Fact]
+    public async Task DeleteVerifiedSource_WithLongComponent_UsesShortStagingLocation()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        using var fixture = new TestVault();
+        var folder = Path.Combine(fixture.Root, "long-source");
+        Directory.CreateDirectory(folder);
+        var sourcePath = Path.Combine(folder, new string('a', 225) + ".png");
+        var content = GalleryTests.MakePng();
+        await File.WriteAllBytesAsync(sourcePath, content);
+
+        await ImportSource.DeleteVerifiedPathAsync(
+            sourcePath, Convert.ToHexString(SHA256.HashData(content)));
+
+        Assert.False(File.Exists(sourcePath));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(folder));
     }
 
     [Fact]
@@ -210,6 +375,16 @@ public sealed class IngestionScanTests
             estimate.EstimatedBytes, estimate.EstimatedBytes, true);
         Assert.False(onlyEstimateFits.HasEnoughSpace);
         Assert.Equal(estimate.EstimatedBytes, onlyEstimateFits.EstimatedBytes);
+    }
+
+    private static string StageSourceForDeletion(string sourcePath)
+    {
+        var stagingDirectory = Path.Combine(Path.GetDirectoryName(sourcePath)!,
+            ImportSource.StagingDirectoryPrefix + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stagingDirectory);
+        var stagedPath = Path.Combine(stagingDirectory, Path.GetFileName(sourcePath));
+        File.Move(sourcePath, stagedPath);
+        return stagedPath;
     }
 
     [Fact]

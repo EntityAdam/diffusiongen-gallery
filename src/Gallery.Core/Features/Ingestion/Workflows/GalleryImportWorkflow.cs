@@ -27,6 +27,13 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
         var store = location.GalleryStore;
         await using var catalogOperation = await store.OpenOperationAsync(key.Bytes);
         var importer = new MediaImporter(store, store.Gate, importMediaPreparer);
+        if (Path.IsPathFullyQualified(sourcePath))
+        {
+            var sourceDirectory = Path.GetDirectoryName(sourcePath);
+            if (!string.IsNullOrEmpty(sourceDirectory) && Directory.Exists(sourceDirectory))
+                await ReconcilePendingSourceDeletionsAsync(
+                    store, sourceDirectory, FolderSearchScope.SelectedFolder, key.Bytes);
+        }
         await importer.PrepareFingerprintIndexAsync(key.Bytes);
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
         return await importer.ImportAsync(input, name, sourceFolder, sourcePath, key.Bytes, mediaRoot);
@@ -48,6 +55,7 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
         IngestionOptionsValidator.Validate(options);
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
         var importer = new MediaImporter(store, store.Gate, importMediaPreparer);
+        await ReconcilePendingSourceDeletionsAsync(store, folder, searchScope, key.Bytes);
         await importer.ImportFolderAsync(folder, searchScope, progress, sourceRetention, reportProgress, reportTimings,
             options, scan, SelectMedia(includeImages, includeVideos), location.VaultStore.Root, mediaRoot, key.Bytes);
     }
@@ -66,6 +74,9 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
         using var key = vaultSession.AcquireUnlockedSession().Borrow();
         var location = galleryLifetime.Current;
         var mediaRoot = await GallerySettings.ReadMediaDirectoryAsync(location, key.Bytes);
+        var store = location.GalleryStore;
+        await using (var catalogOperation = await store.OpenOperationAsync(key.Bytes))
+            await ReconcilePendingSourceDeletionsAsync(store, folder, searchScope, key.Bytes);
         return await IngestionSourceScanner.ScanAsync(folder, searchScope, location.VaultStore.Root, mediaRoot);
     }
 
@@ -84,6 +95,18 @@ internal sealed class GalleryImportWorkflow(GalleryLifetime galleryLifetime, Vau
     private static IngestionMediaSelection SelectMedia(bool includeImages, bool includeVideos) =>
         (includeImages ? IngestionMediaSelection.Images : IngestionMediaSelection.None)
         | (includeVideos ? IngestionMediaSelection.Videos : IngestionMediaSelection.None);
+
+    private static async Task ReconcilePendingSourceDeletionsAsync(
+        IGalleryStore store, string folder, FolderSearchScope searchScope, byte[] key)
+    {
+        await store.Gate.WaitAsync();
+        try
+        {
+            var catalogSources = await store.ReadImportSourcesAsync(key);
+            await ImportSource.ReconcilePendingDeletesAsync(folder, searchScope, catalogSources);
+        }
+        finally { store.Gate.Release(); }
+    }
 
     internal async Task<List<CatalogImportSource>> ReadImportSourcesAsync()
     {

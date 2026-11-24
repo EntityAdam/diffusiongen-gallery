@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Ingestion.Managers.Models;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
@@ -45,7 +46,9 @@ internal static class IngestionSourceScanner
             AttributesToSkip = FileAttributes.ReparsePoint
         };
         return Directory.EnumerateFiles(folder, "*", options)
-            .Where(path => Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase));
+            .Where(path => Extensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)
+                && !Path.GetRelativePath(folder, path).Split(Path.DirectorySeparatorChar)
+                    .Any(ImportSource.IsStagingDirectoryName));
     }
 
     public static void ValidateScan(IngestionScan scan, string folder, FolderSearchScope scope, string catalogRoot, string mediaRoot)

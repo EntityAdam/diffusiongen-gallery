@@ -364,7 +364,9 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
                     else
                     {
                         current = await PendingImportOperations.CloseSourceAsync(current, Update, timings);
-                        await ImportSource.DeleteVerifiedPathAsync(current.Path, record.Sha256);
+                        await catalogGate.WaitAsync();
+                        try { await ImportSource.DeleteVerifiedPathAsync(current.Path, record.Sha256); }
+                        finally { catalogGate.Release(); }
                     }
                     timings?.Record(IngestionStage.DeleteSource, start);
                 }
