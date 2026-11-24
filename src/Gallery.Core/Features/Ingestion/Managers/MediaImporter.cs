@@ -2,6 +2,7 @@ using Gallery.Core.Features.Media.Processors;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Media;
@@ -139,17 +140,15 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
     {
         folder = ResolveImportFolder(folder);
         ValidateScanIfPresent(scan, folder, searchScope, catalogRoot, mediaRoot);
-        var measurementStart = reportTimings is null ? null : IngestionTimingReports.Start(folder, mediaRoot, catalogRoot);
-        var observations = reportTimings is null ? null : new ConcurrentQueue<IngestionTimingObservation>();
-        var timings = observations is null ? null : new IngestionTimings(observations.Enqueue);
+        var timingSession = StartTimingSession(reportTimings, folder, mediaRoot, catalogRoot);
         try
         {
             await RunFolderImportAsync(folder, searchScope, progress, sourceRetention, reportProgress,
-                options, scan, mediaSelection, catalogRoot, mediaRoot, key, timings);
+                options, scan, mediaSelection, catalogRoot, mediaRoot, key, timingSession?.Timings);
         }
         finally
         {
-            CompleteTimingReport(reportTimings, measurementStart, observations, catalogRoot);
+            CompleteTimingReport(reportTimings, timingSession, catalogRoot);
         }
     }
 
@@ -165,33 +164,13 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         timings?.Record(IngestionStage.Backfill, stageStart);
 
         using var progressGate = new SemaphoreSlim(1);
-        var progressSnapshot = FolderImportProgress.CreateSnapshot(mediaPaths.Length);
-        async Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name)
-        {
-            var start = Stopwatch.GetTimestamp();
-            await progressGate.WaitAsync();
-            try
-            {
-                progressSnapshot = await FolderImportProgress.ReportAsync(
-                    progressSnapshot, progress, reportProgress, status, reportMode, name, catalogRoot);
-            }
-            finally
-            {
-                progressGate.Release();
-                timings?.Record(IngestionStage.ReportProgress, start);
-            }
-        }
-
-        async Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed)
-        {
-            await progressGate.WaitAsync();
-            try
-            {
-                progressSnapshot = FolderImportProgress.RecordCompletion(
-                    progressSnapshot, fileImportWasCommitted, fileImportFailed);
-            }
-            finally { progressGate.Release(); }
-        }
+        var progressSnapshot = FolderImportProgress.CreateSnapshotBox(mediaPaths.Length);
+        Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name) =>
+            FolderImportProgress.ReportAsync(progressGate, progressSnapshot, progress, reportProgress,
+                status, reportMode, name, catalogRoot, timings);
+        Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed) =>
+            FolderImportProgress.RecordCompletionAsync(progressGate, progressSnapshot,
+                fileImportWasCommitted, fileImportFailed);
 
         var failuresByPathIndex = new Exception?[mediaPaths.Length];
         var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
@@ -221,7 +200,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
             }
         }
 
-        FolderImportProgress.RecordOutcome(progressSnapshot, timings);
+        FolderImportProgress.RecordOutcome(FolderImportProgress.CurrentSnapshot(progressSnapshot), timings);
         await ReportFolderProgressAsync(
             mediaPaths.Length == 0 ? "No supported media found." : "Ingestion complete.",
             ProgressReportMode.Immediate, null);
@@ -280,13 +259,24 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         return mediaPaths;
     }
 
-    private static void CompleteTimingReport(Action<IngestionTimingReport>? reportTimings,
-        IngestionMeasurementStart? measurementStart, ConcurrentQueue<IngestionTimingObservation>? observations,
-        string catalogRoot)
+    private static (IngestionMeasurementStart Start, ConcurrentQueue<IngestionTimingObservation> Observations,
+        IngestionTimings Timings)? StartTimingSession(
+        Action<IngestionTimingReport>? reportTimings, string folder, string mediaRoot, string catalogRoot)
     {
-        if (measurementStart is null || observations is null) return;
-        var completedMeasurement = new CompletedIngestionMeasurement(measurementStart,
-            Stopwatch.GetTimestamp(), observations.ToImmutableArray());
+        if (reportTimings is null) return null;
+        var observations = new ConcurrentQueue<IngestionTimingObservation>();
+        return (IngestionTimingReports.Start(folder, mediaRoot, catalogRoot),
+            observations, new IngestionTimings(observations.Enqueue));
+    }
+
+    private static void CompleteTimingReport(Action<IngestionTimingReport>? reportTimings,
+        (IngestionMeasurementStart Start, ConcurrentQueue<IngestionTimingObservation> Observations,
+            IngestionTimings Timings)? timingSession, string catalogRoot)
+    {
+        if (reportTimings is null || timingSession is null) return;
+        var session = timingSession.Value;
+        var completedMeasurement = new CompletedIngestionMeasurement(session.Start,
+            Stopwatch.GetTimestamp(), session.Observations.ToImmutableArray());
         try
         {
             IngestionProgressCallbackGuard.Run(catalogRoot,
