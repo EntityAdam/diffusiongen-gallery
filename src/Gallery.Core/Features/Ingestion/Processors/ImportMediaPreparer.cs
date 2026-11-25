@@ -1,5 +1,4 @@
 using Gallery.Core.Features.Media.Processors;
-using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -174,7 +173,7 @@ internal sealed class ImportMediaPreparer(VideoTools? videoTools)
     private VideoTools RequiredVideoTools() =>
         videoTools is not null && videoTools.IsAvailable ? videoTools
             : throw new VideoToolUnavailableException(VideoTools.MissingMessage, LogEventGallery.PrepareVideo,
-                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Video.RequiredTools", "ffmpeg, ffprobe")));
+                new ContextualData().Add("Video.RequiredTools", "ffmpeg, ffprobe"));
 
     internal static string CreatePrivateTemporaryVideoDirectory()
     {

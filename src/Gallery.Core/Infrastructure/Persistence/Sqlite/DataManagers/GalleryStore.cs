@@ -300,7 +300,7 @@ internal sealed partial class GalleryStore(string databasePath) : IGalleryStore
     private static async Task<byte[]> ReadRequiredEncryptedThumbnailAsync(SqliteCommand sqliteCommand, string id) =>
         (byte[]?)await sqliteCommand.ExecuteScalarAsync()
             ?? throw new ThumbnailNotFoundException($"Expected one thumbnail for media item '{id}', but found 0.",
-                LogEventGallery.ReadThumbnail, new ContextualData(System.Collections.Immutable.ImmutableDictionary<string, object>.Empty.Add("Image.Id", id)));
+                LogEventGallery.ReadThumbnail, new ContextualData().Add("Image.Id", id));
 
     private static ImageThumbnail DecodeThumbnail(byte[] encryptedThumbnail, byte[] key, string id, string envelopeDescription)
     {

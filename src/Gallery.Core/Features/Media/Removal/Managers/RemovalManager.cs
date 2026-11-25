@@ -2,7 +2,6 @@ using Gallery.Core.Features.Media.Removal.Managers.Validators;
 using Gallery.Core.Features.Media.Removal.Managers.Diagnostics;
 using Gallery.Core.Features.Media.Processors;
 using Gallery.Core.Features.Media.Formatters;
-using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
@@ -114,8 +113,8 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
         var imageRecord = await store.ReadRecordAsync(id, key);
         if (!RemovalRules.CanRemove(imageRecord))
             throw new ImageNotMarkedForDeletionException($"'{imageRecord.Name}' (media item '{imageRecord.Id}') must be marked for deletion first.",
-                LogEventGallery.PrepareRemoval, new ContextualData(ImmutableDictionary<string, object>.Empty
-                .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false)));
+                LogEventGallery.PrepareRemoval, new ContextualData()
+                .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false));
         var originalPath = OriginalPath(imageRecord);
         return new(id, imageRecord.Name, originalPath, SourceExists(originalPath));
     }
@@ -209,15 +208,15 @@ internal sealed class RemovalManager(GalleryLifetime galleryLifetime, VaultSessi
     {
         if (!RemovalRules.CanRemove(imageRecord))
             throw new ImageNotMarkedForDeletionException($"Media item '{imageRecord.Id}' is no longer marked for deletion.",
-                LogEventGallery.RemoveImage, new ContextualData(ImmutableDictionary<string, object>.Empty
-                .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false)));
+                LogEventGallery.RemoveImage, new ContextualData()
+                .Add(ImageIdContextKey, imageRecord.Id).Add(ImageMarkedForDeletionContextKey, false));
     }
 
     private static GalleryRemovalException CreateRemovalFailure(string message, string imageId,
         bool catalogEntryWasRemoved, string? restoredPath, bool originalDeleted, Exception cause) =>
-        new(message, new RemovalFailureLogEvent(), new ContextualData(ImmutableDictionary<string, object>.Empty
+        new(message, new RemovalFailureLogEvent(), new ContextualData()
             .Add(ImageIdContextKey, imageId).Add(CatalogEntryWasRemovedContextKey, catalogEntryWasRemoved)
-            .Add("Gallery.RestoredPath", restoredPath ?? "").Add("Original.Deleted", originalDeleted)), cause);
+            .Add("Gallery.RestoredPath", restoredPath ?? "").Add("Original.Deleted", originalDeleted), cause);
 
     private static async Task<bool> DeleteVerifiedOriginalIfRequestedAsync(
         RemovalItem removalItem, ImageRecord imageRecord, string originalPath, ExistingOriginalAction existingAction)

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text.Json.Nodes;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -37,7 +36,7 @@ internal static partial class ComfyMetadata
             string excerpt = JsonSerializer.Serialize(metadataJson[..Math.Min(metadataJson.Length, 80)]);
             throw new StoredMetadataFormatException($"Stored generation metadata is not valid JSON. Input excerpt: {excerpt}.",
                 LogEventGallery.ParseMetadata,
-                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Metadata.InputExcerpt", excerpt)), exception);
+                new ContextualData().Add("Metadata.InputExcerpt", excerpt), exception);
         }
     }
 

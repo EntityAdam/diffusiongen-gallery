@@ -35,7 +35,8 @@ internal static class AsserterExceptionContract
             discrepancies.Add($"Context key: Expected: an independently arranged expectation for '{key}'; Actual: unasserted contextual entry.");
         Compare("Context Message", actual.Message, context.GetValueOrDefault("Message"), discrepancies);
 
-        var expectedDiagnostics = ExpectedExceptionDiagnostics.Create(context, actual.StackTrace, actual.InnerException?.GetType().Name);
+        var expectedDiagnostics = ExpectedExceptionDiagnostics.Create(
+            context.SetItem("HttpStatusCode", actual.HttpStatusCode), actual.StackTrace, actual.InnerException?.GetType().Name);
         discrepancies.AddRange(FindDiagnosticDiscrepancies(expectedDiagnostics,
             new(actual.ToDiagnosticString(), actual.ToJson())));
         Assert.True(discrepancies.Count == 0,

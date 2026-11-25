@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Diagnostics.Models;
 
@@ -15,10 +14,10 @@ internal static class SavedViewNameValidator
         if (!HasSupportedLength(name))
             throw new InvalidSavedViewNameException(
                 $"Saved view name '{name}' must have {MinimumNameLength} to {MaximumNameLength} characters.",
-                LogEventGallery.ValidateSavedViewName, new ContextualData(ImmutableDictionary<string, object>.Empty
+                LogEventGallery.ValidateSavedViewName, new ContextualData()
                     .Add("SavedView.Name", name)
                     .Add("SavedView.MinimumNameLength", MinimumNameLength)
-                    .Add("SavedView.MaximumNameLength", MaximumNameLength)));
+                    .Add("SavedView.MaximumNameLength", MaximumNameLength));
         return name;
     }
 

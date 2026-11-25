@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Text.Json;
@@ -18,10 +17,10 @@ public abstract class GalleryException : Exception
         : base(message, exception)
     {
         LogEvent = logEvent;
-        additionalDiagnosticValuesByName = contextualData?.ValuesByName ?? ImmutableDictionary<string, object>.Empty;
+        additionalDiagnosticValuesByName = contextualData is null ? new ContextualData() : new ContextualData(contextualData);
     }
 
-    private readonly ImmutableDictionary<string, object> additionalDiagnosticValuesByName = ImmutableDictionary<string, object>.Empty;
+    private readonly ContextualData additionalDiagnosticValuesByName = new();
 
     public string Reason => ReasonCore;
     protected abstract string ReasonCore { get; }
@@ -33,22 +32,22 @@ public abstract class GalleryException : Exception
     public string ToJson() => JsonSerializer.Serialize(ContextualDataByName.ValuesByName);
     public string ToDiagnosticString() => string.Join(Environment.NewLine,
         ContextualDataByName.ValuesByName.Where(pair => pair.Key != StackTraceKey)
-            .Select(pair => $"{pair.Key}: {pair.Value}")
+            .Select(pair => $"{pair.Key}: {(pair.Key == "HttpStatusCode" ? HttpStatusCode : pair.Value)}")
             .Concat(StackTrace is null ? [] : new[] { $"StackTrace: {StackTrace}" }));
 
     private ContextualData BuildDiagnosticContext()
     {
-        var diagnosticValuesByName = additionalDiagnosticValuesByName.ToBuilder();
-        diagnosticValuesByName["ApplicationName"] = "Gallery";
-        diagnosticValuesByName["ExceptionType"] = GetType().Name;
-        diagnosticValuesByName["Reason"] = Reason;
-        diagnosticValuesByName["Severity"] = Severity.ToString();
-        diagnosticValuesByName["HttpStatusCode"] = HttpStatusCode;
-        diagnosticValuesByName["Message"] = Message;
-        if (LogEvent is not null) diagnosticValuesByName["LogEvent"] = LogEvent.Value;
-        if (InnerException is not null) diagnosticValuesByName["CausedBy"] = InnerException.GetType().Name;
-        if (StackTrace is not null) diagnosticValuesByName[StackTraceKey] = StackTrace;
-        return new(diagnosticValuesByName.ToImmutable());
+        var diagnosticValuesByName = new ContextualData(additionalDiagnosticValuesByName)
+            .Add("ApplicationName", "Gallery")
+            .Add("ExceptionType", GetType().Name)
+            .Add("Reason", Reason)
+            .Add("Severity", Severity.ToString())
+            .Add("HttpStatusCode", (int)HttpStatusCode)
+            .Add("Message", Message);
+        if (LogEvent is not null) diagnosticValuesByName = diagnosticValuesByName.Add("LogEvent", LogEvent.Value);
+        if (InnerException is not null) diagnosticValuesByName = diagnosticValuesByName.Add("CausedBy", InnerException.GetType().Name);
+        if (StackTrace is not null) diagnosticValuesByName = diagnosticValuesByName.Add(StackTraceKey, StackTrace);
+        return diagnosticValuesByName;
     }
     public ExceptionCause? Cause => InnerException is { } exception
         ? new(exception.GetType().Name, exception.Message, exception.StackTrace) : null;

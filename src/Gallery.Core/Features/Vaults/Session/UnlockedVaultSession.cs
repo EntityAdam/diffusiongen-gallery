@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Diagnostics.Models;
@@ -65,7 +64,7 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
                     ? "The gallery locked automatically due to inactivity."
                     : "Unlock the gallery first. This unlocked session has been revoked.",
                 LogEventGallery.AcquireVaultKey,
-                new ContextualData(ImmutableDictionary<string, object>.Empty.Add("Vault.State", HasTimedOut ? "timed_out" : "revoked")));
+                new ContextualData().Add("Vault.State", HasTimedOut ? "timed_out" : "revoked"));
     }
 
     internal void Revoke(bool timedOut = false)

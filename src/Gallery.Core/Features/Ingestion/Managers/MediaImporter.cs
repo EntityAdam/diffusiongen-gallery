@@ -306,8 +306,8 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         var failures = failuresByPathIndex.OfType<Exception>().ToList();
         if (failures.Count == 0) return;
         throw new ImportFolderException($"Importing folder '{folder}' completed with one or more file failures.",
-            new LogEventFolderImportFailure(), new ContextualData(ImmutableDictionary<string, object>.Empty
-                .Add("Folder", folder).Add("FailureCount", failures.Count)), new AggregateException(failures));
+            new LogEventFolderImportFailure(), new ContextualData()
+                .Add("Folder", folder).Add("FailureCount", failures.Count), new AggregateException(failures));
     }
 
     private async Task PrepareBatchAsync(PendingImport[] pending, ParallelOptions parallelism,
