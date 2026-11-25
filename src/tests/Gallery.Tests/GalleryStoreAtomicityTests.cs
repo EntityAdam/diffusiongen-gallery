@@ -1,6 +1,7 @@
+using System.Collections.Immutable;
 using System.Security.Cryptography;
 using Gallery.Core.Features.Storage.DriveOperations;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -74,6 +75,41 @@ public sealed class GalleryStoreAtomicityTests
     }
 
     [Fact]
+    public async Task UpdateRecords_WhenOneUpdateFails_ThenRollsBackTheEntireBatch()
+    {
+        using var fixture = new TestVault();
+        Directory.CreateDirectory(fixture.Root);
+        var key = RandomNumberGenerator.GetBytes(32);
+        var first = new ImageRecord { Id = "batch-first", Name = "before-first", Sha256 = new string('A', 64) };
+        var second = new ImageRecord { Id = "batch-second", Name = "before-second", Sha256 = new string('B', 64) };
+        using var firstThumbnail = new ImageThumbnail([1, 2, 3]);
+        using var secondThumbnail = new ImageThumbnail([4, 5, 6]);
+        await fixture.Store.InsertAsync(first, firstThumbnail, key);
+        await fixture.Store.InsertAsync(second, secondThumbnail, key);
+        await using (var sqliteConnection = new SqliteConnection(
+            $"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False"))
+        {
+            await sqliteConnection.OpenAsync();
+            using var sqliteCommand = sqliteConnection.CreateCommand();
+            sqliteCommand.CommandText = """
+                CREATE TRIGGER reject_test_batch_update BEFORE UPDATE OF record ON images
+                WHEN NEW.id = 'batch-second'
+                BEGIN SELECT RAISE(ABORT, 'atomicity-injected'); END;
+                """;
+            await sqliteCommand.ExecuteNonQueryAsync();
+        }
+        var revisionBefore = await fixture.Store.ReadStorageRevisionAsync();
+
+        var error = await Assert.ThrowsAsync<SqliteException>(() => fixture.Store.UpdateRecordsAsync(
+            [first with { Name = "after-first" }, second with { Name = "after-second" }], key));
+
+        Assert.Contains("atomicity-injected", error.Message, StringComparison.Ordinal);
+        Assert.Equal("before-first", (await fixture.Store.ReadRecordAsync(first.Id, key)).Name);
+        Assert.Equal("before-second", (await fixture.Store.ReadRecordAsync(second.Id, key)).Name);
+        Assert.Equal(revisionBefore, await fixture.Store.ReadStorageRevisionAsync());
+    }
+
+    [Fact]
     public async Task DeleteAndEnqueue_WhenTheImageIsMissing_ThenReportsItsIdentityAndLeavesTheQueueEmpty()
     {
         // Arrange
@@ -88,6 +124,78 @@ public sealed class GalleryStoreAtomicityTests
         var invalidOperationException = Assert.IsType<InvalidOperationException>(exception);
         Assert.Equal("Expected to delete one media item with id 'missing', but deleted 0.", invalidOperationException.Message);
         Assert.Empty(await fixture.Store.ReadDueDriveOperationsAsync(100, long.MaxValue));
+    }
+
+    [Fact]
+    public async Task Verification_WhenTheImageIsMissing_ThenIncludesCommandAndObservedShape()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.Store.ReadVerificationAsync("missing", fixture.Session.Key));
+
+        Assert.Equal("GalleryStoreCommandFactory.CreateReadVerification", exception.Data["CommandIdentity"]);
+        Assert.Equal(0, exception.Data["ObservedRowCount"]);
+    }
+
+    [Fact]
+    public async Task Storage_revision_WhenSingletonIsMissing_ThenDiagnosesZeroRowsWithoutConflatingZeroRevision()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        await fixture.Store.InitializeAsync();
+        await using var connection = new SqliteConnection(
+            $"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False");
+        await connection.OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE storage_overview_state SET revision = 0 WHERE id = 1";
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        Assert.Equal(0L, await fixture.Store.ReadStorageRevisionAsync());
+
+        command.CommandText = "DELETE FROM storage_overview_state WHERE id = 1";
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fixture.Store.ReadStorageRevisionAsync());
+
+        Assert.Equal("GalleryStoreCommandFactory.CreateReadStorageRevision", exception.Data["CommandIdentity"]);
+        Assert.Equal(0, exception.Data["ObservedRowCount"]);
+    }
+
+    [Fact]
+    public async Task Drive_queue_counts_WhenSyntheticCommandReturnsNoRows_ThenIncludesCommandAndObservedShape()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 WHERE 0";
+
+        var readQueueCounts = typeof(GalleryStore).GetMethod(
+            "ReadQueueCountsAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => (Task)readQueueCounts.Invoke(null, [command])!);
+
+        Assert.Equal("Expected one drive queue count row, but found 0.", exception.Message);
+        Assert.Equal("DriveOperationCommandFactory.CreateCounts", exception.Data["CommandIdentity"]);
+        Assert.Equal(0, exception.Data["ObservedRowCount"]);
+    }
+
+    [Fact]
+    public async Task Pending_drive_lookup_ExplicitlyHandlesAbsenceAndReturnsOneMatch()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var target = ImmutableArray.Create<byte>(1, 2, 3);
+        const string kind = "lookup-test";
+
+        Assert.Null(await fixture.Store.FindPendingDriveOperationAsync(kind, target.ToArray()));
+        await fixture.Store.EnqueueDriveOperationsAsync(
+            [new NewDriveOperation(kind, target, null, ImmutableArray.Create<byte>(4, 5, 6))]);
+
+        var found = await fixture.Store.FindPendingDriveOperationAsync(kind, target.ToArray());
+
+        Assert.NotNull(found);
+        Assert.Equal(kind, found.Kind);
+        Assert.Equal(target.ToArray(), found.Target.ToArray());
     }
 
     [Fact]

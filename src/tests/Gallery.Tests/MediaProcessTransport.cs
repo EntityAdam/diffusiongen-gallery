@@ -1,4 +1,4 @@
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 
 
 namespace Gallery.Tests;
@@ -10,7 +10,7 @@ internal sealed class MediaProcessTransport : IDisposable
     private readonly string directory = Path.Combine(Path.GetTempPath(), "gallery-process-" + Guid.NewGuid().ToString("N"));
     public VideoTools VideoTools { get; }
 
-    public MediaProcessTransport(string probeJson)
+    public MediaProcessTransport(string probeJson, byte[]? frameBytes = null)
     {
         Directory.CreateDirectory(directory);
         var mediatorDirectory = Path.Combine(AppContext.BaseDirectory, "ProcessMediator");
@@ -26,9 +26,11 @@ internal sealed class MediaProcessTransport : IDisposable
                 File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
         File.WriteAllText(Path.Combine(directory, "probe.json"), probeJson);
-        File.WriteAllBytes(Path.Combine(directory, "frame.png"), GalleryTests.MakePng(32, 24));
+        File.WriteAllBytes(Path.Combine(directory, "frame.png"), frameBytes ?? GalleryTests.MakePng(32, 24));
         VideoTools = new(directory);
     }
+
+    public string LastInputPath => File.ReadAllText(Path.Combine(directory, "last-input-path.txt"));
 
     public void Dispose()
     {

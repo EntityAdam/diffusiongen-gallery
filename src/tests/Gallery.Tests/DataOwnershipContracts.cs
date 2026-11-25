@@ -1,6 +1,7 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Gallery.Core.Features.Storage.DriveOperations;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Infrastructure.Persistence;
 
 namespace Gallery.Tests;
@@ -40,6 +41,32 @@ public sealed class DataOwnershipContracts
         Assert.Equal(new byte[] { 0, 0, 0 }, ownedBytes);
         Assert.Equal(new byte[] { 0, 0, 0 }, borrowedContent.ToArray());
         Assert.Throws<ObjectDisposedException>(() => thumbnail.Content);
+    }
+
+    [Fact]
+    public void OwnedThumbnailStream_WhenDisposedTwice_ThenUsesAndClearsTheOriginalBuffer()
+    {
+        byte[] ownedBytes = [1, 2, 3];
+        var thumbnail = new ImageThumbnail(ownedBytes);
+        Stream stream = thumbnail;
+
+        Assert.Same(thumbnail, stream);
+        Assert.True(stream.CanRead);
+        Assert.False(stream.CanWrite);
+        Assert.Equal(0, stream.Position);
+        Assert.Equal(ownedBytes.Length, stream.Length);
+        Assert.True(MemoryMarshal.TryGetArray(thumbnail.Content, out var backingBuffer));
+        Assert.Same(ownedBytes, backingBuffer.Array);
+        ownedBytes[0] = 9;
+        Assert.Equal(9, stream.ReadByte());
+
+        stream.Dispose();
+        stream.Dispose();
+        thumbnail.Dispose();
+
+        Assert.Equal(new byte[] { 0, 0, 0 }, ownedBytes);
+        Assert.Throws<ObjectDisposedException>(() => thumbnail.Content);
+        Assert.Throws<ObjectDisposedException>(() => stream.ReadByte());
     }
 
     [Fact]

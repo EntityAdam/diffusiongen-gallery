@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 using SixLabors.ImageSharp;
 
 namespace Gallery.Tests;
@@ -40,7 +40,7 @@ public sealed class VideoGatewayEdgeTests
             }
 
             var probe = await tools.ProbeAsync(video);
-            byte[] frame = await tools.FirstFrameAsync(video);
+            byte[] frame = await tools.FirstFrameAsync(video, probe.StreamIndex);
             using Image image = Image.Load(frame);
             Assert.Equal((40, 30), (probe.Width, probe.Height));
             Assert.Equal((40, 30), (image.Width, image.Height));

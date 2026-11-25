@@ -13,7 +13,7 @@
         <p class="text-muted-foreground">
             @if (ProgressInfo.Total is int total)
             {
-                <span>@ProgressInfo.Completed / @total files processed &middot; @ProgressInfo.Imported imported &middot; @ProgressInfo.Failed reported issues</span>
+                <span>@ProgressInfo.Completed / @total files processed &middot; @ProgressInfo.Imported imported &middot; @ProgressInfo.Skipped already exist &middot; @ProgressInfo.Failed reported issues</span>
             }
         </p>
         <p role="status">@ProgressInfo.Status</p>

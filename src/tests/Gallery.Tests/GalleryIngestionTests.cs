@@ -4,7 +4,7 @@ using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Features.Vaults.Session;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Microsoft.Data.Sqlite;
@@ -81,6 +81,28 @@ public sealed class GalleryIngestionTests
         Assert.True(stored.IsFavorite);
         Assert.True(stored.IsMarkedForDeletion);
         Assert.True(File.Exists(stored.StoredPath));
+    }
+
+    [Fact]
+    public async Task OpenThumbnailAsync_AfterImport_ReturnsReadablePngStreamOwnedByCaller()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePng()), "thumbnail.png", "folder");
+
+        using var thumbnailStream = await fixture.Scope.Media.OpenThumbnailAsync(image.Id);
+        Assert.True(thumbnailStream.CanRead);
+        var signature = new byte[8];
+        Assert.Equal(signature.Length, await thumbnailStream.ReadAsync(signature));
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, signature);
+
+        thumbnailStream.Position = 0;
+        using var thumbnail = await Image.LoadAsync<Rgba32>(thumbnailStream);
+        Assert.True(thumbnail.Width > 0);
+        Assert.True(thumbnail.Height > 0);
+
+        thumbnailStream.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => thumbnailStream.ReadByte());
     }
 
     [Fact]
@@ -199,7 +221,7 @@ public sealed class GalleryIngestionTests
     }
 
     [Fact]
-    public async Task FolderImport_WhenBatchHasDuplicateAndInvalidFiles_AwaitsProgressAndReportsBothFailures()
+    public async Task FolderImport_WhenBatchHasDuplicateAndInvalidFiles_AwaitsProgressAndReportsOnlyTheInvalidFile()
     {
         // Arrange
         using var fixture = new TestVault();
@@ -213,21 +235,35 @@ public sealed class GalleryIngestionTests
         await File.WriteAllTextAsync(Path.Combine(folder, "invalid.png"), "not an image");
         await File.WriteAllTextAsync(Path.Combine(folder, "ignored.txt"), "ignored");
         var updates = new List<ImportProgress>();
+        var fileUpdates = new List<string>();
         var activeCallbacks = 0;
         // Act
         var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder, reportProgress: async update =>
-        {
-            Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
-            try
-            {
-                await Task.Delay(1);
-                updates.Add(update);
-            }
-            finally { Interlocked.Decrement(ref activeCallbacks); }
-        }));
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                progress: name =>
+                {
+                    Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
+                    try
+                    {
+                        Thread.Sleep(1);
+                        fileUpdates.Add(name);
+                    }
+                    finally { Interlocked.Decrement(ref activeCallbacks); }
+                },
+                reportProgress: async update =>
+                {
+                    Assert.Equal(1, Interlocked.Increment(ref activeCallbacks));
+                    try
+                    {
+                        await Task.Delay(1);
+                        updates.Add(update);
+                    }
+                    finally { Interlocked.Decrement(ref activeCallbacks); }
+                }));
 
         // Assert
+        Assert.Equal(4, fileUpdates.Count);
+        Assert.All(fileUpdates, name => Assert.False(string.IsNullOrEmpty(name)));
         Assert.Null(updates[0].Total);
         Assert.Equal(0, updates[0].Completed);
         Assert.All(updates.Skip(1), update => Assert.Equal(4, update.Total));
@@ -237,28 +273,129 @@ public sealed class GalleryIngestionTests
         {
             Assert.True(pair.First.Completed <= pair.Second.Completed, $"Expected Completed to stay the same or increase from {pair.First.Completed}; Actual: {pair.Second.Completed}.");
             Assert.True(pair.First.Imported <= pair.Second.Imported, $"Expected Imported to stay the same or increase from {pair.First.Imported}; Actual: {pair.Second.Imported}.");
+            Assert.True(pair.First.Skipped <= pair.Second.Skipped, $"Expected Skipped to stay the same or increase from {pair.First.Skipped}; Actual: {pair.Second.Skipped}.");
             Assert.True(pair.First.Failed <= pair.Second.Failed, $"Expected Failed to stay the same or increase from {pair.First.Failed}; Actual: {pair.Second.Failed}.");
         });
         var final = updates[^1];
         Assert.Equal(4, final.Completed);
         Assert.Equal(2, final.Imported);
-        Assert.Equal(2, final.Failed);
+        Assert.Equal(1, final.Skipped);
+        Assert.Equal(1, final.Failed);
         Assert.Equal("Ingestion complete.", final.Status);
-        var fileFailures = failure.Failures.InnerExceptions;
-        Assert.Equal(final.Failed, fileFailures.Count);
-        Assert.Contains(fileFailures, exception =>
-            exception.Message.Contains(Path.Combine(folder, "one.png"), StringComparison.Ordinal)
-            || exception.Message.Contains(Path.Combine(folder, "duplicate.png"), StringComparison.Ordinal));
-        Assert.Contains(fileFailures, exception => exception.Message.Contains(Path.Combine(folder, "invalid.png"), StringComparison.Ordinal));
-        Assert.All(fileFailures, exception => Assert.IsType<IOException>(exception));
-        Assert.Contains(fileFailures, exception => exception.InnerException is InvalidOperationException);
-        Assert.Contains(fileFailures, exception => exception.InnerException is UnknownImageFormatException);
+        var fileFailure = Assert.IsType<IOException>(Assert.Single(failure.Failures.InnerExceptions));
+        Assert.Contains(Path.Combine(folder, "invalid.png"), fileFailure.Message, StringComparison.Ordinal);
+        Assert.IsType<UnknownImageFormatException>(fileFailure.InnerException);
         var records = await fixture.Scope.Catalog.ListAsync();
         Assert.Equal(final.Imported, records.Count);
         Assert.Equal(records.Count, Directory.GetFiles(Path.Combine(fixture.Root, "images"), "*.dpng",
             SearchOption.AllDirectories).Length);
         foreach (var record in records) await fixture.Scope.Ingestion.VerifyImportedAsync(record.Id);
         Assert.Equal(5, Directory.GetFiles(folder).Length);
+    }
+
+    [Fact]
+    public async Task FolderImport_WhenProgressCallbackClosesVault_ThenFailsFastWithGuidance()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                reportProgress: async _ => await fixture.Scope.Vault.CloseVaultAsync()));
+
+        Assert.Contains("ingestion progress callback", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+    }
+
+    [Fact]
+    public async Task FolderImport_WhenFileProgressCallbackLocksVault_ThenFailsFastWithGuidance()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+
+        var error = await Assert.ThrowsAsync<ImportFolderException>(() =>
+            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+                progress: _ => fixture.Scope.Vault.LockVault()));
+
+        var fileFailure = Assert.Single(error.Failures.InnerExceptions);
+        var guardFailure = Assert.IsType<InvalidOperationException>(fileFailure.InnerException);
+        Assert.Contains("ingestion progress callback", guardFailure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+    }
+
+    [Fact]
+    public async Task FolderImport_WhenProgressCallbackTouchesDifferentVault_ThenImportCanContinue()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        using var other = new TestVault();
+        await other.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            reportProgress: _ =>
+            {
+                other.Scope.Vault.LockVault();
+                return Task.CompletedTask;
+            });
+
+        Assert.False(other.Scope.Vault.IsUnlocked);
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
+    public async Task FolderImport_WhenCallbackSpawnsVaultOperation_ThenGuardExpiresAfterCallbackReturns()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+        var releaseOperation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? spawnedOperation = null;
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            reportProgress: _ =>
+            {
+                spawnedOperation ??= Task.Run(async () =>
+                {
+                    await releaseOperation.Task;
+                    fixture.Scope.Vault.LockVault();
+                });
+                return Task.CompletedTask;
+            });
+
+        releaseOperation.SetResult();
+        await (spawnedOperation ?? throw new Xunit.Sdk.XunitException("Expected a callback-spawned operation."));
+
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
+    }
+
+    [Fact]
+    public async Task FolderImport_WhenTimingCallbackClosesVault_ThenGuardPreventsReentry()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var folder = Path.Combine(fixture.Root, "source");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), MakePng());
+        Task? closeTask = null;
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            reportTimings: _ => closeTask = fixture.Scope.Vault.CloseVaultAsync());
+
+        if (closeTask is not null) await closeTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(closeTask);
+        Assert.True(fixture.Scope.Vault.IsUnlocked);
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
     }
 
     [Fact]
@@ -276,18 +413,18 @@ public sealed class GalleryIngestionTests
         IngestionTimingReport? completedTimingReport = null;
 
         // Act
-        await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder, reportTimings: report => completedTimingReport = report));
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            reportTimings: report => completedTimingReport = report);
         var report = completedTimingReport
             ?? throw new Xunit.Sdk.XunitException("Expected a completed ingestion timing report; Actual: null.");
         var text = report.ToString();
 
         // Assert
-        Assert.Equal((3, 2, 1), (report.FilesFound, report.Imported, report.Failed));
+        Assert.Equal((3, 2, 1, 0), (report.FilesFound, report.Imported, report.Skipped, report.Failed));
         Assert.Equal(3, report.Stages.Single(stage => stage.Stage == IngestionStage.File).Count);
         // Parallel workers can both decode the duplicate before one is rejected at persist time.
         Assert.InRange(report.Stages.Single(stage => stage.Stage == IngestionStage.Decode).Count, 2, 3);
-        Assert.Equal(2, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogInsert).Count);
+        Assert.Equal(1, report.Stages.Single(stage => stage.Stage == IngestionStage.CatalogInsert).Count);
         Assert.Equal(bytes.Length * 2L + MakePng(30, 18).Length, report.SourceBytes);
         Assert.True(report.WallMs > 0, $"Expected ingestion wall time greater than 0 ms; Actual: {report.WallMs} ms.");
         foreach (var forbidden in new[] { "secret-folder-name", "private-", fixture.Root, Path.GetTempPath() })
@@ -419,12 +556,8 @@ public sealed class GalleryIngestionTests
         await fixture.Scope.Ingestion.VerifyImportedAsync(imported.Id);
 
         // Assert
-        Assert.Equal(2, failure.Failures.InnerExceptions.Count);
-        Assert.Contains(failure.Failures.InnerExceptions, exception =>
-            exception.Message.Contains(invalid, StringComparison.Ordinal));
-        Assert.Contains(failure.Failures.InnerExceptions, exception =>
-            exception.Message.Contains(duplicate, StringComparison.Ordinal));
-        Assert.Equal(new ImportProgress(3, 3, 1, 2, "Ingestion complete."), final);
+        Assert.Contains(invalid, Assert.Single(failure.Failures.InnerExceptions).Message, StringComparison.Ordinal);
+        Assert.Equal(new ImportProgress(3, 3, 1, 1, "Ingestion complete.") { Skipped = 1 }, final);
         Assert.False(File.Exists(valid));
         Assert.True(File.Exists(invalid));
         Assert.Equal(duplicateBytes, retainedDuplicate);

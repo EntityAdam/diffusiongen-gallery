@@ -16,6 +16,18 @@ namespace Gallery.Core.Infrastructure.Persistence.Turso;
 /// <summary>Opt-in local Turso adapter. Typed catalog values are encrypted by the engine, not by record codecs.</summary>
 internal sealed partial class TursoGalleryStore(string databasePath, long walCheckpointBytes = 64L * 1024 * 1024) : IGalleryStore
 {
+    private const string SettingsTableName = "settings";
+    private const string SettingsUpsertSql =
+        "INSERT INTO " + SettingsTableName +
+        "(id,payload) VALUES($id,$payload) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload";
+    private const string SavedViewsSettingId = "saved-views";
+    private const string SavedViewsPurpose = "saved-views:v1";
+    private const string MediaIndexDeleteSql = "DELETE FROM media_index";
+    private const string MediaLookupCommand = "ReadMediaRecord";
+    private const string ThumbnailLookupCommand = "ReadThumbnailBytes";
+    private const string DriveQueueCountsCommand = "ReadDriveQueueCounts";
+    private const string CheckpointCommand = "PRAGMA wal_checkpoint(TRUNCATE)";
+
     private readonly string databasePath = Path.GetFullPath(databasePath);
     // The native driver holds an exclusive file handle. All use, checkpointing and snapshot copying
     // share this gate. A retained handle belongs to explicit operations whose key leases outlive it.
@@ -88,37 +100,46 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         if (connection is not null) await connection.DisposeAsync();
     }
 
+    private enum CatalogOpenMode
+    {
+        CreateOrUpgrade,
+        UpgradeExisting,
+        ValidateExisting
+    }
+
     private async Task<T> ExecuteAsync<T>(byte[]? key, Func<DbConnection, Task<T>> operation,
-        bool initialize = false, string? path = null, bool upgrade = true)
+        CatalogOpenMode openMode = CatalogOpenMode.UpgradeExisting, string? path = null,
+        CancellationToken cancellationToken = default)
     {
         ValidateKey(key);
         var waitStarted = Stopwatch.GetTimestamp();
-        await databaseGate.WaitAsync();
+        await databaseGate.WaitAsync(cancellationToken);
         CatalogMetrics.GateWaitDuration.Record(Stopwatch.GetElapsedTime(waitStarted).TotalMilliseconds);
         DbConnection? transient = null;
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             CheckOperationKey(key!);
             var catalogPath = path is null ? databasePath : Path.GetFullPath(path);
-            var primary = string.Equals(catalogPath, databasePath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-            var reuse = primary && activeOperations > 0;
-            var connection = reuse ? retainedConnection : null;
+            var catalogPathIsPrimary = string.Equals(catalogPath, databasePath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            var canReuseRetainedConnection = catalogPathIsPrimary && activeOperations > 0;
+            var connection = canReuseRetainedConnection ? retainedConnection : null;
             if (connection is null)
             {
-                connection = await OpenConnectionAsync(catalogPath, key!, initialize, upgrade);
+                connection = await OpenConnectionAsync(catalogPath, key!, openMode);
                 // Verification-only opens must not cache an unupgraded connection for later writes.
-                if (reuse && upgrade) retainedConnection = connection;
+                if (canReuseRetainedConnection && openMode != CatalogOpenMode.ValidateExisting) retainedConnection = connection;
                 else transient = connection;
-                if (primary) await MaintainWalAsync(connection);
+                if (catalogPathIsPrimary) await MaintainWalAsync(connection);
             }
             var result = await operation(connection);
             // Operations dispose their readers and transactions before returning. Snapshot closes the
             // connection before copying; its next constituent call must reopen instead of reusing it.
             if (connection.State == ConnectionState.Open)
             {
-                if (primary) await MaintainWalAsync(connection);
+                if (catalogPathIsPrimary) await MaintainWalAsync(connection);
             }
-            else if (reuse) await CloseRetainedConnectionAsync();
+            else if (canReuseRetainedConnection) await CloseRetainedConnectionAsync();
             return result;
         }
         catch (TursoException error)
@@ -138,9 +159,10 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         }
     }
 
-    private static async Task<DbConnection> OpenConnectionAsync(string catalogPath, byte[] key, bool initialize, bool upgrade)
+    private static async Task<DbConnection> OpenConnectionAsync(string catalogPath, byte[] key, CatalogOpenMode openMode)
     {
-        if (!initialize && !File.Exists(catalogPath)) throw new FileNotFoundException("The catalog is missing.", catalogPath);
+        if (openMode != CatalogOpenMode.CreateOrUpgrade && !File.Exists(catalogPath))
+            throw new FileNotFoundException("The catalog is missing.", catalogPath);
         if (File.Exists(catalogPath) && new FileInfo(catalogPath).Length > 0)
         {
             using var file = new FileStream(catalogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -171,8 +193,8 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
                 var migrationStarted = Stopwatch.GetTimestamp();
                 try
                 {
-                    if (upgrade) TursoGalleryDatabase.Upgrade(connection, allowCreate: initialize);
-                    else TursoGalleryDatabase.Validate(connection);
+                    if (openMode == CatalogOpenMode.ValidateExisting) TursoGalleryDatabase.Validate(connection);
+                    else TursoGalleryDatabase.Upgrade(connection, allowCreate: openMode == CatalogOpenMode.CreateOrUpgrade);
                 }
                 finally { CatalogMetrics.MigrationDuration.Record(Stopwatch.GetElapsedTime(migrationStarted).TotalMilliseconds); }
                 return connection;
@@ -203,8 +225,9 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         }
     }
 
-    private Task ExecuteAsync(byte[]? key, Func<DbConnection, Task> operation, bool initialize = false) =>
-        ExecuteAsync(key, async connection => { await operation(connection); return true; }, initialize);
+    private Task ExecuteAsync(byte[]? key, Func<DbConnection, Task> operation,
+        CatalogOpenMode openMode = CatalogOpenMode.UpgradeExisting) =>
+        ExecuteAsync(key, async connection => { await operation(connection); return true; }, openMode);
 
     private static DbCommand Command(DbConnection connection, string sql, DbTransaction? transaction = null,
         params (string Name, object? Value)[] parameters)
@@ -212,7 +235,8 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         var command = connection.CreateCommand();
         command.CommandText = sql;
         command.Transaction = transaction;
-        foreach (var (name, value) in parameters) command.AddParameter(name, value ?? DBNull.Value);
+        foreach (var parameter in parameters)
+            command.AddParameter(parameter.Name, parameter.Value ?? DBNull.Value);
         return command;
     }
 
@@ -230,7 +254,8 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         return await command.ExecuteScalarAsync();
     }
 
-    public Task InitializeAsync(byte[]? key = null) => ExecuteAsync(key, _ => Task.CompletedTask, initialize: true);
+    public Task InitializeAsync(byte[]? key = null) =>
+        ExecuteAsync(key, _ => Task.CompletedTask, CatalogOpenMode.CreateOrUpgrade);
     public Task<long> ReadStorageRevisionAsync(byte[]? key = null) => ExecuteAsync(key, connection => ReadRevisionAsync(connection));
     private static async Task<long> ReadRevisionAsync(DbConnection connection, DbTransaction? transaction = null) =>
         Convert.ToInt64(await ScalarAsync(connection, "SELECT revision FROM storage_overview_state WHERE id=1", transaction));
@@ -241,12 +266,15 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         using var command = Command(connection, "SELECT COUNT(*) FROM media");
         using var cancellation = token.Register(command.Cancel);
         return Convert.ToInt64(await command.ExecuteScalarAsync(token));
-    });
+    }, cancellationToken: token);
 
     public Task<List<ImageRecord>> ReadRecordsAsync(byte[] key) =>
         ExecuteAsync(key, connection => ReadRecordsAsync(connection, "ORDER BY m.rowid", default));
 
-    public Task<List<CatalogImportSource>> ReadImportSourcesAsync(byte[] key) => ExecuteAsync(key, async connection =>
+    public Task<List<CatalogImportSource>> ReadImportSourcesAsync(byte[] key) =>
+        ExecuteAsync(key, connection => ReadImportSourcesAsync(connection));
+
+    private static async Task<List<CatalogImportSource>> ReadImportSourcesAsync(DbConnection connection)
     {
         var sources = new List<CatalogImportSource>();
         using var command = Command(connection, "SELECT id,source_path,source_sha256,original_bytes FROM media");
@@ -254,23 +282,27 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         while (await reader.ReadAsync())
             sources.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3)));
         return sources;
-    });
+    }
 
     public Task<ImageRecord> ReadRecordAsync(string id, byte[] key) => ExecuteAsync(key, async connection =>
-        await FindRecordAsync(connection, id) ?? throw new InvalidOperationException($"Expected media item '{id}', but found 0."));
+        await FindRecordAsync(connection, id) ?? throw MissingRecordException(id));
 
     public Task<ImageRecord?> TryReadRecordAsync(string id, byte[] key) => ExecuteAsync(key, connection => FindRecordAsync(connection, id));
 
     private static async Task<ImageRecord?> FindRecordAsync(DbConnection connection, string id, DbTransaction? transaction = null)
     {
         var records = await ReadRecordsAsync(connection, "WHERE m.id=$id", default, transaction, ("$id", id));
-        return records.SingleOrDefault();
+        if (records.Count == 0) return null;
+        if (records.Count == 1) return records[0];
+        throw WithResultShapeContext(
+            new InvalidOperationException($"Expected one media item '{id}', but found {records.Count}."),
+            MediaLookupCommand, records.Count);
     }
 
     public Task InsertAsync(ImageRecord imageRecord, ImageThumbnail imageThumbnail, byte[] key) => ExecuteAsync(key, async connection =>
     {
         using var transaction = connection.BeginTransaction();
-        await WriteRecordAsync(connection, transaction, imageRecord, insert: true);
+        await WriteRecordAsync(connection, transaction, imageRecord, RecordWriteMode.Insert);
         await NonQueryAsync(connection, "INSERT INTO media_thumbnails VALUES($id,$bytes)", transaction,
             ("$id", imageRecord.Id), ("$bytes", imageThumbnail.Content.ToArray()));
         transaction.Commit();
@@ -281,31 +313,7 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         await Gate.WaitAsync();
         try
         {
-            return await ExecuteAsync(key, async connection =>
-            {
-                using var transaction = connection.BeginTransaction();
-                var imported = ImmutableArray.CreateBuilder<string>();
-                var duplicates = ImmutableArray.CreateBuilder<string>();
-                foreach (var entry in importCatalogEntries)
-                {
-                    if (await ContainsHashAsync(connection, entry.Record.Sha256, transaction))
-                    {
-                        duplicates.Add(entry.Record.Id);
-                        continue;
-                    }
-                    await WriteRecordAsync(connection, transaction, entry.Record, insert: true);
-                    var thumbnail = VaultCrypto.Decrypt(entry.EncryptedThumbnail.AsSpan(), key, $"thumbnail:{entry.Record.Id}");
-                    try
-                    {
-                        await NonQueryAsync(connection, "INSERT INTO media_thumbnails VALUES($id,$bytes)", transaction,
-                            ("$id", entry.Record.Id), ("$bytes", thumbnail));
-                    }
-                    finally { CryptographicOperations.ZeroMemory(thumbnail); }
-                    imported.Add(entry.Record.Id);
-                }
-                transaction.Commit();
-                return new ImportCommitResult(imported.ToImmutable(), duplicates.ToImmutable());
-            });
+            return await ExecuteAsync(key, connection => CommitImportsAsync(connection, importCatalogEntries, key));
         }
         catch (CatalogStorageException error)
         {
@@ -317,7 +325,15 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
     public Task UpdateAsync(ImageRecord imageRecord, byte[] key) => ExecuteAsync(key, async connection =>
     {
         using var transaction = connection.BeginTransaction();
-        await WriteRecordAsync(connection, transaction, imageRecord, insert: false);
+        await WriteRecordAsync(connection, transaction, imageRecord, RecordWriteMode.Update);
+        transaction.Commit();
+    });
+
+    public Task UpdateRecordsAsync(IReadOnlyList<ImageRecord> imageRecords, byte[] key) => ExecuteAsync(key, async connection =>
+    {
+        using var transaction = connection.BeginTransaction();
+        foreach (var imageRecord in imageRecords)
+            await WriteRecordAsync(connection, transaction, imageRecord, RecordWriteMode.Update);
         transaction.Commit();
     });
 
@@ -331,8 +347,8 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
         if (count != 1) throw new InvalidOperationException($"Expected one media mutation for '{id}', but found {count}.");
     }
 
-    public Task<bool> ContainsFingerprintAsync(string contentSha256, byte[] key) =>
-        ExecuteAsync(key, connection => ContainsHashAsync(connection, contentSha256));
+    public Task<bool> ContainsFingerprintAsync(string sourceSha256, byte[] key) =>
+        ExecuteAsync(key, connection => ContainsHashAsync(connection, sourceSha256));
 
     private static async Task<bool> ContainsHashAsync(DbConnection connection, string sourceSha256, DbTransaction? transaction = null) =>
         Convert.ToInt64(await ScalarAsync(connection, "SELECT COUNT(*) FROM media WHERE source_identity=$hash", transaction,
@@ -346,13 +362,15 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
 
     private static async Task<byte[]> ReadThumbnailBytesAsync(DbConnection connection, string id, DbTransaction? transaction = null) =>
         (byte[]?)await ScalarAsync(connection, "SELECT bytes FROM media_thumbnails WHERE media_id=$id", transaction, ("$id", id))
-        ?? throw new InvalidOperationException($"Expected thumbnail for '{id}', but found 0.");
+        ?? throw WithResultShapeContext(
+            new InvalidOperationException($"Expected thumbnail for '{id}', but found 0."),
+            ThumbnailLookupCommand, observedRowCount: 0);
 
     public Task<(ImageRecord Record, ImageThumbnail Thumbnail)> ReadVerificationAsync(string id, byte[] key) => ExecuteAsync(key, async connection =>
     {
         using var transaction = connection.BeginTransaction();
         var record = await FindRecordAsync(connection, id, transaction)
-            ?? throw new InvalidOperationException($"Expected media item '{id}', but found 0.");
+            ?? throw MissingRecordException(id);
         var thumbnail = await ReadThumbnailBytesAsync(connection, id, transaction);
         transaction.Commit();
         return (record, new ImageThumbnail(thumbnail));
@@ -366,27 +384,81 @@ internal sealed partial class TursoGalleryStore(string databasePath, long walChe
 
     public Task SaveSettingsAsync<T>(T value, string id, string purpose, byte[] key) => ExecuteAsync(key, async connection =>
     {
-        await NonQueryAsync(connection,
-            "INSERT INTO settings(id,payload) VALUES($id,$payload) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", null,
-            ("$id", id), ("$payload", JsonSerializer.Serialize(value)));
+        await UpsertSettingAsync(connection, null, id, value);
     });
 
     public Task DeleteSettingsAsync(byte[] key, params string[] ids) => ExecuteAsync(key, async connection =>
     {
-        using var transaction = connection.BeginTransaction();
-        foreach (var id in ids) await NonQueryAsync(connection, "DELETE FROM settings WHERE id=$id", transaction, ("$id", id));
-        transaction.Commit();
+        await DeleteSettingsAsync(connection, ids);
     });
 
     public async Task<List<SavedView>> LoadViewsAsync(byte[] key) =>
-        await ReadSettingsAsync<List<SavedView>>("saved-views", "saved-views:v1", key) ?? [];
+        await ReadSettingsAsync<List<SavedView>>(SavedViewsSettingId, SavedViewsPurpose, key) ?? [];
     public Task SaveViewAsync(string name, GalleryFilter galleryFilter, byte[] key) =>
         ChangeViewsAsync(views => SavedViewProcessor.Replace(views, name, galleryFilter), key);
     public Task DeleteViewAsync(string name, byte[] key) => ChangeViewsAsync(views => SavedViewProcessor.Remove(views, name), key);
     private async Task ChangeViewsAsync(Action<List<SavedView>> change, byte[] key)
     {
         await Gate.WaitAsync();
-        try { var views = await LoadViewsAsync(key); change(views); await SaveSettingsAsync(views, "saved-views", "saved-views:v1", key); }
+        try { var views = await LoadViewsAsync(key); change(views); await SaveSettingsAsync(views, SavedViewsSettingId, SavedViewsPurpose, key); }
         finally { Gate.Release(); }
+    }
+
+    private static async Task<ImportCommitResult> CommitImportsAsync(DbConnection connection,
+        IReadOnlyList<ImportCatalogEntry> importCatalogEntries, byte[] key)
+    {
+        using var transaction = connection.BeginTransaction();
+        var imported = ImmutableArray.CreateBuilder<string>();
+        var duplicates = ImmutableArray.CreateBuilder<string>();
+        foreach (var entry in importCatalogEntries)
+        {
+            if (await ContainsHashAsync(connection, entry.Record.Sha256, transaction))
+            {
+                duplicates.Add(entry.Record.Id);
+                continue;
+            }
+
+            await WriteImportEntryAsync(connection, transaction, entry, key);
+            imported.Add(entry.Record.Id);
+        }
+
+        transaction.Commit();
+        return new ImportCommitResult(imported.ToImmutable(), duplicates.ToImmutable());
+    }
+
+    private static async Task WriteImportEntryAsync(DbConnection connection, DbTransaction transaction,
+        ImportCatalogEntry entry, byte[] key)
+    {
+        await WriteRecordAsync(connection, transaction, entry.Record, RecordWriteMode.Insert);
+        var thumbnail = VaultCrypto.Decrypt(entry.EncryptedThumbnail.AsSpan(), key, $"thumbnail:{entry.Record.Id}");
+        try
+        {
+            await NonQueryAsync(connection, "INSERT INTO media_thumbnails VALUES($id,$bytes)", transaction,
+                ("$id", entry.Record.Id), ("$bytes", thumbnail));
+        }
+        finally { CryptographicOperations.ZeroMemory(thumbnail); }
+    }
+
+    private static Task UpsertSettingAsync<T>(DbConnection connection, DbTransaction? transaction, string id, T value) =>
+        NonQueryAsync(connection, SettingsUpsertSql, transaction,
+            ("$id", id), ("$payload", JsonSerializer.Serialize(value)));
+
+    private static async Task DeleteSettingsAsync(DbConnection connection, params string[] ids)
+    {
+        using var transaction = connection.BeginTransaction();
+        foreach (var id in ids) await NonQueryAsync(connection, "DELETE FROM settings WHERE id=$id", transaction, ("$id", id));
+        transaction.Commit();
+    }
+
+    private static InvalidOperationException MissingRecordException(string id) =>
+        WithResultShapeContext(new InvalidOperationException($"Expected media item '{id}', but found 0."),
+            MediaLookupCommand, observedRowCount: 0);
+
+    private static T WithResultShapeContext<T>(T exception, string command, int observedRowCount)
+        where T : Exception
+    {
+        exception.Data["Gallery.Turso.Command"] = command;
+        exception.Data["Gallery.Turso.ObservedRowCount"] = observedRowCount;
+        return exception;
     }
 }

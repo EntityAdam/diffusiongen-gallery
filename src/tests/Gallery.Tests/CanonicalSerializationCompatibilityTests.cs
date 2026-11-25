@@ -100,6 +100,19 @@ public sealed class CanonicalSerializationCompatibilityTests
         Assert.False(failureJson.TryGetProperty("Exception", out _));
     }
 
+    [Fact]
+    public void ExportFile_RetainsPublicIdentityAndContentWireName()
+    {
+        var export = new ExportFile("image.png", "image/png", [1, 2, 3]);
+        var attribute = typeof(ExportFile).GetProperty(nameof(ExportFile.ContentBytes))!
+            .GetCustomAttributes(typeof(System.Text.Json.Serialization.JsonPropertyNameAttribute), false)
+            .Cast<System.Text.Json.Serialization.JsonPropertyNameAttribute>().Single();
+
+        Assert.Equal("Gallery.Core.Models.ExportFile", typeof(ExportFile).FullName);
+        Assert.Equal("Content", attribute.Name);
+        Assert.Equal(new byte[] { 1, 2, 3 }, export.ContentBytes.ToArray());
+    }
+
     private static void AssertFlags(JsonElement serialized, bool flag, params string[] wireNames)
     {
         foreach (var wireName in wireNames)

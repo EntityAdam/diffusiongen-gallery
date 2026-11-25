@@ -62,6 +62,181 @@ public sealed class DriveOperationPlayerLifetimeTests
     }
 
     [Fact]
+    public async Task Refresh_WhenCountsArriveAfterAReplacementRun_ThenKeepsTheReplacementStatus()
+    {
+        var countsRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCounts = new TaskCompletionSource<DriveQueueCounts>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        using var player = new DriveOperationPlayer(
+            () => new Session(_ => Task.FromResult(new DriveBatchReport(0, 0, ""))),
+            () => Interlocked.Increment(ref reads) == 1
+                ? WaitForCountsAsync()
+                : Task.FromResult(new DriveQueueCounts(0, 0, null)));
+
+        var refresh = player.RefreshAsync();
+        await countsRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        player.Start();
+        await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        releaseCounts.SetResult(new DriveQueueCounts(1, 0, null));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, player.Status.Pending);
+
+        async Task<DriveQueueCounts> WaitForCountsAsync()
+        {
+            countsRead.TrySetResult();
+            return await releaseCounts.Task;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Refresh_WhenTwoCountReadsOverlap_ThenKeepsTheNewerRead(bool newerCompletesFirst)
+    {
+        var oldCounts = new TaskCompletionSource<DriveQueueCounts>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var newCounts = new TaskCompletionSource<DriveQueueCounts>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        using var player = new DriveOperationPlayer(() => null, () =>
+            Interlocked.Increment(ref reads) == 1 ? oldCounts.Task : newCounts.Task);
+
+        var oldRefresh = player.RefreshAsync();
+        var newRefresh = player.RefreshAsync();
+        if (newerCompletesFirst)
+        {
+            newCounts.SetResult(new DriveQueueCounts(2, 0, null));
+            await newRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+            oldCounts.SetResult(new DriveQueueCounts(1, 0, null));
+        }
+        else
+        {
+            oldCounts.SetResult(new DriveQueueCounts(1, 0, null));
+            await oldRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+            newCounts.SetResult(new DriveQueueCounts(2, 0, null));
+        }
+        await Task.WhenAll(oldRefresh, newRefresh).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, player.Status.Pending);
+    }
+
+    [Fact]
+    public async Task Cancel_WhenTheRunFaultWasAlreadyObserved_ThenRunsTheDiscardAction()
+    {
+        var expectedFailure = new IOException("Cannot read queue counts");
+        using var player = new DriveOperationPlayer(
+            () => null,
+            () => Task.FromException<DriveQueueCounts>(expectedFailure));
+
+        player.Start();
+        Assert.Same(expectedFailure, await Assert.ThrowsAsync<IOException>(player.WhenIdleAsync));
+        var discardRan = false;
+        await player.RunWhileStartAdmissionBlockedAsync(() =>
+        {
+            discardRan = true;
+            return Task.CompletedTask;
+        });
+
+        Assert.True(discardRan);
+        Assert.Equal(DriveQueueState.Faulted, player.Status.State);
+    }
+
+    [Fact]
+    public async Task StartsDuringDiscardWindow_ThenWaitUntilDiscardCompletes()
+    {
+        var firstBatchStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var discardStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDiscard = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessions = 0;
+        var sessionsBeforeDiscardCompletes = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            var firstSession = Interlocked.Increment(ref sessions) == 1;
+            return new Session(async _ =>
+            {
+                if (!firstSession) return new(0, 0, "");
+                firstBatchStarted.TrySetResult();
+                await releaseFirstBatch.Task;
+                return new(0, 0, "");
+            });
+        }, () => Task.FromResult(new DriveQueueCounts(0, 0, null)));
+
+        player.Start();
+        await firstBatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var discard = player.RunWhileStartAdmissionBlockedAsync(async () =>
+        {
+            discardStarted.TrySetResult();
+            await releaseDiscard.Task;
+            sessionsBeforeDiscardCompletes = Volatile.Read(ref sessions);
+        });
+        player.Start();
+        releaseFirstBatch.SetResult();
+        await discardStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        player.Start();
+        releaseDiscard.SetResult();
+        await discard.WaitAsync(TimeSpan.FromSeconds(5));
+        await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, sessionsBeforeDiscardCompletes);
+        Assert.Equal(2, sessions);
+    }
+
+    [Fact]
+    public async Task StartDuringPostDiscardRefresh_WhenRefreshFails_ThenStartsAfterDiscard()
+    {
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expectedFailure = new IOException("refresh failed");
+        var opened = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            Interlocked.Increment(ref opened);
+            return new Session(_ => Task.FromResult(new DriveBatchReport(0, 0, "")));
+        }, () => Task.FromResult(new DriveQueueCounts(0, 0, null)));
+
+        var discard = player.RunWhileStartAdmissionBlockedAsync(
+            () => Task.CompletedTask,
+            async () =>
+            {
+                refreshStarted.SetResult();
+                await releaseRefresh.Task;
+                throw expectedFailure;
+            });
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        player.Start();
+        Assert.Equal(0, opened);
+        releaseRefresh.SetResult();
+        Assert.Same(expectedFailure, await Assert.ThrowsAsync<IOException>(() => discard));
+        await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, opened);
+    }
+
+    [Fact]
+    public async Task StartDuringFailedDiscard_ThenDoesNotStartUncertainWork()
+    {
+        var discardStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDiscard = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var opened = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            Interlocked.Increment(ref opened);
+            return null;
+        }, () => Task.FromResult(new DriveQueueCounts(0, 0, null)));
+
+        var discard = player.RunWhileStartAdmissionBlockedAsync(async () =>
+        {
+            discardStarted.SetResult();
+            await releaseDiscard.Task;
+            throw new IOException("discard failed");
+        });
+        await discardStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        player.Start();
+        releaseDiscard.SetResult();
+        await Assert.ThrowsAsync<IOException>(() => discard);
+        Assert.Equal(0, opened);
+    }
+
+    [Fact]
     public async Task Batch_WhenItFaults_ThenReleasesSessionAndPreservesTheFailureAtBothBoundaries()
     {
         var expectedFailure = new InvalidDataException("Cannot play persisted operation");
@@ -75,6 +250,228 @@ public sealed class DriveOperationPlayerLifetimeTests
         Assert.True(session.IsDisposed);
         Assert.Equal(DriveQueueState.Faulted, player.Status.State);
         Assert.Same(expectedFailure, await Assert.ThrowsAsync<InvalidDataException>(player.StopAsync));
+    }
+
+    [Fact]
+    public async Task StartAfterObservingPreviousFailure_WhenCalledFromCatalogRead_RestartsWithoutPropagatingStaleFault()
+    {
+        var failurePublished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var openedSessions = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            var firstSession = Interlocked.Increment(ref openedSessions) == 1;
+            return new Session(_ => firstSession
+                ? Task.FromException<DriveBatchReport>(new InvalidDataException("Transient queue failure"))
+                : Task.FromResult(new DriveBatchReport(0, 0, "")));
+        }, () => Task.FromResult(new DriveQueueCounts(0, 0, null)));
+        player.Changed += () =>
+        {
+            if (player.Status.State == DriveQueueState.Faulted) failurePublished.TrySetResult();
+        };
+
+        player.Start();
+        await failurePublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await player.StartAfterObservingPreviousFailureAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, openedSessions);
+        Assert.Equal(DriveQueueState.Idle, player.Status.State);
+    }
+
+    [Fact]
+    public async Task StartAfterCommit_WhenAnotherCallerStartsAndItsRunFaults_PreservesTheNewFault()
+    {
+        var oldFailure = new IOException("old failure");
+        var newFailure = new InvalidDataException("replacement failure");
+        var replacementFaulted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var opened = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            Exception failure = Interlocked.Increment(ref opened) == 1 ? oldFailure : newFailure;
+            return new Session(_ => Task.FromException<DriveBatchReport>(failure));
+        }, () => Task.FromResult(new DriveQueueCounts(1, 0, null)));
+        player.Changed += () =>
+        {
+            if (Volatile.Read(ref opened) == 2 && player.Status.State == DriveQueueState.Faulted)
+                replacementFaulted.TrySetResult();
+        };
+
+        player.Start();
+        await WaitForFaultAsync(player);
+        var firstMoveFailure = player.CaptureFailure();
+        var secondMoveFailure = player.CaptureFailure();
+        await player.StartAfterCommitAsync(firstMoveFailure);
+        await replacementFaulted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, opened);
+
+        await player.StartAfterCommitAsync(secondMoveFailure);
+
+        Assert.Same(newFailure, Assert.Throws<InvalidDataException>(player.Start));
+        Assert.Same(newFailure, await Assert.ThrowsAsync<InvalidDataException>(player.WhenIdleAsync));
+        Assert.Equal(2, opened);
+    }
+
+    [Fact]
+    public async Task StartAfterCommit_WhenRunFaultsAfterCapture_LeavesTheFailureUnobserved()
+    {
+        var batchStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failure = new IOException("new failure");
+        using var player = new DriveOperationPlayer(() => new Session(async _ =>
+        {
+            batchStarted.SetResult();
+            await releaseBatch.Task;
+            throw failure;
+        }), () => Task.FromResult(new DriveQueueCounts(1, 0, null)));
+        player.Start();
+        await batchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var previousFailure = player.CaptureFailure();
+        releaseBatch.SetResult();
+        await WaitForFaultAsync(player);
+
+        await player.StartAfterCommitAsync(previousFailure);
+
+        Assert.Same(failure, Assert.Throws<IOException>(player.Start));
+        Assert.Same(failure, await Assert.ThrowsAsync<IOException>(player.WhenIdleAsync));
+    }
+
+    [Fact]
+    public async Task StartAfterCommit_WhenFaultPublicationThrows_DoesNotAcknowledgeTheDifferentTaskFailure()
+    {
+        var oldFailure = new IOException("queue failure");
+        var callbackFailure = new InvalidDataException("fault observer failure");
+        using var player = new DriveOperationPlayer(() => null,
+            () => Task.FromException<DriveQueueCounts>(oldFailure));
+        player.Changed += () => throw callbackFailure;
+        player.Start();
+        await WaitForFaultAsync(player);
+
+        await player.StartAfterCommitAsync(player.CaptureFailure());
+
+        Assert.Same(oldFailure, Assert.Throws<IOException>(player.Start));
+        Assert.Same(callbackFailure, await Assert.ThrowsAsync<InvalidDataException>(player.WhenIdleAsync));
+    }
+
+    [Fact]
+    public async Task PauseAndResume_WhenInterleaved_ThenPendingWorkDoesNotNeedAnotherStart()
+    {
+        var firstBatchStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessions = 0;
+        var processed = 0;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            var firstSession = Interlocked.Increment(ref sessions) == 1;
+            var firstBatch = 0;
+            return new Session(async token =>
+            {
+                if (firstSession && Interlocked.Exchange(ref firstBatch, 1) == 0)
+                {
+                    firstBatchStarted.TrySetResult(token);
+                    await releaseFirstBatch.Task;
+                    if (token.IsCancellationRequested) return new(0, 0, "");
+                }
+                var done = Interlocked.Exchange(ref processed, 1) == 0;
+                return done ? new(1, 1, "processed") : new(0, 0, "");
+            });
+        }, () => Task.FromResult(new DriveQueueCounts(Volatile.Read(ref processed) == 0 ? 1 : 0, 0, null)));
+
+        player.Start();
+        await firstBatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var transitionBarrier = new Barrier(3);
+        var pause = Task.Run(async () =>
+        {
+            transitionBarrier.SignalAndWait(TimeSpan.FromSeconds(5));
+            await player.PauseAsync();
+        });
+        var resume = Task.Run(() =>
+        {
+            transitionBarrier.SignalAndWait(TimeSpan.FromSeconds(5));
+            player.Resume();
+        });
+        transitionBarrier.SignalAndWait(TimeSpan.FromSeconds(5));
+        await resume.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseFirstBatch.SetResult();
+        await pause.WaitAsync(TimeSpan.FromSeconds(5));
+        if (player.IsPaused) player.Resume();
+        await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, processed);
+        Assert.Equal(0, player.Status.Pending);
+        Assert.Equal(DriveQueueState.Idle, player.Status.State);
+    }
+
+    [Fact]
+    public async Task PauseAndResume_WhenRunIsStopping_ThenReplacementIsExclusiveAndStartsWithFreshCount()
+    {
+        var firstBatchStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacementCountPublished = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sessions = 0;
+        var activeSessions = 0;
+        var maximumOpenSessions = 0;
+        var processed = 0;
+        Session? firstSession = null;
+        using var player = new DriveOperationPlayer(() =>
+        {
+            var firstRun = Interlocked.Increment(ref sessions) == 1;
+            if (!firstRun) Assert.True(firstSession!.IsDisposed);
+            var active = Interlocked.Increment(ref activeSessions);
+            var maximum = Volatile.Read(ref maximumOpenSessions);
+            while (active > maximum)
+            {
+                var previous = Interlocked.CompareExchange(ref maximumOpenSessions, active, maximum);
+                if (previous == maximum) break;
+                maximum = previous;
+            }
+            var session = new Session(async token =>
+            {
+                if (firstRun)
+                {
+                    firstBatchStarted.TrySetResult(token);
+                    await releaseFirstBatch.Task;
+                    return new(1, 7, "finished while stopping");
+                }
+                return Interlocked.Exchange(ref processed, 1) == 0
+                    ? new(1, 2, "replacement batch")
+                    : new(0, 0, "");
+            }, () => Interlocked.Decrement(ref activeSessions));
+            if (firstRun) firstSession = session;
+            return session;
+        }, () => Task.FromResult(new DriveQueueCounts(Volatile.Read(ref processed) == 0 ? 1 : 0, 0, null)));
+        player.Changed += () =>
+        {
+            var status = player.Status;
+            if (status.State == DriveQueueState.Running && status.Completed == 2)
+                replacementCountPublished.TrySetResult(status.Completed);
+        };
+        Task? pause = null;
+
+        try
+        {
+            player.Start();
+            var originalToken = await firstBatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            pause = player.PauseAsync();
+            Assert.True(originalToken.IsCancellationRequested);
+            player.Resume();
+            releaseFirstBatch.SetResult();
+
+            var replacementCount = await replacementCountPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await pause.WaitAsync(TimeSpan.FromSeconds(5));
+            await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(2, replacementCount);
+            Assert.Equal(2, sessions);
+            Assert.Equal(1, maximumOpenSessions);
+            Assert.Equal(0, activeSessions);
+            Assert.Equal(DriveQueueState.Idle, player.Status.State);
+        }
+        finally
+        {
+            releaseFirstBatch.TrySetResult();
+            if (pause is not null) await pause.WaitAsync(TimeSpan.FromSeconds(5));
+            await player.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     [Theory]
@@ -197,11 +594,16 @@ public sealed class DriveOperationPlayerLifetimeTests
     }
 
     // One test-owned session serially invokes its scripted batch behavior and exposes only disposal evidence.
-    private sealed class Session(Func<CancellationToken, Task<DriveBatchReport>> play) : IDriveOperationSession
+    private sealed class Session(Func<CancellationToken, Task<DriveBatchReport>> play, Action? disposed = null) : IDriveOperationSession
     {
         internal bool IsDisposed { get; private set; }
         public Task<DriveBatchReport> PlayBatchAsync(CancellationToken cancellationToken) => play(cancellationToken);
-        public void Dispose() => IsDisposed = true;
+        public void Dispose()
+        {
+            if (IsDisposed) return;
+            IsDisposed = true;
+            disposed?.Invoke();
+        }
     }
 
     private sealed class QueuedSynchronizationContext : SynchronizationContext

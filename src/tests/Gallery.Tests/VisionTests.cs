@@ -1,6 +1,8 @@
 using System.Net;
+using System.Text;
 using Gallery.Core.Features.Vision.Endpoints;
 using Gallery.Core.Models;
+using Gallery.Core.Services.Processors;
 
 namespace Gallery.Tests;
 
@@ -76,11 +78,80 @@ public static class VisionTests
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) }))), new VisionSettings());
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AnalyzeAsync("vision", 180, "image"));
+            service.AnalyzeImageAsync("vision", 180, "image"));
 
         // Assert
         var malformedResponse = Assert.IsType<InvalidOperationException>(error);
         Assert.Contains(expected, malformedResponse.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public static async Task Analysis_StopsReadingAnOversizedResponseWithoutContentLength()
+    {
+        var content = new OversizedStreamingContent();
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content })));
+        var service = new VisionService(client, new VisionSettings());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.AnalyzeImageAsync("vision", 180, "image"));
+
+        Assert.Contains("response size limit", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(StructuredVision.MaximumDocumentBytes * 8L + 1, content.BytesRead);
+    }
+
+    [Fact]
+    public static async Task Analysis_WhenResponseReachesFourMiB_ThenKeepsItsOwnLimit()
+    {
+        const string prefix = """{"choices":[{"message":{"content":"{\"description\":\"valid\",\"tags\":[]}"}}]}""";
+        var body = prefix + new string(' ', 4 * 1024 * 1024 - prefix.Length);
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) })));
+        var service = new VisionService(client, new VisionSettings());
+
+        var result = await service.AnalyzeImageAsync("vision", 180, "image");
+
+        Assert.Equal("valid", result.Description);
+    }
+
+    [Theory]
+    [InlineData("utf-8", false, true)]
+    [InlineData("utf-8", true, false)]
+    [InlineData("utf-16", false, true)]
+    [InlineData("utf-16", true, false)]
+    public static async Task Analysis_WhenResponseUsesDeclaredOrBomEncoding_ThenDecodesIt(
+        string encodingName, bool includeBom, bool declareCharset)
+    {
+        const string body = """{"choices":[{"message":{"content":"{\"description\":\"café\",\"tags\":[\"green\"]}"}}]}""";
+        var encoding = Encoding.GetEncoding(encodingName);
+        var bytes = (includeBom ? encoding.GetPreamble() : []).Concat(encoding.GetBytes(body)).ToArray();
+        using var client = new HttpClient(new FakeHandler(_ =>
+        {
+            var content = new ByteArrayContent(bytes);
+            if (declareCharset)
+                content.Headers.ContentType = new("application/json") { CharSet = encodingName };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }));
+        var service = new VisionService(client, new VisionSettings());
+
+        var result = await service.AnalyzeImageAsync("vision", 180, "image");
+
+        Assert.Equal("café", result.Description);
+        Assert.Equal("green", result.Tags);
+    }
+
+    [Fact]
+    public static async Task Analysis_WhenBodyReadIsCanceled_ThenStopsReading()
+    {
+        var stream = new BlockingResponseStream();
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(stream) })));
+        var service = new VisionService(client, new VisionSettings());
+        using var cancellation = new CancellationTokenSource();
+
+        var analysis = service.AnalyzeImageAsync("vision", 180, "image", cancellationToken: cancellation.Token);
+        await stream.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => analysis);
     }
 
     [Fact]
@@ -91,7 +162,7 @@ public static class VisionTests
         { Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A landscape.\",\"tags\":[\"green\"]}"}}]}""") }))), new VisionSettings());
         var expected = ExpectedVisionScenario.Create("basic analysis returns description and tags", new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
-        var analysis = await service.AnalyzeAsync("vision", 180, "image");
+        var analysis = await service.AnalyzeImageAsync("vision", 180, "image");
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?> { ["analysis"] = new[] { analysis.Description, analysis.Tags } });
     }
@@ -112,7 +183,7 @@ public static class VisionTests
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(envelope) }))), new VisionSettings());
         // Act
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AnalyzeAsync("vision", 180, "image"));
+            service.AnalyzeImageAsync("vision", 180, "image"));
 
         // Assert
         var invalidAnalysis = Assert.IsType<InvalidOperationException>(error);
@@ -247,7 +318,7 @@ public static class VisionTests
         var expected = ExpectedVisionScenario.Create("private-LAN analysis uses the configured origin and parses the response",
             new ExpectedVisionObligation("request origin", new Uri(new Uri(endpoint), "chat/completions").AbsoluteUri), new ExpectedVisionObligation("analysis", new[] { "A landscape.", "green" }));
         // Act
-        var analysis = await service.AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, "image");
+        var analysis = await service.AnalyzeImageAsync(settings.Model, settings.RequestTimeoutSeconds, "image");
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?> { ["request origin"] = requestUri, ["analysis"] = new[] { analysis.Description, analysis.Tags } });
     }
@@ -272,7 +343,7 @@ public static class VisionTests
             new ExpectedVisionObligation("origin", "http://127.0.0.1:1234/v1/chat/completions"), new ExpectedVisionObligation("analysis", new[] { "A green landscape.", "green, landscape" }),
             new ExpectedVisionObligation("model", "local-vision", VisionComparison.Contains), new ExpectedVisionObligation("payload", "data:image/png;base64,example", VisionComparison.Contains));
         // Act
-        var result = await service.AnalyzeAsync("local-vision", 180, "data:image/png;base64,example");
+        var result = await service.AnalyzeImageAsync("local-vision", 180, "data:image/png;base64,example");
 
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expected, new Dictionary<string, object?>
@@ -286,7 +357,7 @@ public static class VisionTests
         var service = new VisionService(new HttpClient(new FakeHandler(_ => Task.FromResult(
             new HttpResponseMessage(HttpStatusCode.BadRequest)))), new VisionSettings());
         // Act
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.AnalyzeAsync("local", 180, "image"));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.AnalyzeImageAsync("local", 180, "image"));
 
         // Assert
         var httpFailure = Assert.IsType<InvalidOperationException>(error);
@@ -340,6 +411,78 @@ public static class VisionTests
         // Assert
         AsserterVisionScenario.AssertAllObligationsAreMet(expectedVisionScenario,
             new Dictionary<string, object?> { ["models"] = models });
+    }
+
+    [Theory]
+    [InlineData(1024 * 1024, true)]
+    [InlineData(1024 * 1024 + 1, false)]
+    public static async Task ModelDiscovery_WhenResponseHasDeclaredLength_ThenEnforcesOneMiBBoundary(int byteCount, bool accepted)
+    {
+        const string prefix = """{"data":[{"id":"vision"}]}""";
+        var body = prefix + new string(' ', byteCount - prefix.Length);
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) })));
+        var service = new VisionService(client, new VisionSettings());
+
+        if (accepted)
+            Assert.Equal(["vision"], await service.GetModelsAsync(180));
+        else
+            Assert.Contains("response size limit", (await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.GetModelsAsync(180))).Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenResponseHasNoLength_ThenStopsAtOneMiBPlusOneByte()
+    {
+        var content = new OversizedStreamingContent();
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = content })));
+        var service = new VisionService(client, new VisionSettings());
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetModelsAsync(180));
+
+        Assert.Contains("response size limit", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1024 * 1024 + 1L, content.BytesRead);
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenUnspecifiedLengthReachesOneMiB_ThenAcceptsIt()
+    {
+        const string prefix = """{"data":[{"id":"vision"}]}""";
+        var body = prefix + new string(' ', 1024 * 1024 - prefix.Length);
+        var content = new UnknownLengthContent(Encoding.UTF8.GetBytes(body));
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = content })));
+        var service = new VisionService(client, new VisionSettings());
+
+        Assert.Equal(["vision"], await service.GetModelsAsync(180));
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenBodyReadTimesOut_ThenStopsReading()
+    {
+        var stream = new BlockingResponseStream();
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(stream) })));
+        var service = new VisionService(client, new VisionSettings());
+
+        var request = service.GetModelsAsync(10);
+        await stream.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => request.WaitAsync(TimeSpan.FromSeconds(15)));
+
+        Assert.Contains("timed out", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public static async Task ModelDiscovery_WhenResponseDeclaresUtf16_ThenDecodesIt()
+    {
+        var content = new ByteArrayContent(Encoding.Unicode.GetBytes("""{"data":[{"id":"café"}]}"""));
+        content.Headers.ContentType = new("application/json") { CharSet = "utf-16" };
+        using var client = new HttpClient(new FakeHandler(_ => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = content })));
+        var service = new VisionService(client, new VisionSettings());
+
+        Assert.Equal(["café"], await service.GetModelsAsync(180));
     }
 
     // Every malformed model-list envelope is rejected with the invalid shape or identifier.
@@ -448,7 +591,7 @@ public static class VisionTests
 
         var expected = ExpectedVisionScenario.Create("saved authentication is applied to vision and text requests", new ExpectedVisionObligation("set", "set-1"),
             new ExpectedVisionObligation("authorization", new[] { new[] { "Bearer", settings.ApiKey }, new[] { "Bearer", settings.ApiKey } }));
-        await service.AnalyzeAsync(settings.Model, settings.RequestTimeoutSeconds, "image");
+        await service.AnalyzeImageAsync(settings.Model, settings.RequestTimeoutSeconds, "image");
 
         // Act - text request follows an authenticated vision request
         var set = await service.SuggestSetAsync("Series", [new MediaSet("set-1", "collection-1", "Landscapes", 0)], []);
@@ -464,8 +607,8 @@ public static class VisionTests
             new ExpectedVisionObligation("exception type", typeof(InvalidOperationException).FullName));
         foreach (var part in new[] { "127.0.0.1", "::1", "10.x.x.x", "172.16.x.x", "172.31.x.x", "192.168.x.x", "Public addresses and hostnames are not allowed" })
             expected = expected with { Obligations = expected.Obligations.Add(new ExpectedVisionObligation(part, part, VisionComparison.Contains)) };
-        if (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Host.Length > 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0)
-            expected = expected with { Obligations = expected.Obligations.Add(new ExpectedVisionObligation("authority", uri.GetLeftPart(UriPartial.Authority), VisionComparison.Contains)) };
+        if (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.UserInfo.Length > 0)
+            expected = expected with { Obligations = expected.Obligations.Add(new ExpectedVisionObligation("credentials", uri.UserInfo, VisionComparison.Excludes)) };
         if (endpoint.Contains("secret=", StringComparison.Ordinal))
             expected = expected with { Obligations = expected.Obligations.Add(new ExpectedVisionObligation("redaction", "secret=123", VisionComparison.Excludes)) };
         return expected;
@@ -473,7 +616,7 @@ public static class VisionTests
 
     private static Dictionary<string, object?> EndpointEvidence(Exception? error)
     {
-        var evidence = new Dictionary<string, object?> { ["exception type"] = error?.GetType().FullName, ["authority"] = error?.Message, ["redaction"] = error?.Message };
+        var evidence = new Dictionary<string, object?> { ["exception type"] = error?.GetType().FullName, ["credentials"] = error?.Message, ["redaction"] = error?.Message };
         foreach (var part in new[] { "127.0.0.1", "::1", "10.x.x.x", "172.16.x.x", "172.31.x.x", "192.168.x.x", "Public addresses and hostnames are not allowed" }) evidence[part] = error?.Message;
         return evidence;
     }
@@ -496,6 +639,76 @@ public static class VisionTests
         {
             if (disposing) callbackGate.Dispose();
             base.Dispose(disposing);
+        }
+    }
+
+    private sealed class OversizedStreamingContent : HttpContent
+    {
+        public long BytesRead { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            throw new NotSupportedException();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() =>
+            Task.FromResult<Stream>(new OversizedResponseStream(count => BytesRead += count));
+    }
+
+    private sealed class UnknownLengthContent(byte[] bytes) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            throw new NotSupportedException();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync() =>
+            Task.FromResult<Stream>(new MemoryStream(bytes, writable: false));
+    }
+
+    private sealed class BlockingResponseStream : MemoryStream
+    {
+        public TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+    }
+
+    private sealed class OversizedResponseStream(Action<int> recordRead) : Stream
+    {
+        private long bytesRemaining = StructuredVision.MaximumDocumentBytes * 8L + 1;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var bytesRead = (int)Math.Min(buffer.Length, bytesRemaining);
+            buffer.Span[..bytesRead].Fill((byte)'x');
+            bytesRemaining -= bytesRead;
+            recordRead(bytesRead);
+            return ValueTask.FromResult(bytesRead);
         }
     }
 }

@@ -1,7 +1,9 @@
 using System.Text;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vaults.Session;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Features.Storage;
+using Gallery.Core.Features.Storage.DriveOperations;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using static Gallery.Tests.GalleryTests;
@@ -43,6 +45,34 @@ public sealed class StorageOverviewTests
         Assert.InRange(refreshed.UpdatedAt, refreshStartedAt, refreshCompletedAt);
         Assert.False(refreshed.IsStale);
         Assert.Equal(refreshed, cached);
+    }
+
+    [Fact]
+    public async Task Refresh_WhenCatalogRevisionChangesBeforeIndexWriteback_ThenDropsTheOldMeasurement()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var imageRecord = await fixture.Scope.Ingestion.ImportAsync(
+            new MemoryStream(MakePng()), "image.png", "folder");
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        var key = fixture.Session.Key;
+        try
+        {
+            var snapshotRevision = await fixture.Store.ReadStorageRevisionAsync(key);
+            await fixture.Scope.Records.UpdateAsync(imageRecord.Id,
+                currentRecord => currentRecord with { Description = currentRecord.Description + " updated" });
+
+            var unindexedPath = Path.Combine(fixture.Root, "unindexed", "measured.dpng");
+            var target = DriveOperationProcessor.PathFingerprint(key, unindexedPath);
+            var directory = DriveOperationProcessor.PathFingerprint(key, Path.GetDirectoryName(unindexedPath)!);
+            await MediaStorageIndex.IndexMeasurementsIfCurrentAsync(fixture.Store, snapshotRevision,
+                [(directory, new IndexedFile(target, 1234))], key);
+
+            var indexedLengths = await fixture.Store.ReadMediaIndexAsync(key);
+
+            Assert.DoesNotContain(Convert.ToHexString(target), indexedLengths.Keys);
+        }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
     }
 
     [Fact]

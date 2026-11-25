@@ -34,11 +34,11 @@ public sealed class NativeStoragePathTests
     public void MoveValidation_WhenComparingCaseVariants_ThenUsesPlatformPathIdentity()
     {
         var failure = Record.Exception(() =>
-            Gallery.Core.Features.Media.Movement.StoredImageMoveValidator.ValidateDifferentPath("lower.dpng", "LOWER.dpng"));
+            Gallery.Core.Features.Media.Movement.Managers.Validators.StoredImageMoveValidator.ValidateDifferentPath("lower.dpng", "LOWER.dpng"));
         if (OperatingSystem.IsWindows()) Assert.IsType<InvalidOperationException>(failure);
         else Assert.Null(failure);
         Assert.Throws<InvalidOperationException>(() =>
-            Gallery.Core.Features.Media.Movement.StoredImageMoveValidator.ValidateDifferentPath("same.dpng", "same.dpng"));
+            Gallery.Core.Features.Media.Movement.Managers.Validators.StoredImageMoveValidator.ValidateDifferentPath("same.dpng", "same.dpng"));
     }
 
     [Fact]

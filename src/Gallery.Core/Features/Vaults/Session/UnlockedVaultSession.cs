@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 
 namespace Gallery.Core.Features.Vaults.Session;
 
@@ -16,16 +16,16 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
     internal bool HasTimedOut { get; private set; }
     internal bool HasPendingTimeoutNotification { get; private set; }
 
-    internal bool HasExpired(DateTimeOffset now) => !IsRevoked
+    internal bool HasExpired() => !IsRevoked
         && vaultLeaseState.InactivityTimeout is { } timeout && timeout > TimeSpan.Zero
-        && now - vaultLeaseState.LastAccessUtc >= timeout;
+        && vaultLeaseState.TimeProvider.GetElapsedTime(vaultLeaseState.LastActivityTimestamp) >= timeout;
 
     internal byte[] CopyKey()
     {
         lock (vaultLeaseState.SyncRoot)
         {
             RequireActive();
-            vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+            vaultLeaseState.RecordActivity();
             return key.ToArray();
         }
     }
@@ -35,39 +35,39 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
         lock (vaultLeaseState.SyncRoot)
         {
             RequireActive();
-            return CreateKeyLease();
+            return CreateKeyLease(LeaseActivityPolicy.RefreshInactivityDeadline);
         }
     }
 
-    internal KeyLease? TryBorrow(bool recordActivity = true)
+    internal KeyLease Borrow(LeaseActivityPolicy leaseActivityPolicy)
     {
         lock (vaultLeaseState.SyncRoot)
         {
-            if (HasExpired(DateTimeOffset.UtcNow)) Expire();
-            return IsRevoked ? null : CreateKeyLease(recordActivity);
+            RequireActive();
+            return CreateKeyLease(leaseActivityPolicy);
         }
     }
 
-    private KeyLease CreateKeyLease(bool recordActivity = true)
+    private KeyLease CreateKeyLease(LeaseActivityPolicy leaseActivityPolicy)
     {
         var leasedKeyBytes = key.ToArray();
-        if (recordActivity) vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+        if (leaseActivityPolicy == LeaseActivityPolicy.RefreshInactivityDeadline) vaultLeaseState.RecordActivity();
         vaultLeaseState.ActiveLeases++;
         return new KeyLease(leasedKeyBytes, vaultLeaseState);
     }
 
     private void RequireActive()
     {
-        if (HasExpired(DateTimeOffset.UtcNow)) Expire();
+        if (HasExpired()) Revoke(timedOut: true);
         if (IsRevoked)
             throw new VaultLockedException(HasTimedOut
                     ? "The gallery locked automatically due to inactivity."
                     : "Unlock the gallery first. This unlocked session has been revoked.",
-                GalleryLogEvent.AcquireVaultKey,
+                LogEventGallery.AcquireVaultKey,
                 new ContextualData().Add("Vault.State", HasTimedOut ? "timed_out" : "revoked"));
     }
 
-    internal void Revoke()
+    internal void Revoke(bool timedOut = false)
     {
         lock (vaultLeaseState.SyncRoot)
         {
@@ -75,16 +75,11 @@ internal sealed class UnlockedVaultSession(byte[] key, VaultLeaseState vaultLeas
             CryptographicOperations.ZeroMemory(key);
             // Signal immediately, but run cancellation callbacks outside the session's synchronization lock.
             _ = revocation.CancelAsync();
-        }
-    }
-
-    internal void Expire()
-    {
-        lock (vaultLeaseState.SyncRoot)
-        {
-            Revoke();
-            HasTimedOut = true;
-            HasPendingTimeoutNotification = true;
+            if (timedOut)
+            {
+                HasTimedOut = true;
+                HasPendingTimeoutNotification = true;
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
-using System.Text.Json;
 using Gallery.Core.Features.Settings;
+using Gallery.Core.Features.Vaults.Publication;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
@@ -9,10 +9,6 @@ namespace Gallery.Core.Features.Vaults;
 
 internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession vaultSession)
 {
-    private const string CreationMarkerFileName = ".vault-create.json";
-    private const string CreationStagingPrefix = ".vault-create-";
-    private sealed record CreationPublication(string StagingDirectory, string CatalogSha256, string HeaderSha256);
-
     public async Task<string> CreateVaultAsync(
         string passphrase,
         string confirmation,
@@ -31,7 +27,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
             var vaultRoot = galleryLifetime.Current.VaultStore.Root;
             CatalogDirectoryRules.RequireLocalCatalogDirectory(vaultRoot);
             EnsureCheckout();
-            RecoverInterruptedCreation(vaultRoot);
+            VaultCreationPublication.RecoverInterruptedCreation(vaultRoot);
             EnsureVaultDoesNotExist(vaultRoot);
             return await CreateAndPublishVaultAsync(vaultRoot, passphrase, galleryName, storageOptions);
         }
@@ -54,7 +50,7 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         {
             using var keyLease = vaultSession.AcquireUnlockedSession().Borrow();
             EnsureCheckout();
-            await galleryLifetime.Current.VaultStore.RenameAsync(galleryName);
+            await galleryLifetime.Current.VaultStore.RenameVaultAsync(galleryName);
         }
         finally { galleryLifetime.Gate.Release(); }
     }
@@ -65,28 +61,38 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         string galleryName,
         MediaStorageOptions? storageOptions)
     {
-        var staging = CreateStagingDirectory(vaultRoot);
+        var staging = VaultCreationPublication.CreateStagingDirectory(vaultRoot);
         byte[]? createdKey = null;
         try
         {
             var stagedVaultStore = new VaultStore(staging);
-            var createdVault = await stagedVaultStore.CreateAsync(passphrase, galleryName, galleryLifetime.StoreFactory.NewCatalogBackend);
+            var createdVault = await stagedVaultStore.CreateVaultAsync(passphrase, galleryName, galleryLifetime.StoreFactory.NewCatalogBackend);
             createdKey = createdVault.Key;
             await InitializeStagedCatalogAsync(staging, storageOptions, createdKey);
             EnsureActive();
             SaveVaultHistory(vaultRoot);
-            using (var activation = vaultSession.PrepareUnlock(createdKey))
+            vaultSession.PublishUnlock(createdKey, () =>
             {
-                PublishCreatedVault(staging, vaultRoot);
-                activation.Commit();
-            }
+                VaultCreationPublication.Prepare(staging, vaultRoot);
+                var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
+                try
+                {
+                    MoveCreatedVaultFiles(staging, vaultRoot, catalogPath);
+                }
+                catch
+                {
+                    VaultCreationPublication.RecoverInterruptedCreation(vaultRoot);
+                    throw;
+                }
+                VaultCreationPublication.RemoveReceipt(vaultRoot);
+            });
             return createdVault.Recovery;
         }
         finally
         {
             if (createdKey is not null) CryptographicOperations.ZeroMemory(createdKey);
-            if (!File.Exists(Path.Combine(vaultRoot, CreationMarkerFileName)))
-                DeleteCreationStaging(staging);
+            if (!VaultCreationPublication.HasReceipt(vaultRoot))
+                VaultCreationPublication.DeleteStaging(staging);
         }
     }
 
@@ -107,9 +113,6 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
         }
     }
 
-    private static string CreateStagingDirectory(string vaultRoot) =>
-        Path.Combine(vaultRoot, CreationStagingPrefix + Guid.NewGuid().ToString("N"));
-
     private async Task InitializeStagedCatalogAsync(
         string staging, MediaStorageOptions? storageOptions, byte[] createdKey)
     {
@@ -122,95 +125,11 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
 
     private void SaveVaultHistory(string vaultRoot) => galleryLifetime.History?.Save(vaultRoot);
 
-    private static void PublishCreatedVault(string staging, string vaultRoot)
+    private static void MoveCreatedVaultFiles(string staging, string vaultRoot, string catalogPath)
     {
-        PrepareCreationPublication(staging, vaultRoot);
-        var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
-        try
-        {
-            File.Move(Path.Combine(staging, GalleryStoreFactory.CatalogFileName), catalogPath, overwrite: false);
-            File.Move(Path.Combine(staging, VaultStore.HeaderFileName),
-                Path.Combine(vaultRoot, VaultStore.HeaderFileName), overwrite: false);
-        }
-        catch
-        {
-            RecoverInterruptedCreation(vaultRoot);
-            throw;
-        }
-        File.Delete(Path.Combine(vaultRoot, CreationMarkerFileName));
-    }
-
-    private static void PrepareCreationPublication(string staging, string vaultRoot)
-    {
-        var publication = new CreationPublication(Path.GetFileName(staging),
-            FileHash(Path.Combine(staging, GalleryStoreFactory.CatalogFileName)),
-            FileHash(Path.Combine(staging, VaultStore.HeaderFileName)));
-        var stagedMarker = Path.Combine(staging, CreationMarkerFileName);
-        using (var stream = new FileStream(stagedMarker, FileMode.CreateNew, FileAccess.Write,
-            FileShare.None, 4096, FileOptions.WriteThrough))
-        {
-            JsonSerializer.Serialize(stream, publication);
-            stream.Flush(flushToDisk: true);
-        }
-        File.Move(stagedMarker, Path.Combine(vaultRoot, CreationMarkerFileName), overwrite: false);
-    }
-
-    // Caller holds the destination checkout. A durable receipt identifies only this creation's files.
-    internal static void RecoverInterruptedCreation(string vaultRoot)
-    {
-        var markerPath = Path.Combine(vaultRoot, CreationMarkerFileName);
-        if (!File.Exists(markerPath)) return;
-        CreationPublication? publication;
-        try { publication = JsonSerializer.Deserialize<CreationPublication>(File.ReadAllText(markerPath)); }
-        catch (JsonException exception)
-        {
-            throw new IOException("The interrupted gallery creation receipt is invalid; existing files were preserved.", exception);
-        }
-        if (publication is null || publication.StagingDirectory is null
-            || !publication.StagingDirectory.StartsWith(CreationStagingPrefix, StringComparison.Ordinal)
-            || !Guid.TryParseExact(publication.StagingDirectory[CreationStagingPrefix.Length..], "N", out _)
-            || !IsFileHash(publication.CatalogSha256) || !IsFileHash(publication.HeaderSha256))
-            throw new IOException("The interrupted gallery creation receipt is invalid; existing files were preserved.");
-
-        var staging = Path.Combine(vaultRoot, publication.StagingDirectory);
-        if (Directory.Exists(staging) && File.GetAttributes(staging).HasFlag(FileAttributes.ReparsePoint))
-            throw new IOException("The interrupted gallery staging directory cannot be a symbolic link.");
-        var catalogPath = Path.Combine(vaultRoot, GalleryStoreFactory.CatalogFileName);
-        var headerPath = Path.Combine(vaultRoot, VaultStore.HeaderFileName);
-        if (File.Exists(headerPath))
-        {
-            if (FileHash(headerPath) != publication.HeaderSha256)
-                throw new IOException("The gallery header changed after interrupted creation; existing files were preserved.");
-        }
-        else if (File.Exists(catalogPath))
-        {
-            var stagedCatalog = Path.Combine(staging, GalleryStoreFactory.CatalogFileName);
-            var stagedHeader = Path.Combine(staging, VaultStore.HeaderFileName);
-            if (File.Exists(stagedCatalog) || !File.Exists(stagedHeader)
-                || FileHash(stagedHeader) != publication.HeaderSha256
-                || FileHash(catalogPath) != publication.CatalogSha256
-                || File.Exists(catalogPath + "-wal") || File.Exists(catalogPath + "-shm"))
-                throw new IOException("The catalog cannot be identified as an interrupted creation; existing files were preserved.");
-            File.Move(catalogPath, stagedCatalog, overwrite: false);
-        }
-        if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
-        File.Delete(markerPath);
-    }
-
-    private static bool IsFileHash(string? value) =>
-        value is { Length: 64 } && value.All(char.IsAsciiHexDigit);
-
-    private static string FileHash(string path)
-    {
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream));
-    }
-
-    private static void DeleteCreationStaging(string staging)
-    {
-        try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        File.Move(Path.Combine(staging, GalleryStoreFactory.CatalogFileName), catalogPath, overwrite: false);
+        File.Move(Path.Combine(staging, VaultStore.HeaderFileName),
+            Path.Combine(vaultRoot, VaultStore.HeaderFileName), overwrite: false);
     }
 
     private void EnsureActive() =>
@@ -226,9 +145,12 @@ internal sealed class VaultManager(GalleryLifetime galleryLifetime, VaultSession
 
     private static void ValidatePassphrase(string passphrase)
     {
-        if (string.IsNullOrWhiteSpace(passphrase) || passphrase.Length < 14)
+        if (!IsAcceptablePassphrase(passphrase))
             throw new InvalidOperationException("Use a passphrase of at least 14 characters; a long unique phrase is recommended.");
     }
+
+    private static bool IsAcceptablePassphrase(string passphrase) =>
+        !string.IsNullOrWhiteSpace(passphrase) && passphrase.Length >= 14;
 
     private static string NormalizeGalleryName(string galleryName)
     {

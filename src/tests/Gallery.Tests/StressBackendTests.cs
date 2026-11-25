@@ -37,7 +37,7 @@ public sealed class StressBackendTests
         var workspace = Path.Combine(root, "workspace");
         try
         {
-            var created = await new VaultStore(vault).CreateAsync(TestVault.Passphrase, backend: backend);
+            var created = await new VaultStore(vault).CreateVaultAsync(TestVault.Passphrase, backend: backend);
             CryptographicOperations.ZeroMemory(created.Key);
             var automatic = new StressOptions(["build", "--workspace", workspace]);
             Assert.Equal(backend, StressVault.ResolveBackend(automatic, vault));

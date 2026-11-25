@@ -38,6 +38,62 @@ public sealed class VaultHistoryTests : IDisposable
     }
 
     [Fact]
+    public void History_MalformedLegacySelection_DoesNotBlockValidGalleryListAndIsRepairedOnSave()
+    {
+        Directory.CreateDirectory(root);
+        var first = Path.Combine(root, "first");
+        var second = Path.Combine(root, "second");
+        File.WriteAllText(Path.Combine(root, "galleries.json"), JsonSerializer.Serialize(new[] { first }));
+        File.WriteAllText(Path.Combine(root, "last-vault.json"), "{not-json");
+
+        var history = new VaultHistory(root);
+
+        Assert.Null(history.Read());
+        Assert.Equal([first], history.ReadGalleries());
+        history.Save(second);
+        Assert.Equal(second, new VaultHistory(root).Read());
+        Assert.Equal([second, first], new VaultHistory(root).ReadGalleries());
+    }
+
+    [Fact]
+    public void History_MalformedGalleries_ArePreservedAndReplacedOnSave()
+    {
+        Directory.CreateDirectory(root);
+        var first = Path.Combine(root, "first");
+        var second = Path.Combine(root, "second");
+        File.WriteAllText(Path.Combine(root, "last-vault.json"), JsonSerializer.Serialize(first));
+        var malformed = "{not-json";
+        File.WriteAllText(Path.Combine(root, "galleries.json"), malformed);
+
+        var history = new VaultHistory(root);
+
+        Assert.Equal([first], history.ReadGalleries());
+        var preserved = Directory.GetFiles(root, "galleries.json.corrupt.*.json");
+        Assert.Single(preserved);
+        Assert.Equal(malformed, File.ReadAllText(preserved[0]));
+        history.Save(second);
+        Assert.Equal([second, first], new VaultHistory(root).ReadGalleries());
+    }
+
+    [Fact]
+    public void History_Save_DoesNotOverwriteMalformedGalleries_WhenPreservationFails()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        Directory.CreateDirectory(root);
+        var malformed = "{not-json";
+        var galleriesPath = Path.Combine(root, "galleries.json");
+        File.WriteAllText(galleriesPath, malformed);
+        File.WriteAllText(Path.Combine(root, "last-vault.json"), JsonSerializer.Serialize(Path.Combine(root, "first")));
+        using var lockHandle = new FileStream(galleriesPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var history = new VaultHistory(root);
+
+        history.Save(Path.Combine(root, "second"));
+
+        Assert.Equal(malformed, File.ReadAllText(galleriesPath));
+        Assert.Empty(Directory.GetFiles(root, "galleries.json.corrupt.*.json"));
+    }
+
+    [Fact]
     public async Task KnownGalleries_TracksCreatedAndOpenedGalleries_AndReadsCurrentNames()
     {
         var first = Path.Combine(root, "first");

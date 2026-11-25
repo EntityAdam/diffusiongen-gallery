@@ -8,7 +8,6 @@ internal static class PromptRules
     /// <summary>Groups exactly matching prompts (shared groups first, largest first), then unique and missing prompts.</summary>
     public static List<PromptGroup> GroupByPrompt(IEnumerable<ImageRecord> records)
     {
-        ArgumentNullException.ThrowIfNull(records);
         List<(string Prompt, List<ImageRecord> Images)> promptGroups;
         List<ImageRecord> imagesWithoutPrompts;
         (promptGroups, imagesWithoutPrompts) = CollectPromptGroups(records);
@@ -52,9 +51,9 @@ internal static class PromptRules
         List<(string Prompt, List<ImageRecord> Images)> promptGroups)
     {
         var uniquelyPromptedImages = promptGroups.Where(promptGroup => promptGroup.Images.Count == 1)
-            .SelectMany(promptGroup => promptGroup.Images).ToList();
-        if (uniquelyPromptedImages.Count > 0)
-            orderedPromptGroups.Add(new(PromptGroup.Unique, "", uniquelyPromptedImages.ToImmutableArray()));
+            .SelectMany(promptGroup => promptGroup.Images).ToImmutableArray();
+        if (!uniquelyPromptedImages.IsEmpty)
+            orderedPromptGroups.Add(new(PromptGroup.Unique, "", uniquelyPromptedImages));
     }
 
     private static void AppendImagesWithoutPrompts(List<PromptGroup> orderedPromptGroups,

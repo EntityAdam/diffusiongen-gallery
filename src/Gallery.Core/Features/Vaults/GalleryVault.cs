@@ -8,11 +8,18 @@ namespace Gallery.Core.Features.Vaults;
 internal sealed class GalleryVault(GalleryLifetime galleryLifetime, VaultSession vaultSession, VaultAccess vaultAccess,
     VaultManager vaultManager, VaultLocationCoordinator vaultLocations) : IGalleryVault
 {
+    private void GuardIngestionProgressCallback(string operation) =>
+        IngestionProgressCallbackGuard.ThrowIfActive(operation, galleryLifetime.Current.VaultStore.Root);
+
     public bool CatalogIsOnNetworkDrive => CatalogDirectoryRules.IsNetworkDirectory(VaultRoot);
 
     /// <summary>Relocates only the encrypted catalog and header; all encrypted media stays at its existing paths.</summary>
 
-    public Task RelocateCatalogAsync(string directory) => vaultLocations.RelocateCatalogAsync(directory);
+    public Task RelocateCatalogAsync(string directory)
+    {
+        GuardIngestionProgressCallback("relocate the catalog");
+        return vaultLocations.RelocateCatalogAsync(directory);
+    }
 
     public bool IsUnlocked => vaultSession.IsUnlocked;
 
@@ -21,15 +28,21 @@ internal sealed class GalleryVault(GalleryLifetime galleryLifetime, VaultSession
     public string VaultRoot => galleryLifetime.Current.VaultStore.Root;
 
     public Task<string> CreateVaultAsync(string passphrase, string confirmation, string? name = null,
-     MediaStorageOptions? storageOptions = null) =>
-     vaultManager.CreateVaultAsync(passphrase, confirmation, name, storageOptions);
+     MediaStorageOptions? storageOptions = null)
+    {
+        GuardIngestionProgressCallback("create a vault");
+        return vaultManager.CreateVaultAsync(passphrase, confirmation, name, storageOptions);
+    }
 
     public Task UnlockWithPassphraseAsync(string passphrase) => vaultAccess.UnlockWithPassphraseAsync(passphrase);
 
     public Task UnlockWithRecoveryPhraseAsync(string recoveryPhrase) => vaultAccess.UnlockWithRecoveryPhraseAsync(recoveryPhrase);
 
-    public Task ChangePassphraseAsync(string passphrase, string confirmation) =>
-        vaultManager.ChangePassphraseAsync(passphrase, confirmation);
+    public Task ChangePassphraseAsync(string passphrase, string confirmation)
+    {
+        GuardIngestionProgressCallback("change the passphrase");
+        return vaultManager.ChangePassphraseAsync(passphrase, confirmation);
+    }
 
     public event Action? OnAutoLocked
     {
@@ -47,21 +60,49 @@ internal sealed class GalleryVault(GalleryLifetime galleryLifetime, VaultSession
 
     public void Panic() => LockVault();
 
-    public void LockVault() => vaultAccess.LockVault();
+    public void LockVault()
+    {
+        GuardIngestionProgressCallback("lock the vault");
+        vaultAccess.LockVault();
+    }
 
     public string VaultName => galleryLifetime.Current.VaultStore.Name;
 
     public IReadOnlyList<GalleryLocation> KnownGalleries => vaultLocations.KnownGalleries;
 
-    public Task OpenExistingVaultAsync(string directory) => vaultLocations.OpenExistingVaultAsync(directory);
+    public Task OpenExistingVaultAsync(string directory)
+    {
+        GuardIngestionProgressCallback("open a vault");
+        return vaultLocations.OpenExistingVaultAsync(directory);
+    }
 
-    public Task SelectNewVaultAsync(string directory) => vaultLocations.SelectNewVaultAsync(directory);
+    public Task SelectNewVaultAsync(string directory)
+    {
+        GuardIngestionProgressCallback("select a new vault location");
+        return vaultLocations.SelectNewVaultAsync(directory);
+    }
 
-    public Task CloseVaultAsync() => vaultLocations.CloseVaultAsync();
+    public Task CloseVaultAsync()
+    {
+        GuardIngestionProgressCallback("close the vault");
+        return vaultLocations.CloseVaultAsync();
+    }
 
-    public Task RenameVaultAsync(string name) => vaultManager.RenameVaultAsync(name);
+    public Task RenameVaultAsync(string name)
+    {
+        GuardIngestionProgressCallback("rename the vault");
+        return vaultManager.RenameVaultAsync(name);
+    }
 
-    public Task MoveVaultAsync(string directory) => vaultLocations.MoveVaultAsync(directory);
+    public Task MoveVaultAsync(string directory)
+    {
+        GuardIngestionProgressCallback("move the vault");
+        return vaultLocations.MoveVaultAsync(directory);
+    }
 
-    public Task PurgeVaultAsync(string confirmation) => vaultLocations.PurgeVaultAsync(confirmation);
+    public Task PurgeVaultAsync(string confirmation)
+    {
+        GuardIngestionProgressCallback("purge the vault");
+        return vaultLocations.PurgeVaultAsync(confirmation);
+    }
 }

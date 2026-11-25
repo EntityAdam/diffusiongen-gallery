@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Gallery.Core.Exceptions;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 
 namespace Gallery.Tests;
 
@@ -37,7 +37,7 @@ public sealed class ExceptionContractAssertionTests
     public void Context_WhenReusedOrReplaced_ThenExceptionKeepsItsSnapshotAndDiagnosticRendering()
     {
         var context = new ContextualData().Add("Import.Detail", "original");
-        var exception = CaptureThrown(new ImportFolderException("Cannot import", new GalleryLogEvent("Gallery.ImportFolder"), context));
+        var exception = CaptureThrown(new ImportFolderException("Cannot import", new LogEventGallery("Gallery.ImportFolder"), context));
         context.Add("Import.Detail", "changed");
         var returned = exception.ContextualDataByName;
         returned.Add("Import.Detail", "returned change");
@@ -59,7 +59,7 @@ public sealed class ExceptionContractAssertionTests
         var expected = ExpectedExceptionContract.Create(typeof(ImportFolderException), ["cannot", "import"],
             HttpStatusCode.InternalServerError, Severity.Error, "One or more files could not be imported.",
             "Gallery.ImportFolder", new Dictionary<string, object?> { ["Import.Detail"] = nested });
-        var actual = CaptureThrown(new ImportFolderException("Cannot import this folder", new GalleryLogEvent("Gallery.ImportFolder"),
+        var actual = CaptureThrown(new ImportFolderException("Cannot import this folder", new LogEventGallery("Gallery.ImportFolder"),
             new ContextualData().Add("Import.Detail", nested),
             new AggregateException(new InvalidOperationException("provider failure"))));
 

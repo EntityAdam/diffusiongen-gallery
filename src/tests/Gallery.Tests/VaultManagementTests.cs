@@ -2,9 +2,11 @@ using System.Collections.Immutable;
 using System.IO.Compression;
 using System.Net.Sockets;
 using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
+using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Services;
 using Gallery.Web.Composition;
@@ -80,6 +82,57 @@ public sealed class VaultManagementTests
         Assert.False(fixture.Scope.Vault.IsUnlocked);
     }
 
+    [Fact]
+    public async Task Unlock_WhenLockArrivesBeforeAdmissionCompletes_ThenDoesNotReactivateTheVault()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        var lifetime = (GalleryLifetime)typeof(GalleryScope)
+            .GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(fixture.Scope)!;
+
+        await lifetime.Gate.WaitAsync();
+        Task unlocking;
+        try
+        {
+            unlocking = fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            Assert.False(unlocking.IsCompleted);
+            fixture.Scope.Vault.LockVault();
+        }
+        finally { lifetime.Gate.Release(); }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => unlocking);
+        Assert.False(fixture.Scope.Vault.IsUnlocked);
+        using var releasedCheckout = await WaitForCheckoutReleaseAsync(fixture.Root);
+    }
+
+    [Fact]
+    public async Task Unlock_WhenHistoryCannotBeWritten_ThenDoesNotActivateTheVault()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+        await fixture.Scope.Vault.CloseVaultAsync();
+        var historyPath = fixture.Root + "-state";
+        var lifetime = (GalleryLifetime)typeof(GalleryScope)
+            .GetField("galleryLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(fixture.Scope)!;
+        lifetime.InitializeHistory(new VaultHistory(historyPath));
+        if (Directory.Exists(historyPath)) Directory.Delete(historyPath, recursive: true);
+        await File.WriteAllTextAsync(historyPath, "not a directory");
+
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(
+                () => fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+            Assert.False(fixture.Scope.Vault.IsUnlocked);
+        }
+        finally
+        {
+            if (File.Exists(historyPath)) File.Delete(historyPath);
+            await fixture.Scope.Vault.CloseVaultAsync();
+        }
+    }
+
     [Theory]
     [InlineData("http://account.blob.core.windows.net/container?sr=c&sp=rl&sig=x")]
     [InlineData("https://account.blob.core.windows.net/container/blob.zip?sr=c&sp=rl&sig=x")]
@@ -135,6 +188,52 @@ public sealed class VaultManagementTests
             DeleteTemporaryDirectory(destination);
             DeleteTemporaryDirectory(external);
         }
+    }
+
+    [Fact]
+    public async Task Move_PreservesSourceOrphanEncryptedFiles_NotOwnedByCatalog()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Travel vault");
+        await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(32, 24)), "first.png", "folder");
+        var destination = NewTemporaryDirectory();
+        var orphanDirectory = Path.Combine(fixture.Root, "images", "orphan-shard");
+        var orphanPath = Path.Combine(orphanDirectory, "orphan.dpng");
+        Directory.CreateDirectory(orphanDirectory);
+        await File.WriteAllBytesAsync(orphanPath, [1, 2, 3]);
+        try
+        {
+            await fixture.Scope.Vault.MoveVaultAsync(destination);
+            Assert.True(File.Exists(orphanPath));
+            await fixture.Scope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+            Assert.Single(await fixture.Scope.Catalog.ListAsync());
+        }
+        finally
+        {
+            await fixture.Scope.Vault.CloseVaultAsync();
+            DeleteTemporaryDirectory(destination);
+        }
+    }
+
+    [Fact]
+    public async Task Purge_DeletesOrphanedEncryptedAndRemovalStagingFiles_ButRetainsUnrelatedFiles()
+    {
+        using var fixture = new TestVault();
+        await fixture.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase, "Travel vault");
+        var images = Path.Combine(fixture.Root, "images", "orphan-shard");
+        Directory.CreateDirectory(images);
+        var orphanPath = Path.Combine(images, "orphan.dpng");
+        var stagedPath = Path.Combine(images, "pending.dpng.removing-queued");
+        var unrelatedPath = Path.Combine(images, "notes.txt");
+        await File.WriteAllBytesAsync(orphanPath, [1, 2, 3]);
+        await File.WriteAllBytesAsync(stagedPath, [4, 5, 6]);
+        await File.WriteAllTextAsync(unrelatedPath, "keep");
+
+        await fixture.Scope.Vault.PurgeVaultAsync("PURGE");
+
+        Assert.False(File.Exists(orphanPath));
+        Assert.False(File.Exists(stagedPath));
+        Assert.Equal("keep", await File.ReadAllTextAsync(unrelatedPath));
     }
 
     [Fact]

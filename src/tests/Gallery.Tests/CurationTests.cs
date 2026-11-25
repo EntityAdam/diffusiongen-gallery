@@ -1,6 +1,9 @@
-using Gallery.Core.Services.Processors;
+using System.Security.Cryptography;
 using System.Text;
+using Gallery.Core.Services.Processors;
 using Gallery.Core.Exceptions;
+using Gallery.Core.Features.Vaults.Security;
+using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using SixLabors.ImageSharp;
@@ -94,6 +97,25 @@ public sealed class CurationTests
         // A rescan reuses cached fingerprints and reflects curation changes in the keeper.
         Assert.Equal((3, 3), finalProgress[0]);
         Assert.Equal(small.Id, Assert.Single(rescan.Groups).KeepId);
+    }
+
+    [Fact]
+    public async Task DuplicateScan_WhenCachedHashesUseLegacyPngSha256Field_ReusesThem()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(40, 30, 0)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(MakePattern(40, 30, 1)), "second.png", "folder");
+        await DuplicateCacheArrangement.ArrangeAsync(fixture, [(first, 1UL), (second, 2UL)]);
+        var progress = new SynchronousProgress();
+
+        await fixture.Scope.Duplicates.ScanDuplicatesAsync(progress);
+        var cachedHashes = await fixture.RawStore.ReadSettingsAsync("perceptual-hashes");
+        var serializedHashes = Encoding.UTF8.GetString(
+            VaultCrypto.Decrypt(cachedHashes!, fixture.Session.Key, "perceptual-hashes:v1"));
+
+        Assert.Equal((2, 2), progress.Snapshot()[0]);
+        Assert.Contains("\"PngSha256\"", serializedHashes, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -305,6 +327,73 @@ public sealed class CurationTests
         Assert.All(group, id => Assert.Contains(id, outsideKeeperError.Message, StringComparison.Ordinal));
         var unchanged = Assert.Single(afterRejectedDecisions, image => image.Id == b.Id);
         Assert.True(unchanged.IsMarkedForDeletion);
+        Assert.All(afterRejectedDecisions, image => Assert.Equal(marks[image.Id], image.IsMarkedForDeletion));
+    }
+
+    [Fact]
+    public async Task DuplicateDecision_WhenGroupUsesCaseInsensitiveIdentity_RejectsCaseMismatchBeforeUpdating()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var sourceHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("keeper-source")));
+        var contentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("keeper-content")));
+        var imageRecord = new ImageRecord
+        {
+            Id = "Keeper-A",
+            Name = "keeper.png",
+            StoredPath = Path.Combine(fixture.Root, "keeper.dpng"),
+            Sha256 = sourceHash,
+            ContentSha256 = contentHash
+        };
+        using var key = fixture.Session.AcquireUnlockedSession().Borrow();
+        var thumbnail = GalleryTests.MakePng();
+        var encryptedThumbnail = VaultCrypto.Encrypt(thumbnail, key.Bytes, $"thumbnail:{imageRecord.Id}");
+        await fixture.Store.CommitImportsAsync([new ImportCatalogEntry(imageRecord, encryptedThumbnail)], key.Bytes);
+        var groupImageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { imageRecord.Id };
+        var keep = new HashSet<string>(StringComparer.Ordinal) { "keeper-a" };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Duplicates.ApplyDuplicateDecisionAsync(groupImageIds, keep));
+
+        Assert.Contains("keeper-a", error.Message, StringComparison.Ordinal);
+        Assert.False(Assert.Single(await fixture.Scope.Catalog.ListAsync()).IsMarkedForDeletion);
+    }
+
+    [Fact]
+    public async Task DuplicateDecision_WhenKeeperWasRemoved_LeavesRemainingGroupUnchanged()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var survivor = await fixture.Scope.Ingestion.ImportAsync(
+            new MemoryStream(MakePattern(40, 30, 0)), "survivor.png", "folder");
+        const string removedKeeperId = "removed-keeper";
+
+        var error = await Assert.ThrowsAsync<AggregateException>(() =>
+            fixture.Scope.Duplicates.ApplyDuplicateDecisionAsync(
+                [removedKeeperId, survivor.Id], new HashSet<string> { removedKeeperId }));
+
+        Assert.Contains(removedKeeperId, error.Message, StringComparison.Ordinal);
+        Assert.False(Assert.Single(await fixture.Scope.Catalog.ListAsync()).IsMarkedForDeletion);
+    }
+
+    [Fact]
+    public void DuplicateCandidateInputs_AreValidatedAtTheCapabilityBoundary()
+    {
+        using var fixture = new TestVault();
+
+        var nullKeeperCandidates = Assert.Throws<ArgumentNullException>(() =>
+            fixture.Scope.Duplicates.PickDuplicateKeeper(null!));
+        var emptyKeeperCandidates = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Scope.Duplicates.PickDuplicateKeeper([]));
+        var nullInitialKeepers = Assert.Throws<ArgumentNullException>(() =>
+            fixture.Scope.Duplicates.InitialDuplicateKeepers(null!));
+        var emptyInitialKeepers = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Scope.Duplicates.InitialDuplicateKeepers([]));
+
+        Assert.Equal("candidates", nullKeeperCandidates.ParamName);
+        Assert.Equal("candidates", nullInitialKeepers.ParamName);
+        Assert.Contains("candidate count was 0", emptyKeeperCandidates.Message, StringComparison.Ordinal);
+        Assert.Equal(emptyKeeperCandidates.Message, emptyInitialKeepers.Message);
     }
 
     // One recorder belongs to one awaited scan; Report completes capture synchronously.

@@ -7,7 +7,6 @@ internal static class DiffusionModelRules
 {
     public static List<DiffusionModelGroup> GroupByDiffusionModel(IEnumerable<ImageRecord> records)
     {
-        ArgumentNullException.ThrowIfNull(records);
         Dictionary<string, List<ImageRecord>> imagesByModel;
         List<string> orderedModels;
         List<ImageRecord> imagesWithoutModel;

@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Data.Common;
 using Gallery.Core.Features.Tags;
 using Gallery.Core.Models;
 
@@ -7,17 +7,36 @@ namespace Gallery.Core.Infrastructure.Persistence.Turso;
 internal sealed partial class TursoGalleryStore
 {
     public Task CommitTagCatalogAsync(IReadOnlyList<ImageRecord> records, TagCatalog catalog,
-        IReadOnlyList<SavedView>? views, byte[] key) => ExecuteAsync(key, async connection =>
+        IReadOnlyList<SavedView>? views, byte[] key) =>
+        ExecuteAsync(key, connection => CommitTagCatalogAsync(connection, records, catalog, views));
+
+    private static async Task CommitTagCatalogAsync(DbConnection connection, IReadOnlyList<ImageRecord> records,
+        TagCatalog catalog, IReadOnlyList<SavedView>? views)
     {
         using var transaction = connection.BeginTransaction();
-        foreach (var record in records) await WriteRecordAsync(connection, transaction, record, insert: false);
-        await NonQueryAsync(connection,
-            "INSERT INTO settings(id,payload) VALUES($id,$payload) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", transaction,
-            ("$id", TagCatalog.SettingId), ("$payload", JsonSerializer.Serialize(catalog)));
+        await UpdateTagRecordsAsync(connection, transaction, records);
+        await UpsertSettingAsync(connection, transaction, TagCatalog.SettingId, catalog);
         if (views is not null)
-            await NonQueryAsync(connection,
-                "INSERT INTO settings(id,payload) VALUES($id,$payload) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", transaction,
-                ("$id", "saved-views"), ("$payload", JsonSerializer.Serialize(views)));
+            await UpsertSettingAsync(connection, transaction, SavedViewsSettingId, views);
         transaction.Commit();
-    });
+    }
+
+    private static async Task UpdateTagRecordsAsync(DbConnection connection, DbTransaction transaction,
+        IReadOnlyList<ImageRecord> records)
+    {
+        var existingRecords = await ReadBrowseRecordsAsync(connection, transaction,
+            records.Select(record => record.Id).Distinct(StringComparer.Ordinal).ToArray(), CancellationToken.None);
+        var existingById = existingRecords.ToDictionary(record => record.Id, StringComparer.Ordinal);
+        foreach (var record in records)
+        {
+            await WriteMediaRowAsync(connection, transaction, record, RecordWriteMode.Update);
+            await UpsertMediaMetadataAsync(connection, transaction, record);
+            if (!existingById.TryGetValue(record.Id, out var existing)
+                || !existing.Collections.SequenceEqual(record.Collections))
+                await ReplaceCollectionsAsync(connection, transaction, record);
+            if (existing is null || existing.Generation != record.Generation)
+                await ReplaceGenerationAsync(connection, transaction, record);
+            existingById[record.Id] = record;
+        }
+    }
 }

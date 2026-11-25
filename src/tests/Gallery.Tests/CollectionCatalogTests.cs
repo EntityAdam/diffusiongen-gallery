@@ -42,6 +42,25 @@ public sealed class CollectionCatalogTests
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
+    public async Task UndoCannotReplaceAnotherVaultsCollectionCatalog(CatalogBackend backend)
+    {
+        using var source = new ServiceFixture(backend);
+        using var destination = new ServiceFixture(backend);
+        await source.InitializeAsync();
+        await destination.InitializeAsync();
+        var sourceCollection = await source.Scope.Collections.CreateCollectionAsync("Source");
+        var undo = (await source.Scope.Collections.RenameCollectionAsync(sourceCollection.Id, "Source renamed")).Undo;
+        var destinationCollection = await destination.Scope.Collections.CreateCollectionAsync("Destination");
+        await destination.Scope.Collections.RenameCollectionAsync(destinationCollection.Id, "Destination renamed");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => destination.Scope.Collections.UndoCollectionChangeAsync(undo));
+
+        Assert.Equal("Destination renamed", Assert.Single((await destination.Scope.Collections.LoadCollectionCatalogAsync()).Collections).Name);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
     public async Task FailedDestinationMoveLeavesNoContainersAndExistingDestinationsAreReused(CatalogBackend backend)
     {
         using var fixture = new ServiceFixture(backend);
@@ -59,6 +78,22 @@ public sealed class CollectionCatalogTests
         Assert.Single(reused.Catalog.Sets);
         Assert.Equal(moved.Catalog.Sets[0].Id, reused.Catalog.Sets[0].Id);
         Assert.All(await fixture.Scope.Catalog.ListAsync(), image => Assert.Equal(moved.Catalog.Sets[0].Id, image.SetId));
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task DestinationMoveIgnoresInvalidNamesWhenBothDestinationIdsAreProvided(CatalogBackend backend)
+    {
+        using var fixture = new ServiceFixture(backend);
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
+        var collection = await fixture.Scope.Collections.CreateCollectionAsync("Collection");
+        var set = await fixture.Scope.Collections.CreateSetAsync(collection.Id, "Set");
+
+        await fixture.Scope.Collections.MoveMediaToDestinationAsync([image.Id], "\n", "\n", collection.Id, set.Id);
+
+        Assert.Equal(set.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).SetId);
     }
 
     [Theory]
@@ -124,16 +159,54 @@ public sealed class CollectionCatalogTests
         using var fixture = new ServiceFixture(backend);await fixture.InitializeAsync();
         var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "image.png", "folder");
         var a = await fixture.Scope.Collections.CreateCollectionAsync("Old");var b = await fixture.Scope.Collections.CreateCollectionAsync("Other");var set = await fixture.Scope.Collections.CreateSetAsync(a.Id, "First");
-        await fixture.Scope.Collections.MoveMediaToSetAsync([image.Id], set.Id);await fixture.Scope.Settings.SaveViewAsync("Saved", new GalleryFilter { Collection = "Old" });
+        await fixture.Scope.Collections.MoveMediaToSetAsync([image.Id], set.Id);
+        await fixture.Scope.Settings.SaveViewAsync("Saved", new GalleryFilter { Collection = "Old" });
+        await fixture.Scope.Settings.SaveViewAsync("Already renamed", new GalleryFilter { Collection = "Renamed", Tag = "preserved" });
         var renamed = await fixture.Scope.Collections.RenameCollectionAsync(a.Id, "Renamed");
-        Assert.Equal("Renamed", Assert.Single(await fixture.Scope.Catalog.ListAsync()).Collections[0]);Assert.Equal("Renamed", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Collection);
+        Assert.Equal("Renamed", Assert.Single(await fixture.Scope.Catalog.ListAsync()).Collections[0]);        Assert.Equal("Renamed", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync(), view => view.Name == "Saved").GalleryFilter.Collection);
+        await fixture.Scope.Settings.SaveViewAsync("Saved", new GalleryFilter { Collection = "Renamed", Tag = "updated", MinRating = 4 });
         await fixture.Scope.Collections.UndoCollectionChangeAsync(renamed.Undo);
-        Assert.Equal("Old", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Collection);
+        var views = await fixture.Scope.Settings.LoadViewsAsync();
+        Assert.Equal("Old", Assert.Single(views, view => view.Name == "Saved").GalleryFilter.Collection);
+        Assert.Equal("updated", Assert.Single(views, view => view.Name == "Saved").GalleryFilter.Tag);
+        Assert.Equal(4, Assert.Single(views, view => view.Name == "Saved").GalleryFilter.MinRating);
+        Assert.Equal("Renamed", Assert.Single(views, view => view.Name == "Already renamed").GalleryFilter.Collection);
         await fixture.Scope.Collections.RenameCollectionAsync(a.Id, "Renamed");
         await fixture.Scope.Collections.MoveSetAsync(set.Id, b.Id);Assert.Equal("Other", Assert.Single(await fixture.Scope.Catalog.ListAsync()).Collections[0]);
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Collections.MoveMediaToSetAsync([image.Id, "missing"], null));
         Assert.Equal(set.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).SetId);
         await fixture.Scope.Collections.DeleteContainerAsync(set.Id, true);Assert.Null(Assert.Single(await fixture.Scope.Catalog.ListAsync()).SetId);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task UndoRenameRejectsSavedViewCollectionChangesMadeAfterRename(CatalogBackend backend)
+    {
+        using var fixture = new ServiceFixture(backend);
+        await fixture.InitializeAsync();
+        var collection = await fixture.Scope.Collections.CreateCollectionAsync("Old");
+        await fixture.Scope.Settings.SaveViewAsync("Saved", new GalleryFilter { Collection = "Old" });
+        var renamed = await fixture.Scope.Collections.RenameCollectionAsync(collection.Id, "Renamed");
+        await fixture.Scope.Settings.SaveViewAsync("Saved", new GalleryFilter { Collection = "Other" });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Collections.UndoCollectionChangeAsync(renamed.Undo));
+
+        Assert.Equal("Renamed", Assert.Single((await fixture.Scope.Collections.LoadCollectionCatalogAsync()).Collections).Name);
+        Assert.Equal("Other", Assert.Single(await fixture.Scope.Settings.LoadViewsAsync()).GalleryFilter.Collection);
+    }
+
+    [Fact]
+    public void PathOfReportsSetAndParentIdsWhenTheParentCollectionIsMissing()
+    {
+        var catalog = new CollectionCatalog([], [new("set-id", "missing-collection-id", "Set", 0)]);
+        var image = new ImageRecord { Id = "media-id", Name = "image.png", Sha256 = new string('A', 64), SetId = "set-id" };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => catalog.PathOf(image));
+
+        Assert.Contains("set-id", exception.Message);
+        Assert.Contains("missing-collection-id", exception.Message);
+        Assert.Contains("no matches", exception.Message);
     }
 
     [Theory]

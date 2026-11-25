@@ -1,5 +1,5 @@
 using Gallery.Core.Exceptions;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 
 namespace Gallery.Core.Features.Vaults.Session;
 
@@ -7,14 +7,19 @@ internal sealed class VaultSession : IDisposable
 {
     private const string UnlockRequiredMessage = "Unlock the gallery first.";
 
-    private readonly VaultLeaseState vaultLeaseState = new();
+    private readonly VaultLeaseState vaultLeaseState;
     private readonly Timer timer;
     private bool disposed;
 
-    public VaultSession() : this(TimeSpan.FromSeconds(5)) { }
+    public VaultSession() : this(TimeSpan.FromSeconds(5), TimeProvider.System) { }
 
-    internal VaultSession(TimeSpan timerInterval) =>
+    internal VaultSession(TimeSpan timerInterval) : this(timerInterval, TimeProvider.System) { }
+
+    internal VaultSession(TimeSpan timerInterval, TimeProvider timeProvider)
+    {
+        vaultLeaseState = new VaultLeaseState(timeProvider);
         timer = new Timer(_ => CheckInactivityTimeout(), null, timerInterval, timerInterval);
+    }
 
     public event Action? AutoLocked;
 
@@ -64,7 +69,7 @@ internal sealed class VaultSession : IDisposable
     private void RecordActivityTimestamp()
     {
         lock (vaultLeaseState.SyncRoot)
-            if (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }) vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+            if (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }) vaultLeaseState.RecordActivity();
     }
 
     internal UnlockedVaultSession AcquireUnlockedSession()
@@ -74,48 +79,74 @@ internal sealed class VaultSession : IDisposable
         {
             if (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false })
             {
-                vaultLeaseState.LastAccessUtc = DateTimeOffset.UtcNow;
+                vaultLeaseState.RecordActivity();
                 return vaultLeaseState.UnlockedVaultSession;
             }
 
             var timedOut = vaultLeaseState.UnlockedVaultSession?.HasTimedOut == true;
             throw new VaultLockedException(timedOut
                     ? "The gallery locked automatically due to inactivity."
-                    : UnlockRequiredMessage, GalleryLogEvent.AcquireVaultKey,
+                    : UnlockRequiredMessage, LogEventGallery.AcquireVaultKey,
                 new ContextualData().Add("Vault.State", timedOut ? "timed_out" : "locked"));
         }
     }
 
-    internal KeyLease? TryBorrowUnlockedKey(bool recordActivity = true)
+    internal KeyLease BorrowUnlockedKey(LeaseActivityPolicy leaseActivityPolicy)
     {
         CheckInactivityTimeout();
-        KeyLease? keyLease;
-        lock (vaultLeaseState.SyncRoot)
-            keyLease = vaultLeaseState.UnlockedVaultSession?.TryBorrow(recordActivity);
-        if (keyLease is null) CheckInactivityTimeout();
-        return keyLease;
+        try
+        {
+            lock (vaultLeaseState.SyncRoot)
+            {
+                var unlockedSession = vaultLeaseState.UnlockedVaultSession;
+                if (unlockedSession is null) throw CreateLockedException(timedOut: false);
+                return unlockedSession.Borrow(leaseActivityPolicy);
+            }
+        }
+        catch (VaultLockedException)
+        {
+            CheckInactivityTimeout();
+            throw;
+        }
     }
+
+    private static VaultLockedException CreateLockedException(bool timedOut) =>
+        new(timedOut
+                ? "The gallery locked automatically due to inactivity."
+                : UnlockRequiredMessage, LogEventGallery.AcquireVaultKey,
+            new ContextualData().Add("Vault.State", timedOut ? "timed_out" : "locked"));
 
     public void Unlock(byte[] suppliedKeyBytes)
     {
         ArgumentNullException.ThrowIfNull(suppliedKeyBytes);
-        using var activation = PrepareUnlock(suppliedKeyBytes);
-        activation.Commit();
+        PublishUnlock(suppliedKeyBytes, static () => { });
     }
 
-    // The caller must finish this synchronous scope without awaiting or changing threads.
-    internal VaultActivation PrepareUnlock(byte[] value)
+    // Publication must stay synchronous while the session monitor protects the previous generation.
+    internal void PublishUnlock(byte[] value, Action publish)
     {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(publish);
         Monitor.Enter(vaultLeaseState.SyncRoot);
+        UnlockedVaultSession? preparedSession = null;
+        var committed = false;
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            return new VaultActivation(value, vaultLeaseState);
+            preparedSession = new UnlockedVaultSession(value, vaultLeaseState);
+            publish();
+            vaultLeaseState.UnlockedVaultSession?.Revoke();
+            vaultLeaseState.UnlockedVaultSession = preparedSession;
+            vaultLeaseState.RecordActivity();
+            committed = true;
         }
-        catch
+        finally
         {
-            Monitor.Exit(vaultLeaseState.SyncRoot);
-            throw;
+            try
+            {
+                if (!committed) preparedSession?.Revoke();
+            }
+            finally { Monitor.Exit(vaultLeaseState.SyncRoot); }
         }
     }
 
@@ -129,22 +160,22 @@ internal sealed class VaultSession : IDisposable
         lock (vaultLeaseState.SyncRoot)
         {
             vaultLeaseState.UnlockedVaultSession?.Revoke();
-            return WaitForLeases();
+            return WaitForLeasesAsync();
         }
     }
 
     internal Task WhenDrainedAsync()
     {
-        lock (vaultLeaseState.SyncRoot) return WaitForLeases();
+        lock (vaultLeaseState.SyncRoot) return WaitForLeasesAsync();
     }
 
     internal (bool Unlocked, Task Drain) ReadCheckoutReleaseState()
     {
         lock (vaultLeaseState.SyncRoot)
-            return (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }, WaitForLeases());
+            return (vaultLeaseState.UnlockedVaultSession is { IsRevoked: false }, WaitForLeasesAsync());
     }
 
-    private Task WaitForLeases()
+    private Task WaitForLeasesAsync()
     {
         if (vaultLeaseState.ActiveLeases == 0) return Task.CompletedTask;
         return (vaultLeaseState.TaskCompletionSource ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
@@ -152,14 +183,15 @@ internal sealed class VaultSession : IDisposable
 
     internal void CheckInactivityTimeout()
     {
-        bool publish;
+        bool shouldPublishTimeoutNotification;
         lock (vaultLeaseState.SyncRoot)
         {
-            if (vaultLeaseState.UnlockedVaultSession?.HasExpired(DateTimeOffset.UtcNow) == true) vaultLeaseState.UnlockedVaultSession.Expire();
-            publish = vaultLeaseState.UnlockedVaultSession?.HasPendingTimeoutNotification == true;
-            if (publish) vaultLeaseState.UnlockedVaultSession!.AcknowledgeTimeout();
+            if (vaultLeaseState.UnlockedVaultSession?.HasExpired() == true)
+                vaultLeaseState.UnlockedVaultSession.Revoke(timedOut: true);
+            shouldPublishTimeoutNotification = vaultLeaseState.UnlockedVaultSession?.HasPendingTimeoutNotification == true;
+            if (shouldPublishTimeoutNotification) vaultLeaseState.UnlockedVaultSession!.AcknowledgeTimeout();
         }
-        if (publish) AutoLocked?.Invoke();
+        if (shouldPublishTimeoutNotification) AutoLockNotificationPublisher.Publish(AutoLocked);
     }
 
     public void Dispose()

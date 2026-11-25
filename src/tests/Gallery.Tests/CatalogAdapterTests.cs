@@ -67,6 +67,21 @@ public sealed class CatalogAdapterTests
     [Theory]
     [InlineData(CatalogBackend.Sqlite)]
     [InlineData(CatalogBackend.Turso)]
+    public async Task Fingerprint_lookup_uses_source_hash_not_content_hash(CatalogBackend backend)
+    {
+        using var fixture = new AdapterFixture(backend);
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var record = Record() with { Sha256 = new string('a', 64), ContentSha256 = new string('b', 64) };
+        using var thumbnail = new ImageThumbnail([1]);
+        await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
+
+        Assert.True(await fixture.Store.ContainsFingerprintAsync(sourceSha256: record.Sha256, fixture.Key));
+        Assert.False(await fixture.Store.ContainsFingerprintAsync(sourceSha256: record.ContentSha256, fixture.Key));
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
     public async Task Snapshot_preserves_logical_fingerprint_and_excludes_backup_settings(CatalogBackend backend)
     {
         using var fixture = new AdapterFixture(backend);
@@ -122,18 +137,22 @@ public sealed class CatalogAdapterTests
 
         var refreshed = record with { MetadataVersion = ComfyMetadata.Version, Generation = new() { Steps = 30 } };
         await store.UpdateAsync(record with { IsMarkedForDeletion = true }, key);
-        Assert.Null(await store.RefreshGenerationMetadataAsync(source, [refreshed], key, CancellationToken.None));
+        var conflict = await Assert.ThrowsAsync<CatalogRevisionConflictException>(() =>
+            store.RefreshGenerationMetadataAsync(source, [refreshed], key, CancellationToken.None));
+        Assert.Equal(source.Revision, conflict.ExpectedRevision);
+        Assert.True(conflict.ActualRevision > conflict.ExpectedRevision);
+        Assert.Equal(conflict.ActualRevision, await store.ReadStorageRevisionAsync(key));
         var afterEdit = await store.ReadRecordAsync(record.Id, key);
         Assert.True(afterEdit.IsMarkedForDeletion);
         Assert.Equal(0, afterEdit.MetadataVersion);
         if (backend == CatalogBackend.Sqlite)
-            Assert.Null(await store.ReadInitialPageAsync(12, markedOnly: true, key, CancellationToken.None));
+            Assert.Null(await store.ReadInitialPageAsync(12, InitialPageMode.Marked, key, CancellationToken.None));
 
         var current = await store.ReadCatalogSnapshotAsync(key, CancellationToken.None);
         var revision = await store.RefreshGenerationMetadataAsync(current,
             [refreshed with { IsMarkedForDeletion = true }], key, CancellationToken.None);
 
-        var page = Assert.IsType<GalleryCatalog>(await store.ReadInitialPageAsync(12, markedOnly: true, key, CancellationToken.None));
+        var page = Assert.IsType<GalleryCatalog>(await store.ReadInitialPageAsync(12, InitialPageMode.Marked, key, CancellationToken.None));
         Assert.True(revision > current.Revision);
         Assert.Equal(revision, page.Revision);
         Assert.Equal(backend == CatalogBackend.Sqlite, page.CacheHit);
@@ -141,6 +160,58 @@ public sealed class CatalogAdapterTests
         Assert.True(updated.IsMarkedForDeletion);
         Assert.Equal(ComfyMetadata.Version, updated.MetadataVersion);
         Assert.Equal(30, updated.Generation!.Steps);
+    }
+
+    [Fact]
+    public async Task Read_catalog_snapshot_reports_revision_conflict_and_recovers_on_a_later_read()
+    {
+        using var fixture = new AdapterFixture(CatalogBackend.Sqlite);
+        await fixture.Store.InitializeAsync(fixture.Key);
+
+        var successful = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+        Assert.True(successful.IsCurrent);
+
+        var database = Path.Combine(fixture.Root, "gallery.db");
+        var connectionOpens = 0;
+        Exception? revisionChangeFailure = null;
+        GalleryCatalog stale;
+        using (var activity = new Activity("catalog snapshot revision conflict").Start())
+        using (Listen("gallery.catalog.connection.opens", ChangeRevisionOnSecondConnectionOpen, activity))
+        {
+            stale = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+        }
+
+        Assert.Null(revisionChangeFailure);
+        Assert.Equal(2, connectionOpens);
+        Assert.False(stale.IsCurrent);
+
+        var recovered = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+        Assert.True(recovered.IsCurrent);
+        Assert.Equal(stale.Revision + 1, recovered.Revision);
+
+        void ChangeRevisionOnSecondConnectionOpen()
+        {
+            if (Interlocked.Increment(ref connectionOpens) != 2)
+                return;
+
+            try
+            {
+                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+                {
+                    DataSource = database,
+                    Pooling = false
+                }.ToString());
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "UPDATE storage_overview_state SET revision = revision + 1 WHERE id = 1";
+                if (command.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException("Expected one storage revision row.");
+            }
+            catch (Exception exception)
+            {
+                revisionChangeFailure = exception;
+            }
+        }
     }
 
     [Theory]
@@ -298,6 +369,51 @@ public sealed class CatalogAdapterTests
         File.Copy(Path.Combine(fixture.Root, "gallery.db"), Path.Combine(fixture.Root, "released.db"));
         Assert.Equal(0, await fixture.Store.CountRecordsAsync(fixture.Key));
         Assert.Equal(3, opens);
+    }
+
+    [Fact]
+    public async Task Turso_refresh_conflict_reopens_connection_without_releasing_active_operation_lease()
+    {
+        using var fixture = new AdapterFixture(CatalogBackend.Turso);
+        await fixture.Store.InitializeAsync(fixture.Key);
+        var record = Record() with { MetadataVersion = 0, Generation = null };
+        using var thumbnail = new ImageThumbnail([1, 2, 3]);
+        await fixture.Store.InsertAsync(record, thumbnail, fixture.Key);
+
+        using var activity = new Activity("catalog refresh conflict").Start();
+        long opens = 0;
+        using var metrics = Listen("gallery.catalog.connection.opens", () => Interlocked.Increment(ref opens), activity);
+        await using (var operation = await fixture.Store.OpenOperationAsync(fixture.Key))
+        {
+            var source = await fixture.Store.ReadCatalogSnapshotAsync(fixture.Key, CancellationToken.None);
+            var refreshed = record with { MetadataVersion = ComfyMetadata.Version };
+            await fixture.Store.UpdateAsync(record with { Rating = 5 }, fixture.Key);
+
+            var conflict = await Assert.ThrowsAsync<CatalogRevisionConflictException>(() =>
+                fixture.Store.RefreshGenerationMetadataAsync(source, [refreshed], fixture.Key, CancellationToken.None));
+            Assert.Equal(source.Revision, conflict.ExpectedRevision);
+            Assert.True(conflict.ActualRevision > conflict.ExpectedRevision);
+
+            var otherKey = RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                await Assert.ThrowsAsync<CatalogStorageException>(() =>
+                    fixture.Store.OpenOperationAsync(otherKey).AsTask());
+                Assert.Equal(1, opens);
+                Assert.Equal(1L, await fixture.Store.CountRecordsAsync(fixture.Key));
+                Assert.Equal(2, opens);
+                Assert.Equal(0, (await fixture.Store.ReadRecordAsync(record.Id, fixture.Key)).MetadataVersion);
+                Assert.Equal(2, opens);
+            }
+            finally { CryptographicOperations.ZeroMemory(otherKey); }
+        }
+
+        var releasedKey = RandomNumberGenerator.GetBytes(32);
+        try
+        {
+            await using var released = await fixture.Store.OpenOperationAsync(releasedKey);
+        }
+        finally { CryptographicOperations.ZeroMemory(releasedKey); }
     }
 
     [Fact]

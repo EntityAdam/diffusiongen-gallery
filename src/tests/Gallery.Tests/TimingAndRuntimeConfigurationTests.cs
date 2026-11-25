@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Managers.Reporters;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 

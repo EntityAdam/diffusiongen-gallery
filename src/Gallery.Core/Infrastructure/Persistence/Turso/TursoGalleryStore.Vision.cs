@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using Gallery.Core.Features.Tags;
 using Gallery.Core.Models;
@@ -12,14 +13,27 @@ internal sealed partial class TursoGalleryStore
         return text is null ? null : JsonSerializer.Deserialize<VisionAnalysis>(text);
     });
 
-    public Task CommitVisionAnalysisAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis analysis, byte[] key) => ExecuteAsync(key, async connection =>
+    public Task CommitVisionApprovalAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis? analysis,
+        VisionCheckpoint? checkpoint, byte[] key) =>
+        ExecuteAsync(key, connection => CommitVisionApprovalAsync(connection, record, catalog, analysis, checkpoint));
+
+    private static async Task CommitVisionApprovalAsync(DbConnection connection, ImageRecord record,
+        TagCatalog catalog, VisionAnalysis? analysis, VisionCheckpoint? checkpoint)
     {
         using var transaction = connection.BeginTransaction();
-        await WriteRecordAsync(connection, transaction, record, insert: false);
-        await NonQueryAsync(connection, "INSERT INTO settings(id,payload) VALUES($id,$payload) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", transaction,
-            ("$id", TagCatalog.SettingId), ("$payload", JsonSerializer.Serialize(catalog)));
-        await NonQueryAsync(connection, "INSERT INTO vision_analysis(image_id,payload) VALUES($id,$payload) ON CONFLICT(image_id) DO UPDATE SET payload=excluded.payload", transaction,
-            ("$id", record.Id), ("$payload", JsonSerializer.Serialize(analysis)));
+        await WriteRecordAsync(connection, transaction, record, RecordWriteMode.Update);
+        await UpsertSettingAsync(connection, transaction, TagCatalog.SettingId, catalog);
+        if (analysis is not null)
+            await UpsertVisionAnalysisAsync(connection, transaction, record.Id, analysis);
+        if (checkpoint is not null)
+            await UpsertSettingAsync(connection, transaction, VisionCheckpoint.SettingId, checkpoint);
         transaction.Commit();
-    });
+    }
+
+    private static async Task UpsertVisionAnalysisAsync(DbConnection connection, DbTransaction transaction,
+        string id, VisionAnalysis analysis)
+    {
+        await NonQueryAsync(connection, "INSERT INTO vision_analysis(image_id,payload) VALUES($id,$payload) ON CONFLICT(image_id) DO UPDATE SET payload=excluded.payload", transaction,
+            ("$id", id), ("$payload", JsonSerializer.Serialize(analysis)));
+    }
 }

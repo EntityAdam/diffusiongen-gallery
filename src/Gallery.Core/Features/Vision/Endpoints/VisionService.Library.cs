@@ -12,22 +12,35 @@ internal sealed partial class VisionService
             ? field.GetString()!
             : throw new VisionResponseFormatException($"The model returned {fieldName} as a missing or non-string value.");
 
-    public async Task<string> SuggestSetAsync(string collection, IReadOnlyList<MediaSet> sets, IReadOnlyList<ImageRecord> images)
+    public async Task<string> SuggestSetAsync(string collection, IReadOnlyList<MediaSet> sets, IReadOnlyList<ImageRecord> images,
+        CancellationToken cancellationToken = default)
     {
-        ValidateSystemPrompt(settings.SetSuggestionSystemPrompt, "Set suggestion system prompt");
-        var payload = JsonSerializer.Serialize(new { collection, sets = sets.Select(set => new { set.Id, set.Name }),
-            media = images.Select(image => new { image.Description, image.Tags }) });
-        using var json = await CompleteTextAsync(settings.Model, settings.RequestTimeoutSeconds, settings.SetSuggestionSystemPrompt, payload);
-        var id = ReadRequiredResponseString(json.RootElement, "setId");
-        if (id.Length > 0 && !sets.Any(set => set.Id == id)) throw new InvalidOperationException("The model suggested a set outside this collection. No media were moved.");
+        ValidateSystemPrompt(settings.SetSuggestionSystemPrompt, SetSuggestionSystemPromptLabel);
+        var payload = BuildSetSuggestionPayload(collection, sets, images);
+        using var jsonDocument = await CompleteTextAsync(settings.Model, settings.RequestTimeoutSeconds,
+            settings.SetSuggestionSystemPrompt, payload, cancellationToken);
+        var id = ReadRequiredResponseString(jsonDocument.RootElement, "setId");
+        if (IsSuggestionOutsideCollection(id, sets))
+            throw new InvalidOperationException("The model suggested a set outside this collection. No media were moved.");
         return id;
     }
 
-    private async Task<JsonDocument> CompleteTextAsync(string model, int requestTimeoutSeconds, string system, string prompt)
+    private static string BuildSetSuggestionPayload(string collection, IReadOnlyList<MediaSet> sets, IReadOnlyList<ImageRecord> images) =>
+        JsonSerializer.Serialize(new
+        {
+            collection,
+            sets = sets.Select(set => new { set.Id, set.Name }),
+            media = images.Select(image => new { image.Description, image.Tags })
+        });
+
+    private static bool IsSuggestionOutsideCollection(string id, IReadOnlyList<MediaSet> sets) =>
+        id.Length > 0 && !sets.Any(set => set.Id == id);
+
+    private async Task<JsonDocument> CompleteTextAsync(string model, int requestTimeoutSeconds, string system, string prompt,
+        CancellationToken cancellationToken)
     {
         using var httpRequestMessage = CreateTextCompletionRequest(model, requestTimeoutSeconds, system, prompt);
-        using var httpResponseMessage = await SendAsync(requestTimeoutSeconds, httpRequestMessage);
-        return await ReadCompletionAsync(httpResponseMessage);
+        return await SendAndReadCompletionAsync(httpRequestMessage, requestTimeoutSeconds, cancellationToken);
     }
 
     private HttpRequestMessage CreateTextCompletionRequest(string model, int requestTimeoutSeconds, string system, string prompt)

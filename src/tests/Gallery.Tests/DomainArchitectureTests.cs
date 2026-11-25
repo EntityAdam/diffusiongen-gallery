@@ -1,17 +1,19 @@
+using Gallery.Core.Features.Media.Removal.Managers.Validators;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Xml.Linq;
 using Gallery.Core.Features.Browsing;
+using Gallery.Core.Features.Browsing.Filtering;
 using Gallery.Core.Features.Curation;
 using Gallery.Core.Features.Duplicates;
 using Gallery.Core.Features.Ingestion.Metadata;
-using Gallery.Core.Features.Ingestion.Video;
-using Gallery.Core.Features.Ingestion;
-using Gallery.Core.Features.Media.Removal;
+using Gallery.Core.Features.Ingestion.Gateways;
+using Gallery.Core.Features.Ingestion.Managers.Reporters;
+using Gallery.Core.Features.Storage.DriveOperations;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Web.Components;
@@ -41,6 +43,44 @@ public sealed class DomainArchitectureTests
             Assert.Same(core, type.Assembly);
             Assert.False(type.IsPublic);
         });
+    }
+
+    [Fact]
+    public void CoreSource_UsesExplicitRoleFoldersWithoutShared()
+    {
+        var coreSource = Path.Combine(SourceRoot(), "Gallery.Core");
+
+        Assert.False(Directory.Exists(Path.Combine(coreSource, "Shared")));
+        Assert.True(File.Exists(Path.Combine(coreSource, "Features", "Validators", "OperationChoiceValidator.cs")));
+        Assert.True(File.Exists(Path.Combine(coreSource, "Services", "GalleryDisplay.cs")));
+        Assert.True(File.Exists(Path.Combine(coreSource, "Features", "Formatters", "GalleryDisplay.cs")));
+        var core = typeof(GalleryScope).Assembly;
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.GalleryException"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.GalleryBusinessException"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.GalleryTechnicalException"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.LogEventBase"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.ContextualData"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.ExceptionCause"));
+        Assert.NotNull(core.GetType("Gallery.Core.Exceptions.Severity"));
+        Assert.NotNull(core.GetType("Gallery.Core.Services.GalleryDisplay"));
+    }
+
+    [Fact]
+    public void VaultSource_SeparatesAccessAndPersistenceFromOrchestration()
+    {
+        var vaultRoot = Path.Combine(SourceRoot(), "Gallery.Core", "Features", "Vaults");
+        foreach (var (folder, name) in new[]
+        {
+            ("Security", "VaultAccess"),
+            ("Security", "VaultCredentialKind"),
+            ("Persistence", "VaultHistory"),
+            ("Persistence", "VaultStore")
+        })
+        {
+            Assert.True(File.Exists(Path.Combine(vaultRoot, folder, name + ".cs")));
+            Assert.False(File.Exists(Path.Combine(vaultRoot, name + ".cs")));
+            Assert.NotNull(typeof(GalleryScope).Assembly.GetType("Gallery.Core.Features.Vaults." + name));
+        }
     }
 
     [Fact]
@@ -89,6 +129,12 @@ public sealed class DomainArchitectureTests
         Assert.DoesNotContain(type.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static),
             method => method.Name is "ToRecord" or "Capture");
         Assert.Same(typeof(GalleryScope).Assembly, type.Assembly);
+    }
+
+    [Fact]
+    public void DriveOperationConflictException_IsPublic()
+    {
+        Assert.True(typeof(DriveOperationConflictException).IsPublic);
     }
 
     private static void AssertPublicContract(Type type, Assembly core)

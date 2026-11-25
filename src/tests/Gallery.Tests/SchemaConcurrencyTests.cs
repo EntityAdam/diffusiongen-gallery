@@ -1,4 +1,4 @@
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Microsoft.Data.Sqlite;
 
 namespace Gallery.Tests;
@@ -48,6 +48,16 @@ public sealed class SchemaConcurrencyTests
         Assert.Equal(1L, sqliteDataReader.GetInt64(0));
         Assert.Equal(1L, sqliteDataReader.GetInt64(1));
         Assert.Equal(1L, sqliteDataReader.GetInt64(2));
+        await sqliteDataReader.DisposeAsync();
+        verifyCommand.CommandText = "SELECT ScriptName FROM SchemaVersions ORDER BY ScriptName";
+        await using var journalReader = await verifyCommand.ExecuteReaderAsync();
+        var scripts = new List<string>();
+        while (await journalReader.ReadAsync()) scripts.Add(journalReader.GetString(0));
+        Assert.Equal([
+            "Gallery.Migrations.Scripts.M0001_Baseline.sql",
+            "Gallery.Migrations.Scripts.M0002_Fingerprint.cs",
+            "Gallery.Migrations.Scripts.M0003_VisionAnalysis.sql"
+        ], scripts);
     }
 
     [Fact]

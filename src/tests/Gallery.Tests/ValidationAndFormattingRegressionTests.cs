@@ -1,4 +1,5 @@
 using Gallery.Core.Features.Ingestion.Metadata;
+using Gallery.Core.Features.Validators;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 
@@ -7,6 +8,17 @@ namespace Gallery.Tests;
 [Trait("Category", "acceptance")]
 public sealed class ValidationAndFormattingRegressionTests
 {
+    private enum OperationChoice { First, Second }
+
+    [Fact]
+    public void OperationChoiceValidator_WhenChoiceIsUndefined_ExplainsAvailableChoices()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OperationChoiceValidator.Validate((OperationChoice)99));
+
+        Assert.Equal("OperationChoice value 99 is invalid. Choose First, Second.", exception.Message);
+    }
+
     [Fact]
     public async Task DeleteView_WhenNameCasingDiffersFromSavedView_RemovesTheView()
     {

@@ -1,0 +1,41 @@
+using Gallery.Core.Features.Tags;
+using Gallery.Core.Models;
+using Microsoft.Data.Sqlite;
+
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers.CommandFactories;
+
+namespace Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
+
+internal sealed partial class GalleryStore
+{
+    public async Task<VisionAnalysis?> ReadVisionAnalysisAsync(string id, byte[] key)
+    {
+        await using var connection = await OpenAsync();
+        using var command = GalleryStoreCommandFactory.CreateReadVisionAnalysis(connection, id);
+        return await command.ExecuteScalarAsync() is byte[] bytes ? DecodeSetting<VisionAnalysis>(bytes, $"vision-analysis:v1:{id}", key) : null;
+    }
+
+    public async Task CommitVisionApprovalAsync(ImageRecord record, TagCatalog catalog, VisionAnalysis? analysis,
+        VisionCheckpoint? checkpoint, byte[] key)
+    {
+        await using var connection = await OpenAsync();
+        using var transaction = connection.BeginTransaction();
+        await WriteUpdatedRecordAsync(connection, transaction, record, key, CancellationToken.None);
+        await SaveCatalogSettingAsync(connection, transaction, TagCatalog.SettingId,
+            EncodeSetting(catalog, TagCatalog.SettingPurpose, key));
+        if (analysis is not null)
+            await SaveVisionAnalysisAsync(connection, transaction, record.Id,
+                EncodeSetting(analysis, $"vision-analysis:v1:{record.Id}", key));
+        if (checkpoint is not null)
+            await SaveCatalogSettingAsync(connection, transaction, VisionCheckpoint.SettingId,
+                EncodeSetting(checkpoint, VisionCheckpoint.SettingPurpose, key));
+        transaction.Commit();
+    }
+
+    private static async Task SaveVisionAnalysisAsync(SqliteConnection connection, SqliteTransaction transaction,
+        string id, byte[] payload)
+    {
+        using var command = GalleryStoreCommandFactory.CreateSaveVisionAnalysis(connection, transaction, id, payload);
+        await command.ExecuteNonQueryAsync();
+    }
+}

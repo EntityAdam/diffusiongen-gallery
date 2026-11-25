@@ -243,7 +243,7 @@ public sealed class DomainCompositionTests
         var validName = Convert.ToHexString(RandomNumberGenerator.GetBytes(validNameLength))[..validNameLength];
 
         // Act
-        var actualException = Record.Exception(() => SavedViewNameValidator.Validate(validName));
+        var actualException = Record.Exception(() => SavedViewNameValidator.NormalizeAndValidate(validName));
 
         // Assert
         Assert.True(actualException is null,

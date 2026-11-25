@@ -37,7 +37,7 @@ public sealed class IsolatedResourceCompatibilityTests
             "Ingestion timings (no file or folder names recorded)",
             "Source drive: SSD | Gallery drive: HDD | Workers: 2 | CPUs: 8",
             "Catalog drive: RAM",
-            "Files: 4 found, 3 imported, 1 reported issues | Source data read: 2.0 MiB",
+            "Files: 4 found, 3 imported, 0 already exist, 1 reported issues | Source data read: 2.0 MiB",
             expectedWallTimeLine,
             "Per-file stages run on parallel workers, so stage totals can exceed wall time.",
             "Stage             Count   Total s   Mean ms    p50 ms    p95 ms    Max ms",

@@ -1,5 +1,6 @@
 using Azure.Core.Pipeline;
 using Azure.Storage.Blobs;
+using Gallery.Core.Features.Backups.Targets.Validators;
 
 namespace Gallery.Core.Features.Backups.Targets;
 
@@ -28,7 +29,7 @@ internal sealed class BackupTargetAzure : IBackupTarget
         return prefix;
     }
 
-    public static void ValidateConnectionString(string connectionString) => _ = CreateClient(connectionString);
+    internal static void ValidateDestination(StoredBackupSettings settings) => _ = CreateClient(settings.AzureConnectionString);
 
     private static BlobClientOptions CreateOptions(HttpClient? httpClient)
     {
@@ -74,7 +75,8 @@ internal sealed class BackupTargetAzure : IBackupTarget
     }
 
     private static bool IsTopLevelArchiveName(string name) =>
-        !name.Contains('/') && name.EndsWith(".zip", StringComparison.Ordinal);
+        !name.Contains('/') && name.EndsWith(".zip", StringComparison.Ordinal)
+        && BackupArchiveNameValidator.IsValid(name);
 
     private static string[] OrderArchiveNames(IEnumerable<string> names) =>
         names.OrderDescending(StringComparer.Ordinal).ToArray();
@@ -90,8 +92,7 @@ internal sealed class BackupTargetAzure : IBackupTarget
     private static Uri ParseContainerSasUrl(string sasUrl)
     {
         if (!Uri.TryCreate(sasUrl.Trim(), UriKind.Absolute, out var uri)
-            || uri.Scheme != Uri.UriSchemeHttps
-            || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0)
+            || !IsValidSasUri(uri))
             throw new InvalidOperationException("Enter an HTTPS Azure Blob container SAS URL.");
         var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (segments.Length != 1)
@@ -102,11 +103,18 @@ internal sealed class BackupTargetAzure : IBackupTarget
             .ToDictionary(group => group.Key,
                 group => string.Join(',', group.Select(part => part.Length == 2
                     ? Uri.UnescapeDataString(part[1].Replace('+', ' ')) : "")), StringComparer.OrdinalIgnoreCase);
-        if (!queryValuesByParameterName.TryGetValue("sr", out var resource) || resource != "c"
-            || !queryValuesByParameterName.TryGetValue("sig", out var signature) || string.IsNullOrWhiteSpace(signature)
-            || !queryValuesByParameterName.TryGetValue("sp", out var permissions)
-            || !permissions.ToString().Contains('r') || !permissions.ToString().Contains('l'))
+        if (!IsContainerSasWithReadAndListPermissions(queryValuesByParameterName))
             throw new InvalidOperationException("Use a container-level SAS URL with read and list permissions.");
         return uri;
     }
+
+    private static bool IsValidSasUri(Uri uri) =>
+        uri.Scheme == Uri.UriSchemeHttps && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0;
+
+    private static bool IsContainerSasWithReadAndListPermissions(
+        IReadOnlyDictionary<string, string> queryValuesByParameterName) =>
+        queryValuesByParameterName.TryGetValue("sr", out var resource) && resource == "c"
+        && queryValuesByParameterName.TryGetValue("sig", out var signature) && !string.IsNullOrWhiteSpace(signature)
+        && queryValuesByParameterName.TryGetValue("sp", out var permissions)
+        && permissions.Contains('r') && permissions.Contains('l');
 }

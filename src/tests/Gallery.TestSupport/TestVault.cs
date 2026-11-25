@@ -1,8 +1,8 @@
-using Gallery.Core.Features.Ingestion.Video;
+using Gallery.Core.Features.Ingestion.Gateways;
 using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults;
 using Gallery.Core.Features.Vision.Endpoints;
-using Gallery.Core.Infrastructure.Persistence.Sqlite;
+using Gallery.Core.Infrastructure.Persistence.Sqlite.DataManagers;
 using Gallery.Core.Services;
 using Microsoft.Extensions.Configuration;
 
@@ -34,7 +34,7 @@ internal sealed class TestVault : IDisposable
 
     public async Task InitializeAsync()
     {
-        var created = await Vault.CreateAsync(Passphrase);
+        var created = await Vault.CreateVaultAsync(Passphrase);
         Session.Unlock(created.Key);
     }
 

@@ -1,7 +1,9 @@
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
 using System.Text;
 using Gallery.Core.Features.Vision.Endpoints;
+using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Web.Components.Features.Vision;
@@ -15,6 +17,46 @@ public sealed class VisionCheckpointTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Equal_valued_replacement_survives_in_flight_approval(bool tagsOnly)
+    {
+        var draft = new VisionDraft("image", "Image", "Description", "tag", "model", TagsOnly: tagsOnly);
+        var replacement = draft with { };
+        Assert.NotSame(draft, replacement);
+        Assert.Equal(draft, replacement);
+        var record = new ImageRecord { Id = draft.Id };
+        var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishApproval = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var persisted = new VisionCheckpoint { Drafts = [draft] };
+        VisionCheckpoint? approvalCheckpoint = null;
+        var session = new VisionCheckpointSession(new() { Drafts = [draft] }, CancellationToken.None,
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, async (_, checkpoint) =>
+            {
+                approvalCheckpoint = checkpoint;
+                approvalStarted.SetResult();
+                await finishApproval.Task;
+                persisted = checkpoint;
+                return record;
+            });
+
+        var approval = session.ApproveDraftAsync(draft);
+        await approvalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var staging = session.StageAsync(replacement);
+        Assert.False(staging.IsCompleted);
+        Assert.Empty(approvalCheckpoint!.Drafts);
+        finishApproval.SetResult();
+
+        Assert.Equal(record, await approval.WaitAsync(TimeSpan.FromSeconds(5)));
+        await staging.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Same(replacement, Assert.Single(session.State.Drafts));
+        Assert.Same(replacement, Assert.Single(persisted.Drafts));
+        var reopened = new VisionCheckpointSession(persisted, CancellationToken.None,
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, (_, _) => Task.FromResult(record));
+        Assert.Same(replacement, Assert.Single(reopened.State.Drafts));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task A_replacement_draft_survives_in_flight_approval_and_rejects_stale_decisions(bool tagsOnly)
     {
         var draft = new VisionDraft("image", "Image", "Description", "old", "model", TagsOnly: tagsOnly);
@@ -22,8 +64,9 @@ public sealed class VisionCheckpointTests
         var record = new ImageRecord { Id = draft.Id, Tags = draft.Tags };
         var approvalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishApproval = new TaskCompletionSource<ImageRecord>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var persisted = new VisionCheckpoint { Drafts = [draft] };
         var session = new VisionCheckpointSession(new() { Drafts = [draft] }, CancellationToken.None,
-            _ => Task.CompletedTask, _ =>
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, (_, _) =>
             {
                 approvalStarted.SetResult();
                 return finishApproval.Task;
@@ -31,13 +74,190 @@ public sealed class VisionCheckpointTests
 
         var approval = session.ApproveDraftAsync(draft);
         await approvalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await session.StageAsync(replacement);
+        var staging = session.StageAsync(replacement);
+        Assert.False(staging.IsCompleted);
         finishApproval.SetResult(record);
 
         Assert.Equal(record, await approval);
+        await staging;
         await Assert.ThrowsAsync<InvalidOperationException>(() => session.ApproveDraftAsync(draft));
         Assert.False(await session.DismissDraftAsync(draft));
         Assert.Equal(replacement, Assert.Single(session.State.Drafts));
+        Assert.Equal(replacement, Assert.Single(persisted.Drafts));
+        var reopened = new VisionCheckpointSession(persisted, CancellationToken.None,
+            checkpoint => { persisted = checkpoint; return Task.CompletedTask; }, (_, _) => Task.FromResult(record));
+        Assert.Equal(replacement, Assert.Single(reopened.State.Drafts));
+    }
+
+    [Fact]
+    public async Task Checkpoint_openings_share_one_owner_per_unlocked_generation()
+    {
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+
+        var first = await vault.Scope.Vision.OpenVisionCheckpointAsync();
+        var second = await vault.Scope.Vision.OpenVisionCheckpointAsync();
+        var draft = new VisionDraft("image", "Image", "Description", "tag", "model");
+        await first.StageAsync(draft);
+
+        Assert.Same(first, second);
+        Assert.Equal(draft, Assert.Single(second.State.Drafts));
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task Checkpoint_handles_preserve_both_staged_drafts_across_scope_handoff(CatalogBackend backend)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vision-handoff-" + Guid.NewGuid().ToString("N"));
+        var options = new GalleryRuntimeOptions { CatalogBackend = backend, StateDirectory = root + "-state" };
+        try
+        {
+            using var firstScope = GalleryScope.Create(root, options, new HttpClient());
+            using var secondScope = GalleryScope.Create(root, options, new HttpClient());
+            await firstScope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+            var seed = await firstScope.Vision.OpenVisionCheckpointAsync();
+            await seed.UpdateAsync(state => state with { Queue = [new("first"), new("second"), new("pending")] });
+            await firstScope.Vault.CloseVaultAsync();
+            await firstScope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+
+            var openings = await Task.WhenAll(firstScope.Vision.OpenVisionCheckpointAsync(),
+                firstScope.Vision.OpenVisionCheckpointAsync());
+            await Assert.ThrowsAsync<IOException>(() => secondScope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase));
+            await openings[0].StageAsync(new("first", "First", "First draft", "", "model"));
+            await openings[1].StageAsync(new("second", "Second", "Second draft", "", "model"));
+            await firstScope.Vault.CloseVaultAsync();
+            await secondScope.Vault.UnlockWithPassphraseAsync(TestVault.Passphrase);
+
+            var persisted = (await secondScope.Vision.OpenVisionCheckpointAsync()).State;
+            Assert.Equal(new[] { "first", "second" }, persisted.Drafts.Select(draft => draft.Id));
+            Assert.Equal("pending", Assert.Single(persisted.Queue).Id);
+            await secondScope.Vault.CloseVaultAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+            if (Directory.Exists(root + "-state")) Directory.Delete(root + "-state", true);
+        }
+    }
+
+    [Fact]
+    public async Task Set_suggestion_returns_a_set_from_the_configured_endpoint()
+    {
+        string? setId = null;
+        using var handler = new LaneVisionHandler((port, _) =>
+        {
+            Assert.Equal(1235, port);
+            var content = JsonSerializer.Serialize(new { setId });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { choices = new[] { new { message = new { content } } } }))
+            });
+        });
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault(vision: new VisionManager(client));
+        await vault.InitializeAsync();
+        var collection = await vault.Scope.Collections.CreateCollectionAsync("Source collection");
+        var expected = await vault.Scope.Collections.CreateSetAsync(collection.Id, "Source set");
+        setId = expected.Id;
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "source-vault-description" });
+        await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "source", Endpoint = "http://127.0.0.1:1235/v1/" });
+
+        Assert.Equal(expected, await vault.Scope.Vision.SuggestDestinationSetAsync(collection.Id, [image.Id]));
+    }
+
+    [Fact]
+    public async Task Set_suggestion_cancels_when_its_unlocked_vault_generation_is_revoked()
+    {
+        var handler = new BlockingSetSuggestionHandler();
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault(vision: new VisionManager(client));
+        await vault.InitializeAsync();
+        var collection = await vault.Scope.Collections.CreateCollectionAsync("Source collection");
+        await vault.Scope.Collections.CreateSetAsync(collection.Id, "Source set");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "source-vault-description" });
+        await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "vision" });
+
+        var suggestion = vault.Scope.Vision.SuggestDestinationSetAsync(collection.Id, [image.Id]);
+        var requestBody = await handler.RequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Contains("source-vault-description", requestBody);
+
+        await vault.Scope.Vault.SelectNewVaultAsync(Path.Combine(vault.Root, "next-vault"));
+        await vault.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestion.WaitAsync(TimeSpan.FromSeconds(10)));
+        await handler.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task Set_suggestion_waiting_for_catalog_releases_its_lease_on_vault_switch()
+    {
+        var handler = new BlockingSetSuggestionHandler();
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault(vision: new VisionManager(client));
+        await vault.InitializeAsync();
+        var collection = await vault.Scope.Collections.CreateCollectionAsync("Source collection");
+        await vault.Scope.Collections.CreateSetAsync(collection.Id, "Source set");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "source-vault-description" });
+        await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "source" });
+
+        await vault.Store.Gate.WaitAsync();
+        try
+        {
+            var suggestion = vault.Scope.Vision.SuggestDestinationSetAsync(collection.Id, [image.Id]);
+            Assert.False(suggestion.IsCompleted);
+            await vault.Scope.Vault.SelectNewVaultAsync(Path.Combine(vault.Root, "next-vault")).WaitAsync(TimeSpan.FromSeconds(10));
+            await vault.Scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+            await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "destination", Endpoint = "http://127.0.0.1:1235/v1" });
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestion.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.False(handler.RequestStarted.Task.IsCompleted);
+        }
+        finally
+        {
+            vault.Store.Gate.Release();
+        }
+    }
+
+    [Fact]
+    public async Task Set_suggestion_revoked_after_records_does_not_read_later_settings_or_submit()
+    {
+        var handler = new BlockingSetSuggestionHandler();
+        using var client = new HttpClient(handler);
+        using var vault = new TestVault();
+        await vault.InitializeAsync();
+        var collection = await vault.Scope.Collections.CreateCollectionAsync("Source collection");
+        await vault.Scope.Collections.CreateSetAsync(collection.Id, "Source set");
+        var image = await vault.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "source.png", "folder");
+        await vault.Scope.Records.UpdateAsync(image.Id, edit => edit with { Description = "source-vault-description" });
+        await vault.Scope.Vision.SaveSettingsAsync(new() { Model = "source" });
+        var store = DispatchProxy.Create<IGalleryStore, SuggestionStoreProxy>();
+        var proxy = (SuggestionStoreProxy)store;
+        proxy.Inner = vault.Store;
+        using var scope = new GalleryScope(store, vault.Vault, vault.Session, visionManager: new VisionManager(client));
+        var generation = vault.Session.AcquireUnlockedSession();
+        var suggestion = scope.Vision.SuggestDestinationSetAsync(collection.Id, [image.Id]);
+        try
+        {
+            await proxy.RecordsRead.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var switchVault = scope.Vault.SelectNewVaultAsync(Path.Combine(vault.Root, "next-vault"));
+            await Task.Delay(Timeout.Infinite, generation.RevocationToken).ContinueWith(_ => { }).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(switchVault.IsCompleted);
+            proxy.ReleaseRecords.TrySetResult();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => suggestion.WaitAsync(TimeSpan.FromSeconds(10)));
+            await switchVault.WaitAsync(TimeSpan.FromSeconds(10));
+            await scope.Vault.CreateVaultAsync(TestVault.Passphrase, TestVault.Passphrase);
+            await scope.Vision.SaveSettingsAsync(new() { Model = "destination", Endpoint = "http://127.0.0.1:1235/v1" });
+            Assert.Equal(0, proxy.VisionSettingsReads);
+            Assert.False(handler.RequestStarted.Task.IsCompleted);
+        }
+        finally
+        {
+            proxy.ReleaseRecords.TrySetResult();
+            await scope.Vault.CloseVaultAsync();
+        }
     }
 
     [Theory]
@@ -687,6 +907,49 @@ public sealed class VisionCheckpointTests
         {
             Content = new StringContent("""{"choices":[{"message":{"content":"{\"description\":\"A photo.\",\"tags\":[\"sunlit\"]}"}}]}""")
         };
+    }
+
+    private sealed class BlockingSetSuggestionHandler : HttpMessageHandler
+    {
+        public TaskCompletionSource<string> RequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Canceled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestStarted.TrySetResult(await request.Content!.ReadAsStringAsync(cancellationToken));
+            try { await Task.Delay(Timeout.Infinite, cancellationToken); }
+            catch (OperationCanceledException)
+            {
+                Canceled.TrySetResult();
+                throw;
+            }
+            return LaneVisionHandler.Success();
+        }
+    }
+
+    public class SuggestionStoreProxy : DispatchProxy
+    {
+        internal IGalleryStore Inner { get; set; } = null!;
+        public TaskCompletionSource RecordsRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseRecords { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int VisionSettingsReads;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name == nameof(IGalleryStore.ReadRecordsAsync))
+                return ReadRecordsAsync((byte[])args![0]!);
+            if (targetMethod?.Name == nameof(IGalleryStore.ReadSettingsAsync) && (string)args![0]! == "vision-settings")
+                Interlocked.Increment(ref VisionSettingsReads);
+            return targetMethod!.Invoke(Inner, args);
+        }
+
+        private async Task<List<ImageRecord>> ReadRecordsAsync(byte[] key)
+        {
+            var records = await Inner.ReadRecordsAsync(key);
+            RecordsRead.TrySetResult();
+            await ReleaseRecords.Task;
+            return records;
+        }
     }
 
     private sealed class InterruptibleVisionHandler : HttpMessageHandler

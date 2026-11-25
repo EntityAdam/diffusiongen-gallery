@@ -1,4 +1,6 @@
+using Gallery.Core.Features.Media.Removal.Managers;
 using Gallery.Core.Exceptions;
+using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Features.Vaults.Security;
 using Gallery.Core.Models;
 
@@ -287,6 +289,108 @@ public sealed class RemovalTests
         Assert.False(File.Exists(second.StoredPath));
     }
 
+    [Fact]
+    public async Task Removal_WhenItemObserverAndQueueFail_ThenReleasesGateAndReportsFailuresInOrder()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(21, 10)), "second.png", "folder");
+        await fixture.Scope.Records.UpdateManyAsync([first.Id, second.Id], image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([first.Id, second.Id]);
+        await fixture.Scope.Records.UpdateAsync(first.Id, image => image with { IsMarkedForDeletion = false });
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        var events = new List<string>();
+        var queueFailure = new IOException("queue failed");
+        var observerFailure = new InvalidOperationException("observer failed");
+        var manager = new RemovalManager(new GalleryLifetime(fixture.Store, fixture.Vault), fixture.Session, () =>
+        {
+            Assert.Equal(1, fixture.Store.Gate.CurrentCount);
+            events.Add("queue");
+            throw queueFailure;
+        });
+        var receipts = new List<RemovalResult>();
+
+        var error = await Assert.ThrowsAsync<AggregateException>(() => manager.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", receipt =>
+            {
+                Assert.Equal(1, fixture.Store.Gate.CurrentCount);
+                events.Add(receipt.Id);
+                receipts.Add(receipt);
+                if (receipt.Id == first.Id) throw observerFailure;
+            }));
+
+        Assert.Equal(["queue", first.Id, second.Id], events);
+        Assert.False(receipts[0].WasRemoved);
+        Assert.True(receipts[1].WasRemoved);
+        Assert.Same(receipts[0].RemovalFailure!.Exception, error.InnerExceptions[0]);
+        Assert.Same(observerFailure, error.InnerExceptions[1]);
+        Assert.Same(queueFailure, error.InnerExceptions[2]);
+        Assert.Equal(first.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).Id);
+    }
+
+    [Fact]
+    public async Task Removal_WhenOnlyQueueStartFails_ThenDeliversReceiptsAndRethrowsTheSameException()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        await fixture.Scope.Records.UpdateAsync(image.Id, record => record with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([image.Id]);
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        var queueFailure = new IOException("queue failed");
+        var events = new List<string>();
+        var manager = new RemovalManager(new GalleryLifetime(fixture.Store, fixture.Vault), fixture.Session, () =>
+        {
+            Assert.Equal(1, fixture.Store.Gate.CurrentCount);
+            events.Add("queue");
+            throw queueFailure;
+        });
+        var receipts = new List<RemovalResult>();
+
+        var error = await Assert.ThrowsAsync<IOException>(() => manager.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", receipt =>
+            {
+                Assert.Equal(1, fixture.Store.Gate.CurrentCount);
+                events.Add(receipt.Id);
+                receipts.Add(receipt);
+            }));
+
+        Assert.Same(queueFailure, error);
+        Assert.Equal(["queue", image.Id], events);
+        Assert.True(Assert.Single(receipts).WasRemoved);
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
+    public async Task Removal_WhenLaterRecordIsInvalid_ThenReleasesGateAndKeepsTheOriginalFailure()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(20, 10)), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(21, 10)), "second.png", "folder");
+        await fixture.Scope.Records.UpdateManyAsync([first.Id, second.Id], image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([first.Id, second.Id]);
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+        await fixture.RawStore.UpdateAsync(second.Id, VaultCrypto.Encrypt("{"u8, fixture.Session.Key, $"record:{second.Id}"));
+        var queueCalls = 0;
+        var manager = new RemovalManager(new GalleryLifetime(fixture.Store, fixture.Vault), fixture.Session, () =>
+        {
+            Assert.Equal(1, fixture.Store.Gate.CurrentCount);
+            queueCalls++;
+            throw new IOException("queue failed");
+        });
+        var receipts = new List<RemovalResult>();
+
+        await Assert.ThrowsAsync<System.Text.Json.JsonException>(() => manager.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", receipts.Add));
+
+        Assert.Equal(1, queueCalls);
+        Assert.Equal(1, fixture.Store.Gate.CurrentCount);
+        Assert.Empty(receipts);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.RawStore.ReadRecordAsync(first.Id));
+    }
+
     private static async Task<ImageRecord> ImportRecoveryImageAsync(TestVault testVault, bool imageWasMoved)
     {
         var imageRecord = await testVault.Scope.Ingestion.ImportAsync(
@@ -412,6 +516,31 @@ public sealed class RemovalTests
         }
         else Assert.Null(results[0].RestoredPath);
         Assert.False(File.Exists(record.StoredPath));
+        Assert.Empty(await fixture.Scope.Catalog.ListAsync());
+    }
+
+    [Fact]
+    public async Task Removal_WhenVerifiedRestoreAlreadyExists_ThenRetryRemovesCatalogEntry()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var bytes = GalleryTests.MakePng();
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(bytes), "source.jpg", "browser-folder");
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([record.Id]);
+        var restoredPath = Path.Combine(fixture.Root, record.Id + ".png");
+        await File.WriteAllBytesAsync(restoredPath, bytes);
+
+        var results = new List<RemovalResult>();
+        await fixture.Scope.MediaMaintenance.RemoveAsync(plan, ExistingOriginalAction.Retain,
+            MissingOriginalAction.RestorePng, fixture.Root, results.Add);
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+
+        var result = Assert.Single(results);
+        Assert.True(result.WasRemoved);
+        Assert.Null(result.Error);
+        Assert.Equal(restoredPath, result.RestoredPath);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(restoredPath));
         Assert.Empty(await fixture.Scope.Catalog.ListAsync());
     }
 
@@ -553,9 +682,45 @@ public sealed class RemovalTests
         Assert.IsType<AggregateException>(removalError);
         Assert.False(result.WasRemoved);
         Assert.Contains("changed since import", result.Error);
+        var failure = Assert.IsType<GalleryRemovalException>(result.RemovalFailure!.Exception);
+        Assert.Equal(false, failure.ContextualDataByName.ValuesByName["Original.Deleted"]);
         Assert.Equal("replacement", originalContents);
         Assert.Equal(expectedCatalogPayload, catalogPayload);
         Assert.Equal(expectedCiphertext, ciphertext);
+    }
+
+    [Fact]
+    public async Task Removal_WhenCatalogDeleteFailsAfterDeletingOriginal_ThenReportsOriginalWasDeleted()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var source = Path.Combine(fixture.Root, "source.png");
+        var bytes = GalleryTests.MakePng();
+        await File.WriteAllBytesAsync(source, bytes);
+        var record = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(bytes), "source.png", fixture.Root, source);
+        await fixture.Scope.Records.UpdateAsync(record.Id, image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([record.Id]);
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(fixture.Root, "gallery.db")};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TRIGGER prevent_original_removal BEFORE DELETE ON images BEGIN SELECT RAISE(ABORT, 'test failure'); END";
+            await command.ExecuteNonQueryAsync();
+        }
+        var receipts = new List<RemovalResult>();
+
+        var error = await Record.ExceptionAsync(() => fixture.Scope.MediaMaintenance.RemoveAsync(
+            plan, ExistingOriginalAction.Delete, MissingOriginalAction.Discard, "", receipts.Add));
+
+        var result = Assert.Single(receipts);
+        Assert.IsType<AggregateException>(error);
+        Assert.False(result.WasRemoved);
+        Assert.Contains("Original was deleted.", result.Error);
+        var failure = Assert.IsType<GalleryRemovalException>(result.RemovalFailure!.Exception);
+        Assert.Equal(true, failure.ContextualDataByName.ValuesByName["Original.Deleted"]);
+        Assert.False(File.Exists(source));
+        Assert.True(File.Exists(record.StoredPath));
+        Assert.Equal(record.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).Id);
     }
 
     [Fact]
@@ -592,6 +757,34 @@ public sealed class RemovalTests
         Assert.Single(records);
         Assert.Equal(expectedCatalogPayload, catalogPayload);
         Assert.Equal(expectedCiphertext, ciphertext);
+    }
+
+    [Fact]
+    public async Task Removal_WhenMarkIsClearedAfterPreview_ThenRetainsThatItemAndContinues()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var first = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "first.png", "folder");
+        var second = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng(31, 20)), "second.png", "folder");
+        await fixture.Scope.Records.UpdateManyAsync([first.Id, second.Id], image => image with { IsMarkedForDeletion = true });
+        var plan = await fixture.Scope.MediaMaintenance.PrepareRemovalAsync([first.Id, second.Id]);
+        await fixture.Scope.Records.UpdateAsync(first.Id, image => image with { IsMarkedForDeletion = false });
+        var expectedCiphertext = await File.ReadAllBytesAsync(first.StoredPath);
+        var receipts = new List<RemovalResult>();
+
+        var error = await Record.ExceptionAsync(() => fixture.Scope.MediaMaintenance.RemoveAsync(
+            plan, ExistingOriginalAction.Retain, MissingOriginalAction.Discard, "", receipts.Add));
+        await fixture.Scope.DriveOperations.WaitForDriveOperationsAsync();
+
+        Assert.IsType<AggregateException>(error);
+        Assert.Equal([first.Id, second.Id], receipts.Select(receipt => receipt.Id));
+        Assert.False(receipts[0].WasRemoved);
+        Assert.Contains("no longer marked for deletion", receipts[0].Error);
+        Assert.IsType<ImageNotMarkedForDeletionException>(receipts[0].RemovalFailure!.Exception.InnerException);
+        Assert.True(receipts[1].WasRemoved);
+        Assert.Equal(first.Id, Assert.Single(await fixture.Scope.Catalog.ListAsync()).Id);
+        Assert.Equal(expectedCiphertext, await File.ReadAllBytesAsync(first.StoredPath));
+        Assert.False(File.Exists(second.StoredPath));
     }
 
     [Fact]

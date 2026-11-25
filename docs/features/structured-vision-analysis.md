@@ -10,7 +10,9 @@ The first-pass experiment describes an image using a commented TypeScript interf
 4. Adjust **Structured vision response token limit** if needed (default 8,192), then save settings.
 5. Analyze a detail item, a selection, or media without a description through the existing vision workflow. Review and approve the encrypted draft.
 
-Each image-analysis mode remembers its own custom prompt. Switching modes restores that mode’s prompt; switching back restores your previous prompt, including after saving and reopening settings. Existing settings default to the legacy description/tags format, with both tag controls enabled. Model discovery, local/LAN connection policy, timeouts, temperatures, set destination prompts, and existing generation limits are preserved. Structured requests have their own response token limit.
+Each image-analysis mode remembers its own custom prompt. Switching modes restores that mode’s prompt; switching back restores your previous prompt, including after saving and reopening settings. Existing settings default to the legacy description/tags format, with both tag controls enabled. Local/LAN connection policy, timeouts, temperatures, set destination prompts, and existing generation limits are preserved. Structured requests have their own response token limit.
+
+**Fetch models** accepts model-list responses up to 1 MiB. Larger responses are rejected; completion responses retain their separate 4 MiB limit.
 
 ## Tags
 
@@ -53,6 +55,6 @@ Structured filters combine with ordinary gallery filters and can be saved as vie
 
 ## Storage and next steps
 
-Full JSON and provenance are loaded on demand from a separate catalog table. The browse record contains extracted entity/relationship facts, not the raw JSON or prompt. SQLite artifacts use authenticated per-item encryption; Turso artifacts remain within the existing page-encrypted catalog. Approval atomically updates the record, tag catalog, and artifact. Backup/restore includes the table, and physical media removal deletes its artifact. Use **Download analysis JSON** in the accepted-analysis view to export the original document without embedding it into media files.
+Full JSON and provenance are loaded on demand from a separate catalog table. The browse record contains extracted entity/relationship facts, not the raw JSON or prompt. SQLite artifacts use authenticated per-item encryption; Turso artifacts remain within the existing page-encrypted catalog. Accepting a staged analysis atomically updates the record, tag catalog, artifact, and pending checkpoint. Backup/restore includes the table, and physical media removal deletes its artifact. Use **Download analysis JSON** in the accepted-analysis view to export the original document without embedding it into media files.
 
 This milestone adds no question/audit pass or final verification pass. Those remain optional follow-up work after first-pass evaluation, along with broader normalization, malformed-output recovery, provider-enforced schemas, and TypeScript-to-C# source generation. Video analysis retains its existing thumbnail-based behavior and records that input in provenance; it does not describe an entire video.

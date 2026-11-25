@@ -1,7 +1,8 @@
+using Gallery.Core.Features.Media.Removal.Managers.Validators;
 using Gallery.Core.Features.Browsing;
+using Gallery.Core.Features.Browsing.Filtering;
 using Gallery.Core.Features.Curation;
 using Gallery.Core.Features.Duplicates;
-using Gallery.Core.Features.Media.Removal;
 using Gallery.Core.Models;
 
 namespace Gallery.Tests;
@@ -88,7 +89,7 @@ public sealed class CoreRulesTests
         var unique = first with { Id = "unique", Generation = new() { Prompt = "unique" } };
         var missing = new ImageRecord { Id = "missing" };
 
-        var filtered = GalleryFilterProcessor.Apply(new() { MinRating = 3 }, [first, second, unique, missing]);
+        var filtered = GalleryFilterProcessor.Filter(new() { MinRating = 3 }, [first, second, unique, missing]);
         var groups = PromptRules.GroupByPrompt([first, second, unique, missing]);
 
         Assert.Equal("second", Assert.Single(filtered).Id);
@@ -104,7 +105,7 @@ public sealed class CoreRulesTests
         var third = new ImageRecord { Id = "third", Generation = new() { Model = "flux dev" } };
         var missing = new ImageRecord { Id = "missing" };
 
-        var filtered = GalleryFilterProcessor.Apply(new() { DiffusionModel = "FLUX" }, [first, second, third, missing]);
+        var filtered = GalleryFilterProcessor.Filter(new() { DiffusionModel = "FLUX" }, [first, second, third, missing]);
         var groups = DiffusionModelRules.GroupByDiffusionModel([first, second, third, missing]);
 
         Assert.Equal(["first", "third"], filtered.Select(image => image.Id).Order(StringComparer.Ordinal));

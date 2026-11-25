@@ -1,8 +1,11 @@
+using System.Collections.Immutable;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
 using Gallery.Core.Features.Tags;
+using Gallery.Core.Features.Vaults;
+using Gallery.Core.Features.Vaults.Session;
 using Gallery.Core.Infrastructure.Persistence;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
@@ -92,6 +95,134 @@ public sealed class TagCatalogTests
         Assert.Equal(new[] { "legacy" }, await fixture.Scope.Tags.LoadTagNamesAsync());
         await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "" });
         Assert.Equal(new[] { new TagDefinition("legacy", 0) }, await fixture.Scope.Tags.LoadTagCatalogAsync());
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task RecordEditorRejectsNewTagNamesOutsideTheSharedContract(CatalogBackend backend)
+    {
+        using var fixture = new ServiceFixture(backend);
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "sample.png", "folder");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Records.UpdateAsync(image.Id, current => current with { Tags = new string('x', 101) }));
+
+        Assert.Equal("", Assert.Single(await fixture.Scope.Catalog.ListAsync()).Tags);
+        Assert.Empty(await fixture.Scope.Tags.LoadTagNamesAsync());
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite, false)]
+    [InlineData(CatalogBackend.Sqlite, true)]
+    [InlineData(CatalogBackend.Turso, false)]
+    [InlineData(CatalogBackend.Turso, true)]
+    public async Task InvalidCsvDoesNotInitializeCatalogOrChangeRecordsAndViews(CatalogBackend backend, bool defaultCatalog)
+    {
+        using var fixture = new SnapshotFixture(backend);
+        await fixture.InitializeAsync(defaultCatalog);
+        var image = await fixture.AddRecordAsync();
+        await fixture.Store.SaveViewAsync("Saved", new GalleryFilter { Tag = "legacy" }, fixture.Key);
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes("tag\nvalid\n\"invalid,tag\"\n"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Tags.ImportTagsCsvAsync(input));
+
+        Assert.Contains("CSV tag 2:", exception.Message);
+        await fixture.AssertUninitializedAsync(defaultCatalog);
+        Assert.Equal("legacy", (await fixture.Store.ReadRecordAsync(image.Id, fixture.Key)).Tags);
+        Assert.Equal("legacy", Assert.Single(await fixture.Store.LoadViewsAsync(fixture.Key)).GalleryFilter.Tag);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite, false)]
+    [InlineData(CatalogBackend.Sqlite, true)]
+    [InlineData(CatalogBackend.Turso, false)]
+    [InlineData(CatalogBackend.Turso, true)]
+    public async Task InvalidEditDoesNotInitializeCatalogOrChangeRecord(CatalogBackend backend, bool defaultCatalog)
+    {
+        using var fixture = new SnapshotFixture(backend);
+        await fixture.InitializeAsync(defaultCatalog);
+        var image = await fixture.AddRecordAsync();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = new string('x', 101) }));
+
+        Assert.Contains("1–100 characters", exception.Message);
+        await fixture.AssertUninitializedAsync(defaultCatalog);
+        Assert.Equal("legacy", (await fixture.Store.ReadRecordAsync(image.Id, fixture.Key)).Tags);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task EmptyCsvInitializesMissingCatalog(CatalogBackend backend)
+    {
+        using var fixture = new SnapshotFixture(backend);
+        await fixture.InitializeAsync(false);
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes("tag\n"));
+
+        Assert.Equal((0, 0), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
+
+        var catalog = await fixture.Store.ReadSettingsAsync<TagCatalog>(TagCatalog.SettingId, TagCatalog.SettingPurpose, fixture.Key);
+        Assert.NotNull(catalog);
+        Assert.False(catalog.Names.IsDefault);
+        Assert.Empty(catalog.Names);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task CsvImportReconcilesUninitializedCatalogAndCommitsNewNames(CatalogBackend backend)
+    {
+        using var fixture = new SnapshotFixture(backend);
+        await fixture.InitializeAsync(false);
+        await fixture.AddRecordAsync();
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes("tag\nlegacy\nnew\n"));
+
+        Assert.Equal((1, 1), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
+
+        var catalog = await fixture.Store.ReadSettingsAsync<TagCatalog>(TagCatalog.SettingId, TagCatalog.SettingPurpose, fixture.Key);
+        Assert.NotNull(catalog);
+        Assert.Equal(new[] { "legacy", "new" }, catalog.Names);
+    }
+
+    [Theory]
+    [InlineData(CatalogBackend.Sqlite)]
+    [InlineData(CatalogBackend.Turso)]
+    public async Task ValidEditCommitsRecordAndReconciledUninitializedCatalog(CatalogBackend backend)
+    {
+        using var fixture = new SnapshotFixture(backend);
+        await fixture.InitializeAsync(false);
+        var image = await fixture.AddRecordAsync();
+
+        await fixture.Scope.Records.UpdateAsync(image.Id, edit => edit with { Tags = "legacy, new" });
+
+        Assert.Equal("legacy, new", (await fixture.Store.ReadRecordAsync(image.Id, fixture.Key)).Tags);
+        var catalog = await fixture.Store.ReadSettingsAsync<TagCatalog>(TagCatalog.SettingId, TagCatalog.SettingPurpose, fixture.Key);
+        Assert.NotNull(catalog);
+        Assert.Equal(new[] { "legacy", "new" }, catalog.Names);
+    }
+
+    [Fact]
+    public async Task PreviouslyStoredLegacyTagNamesRemainTransferable()
+    {
+        using var fixture = new TestVault();
+        await fixture.InitializeAsync();
+        var image = await fixture.Scope.Ingestion.ImportAsync(new MemoryStream(GalleryTests.MakePng()), "legacy.png", "folder");
+        var legacyName = new string('x', 101);
+        await fixture.Store.UpdateAsync(image with { Tags = legacyName }, fixture.Session.Key);
+        await fixture.Scope.Records.UpdateAsync(image.Id, current => current with { IsFavorite = true });
+
+        var file = await fixture.Scope.Tags.ExportTagsCsvAsync();
+        try
+        {
+            using var input = new MemoryStream(file.CopyContentBytes());
+            Assert.Equal((0, 1), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
+        }
+        finally { file.ClearContent(); }
+
+        Assert.Equal(new[] { new TagDefinition(legacyName, 1) }, await fixture.Scope.Tags.LoadTagCatalogAsync());
     }
 
     [Theory]
@@ -245,6 +376,89 @@ public sealed class TagCatalogTests
             Assert.Equal((0, 0), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
         }
         finally { file.ClearContent(); }
+    }
+
+    [Fact]
+    public async Task TagCsvExport_AcceptsLimitAndRejectsOneAdditionalUtf8Byte()
+    {
+        using var fixture = new SnapshotFixture(CatalogBackend.Sqlite);
+        await fixture.InitializeAsync(false);
+        var names = Enumerable.Range(0, 100824)
+            .Select(index => $"{index:D6}{new string('a', 94)}")
+            .Append(new string('z', 52))
+            .ToImmutableArray();
+        await fixture.Store.CommitTagCatalogAsync([], new TagCatalog(names), null, fixture.Key);
+
+        var file = await fixture.Scope.Tags.ExportTagsCsvAsync();
+        try
+        {
+            var bytes = file.CopyContentBytes();
+            try
+            {
+                Assert.Equal(IGalleryTags.MaxCsvBytes, bytes.LongLength);
+                using var input = new MemoryStream(bytes);
+                Assert.Equal((0, names.Length), await fixture.Scope.Tags.ImportTagsCsvAsync(input));
+            }
+            finally { CryptographicOperations.ZeroMemory(bytes); }
+        }
+        finally { file.ClearContent(); }
+
+        names = names.SetItem(names.Length - 1, new string('z', 51) + "é");
+        await fixture.Store.CommitTagCatalogAsync([], new TagCatalog(names), null, fixture.Key);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Scope.Tags.ExportTagsCsvAsync());
+        Assert.Contains("10 MiB", exception.Message);
+        Assert.Equal(names.Length, (await fixture.Scope.Tags.LoadTagNamesAsync()).Count);
+    }
+
+    private sealed class SnapshotFixture : IDisposable
+    {
+        private readonly string root = Path.Combine(Path.GetTempPath(), "tag-snapshot-" + Guid.NewGuid().ToString("N"));
+        private readonly VaultSession session = new();
+        public byte[] Key { get; } = RandomNumberGenerator.GetBytes(32);
+        public IGalleryStore Store { get; }
+        public GalleryScope Scope { get; }
+
+        public SnapshotFixture(CatalogBackend backend)
+        {
+            Directory.CreateDirectory(root);
+            Store = new GalleryStoreFactory().Create(root, backend);
+            Scope = new GalleryScope(Store, new VaultStore(root), session);
+        }
+
+        public async Task InitializeAsync(bool defaultCatalog)
+        {
+            await Store.InitializeAsync(Key);
+            session.Unlock(Key);
+            if (defaultCatalog)
+                await Store.SaveSettingsAsync(new { }, TagCatalog.SettingId, TagCatalog.SettingPurpose, Key);
+        }
+
+        public async Task<ImageRecord> AddRecordAsync()
+        {
+            var image = new ImageRecord { Id = "existing", Name = "sample", Tags = "legacy", Sha256 = new string('A', 64) };
+            using var thumbnail = new ImageThumbnail([1, 2, 3]);
+            await Store.InsertAsync(image, thumbnail, Key);
+            return image;
+        }
+
+        public async Task AssertUninitializedAsync(bool defaultCatalog)
+        {
+            var catalog = await Store.ReadSettingsAsync<TagCatalog>(TagCatalog.SettingId, TagCatalog.SettingPurpose, Key);
+            if (defaultCatalog)
+            {
+                Assert.NotNull(catalog);
+                Assert.True(catalog.Names.IsDefault);
+            }
+            else Assert.Null(catalog);
+        }
+
+        public void Dispose()
+        {
+            Scope.Dispose();
+            Scope.DriveOperations.WaitForDriveOperationsAsync().GetAwaiter().GetResult();
+            CryptographicOperations.ZeroMemory(Key);
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
     }
 
     private sealed class CaptureHandler : HttpMessageHandler

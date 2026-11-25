@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Gallery.Core.Features.Ingestion;
+using Gallery.Core.Features.Ingestion.Processors;
 using Gallery.Core.Models;
 using Gallery.Core.Services;
 using Gallery.Stress.Cli;

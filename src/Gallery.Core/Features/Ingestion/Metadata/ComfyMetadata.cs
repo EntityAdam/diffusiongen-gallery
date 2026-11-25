@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Models;
-using Gallery.Core.Shared.Diagnostics;
+using Gallery.Core.Features.Diagnostics.Models;
 
 namespace Gallery.Core.Features.Ingestion.Metadata;
 
@@ -35,7 +35,7 @@ internal static partial class ComfyMetadata
         {
             string excerpt = JsonSerializer.Serialize(metadataJson[..Math.Min(metadataJson.Length, 80)]);
             throw new StoredMetadataFormatException($"Stored generation metadata is not valid JSON. Input excerpt: {excerpt}.",
-                GalleryLogEvent.ParseMetadata,
+                LogEventGallery.ParseMetadata,
                 new ContextualData().Add("Metadata.InputExcerpt", excerpt), exception);
         }
     }
@@ -72,60 +72,70 @@ internal static partial class ComfyMetadata
         string? prompt = null, workflow = null;
         foreach (var textEntry in textEntries)
         {
-            Classify(textEntry.Value, IsGenerationKeyword(textEntry.Keyword), ref prompt, ref workflow, 0);
-            if (prompt is not null && workflow is not null) break;
+            Classify(textEntry.Value, ref prompt, ref workflow, 0);
         }
         return new(prompt, workflow);
     }
 
-    private static bool IsGenerationKeyword(string keyword) =>
-        keyword.Equals("prompt", StringComparison.OrdinalIgnoreCase)
-        || keyword.Equals("workflow", StringComparison.OrdinalIgnoreCase);
-
-    private static void Classify(string value, bool isGenerationSource, ref string? prompt, ref string? workflow, int depth)
+    private static void Classify(string value, ref string? prompt, ref string? workflow, int depth)
     {
         if (depth > 2) return;
-        var text = NormalizeCandidateText(value, out var hasGenerationPrefix);
+        var text = NormalizeCandidateText(value);
         if (!text.StartsWith('{')) return;
-        var jsonObject = ParseCandidateDocument(text, isGenerationSource || hasGenerationPrefix);
-        if (jsonObject is null) return;
+        var jsonObject = ParseCandidateDocument(text);
 
         if (IsWorkflow(jsonObject)) { workflow ??= text; return; }
         if (IsApiPrompt(jsonObject)) { prompt ??= text; return; }
-        ClassifyNestedDocuments(jsonObject, ref prompt, ref workflow, depth);
-    }
-
-    private static string NormalizeCandidateText(string value, out bool hasGenerationPrefix)
-    {
-        var text = value.Trim();
-        var match = PrefixedJson().Match(text);
-        hasGenerationPrefix = match.Success;
-        return match.Success ? text[match.Length..] : text;
-    }
-
-    // Free-form text that merely starts with '{' is skipped; only identified generation documents report malformed JSON.
-    private static JsonObject? ParseCandidateDocument(string text, bool isGenerationSource)
-    {
-        try { return JsonNode.Parse(text) as JsonObject; }
-        catch (JsonException exception)
-        {
-            if (!isGenerationSource) return null;
-            throw new StoredMetadataFormatException("Embedded generation metadata is not valid JSON.",
-                GalleryLogEvent.ParseMetadata, exception: exception);
-        }
-    }
-
-    private static void ClassifyNestedDocuments(
-        JsonObject jsonObject, ref string? prompt, ref string? workflow, int depth)
-    {
-        // Video Helper Suite stores {"prompt": ..., "workflow": ...} in one comment tag; values may be objects or strings.
         foreach (var name in new[] { "prompt", "workflow" })
         {
             var inner = jsonObject[name];
-            if (inner is JsonObject innerObject) Classify(innerObject.ToJsonString(), true, ref prompt, ref workflow, depth + 1);
+            if (inner is JsonObject innerObject)
+                Classify(innerObject.ToJsonString(), ref prompt, ref workflow, depth + 1);
             else if (inner is JsonValue innerValue && innerValue.TryGetValue<string>(out var innerText))
-                Classify(innerText, true, ref prompt, ref workflow, depth + 1);
+                Classify(innerText, ref prompt, ref workflow, depth + 1);
         }
+    }
+
+    private static string NormalizeCandidateText(string value)
+    {
+        var text = value.Trim();
+        var match = PrefixedJson().Match(text);
+        return match.Success ? text[match.Length..] : text;
+    }
+
+    // Candidate metadata that starts with '{' is treated as JSON and must be valid.
+    private static JsonObject ParseCandidateDocument(string text)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(text);
+            if (ContainsDuplicateProperties(document.RootElement))
+                throw new JsonException("Embedded generation metadata contains duplicate JSON properties.");
+            return JsonNode.Parse(text) as JsonObject
+                ?? throw new JsonException("Embedded generation metadata is not a JSON object.");
+        }
+        catch (JsonException exception)
+        {
+            throw new StoredMetadataFormatException("Embedded generation metadata is not valid JSON.",
+                LogEventGallery.ParseMetadata, exception: exception);
+        }
+    }
+
+    private static bool ContainsDuplicateProperties(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var propertyNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+                if (!propertyNames.Add(property.Name) || ContainsDuplicateProperties(property.Value))
+                    return true;
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                if (ContainsDuplicateProperties(item)) return true;
+        }
+        return false;
     }
 
     private static bool IsWorkflow(JsonObject json) => json["nodes"] is JsonArray && json.ContainsKey("links");
@@ -144,10 +154,13 @@ internal static partial class ComfyMetadata
     public static GenerationInfo? Extract(string metadataJson)
     {
         var documents = Find(metadataJson);
-        if (documents.ApiPrompt is null && documents.Workflow is null) return null;
+        if (!HasGenerationDocuments(documents)) return null;
         var generationInfo = documents.ApiPrompt is null ? new GenerationInfo() : ParseApiPrompt(documents.ApiPrompt);
         return generationInfo with { HasWorkflow = documents.Workflow is not null, HasApiPrompt = documents.ApiPrompt is not null };
     }
+
+    private static bool HasGenerationDocuments(Documents documents) =>
+        documents.ApiPrompt is not null || documents.Workflow is not null;
 
     /// <summary>The document to save as a ComfyUI workflow: the UI workflow when present, otherwise the API prompt.</summary>
     public static string? WorkflowForExport(string metadataJson)
