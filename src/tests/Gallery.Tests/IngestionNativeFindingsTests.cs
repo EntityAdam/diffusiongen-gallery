@@ -58,11 +58,16 @@ public sealed class IngestionNativeFindingsTests
         var folder = Path.Combine(fixture.Root, "source");
         Directory.CreateDirectory(folder);
         await File.WriteAllBytesAsync(Path.Combine(folder, "image.png"), GalleryTests.MakePng());
+        var observerFailuresPath = Path.Combine(fixture.Root, ".timing-observer-failures.ndjson");
+        if (File.Exists(observerFailuresPath)) File.Delete(observerFailuresPath);
 
         await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
             reportTimings: _ => throw new InvalidOperationException("diagnostic observer failed"));
 
         Assert.Single(await fixture.Scope.Catalog.ListAsync());
+        var persistedFailures = await File.ReadAllLinesAsync(observerFailuresPath);
+        Assert.NotEmpty(persistedFailures);
+        Assert.Contains("System.InvalidOperationException", persistedFailures[^1], StringComparison.Ordinal);
     }
 
     [Fact]

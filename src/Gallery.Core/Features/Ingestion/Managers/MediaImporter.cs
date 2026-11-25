@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Gallery.Core.Exceptions;
 using Gallery.Core.Features.Media;
 using Gallery.Core.Features.Ingestion.Gateways;
@@ -23,6 +24,9 @@ namespace Gallery.Core.Features.Ingestion.Managers;
 /// <summary>Runs ingestion against the catalog selected by the caller's vault lease.</summary>
 internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreSlim catalogGate, ImportMediaPreparer mediaPreparer)
 {
+    private static readonly object TimingObserverFailureFileGate = new();
+    private const string TimingObserverFailureFileName = ".timing-observer-failures.ndjson";
+
     public static void ValidateImportName(string name) =>
         ImportRequestValidator.ValidateName(name, IngestionSourceScanner.Extensions);
 
@@ -176,29 +180,8 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
         timings?.SetFiles(mediaPaths.Length, options.Workers);
         await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
-        foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
-        {
-            var pending = indices.Select((index, batchSlot) =>
-                new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
-            Exception? interruption = null;
-            try
-            {
-                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
-                    ReportFolderProgressAsync);
-                await CommitBatchAsync(pending, key, timings);
-                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
-                    RecordCompletionAsync, ReportFolderProgressAsync, failuresByPathIndex);
-            }
-            catch (Exception exception)
-            {
-                interruption = exception;
-                throw;
-            }
-            finally
-            {
-                await CleanupBatchAsync(pending, timings, interruption);
-            }
-        }
+        await ProcessFolderBatchesAsync(mediaPaths, options.CatalogBatchSize, parallelism, sourceRetention,
+            key, mediaRoot, timings, failuresByPathIndex, RecordCompletionAsync, ReportFolderProgressAsync);
 
         FolderImportProgress.RecordOutcome(FolderImportProgress.CurrentSnapshot(progressSnapshot), timings);
         await ReportFolderProgressAsync(
@@ -284,7 +267,40 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not AccessViolationException)
         {
+            // code-review: override[pwi.validation-exception-handling.csharp.catch-site-justification] - timing observers are diagnostic only; import outcome must remain authoritative while observer failures are durably recorded for review.
+            RecordTimingObserverFailure(catalogRoot, exception);
             // Timing is diagnostic; an observer failure must not replace the import outcome.
+        }
+    }
+
+    private async Task ProcessFolderBatchesAsync(
+        string[] mediaPaths, int catalogBatchSize, ParallelOptions parallelism, SourceRetention sourceRetention,
+        byte[] key, string mediaRoot, IngestionTimings? timings, Exception?[] failuresByPathIndex,
+        Func<bool, bool, Task> recordCompletion,
+        Func<string, ProgressReportMode, string?, Task> reportFolderProgress)
+    {
+        foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(catalogBatchSize))
+        {
+            var pending = indices.Select((index, batchSlot) =>
+                new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
+            Exception? interruption = null;
+            try
+            {
+                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
+                    reportFolderProgress);
+                await CommitBatchAsync(pending, key, timings);
+                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
+                    recordCompletion, reportFolderProgress, failuresByPathIndex);
+            }
+            catch (Exception exception)
+            {
+                interruption = exception;
+                throw;
+            }
+            finally
+            {
+                await CleanupBatchAsync(pending, timings, interruption);
+            }
         }
     }
 
@@ -493,6 +509,27 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
     private static bool IsImportFailure(Exception exception) => exception is IOException or InvalidOperationException
         or UnauthorizedAccessException or GalleryException or CryptographicException or UnknownImageFormatException
         or InvalidImageContentException;
+
+    private static void RecordTimingObserverFailure(string catalogRoot, Exception exception)
+    {
+        var eventRecord = JsonSerializer.Serialize(new TimingObserverFailureEvent(
+            DateTimeOffset.UtcNow,
+            exception.GetType().FullName ?? exception.GetType().Name));
+        var destination = Path.Combine(catalogRoot, TimingObserverFailureFileName);
+        try
+        {
+            lock (TimingObserverFailureFileGate)
+            {
+                File.AppendAllText(destination, eventRecord + Environment.NewLine);
+            }
+        }
+        catch (Exception writeFailure) when (writeFailure is IOException or UnauthorizedAccessException)
+        {
+            // Recording observer failures is best-effort only.
+        }
+    }
+
+    private sealed record TimingObserverFailureEvent(DateTimeOffset TimestampUtc, string ExceptionType);
 
     private sealed record PendingImport(int Index, int BatchSlot, string Path)
     {
