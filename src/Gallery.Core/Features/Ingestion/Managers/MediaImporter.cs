@@ -41,10 +41,12 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         string sourcePath, byte[] key, string mediaRoot)
     {
         var prepared = await PrepareImportAsync(input, name, sourceFolder, sourcePath, key, timings: null, mediaRoot);
+        if (prepared is null)
+            throw new InvalidOperationException($"'{name}' is already in the gallery.");
         return await PersistImportAsync(prepared, name, key);
     }
 
-    private async Task<PreparedImport> PrepareImportAsync(
+    private async Task<PreparedImport?> PrepareImportAsync(
         Stream input, string name, string sourceFolder, string sourcePath, byte[] key,
         IngestionTimings? timings, string mediaRoot)
     {
@@ -54,7 +56,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         try
         {
             var sourceHash = ComputeSourceHash(bytes, timings);
-            await RejectDuplicateImportAsync(sourceHash, name, key, timings);
+            if (await IsDuplicateImportAsync(sourceHash, key, timings)) return null;
             var prepared = isVideo
                 ? await mediaPreparer.PrepareVideoAsync(bytes, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot)
                 : await ImportMediaPreparer.PrepareImageAsync(original, name, sourceFolder, sourcePath, sourceHash, key, timings, mediaRoot);
@@ -88,25 +90,19 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         return sourceHash;
     }
 
-    private async Task RejectDuplicateImportAsync(string sourceHash, string name, byte[] key,
+    private async Task<bool> IsDuplicateImportAsync(string sourceHash, byte[] key,
         IngestionTimings? timings)
     {
         var stageStart = Stopwatch.GetTimestamp();
         await catalogGate.WaitAsync();
         timings?.Record(IngestionStage.DuplicateWait, stageStart);
         stageStart = Stopwatch.GetTimestamp();
-        try { await RejectKnownFingerprintAsync(sourceHash, name, key); }
+        try { return await galleryStore.ContainsFingerprintAsync(sourceHash, key); }
         finally
         {
             timings?.Record(IngestionStage.DuplicateCheck, stageStart);
             catalogGate.Release();
         }
-    }
-
-    private async Task RejectKnownFingerprintAsync(string sourceHash, string name, byte[] key)
-    {
-        if (await galleryStore.ContainsFingerprintAsync(sourceHash, key))
-            throw new InvalidOperationException($"'{name}' is already in the gallery.");
     }
 
     private async Task<ImageRecord> PersistImportAsync(PreparedImport prepared, string name, byte[] key)
@@ -172,9 +168,9 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         Task ReportFolderProgressAsync(string status, ProgressReportMode reportMode, string? name) =>
             FolderImportProgress.ReportAsync(progressGate, progressSnapshot, progress, reportProgress,
                 status, reportMode, name, catalogRoot, timings);
-        Task RecordCompletionAsync(bool fileImportWasCommitted, bool fileImportFailed) =>
+        Task RecordCompletionAsync(PendingImport item) =>
             FolderImportProgress.RecordCompletionAsync(progressGate, progressSnapshot,
-                fileImportWasCommitted, fileImportFailed);
+                item.CommittedRecord is not null, item.WasSkipped && item.Failure is null, item.Failure is not null);
 
         var failuresByPathIndex = new Exception?[mediaPaths.Length];
         var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
@@ -331,6 +327,11 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
                 ValidateImportName(item.Name);
                 var prepared = await PrepareImportAsync(current.OpenedSource!.Stream, item.Name, Path.GetDirectoryName(item.Path)!,
                     item.Path, key, timings, mediaRoot);
+                if (prepared is null)
+                {
+                    pending[current.BatchSlot] = current with { WasSkipped = true };
+                    return;
+                }
                 start = Stopwatch.GetTimestamp();
                 current = await PendingImportOperations.StageAsync(current, prepared);
                 pending[current.BatchSlot] = current;
@@ -345,7 +346,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
 
     private async Task FinalizeBatchAsync(PendingImport[] pending, ParallelOptions parallelism,
         SourceRetention sourceRetention, byte[] key, IngestionTimings? timings,
-        Func<bool, bool, Task> recordCompletion,
+        Func<PendingImport, Task> recordCompletion,
         Func<string, ProgressReportMode, string?, Task> reportFolderProgress, Exception?[] failuresByPathIndex) =>
         await Parallel.ForEachAsync(pending, parallelism, async (item, _) =>
         {
@@ -395,15 +396,17 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
             {
                 Update(current with
                 {
-                    Failure = new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
-                        current.Failure ?? new IOException("Catalog commit failed."), cleanupFailure)
+                    Failure = current.Failure is { } importFailure
+                        ? new AggregateException("Import failed and its uncommitted ciphertext could not be removed.",
+                            importFailure, cleanupFailure)
+                        : new IOException("Uncommitted ciphertext could not be removed.", cleanupFailure)
                 });
             }
 
             pending[current.BatchSlot] = current;
             if (current.Failure is not null)
                 failuresByPathIndex[current.Index] = new IOException($"Failed to import '{current.Path}'.", current.Failure);
-            await recordCompletion(current.CommittedRecord is not null, current.Failure is not null);
+            await recordCompletion(current);
             await reportFolderProgress($"Processed {current.Name}",
                 current.Failure is not null ? ProgressReportMode.Immediate : ProgressReportMode.Throttled, null);
             timings?.Record(IngestionStage.File, current.Started);
@@ -454,10 +457,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
             ImportCatalogEntry entry = stagedImport.Entry;
             if (duplicateIds.Contains(entry.Record.Id))
             {
-                pending[item.BatchSlot] = item with
-                {
-                    Failure = new InvalidOperationException($"'{item.Name}' is already in the gallery.")
-                };
+                pending[item.BatchSlot] = item with { WasSkipped = true };
             }
             else
             {
@@ -531,6 +531,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         public StagedImport? UncommittedStagedImport { get; init; }
         public ImportSource? OpenedSource { get; init; }
         public ImageRecord? CommittedRecord { get; init; }
+        public bool WasSkipped { get; init; }
         public Exception? Failure { get; init; }
     }
 

@@ -12,12 +12,12 @@ internal enum ProgressReportMode
 }
 
 internal sealed record FolderImportProgressSnapshot(
-    int Total, int Completed, int Imported, int Failed, long LastReportTimestamp);
+    int Total, int Completed, int Imported, int Skipped, int Failed, long LastReportTimestamp);
 
 internal static class FolderImportProgress
 {
     public static FolderImportProgressSnapshot CreateSnapshot(int total) =>
-        new(total, 0, 0, 0, Stopwatch.GetTimestamp());
+        new(total, 0, 0, 0, 0, Stopwatch.GetTimestamp());
 
     public static StrongBox<FolderImportProgressSnapshot> CreateSnapshotBox(int total) =>
         new(CreateSnapshot(total));
@@ -27,11 +27,12 @@ internal static class FolderImportProgress
         progressSnapshot.Value ?? throw new InvalidOperationException("Folder import progress state is unavailable.");
 
     public static FolderImportProgressSnapshot RecordCompletion(
-        FolderImportProgressSnapshot snapshot, bool fileImportWasCommitted, bool fileImportFailed) =>
+        FolderImportProgressSnapshot snapshot, bool fileImportWasCommitted, bool fileWasSkipped, bool fileImportFailed) =>
         snapshot with
         {
             Completed = snapshot.Completed + 1,
             Imported = snapshot.Imported + (fileImportWasCommitted ? 1 : 0),
+            Skipped = snapshot.Skipped + (fileWasSkipped ? 1 : 0),
             Failed = snapshot.Failed + (fileImportFailed ? 1 : 0)
         };
 
@@ -56,19 +57,19 @@ internal static class FolderImportProgress
 
     public static async Task RecordCompletionAsync(
         SemaphoreSlim progressGate, StrongBox<FolderImportProgressSnapshot> progressSnapshot,
-        bool fileImportWasCommitted, bool fileImportFailed)
+        bool fileImportWasCommitted, bool fileWasSkipped, bool fileImportFailed)
     {
         await progressGate.WaitAsync();
         try
         {
             progressSnapshot.Value = RecordCompletion(
-                CurrentSnapshot(progressSnapshot), fileImportWasCommitted, fileImportFailed);
+                CurrentSnapshot(progressSnapshot), fileImportWasCommitted, fileWasSkipped, fileImportFailed);
         }
         finally { progressGate.Release(); }
     }
 
     public static void RecordOutcome(FolderImportProgressSnapshot snapshot, IngestionTimings? timings) =>
-        timings?.SetOutcome(snapshot.Imported, snapshot.Failed);
+        timings?.SetOutcome(snapshot.Imported, snapshot.Skipped, snapshot.Failed);
 
     private static async Task<FolderImportProgressSnapshot> ReportSnapshotAsync(
         FolderImportProgressSnapshot snapshot, Action<string>? reportFile,
@@ -82,7 +83,10 @@ internal static class FolderImportProgress
             return snapshot;
 
         await IngestionProgressCallbackGuard.RunAsync(vaultRoot, () =>
-            reportProgress(new ImportProgress(snapshot.Total, snapshot.Completed, snapshot.Imported, snapshot.Failed, status)));
+            reportProgress(new ImportProgress(snapshot.Total, snapshot.Completed, snapshot.Imported, snapshot.Failed, status)
+            {
+                Skipped = snapshot.Skipped
+            }));
         return snapshot with { LastReportTimestamp = Stopwatch.GetTimestamp() };
     }
 

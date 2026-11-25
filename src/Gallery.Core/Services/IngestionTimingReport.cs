@@ -40,6 +40,7 @@ public sealed record IngestionTimingReport(
     IReadOnlyList<IngestionStageTiming> Stages)
 {
     public string CatalogDrive { get; init; } = "Unknown";
+    public int Skipped { get; init; }
 
     public override string ToString()
     {
@@ -57,7 +58,7 @@ public sealed record IngestionTimingReport(
         stringBuilder.AppendLine("Ingestion timings (no file or folder names recorded)");
         stringBuilder.AppendLine(invariant, $"Source drive: {SourceDrive} | Gallery drive: {GalleryDrive} | Workers: {Workers} | CPUs: {ProcessorCount}");
         stringBuilder.AppendLine($"Catalog drive: {CatalogDrive}");
-        stringBuilder.AppendLine(invariant, $"Files: {FilesFound} found, {Imported} imported, {Failed} reported issues | Source data read: {mib:F1} MiB");
+        stringBuilder.AppendLine(invariant, $"Files: {FilesFound} found, {Imported} imported, {Skipped} already exist, {Failed} reported issues | Source data read: {mib:F1} MiB");
         stringBuilder.AppendLine(invariant, $"Wall time: {seconds:F2} s | {(seconds > 0 ? FilesFound / seconds : 0):F2} files/s | {(seconds > 0 ? mib / seconds : 0):F2} MiB/s");
     }
 

@@ -210,21 +210,30 @@ public sealed class IngestionPerformanceTests
         await File.WriteAllBytesAsync(Path.Combine(folder, "one.png"), bytes);
         await File.WriteAllBytesAsync(Path.Combine(folder, "two.png"), bytes);
 
-        var expectedFailure = ExpectedExceptionContract.Create(typeof(ImportFolderException),
-            [folder, "file failures"], HttpStatusCode.InternalServerError, Severity.Error,
-            "One or more files could not be imported.", "FolderImport.Failed",
-            new Dictionary<string, object?> { ["Folder"] = folder, ["FailureCount"] = 1 });
-        var failure = await Assert.ThrowsAsync<ImportFolderException>(() =>
-            fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
-                sourceRetention: SourceRetention.DeleteAfterVerification,
-                options: new() { Workers = 2, CatalogBatchSize = 2 }));
-        AsserterExceptionContract.AssertMatches(expectedFailure, failure);
+        ImportProgress? final = null;
+        IngestionTimingReport? timings = null;
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            sourceRetention: SourceRetention.DeleteAfterVerification,
+            reportProgress: update => { final = update; return Task.CompletedTask; },
+            reportTimings: report => timings = report,
+            options: new() { Workers = 2, CatalogBatchSize = 2 });
 
+        Assert.Equal(new ImportProgress(2, 2, 1, 0, "Ingestion complete.") { Skipped = 1 }, final);
+        Assert.NotNull(timings);
+        Assert.Equal((2, 1, 1, 0), (timings.FilesFound, timings.Imported, timings.Skipped, timings.Failed));
         var imported = Assert.Single(await fixture.Scope.Catalog.ListAsync());
         Assert.False(File.Exists(imported.SourcePath));
         var retained = Assert.Single(Directory.EnumerateFiles(folder));
         Assert.Equal(bytes, await File.ReadAllBytesAsync(retained));
         Assert.Single(Directory.EnumerateFiles(Path.Combine(fixture.Root, "images"), "*.dpng", SearchOption.AllDirectories));
+
+        await fixture.Scope.Ingestion.ImportFolderAsync(folder, FolderSearchScope.SelectedFolder,
+            sourceRetention: SourceRetention.DeleteAfterVerification,
+            reportProgress: update => { final = update; return Task.CompletedTask; });
+
+        Assert.Equal(new ImportProgress(1, 1, 0, 0, "Ingestion complete.") { Skipped = 1 }, final);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(retained));
+        Assert.Single(await fixture.Scope.Catalog.ListAsync());
     }
 
     [Fact]

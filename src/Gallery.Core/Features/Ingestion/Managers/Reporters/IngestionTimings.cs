@@ -11,6 +11,7 @@ internal readonly record struct IngestionTimingObservation(
     int? FilesFound = null,
     int? Workers = null,
     int? Imported = null,
+    int? Skipped = null,
     int? Failed = null);
 
 internal sealed record IngestionMeasurementStart(
@@ -40,8 +41,8 @@ internal sealed class IngestionTimings
     internal void SetFiles(int found, int workerCount) =>
         observationSink(new(FilesFound: found, Workers: workerCount));
 
-    internal void SetOutcome(int importedCount, int failedCount) =>
-        observationSink(new(Imported: importedCount, Failed: failedCount));
+    internal void SetOutcome(int importedCount, int skippedCount, int failedCount) =>
+        observationSink(new(Imported: importedCount, Skipped: skippedCount, Failed: failedCount));
 }
 
 internal static class IngestionTimingReports
@@ -67,7 +68,7 @@ internal static class IngestionTimingReports
             discoveryObservation.FilesFound ?? 0, outcome.Imported ?? 0, outcome.Failed ?? 0,
             observations.Sum(observation => observation.SourceBytes),
             Stopwatch.GetElapsedTime(start.Timestamp, completedIngestionMeasurement.CompletedTimestamp).TotalMilliseconds,
-            stages) { CatalogDrive = start.CatalogDrive };
+            stages) { CatalogDrive = start.CatalogDrive, Skipped = outcome.Skipped ?? 0 };
     }
 
     private static IngestionStageTiming CreateStageTiming(IngestionStage stage, double[] sortedSamples) =>

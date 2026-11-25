@@ -6,6 +6,7 @@ using Gallery.Core.Models;
 using Gallery.Web.Components.Features.Backups;
 using Gallery.Web.Components.Features.Browsing;
 using Gallery.Web.Components.Features.Duplicates;
+using Gallery.Web.Components.Features.Ingestion;
 using Gallery.Web.Components.Features.Media;
 using Gallery.Web.Components.Features.Storage;
 using Gallery.Web.Components.Features.Tags;
@@ -24,6 +25,25 @@ namespace Gallery.Tests;
 [Trait("Category", "class_test")]
 public sealed class UiComponentTests
 {
+    [Fact]
+    public async Task IngestionReport_WhenAllFilesAlreadyExist_ShowsSkipsWithZeroReportedIssues()
+    {
+        await using var fixture = ComponentRenderFixture.Create();
+        var html = await fixture.HtmlRenderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var root = await fixture.HtmlRenderer.RenderComponentAsync<IngestionReport>(
+                ParameterView.FromDictionary(new Dictionary<string, object?>
+                {
+                    [nameof(IngestionReport.ProgressInfo)] = new ImportProgress(153, 153, 0, 0, "Ingestion complete.") { Skipped = 153 },
+                    [nameof(IngestionReport.Failures)] = Array.Empty<string>()
+                }));
+            return WebUtility.HtmlDecode(root.ToHtmlString());
+        });
+
+        Assert.Contains("153 / 153 files processed · 0 imported · 153 already exist · 0 reported issues", html);
+        Assert.DoesNotContain("file(s) reported issues", html);
+    }
+
     [Fact]
     public async Task TagManagement_ShowsUnusedDefinitionsAndCascadingActions()
     {
