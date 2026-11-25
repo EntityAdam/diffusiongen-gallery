@@ -180,8 +180,29 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
         var parallelism = new ParallelOptions { MaxDegreeOfParallelism = options.Workers };
         timings?.SetFiles(mediaPaths.Length, options.Workers);
         await ReportFolderProgressAsync("Importing media...", ProgressReportMode.Immediate, null);
-        await ProcessFolderBatchesAsync(mediaPaths, options.CatalogBatchSize, parallelism, sourceRetention,
-            key, mediaRoot, timings, failuresByPathIndex, RecordCompletionAsync, ReportFolderProgressAsync);
+        foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(options.CatalogBatchSize))
+        {
+            var pending = indices.Select((index, batchSlot) =>
+                new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
+            Exception? interruption = null;
+            try
+            {
+                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
+                    ReportFolderProgressAsync);
+                await CommitBatchAsync(pending, key, timings);
+                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
+                    RecordCompletionAsync, ReportFolderProgressAsync, failuresByPathIndex);
+            }
+            catch (Exception exception)
+            {
+                interruption = exception;
+                throw;
+            }
+            finally
+            {
+                await CleanupBatchAsync(pending, timings, interruption);
+            }
+        }
 
         FolderImportProgress.RecordOutcome(FolderImportProgress.CurrentSnapshot(progressSnapshot), timings);
         await ReportFolderProgressAsync(
@@ -265,42 +286,13 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
             IngestionProgressCallbackGuard.Run(catalogRoot,
                 () => reportTimings!(IngestionTimingReports.CreateReport(completedMeasurement)));
         }
+        // code-review: override[pwi.validation-exception-handling.csharp.catch-site-justification] - timing observers are diagnostic only; import outcome must remain authoritative while observer failures are durably recorded for review.
         catch (Exception exception) when (exception is not OutOfMemoryException and not AccessViolationException)
         {
-            // code-review: override[pwi.validation-exception-handling.csharp.catch-site-justification] - timing observers are diagnostic only; import outcome must remain authoritative while observer failures are durably recorded for review.
+            Trace.TraceWarning("Timing observer callback failed with {0}.",
+                exception.GetType().FullName ?? exception.GetType().Name);
             RecordTimingObserverFailure(catalogRoot, exception);
             // Timing is diagnostic; an observer failure must not replace the import outcome.
-        }
-    }
-
-    private async Task ProcessFolderBatchesAsync(
-        string[] mediaPaths, int catalogBatchSize, ParallelOptions parallelism, SourceRetention sourceRetention,
-        byte[] key, string mediaRoot, IngestionTimings? timings, Exception?[] failuresByPathIndex,
-        Func<bool, bool, Task> recordCompletion,
-        Func<string, ProgressReportMode, string?, Task> reportFolderProgress)
-    {
-        foreach (var indices in Enumerable.Range(0, mediaPaths.Length).Chunk(catalogBatchSize))
-        {
-            var pending = indices.Select((index, batchSlot) =>
-                new PendingImport(index, batchSlot, mediaPaths[index])).ToArray();
-            Exception? interruption = null;
-            try
-            {
-                await PrepareBatchAsync(pending, parallelism, sourceRetention, key, mediaRoot, timings,
-                    reportFolderProgress);
-                await CommitBatchAsync(pending, key, timings);
-                await FinalizeBatchAsync(pending, parallelism, sourceRetention, key, timings,
-                    recordCompletion, reportFolderProgress, failuresByPathIndex);
-            }
-            catch (Exception exception)
-            {
-                interruption = exception;
-                throw;
-            }
-            finally
-            {
-                await CleanupBatchAsync(pending, timings, interruption);
-            }
         }
     }
 
@@ -523,6 +515,7 @@ internal sealed class MediaImporter(IGalleryImportStore galleryStore, SemaphoreS
                 File.AppendAllText(destination, eventRecord + Environment.NewLine);
             }
         }
+        // code-review: override[pwi.validation-exception-handling.csharp.catch-site-justification] - failing to append diagnostic observer-failure telemetry must not replace an already-completed import outcome.
         catch (Exception writeFailure) when (writeFailure is IOException or UnauthorizedAccessException)
         {
             // Recording observer failures is best-effort only.
